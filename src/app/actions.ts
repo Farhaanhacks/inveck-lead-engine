@@ -12,6 +12,8 @@ import { driveRun } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
 import { domainOf, normCompany } from '@/lib/pipeline/text';
+import { CLIENT_FIELDS, describeImport, importClients, markClientLeads, rowsToClients, type ClientField } from '@/lib/clients';
+import { parseCsv } from '@/lib/csv';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -227,50 +229,55 @@ export async function deleteIcpAction(form: FormData) {
   revalidatePath('/targets');
 }
 
+/** The last row of the client grid: one client typed in by hand. */
 export async function addClientsAction(_prev: { message: string } | undefined, form: FormData) {
-  const db = await getDb();
-  const existing = await db.select().from(clients);
-  const names = new Set(existing.map((c) => normCompany(c.company)));
-  const rows: (typeof clients.$inferInsert)[] = [];
-  const add = (company: string, website: string, industry: string, whyBought: string) => {
-    if (!company || /^company$/i.test(company) || names.has(normCompany(company))) return;
-    names.add(normCompany(company));
-    rows.push({ company, website: domainOf(website), industry, whyBought });
-  };
-  // One client from the form fields…
-  add(str(form, 'company'), str(form, 'website'), str(form, 'industry'), str(form, 'whyBought'));
-  // …and/or many pasted as lines.
-  for (const line of str(form, 'bulk').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
-    const [company = '', website = '', industry = '', ...why] = line.split(/\t|,/).map((c) => c.trim().replace(/^"|"$/g, ''));
-    add(company, website, industry, why.join(', '));
-  }
-  if (rows.length) {
-    await db.insert(clients).values(rows);
-    // Clients already sitting in the lead list are marked so nobody cold-emails them.
-    const allLeads = await db.select({ id: leads.id, company: leads.company, website: leads.website, status: leads.status }).from(leads);
-    const clientNames = new Set(rows.map((r) => normCompany(r.company)));
-    const clientDomains = new Set(rows.map((r) => r.website).filter(Boolean));
-    const clash = allLeads.filter(
-      (l) => l.status !== 'Contacted' && (clientNames.has(normCompany(l.company)) || (l.website && clientDomains.has(domainOf(l.website)))),
-    );
-    if (clash.length) await db.update(leads).set({ status: 'Existing Client' }).where(inArray(leads.id, clash.map((l) => l.id)));
-  }
+  const records = rowsToClients([[str(form, 'company'), str(form, 'website'), str(form, 'industry'), str(form, 'whyBought')]], { header: false });
+  if (!records.length) return { message: 'Type a company name first.' };
+  const result = await importClients(await getDb(), records);
   revalidatePath('/targets');
-  return { message: rows.length ? `Added ${rows.length} ${rows.length === 1 ? 'client' : 'clients'}.` : 'Nothing new to add.' };
+  return { message: describeImport(result) };
 }
 
-export async function updateClientAction(form: FormData) {
-  const db = await getDb();
-  await db
-    .update(clients)
-    .set({ website: domainOf(str(form, 'website')), industry: str(form, 'industry'), whyBought: str(form, 'whyBought') })
-    .where(eq(clients.id, Number(str(form, 'id'))));
+/** Rows pasted from Excel or Google Sheets (tab separated), or any CSV text. */
+export async function importClientsTextAction(text: string) {
+  const rows = parseCsv(String(text ?? '').slice(0, 2_000_000));
+  if (!rows.length) return { ok: false, message: 'Nothing to import.' };
+  const result = await importClients(await getDb(), rowsToClients(rows));
   revalidatePath('/targets');
+  return { ok: true, message: describeImport(result) };
 }
 
-export async function deleteClientAction(form: FormData) {
+/** A CSV file exported from Excel, Google Sheets, Airtable or a CRM. */
+export async function importClientsFileAction(form: FormData) {
+  const file = form.get('file');
+  if (!(file instanceof File) || !file.size) return { ok: false, message: 'Choose a CSV file.' };
+  if (file.size > 2_000_000) return { ok: false, message: 'That file is over 2 MB. Split it into smaller files.' };
+  const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  // .xlsx files are zip archives ("PK…"); old .xls files start with D0 CF.
+  if ((bytes[0] === 0x50 && bytes[1] === 0x4b) || (bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
+    return { ok: false, message: 'That’s an Excel file. In Excel choose File → Save As → CSV (UTF-8), then upload the CSV.' };
+  }
+  return importClientsTextAction(await file.text());
+}
+
+/** One cell edited in the client grid. */
+export async function updateClientFieldAction(id: number, field: ClientField, value: string) {
+  if (!Number.isInteger(id) || !CLIENT_FIELDS.includes(field)) return { ok: false, value: '', message: 'Unknown cell.' };
+  let v = String(value ?? '').trim().slice(0, 1000);
+  if (field === 'website') v = domainOf(v);
+  if (field === 'company' && !v) return { ok: false, value: '', message: 'Company can’t be empty.' };
   const db = await getDb();
-  await db.delete(clients).where(eq(clients.id, Number(str(form, 'id'))));
+  const [row] = await db.update(clients).set({ [field]: v }).where(eq(clients.id, id)).returning();
+  if (!row) return { ok: false, value: '', message: 'That client no longer exists. Reload the page.' };
+  // A new name or website can match a lead that must not be cold-emailed.
+  if (field === 'company' || field === 'website') await markClientLeads(db, [row]);
+  return { ok: true, value: v };
+}
+
+export async function removeClientAction(id: number) {
+  if (!Number.isInteger(id)) return;
+  const db = await getDb();
+  await db.delete(clients).where(eq(clients.id, id));
   revalidatePath('/targets');
 }
 

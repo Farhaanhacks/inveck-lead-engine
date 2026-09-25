@@ -3,8 +3,8 @@ import { getDb } from '@/lib/db';
 import { clients, icps, type Icp } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
-import { deleteClientAction, deleteIcpAction, saveIcpAction, updateClientAction } from '../../actions';
-import { AddClientsForm } from './add-clients-form';
+import { deleteIcpAction, saveIcpAction } from '../../actions';
+import { ClientsGrid } from './clients-grid';
 
 const ICP_FIELDS: { name: keyof Icp; label: string; rows?: number; hint?: string }[] = [
   { name: 'description', label: 'Description', rows: 2 },
@@ -55,7 +55,7 @@ export default async function TargetsPage() {
   const db = await getDb();
   const [icpList, clientList] = await Promise.all([
     db.select().from(icps).orderBy(asc(icps.id)),
-    db.select().from(clients).orderBy(asc(clients.company)),
+    db.select().from(clients).orderBy(asc(clients.id)),
   ]);
 
   return (
@@ -90,43 +90,7 @@ export default async function TargetsPage() {
       <p className="mb-3 text-sm text-ink-2">
         Clients are never researched or contacted, and the prospect search finds companies like them.
       </p>
-      <div className="grid gap-6 lg:grid-cols-5">
-        <div className="card lg:col-span-3">
-          {clientList.map((c, i) => (
-            <div key={c.id} className={`space-y-2 p-4 ${i ? 'border-t border-line' : ''}`}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">{c.company}</div>
-                <form action={deleteClientAction}>
-                  <input type="hidden" name="id" value={c.id} />
-                  <button className="text-xs text-muted hover:text-critical-ink">Remove</button>
-                </form>
-              </div>
-              <form action={updateClientAction} className="grid gap-2 sm:grid-cols-2">
-                <input type="hidden" name="id" value={c.id} />
-                <label className="text-xs text-muted">
-                  Website
-                  <input name="website" defaultValue={c.website} aria-label={`${c.company} website`} className="field mt-1" />
-                </label>
-                <label className="text-xs text-muted">
-                  Industry
-                  <input name="industry" defaultValue={c.industry} aria-label={`${c.company} industry`} className="field mt-1" />
-                </label>
-                <label className="text-xs text-muted sm:col-span-2">
-                  Why they bought INVECK
-                  <textarea name="whyBought" defaultValue={c.whyBought} rows={2} aria-label={`${c.company}: why they bought`} className="field mt-1" />
-                </label>
-                <div className="sm:col-span-2">
-                  <SubmitButton className="btn-secondary" pendingText="Saving…">Save</SubmitButton>
-                </div>
-              </form>
-            </div>
-          ))}
-          {!clientList.length && <p className="px-4 py-6 text-center text-sm text-muted">No clients yet.</p>}
-        </div>
-        <div className="lg:col-span-2">
-          <AddClientsForm />
-        </div>
-      </div>
+      <ClientsGrid clients={clientList} />
     </>
   );
 }
