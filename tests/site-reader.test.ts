@@ -16,7 +16,7 @@ type Call = { url: string; headers: Record<string, string> };
 
 /** A fake network: each URL maps to a response, an error, or a function. */
 function services(routes: Record<string, (url: string) => Response | Promise<Response>>, calls: Call[]): Services {
-  const fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  const fakeFetch: typeof fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((v, k) => (headers[k] = v));
@@ -25,7 +25,7 @@ function services(routes: Record<string, (url: string) => Response | Promise<Res
     if (!route) throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } });
     return routes[route](url);
   }) as typeof fetch;
-  return { fetch, keys: { deepseek: '', anthropic: '', serper: 'serper-test', hunter: '', jina: '' }, settings: settingsSchema.parse({}) };
+  return { fetch: fakeFetch, keys: { deepseek: '', anthropic: '', serper: 'serper-test', hunter: '', jina: '' }, settings: settingsSchema.parse({}) };
 }
 
 const html = (body: string, status = 200) => new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
