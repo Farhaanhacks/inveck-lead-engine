@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
@@ -20,7 +20,10 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   if (segment) filters.push(eq(leads.segment, segment));
   if (q) filters.push(or(ilike(leads.company, `%${q}%`), ilike(leads.contactName, `%${q}%`), ilike(leads.city, `%${q}%`))!);
   const where = filters.length ? and(...filters) : undefined;
-  const whereWithStatus = status ? and(where, eq(leads.status, status as (typeof LEAD_STATUSES)[number])) : where;
+  // "All" leaves out disqualified companies; they have their own filter.
+  const whereWithStatus = status
+    ? and(where, eq(leads.status, status as (typeof LEAD_STATUSES)[number]))
+    : and(where, ne(leads.status, 'Disqualified'));
 
   const [rows, byStatus, segments, [{ total }]] = await Promise.all([
     db
@@ -35,7 +38,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
     db.select({ total: sql<number>`count(*)::int` }).from(leads).where(whereWithStatus),
   ]);
   const counts: Record<string, number> = Object.fromEntries(byStatus.map((r) => [r.status, r.n]));
-  const all = Object.values(counts).reduce((a, b) => a + b, 0);
+  const all = Object.entries(counts).reduce((a, [s, n]) => (s === 'Disqualified' ? a : a + n), 0);
 
   const link = (next: Record<string, string>) => {
     const p = new URLSearchParams({ ...(status && { status }), ...(segment && { segment }), ...(q && { q }), ...next });
