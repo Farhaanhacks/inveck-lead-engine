@@ -12,15 +12,15 @@ export type Score = {
 
 /**
  * 0-100: ICP fit (up to 50), contact's role matches a target role (20), verified email
- * (20, or 10 for a catch-all server), LinkedIn profile (5), phone (5).
+ * (20, or 10 when the server can't confirm it: catch-all or company format), LinkedIn profile (5), phone (5).
  * A lead gets a draft when it can be reached (email or LinkedIn) and scores at least minScore.
  */
 export function scoreLead(fitScore: number, contact: Contact, emailStatus: EmailStatus, minScore: number): Score {
-  const emailOk = !!contact.email && (emailStatus === 'valid' || emailStatus === 'accept_all');
+  const emailOk = !!contact.email && (emailStatus === 'valid' || emailStatus === 'accept_all' || emailStatus === 'likely');
   const parts = {
     fit: fitScore * 5,
     role: contact.roleMatch ? 20 : 0,
-    email: !contact.email ? 0 : emailStatus === 'valid' ? 20 : emailStatus === 'accept_all' ? 10 : 0,
+    email: !contact.email ? 0 : emailStatus === 'valid' ? 20 : emailStatus === 'accept_all' || emailStatus === 'likely' ? 10 : 0,
     linkedin: contact.linkedin ? 5 : 0,
     phone: contact.phone ? 5 : 0,
   };

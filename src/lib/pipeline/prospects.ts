@@ -4,7 +4,7 @@ import { PROSPECT_EXTRACT_PROMPT, PROSPECT_QUERIES_PROMPT } from './prompts';
 import type { SerperResult, Services } from './services';
 import { googleSearch, mapLimit } from './services';
 import { asList, asText, domainOf, errorMessage, normCompany } from './text';
-import { isBlockedDomain } from './website';
+import { domainScore, isBlockedDomain } from './website';
 
 export type Prospect = { company: string; website: string; city: string; segment: string; source: string };
 
@@ -130,7 +130,8 @@ export async function findProspects(
     const c = raw as Record<string, unknown>;
     const company = asText(c.company);
     let domain = domainOf(asText(c.website));
-    if (isBlockedDomain(domain) || !resultDomains.has(domain)) domain = '';
+    // …and only when the domain is plausibly this company's (not "cumminscollege.org" for Cummins).
+    if (isBlockedDomain(domain) || !resultDomains.has(domain) || !domainScore(company, domain)) domain = '';
     if (!company || seenNames.has(normCompany(company)) || (domain && seenDomains.has(domain))) continue;
     seenNames.add(normCompany(company));
     if (domain) seenDomains.add(domain);

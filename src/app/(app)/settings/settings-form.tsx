@@ -26,7 +26,16 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
           <Num name="dailyLimit" label="Companies researched per run" value={s.dailyLimit} min={1} max={500} hint="Keeps cost and the approval queue manageable." />
           <Num name="minScore" label="Minimum score for a draft (0–100)" value={s.minScore} min={0} max={100} hint="Lower-scoring leads are saved as “Low Score”." />
           <Num name="prospectsPerRun" label="New prospects per search" value={s.prospectsPerRun} min={1} max={50} hint="How many companies the prospect search adds at most." />
-          <Num name="maxEmailGuesses" label="Email formats to try" value={s.maxEmailGuesses} min={0} max={6} hint="When Hunter doesn't know a company's format. Each try uses one Hunter verification." />
+          <Num name="maxEmailGuesses" label="Email formats to try" value={s.maxEmailGuesses} min={0} max={6} hint="When the company's format is unknown. Each try uses one Hunter verification; only confirmed addresses are kept." />
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" name="useCompanyFormat" defaultChecked={s.useCompanyFormat} className="mt-1" />
+            <span>
+              Use the company&apos;s known email format when its mail server can&apos;t confirm addresses
+              <span className="block text-xs text-muted">
+                Like ZoomInfo: saves first.last@company.com, marked “likely”, when the company&apos;s format is proven (Hunter, or published email-format data). Plain guesses are never saved.
+              </span>
+            </span>
+          </label>
           <div>
             <label htmlFor="prospectDay" className="label">Prospect search on scheduled runs</label>
             <select id="prospectDay" name="prospectDay" defaultValue={s.prospectDay} className="field">

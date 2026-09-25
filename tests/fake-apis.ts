@@ -32,6 +32,7 @@ const PEOPLE: Record<string, string> = {
   'Finder Co': 'Kiran Rao - COO',
   'Catchall Co': 'Amit Joshi - Plant Head',
   'No Draft Industries': 'Ravi Shah - COO',
+  Honeywell: 'Mayank Singh - Plant Head',
 };
 
 function aiReply(system: string, user: string): unknown {
@@ -98,6 +99,33 @@ const handlers: Record<string, Handler> = {
       });
     }
     if (/Mystery/.test(q)) return text('boom', 500);
+    if (/email format/.test(q) && /Honeywell/.test(q)) {
+      return json({
+        organic: [
+          {
+            title: 'Honeywell Email Format | honeywell.com Emails - RocketReach',
+            link: 'https://rocketreach.co/honeywell-email-format_123',
+            snippet:
+              'The most common Honeywell email format is [first].[last] (ex. jane.doe@honeywell.com) being used 88.4% of the time. Other common Honeywell email patterns are [first_initial][last] (ex. jdoe@honeywell.com).',
+          },
+        ],
+      });
+    }
+    if (/email format/.test(q) && /John Deere/.test(q)) {
+      return json({
+        organic: [
+          { title: 'Honda email format', link: 'https://x.com/honda', snippet: 'first.last@honda.com (90%)' },
+          {
+            title: 'John Deere Email Format - RocketReach',
+            link: 'https://rocketreach.co/john-deere-email-format_1',
+            snippet: 'The most common John Deere email format is [last][first] (ex. doejane@johndeere.com) being used 67% of the time.',
+          },
+        ],
+      });
+    }
+    if (/"Priya Nair"/.test(q)) {
+      return json({ organic: [{ title: 'Priya Nair - Kappa Metals | ContactOut', link: 'https://contactout.com/p', snippet: "Priya Nair's work email priya.nair@kappametals.com and phone" }] });
+    }
     if (/Ash Logistics/.test(q)) {
       if (q.startsWith('site:')) return json({ organic: [] });
       return json({
@@ -158,6 +186,8 @@ export function fakeFetch(log: FakeLog): typeof fetch {
         if (e.endsWith('@formatguess.in')) return json({ data: { status: e === 'nkapoor@formatguess.in' ? 'valid' : 'invalid' } });
         if (e.endsWith('@findr.in')) return json({ data: { status: e === 'k.rao@findr.in' ? 'valid' : 'invalid' } });
         if (e.endsWith('@tatamotors.com')) return json({ data: { status: e.startsWith('sangamnath.digge') ? 'valid' : 'invalid' } });
+        if (e.endsWith('@honeywell.com')) return json({ data: { status: 'accept_all' } });
+        if (e.endsWith('@johndeere.com')) return json({ errors: [{ details: "You've used all your verification credits" }] }, 429);
         return json({ data: { status: e.startsWith('vijay') ? 'accept_all' : 'valid' } });
       }
     }

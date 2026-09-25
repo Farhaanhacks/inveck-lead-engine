@@ -6,7 +6,7 @@ import { researchLead, websiteEmails, websitePhone } from './research';
 import { scoreLead } from './scoring';
 import type { Services } from './services';
 import { fetchWebsiteText } from './services';
-import { domainOf, normalizeWebsite, normCompany } from './text';
+import { domainOf, normalizeWebsite, normCompany, rootDomain } from './text';
 import { findOfficialWebsite } from './website';
 
 export type LeadUpdate = Partial<Omit<NewLead, 'id' | 'createdAt'>>;
@@ -15,8 +15,8 @@ export type Log = (msg: string, level?: 'info' | 'warn' | 'error') => Promise<vo
 /** The client this lead belongs to, matched by company name (ignoring Pvt/Ltd/India…) or website domain. */
 export function matchClient(lead: { company: string; website: string }, clients: Client[]): Client | undefined {
   const name = normCompany(lead.company);
-  const domain = domainOf(lead.website);
-  return clients.find((c) => (name && normCompany(c.company) === name) || (domain && domainOf(c.website) === domain));
+  const domain = rootDomain(lead.website);
+  return clients.find((c) => (name && normCompany(c.company) === name) || (domain && rootDomain(c.website) === domain));
 }
 
 export function icpFor(segment: string, icps: Icp[]): Icp | undefined {
@@ -64,7 +64,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     }
   }
   if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
-  const domain = domainOf(website);
+  const domain = rootDomain(website);
   const input = { company: lead.company, website, domain, city: lead.city };
 
   const { research, error } = await researchLead(svc, input, icp, site.text);
@@ -114,7 +114,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const contact = picked.contact;
 
   const email = contact.name || contact.email
-    ? await findEmail(svc, contact, { domain, pattern: people.pattern, websiteEmails: websiteEmails(site.text, domain), webEmails })
+    ? await findEmail(svc, contact, { company: lead.company, domain, pattern: people.pattern, websiteEmails: websiteEmails(site.text, domain), webEmails })
     : { email: '', status: 'no email found' as const, source: '' as const, notes: [], reason: 'no contact found' };
   notes.push(...email.notes);
   contact.email = email.email;
@@ -123,7 +123,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const update: LeadUpdate = {
     ...base,
     emailStatus: email.email && email.source
-      ? `${email.status} (${SOURCE_LABELS[email.source]})`
+      ? `${email.status} (${SOURCE_LABELS[email.source]}${email.detail ? `: ${email.detail}` : ''})`
       : email.reason ? `no email found: ${email.reason}` : email.status,
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,

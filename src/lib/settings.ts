@@ -20,6 +20,11 @@ export const settingsSchema = z.object({
   minScore: z.coerce.number().int().min(0).max(100).default(55),
   /** Common email formats to try, and verify with Hunter, when the company's format is unknown. */
   maxEmailGuesses: z.coerce.number().int().min(0).max(6).default(3),
+  /**
+   * Save an address built from the company's proven email format when its mail server can't
+   * confirm single addresses (marked "likely"). Plain guesses are never saved.
+   */
+  useCompanyFormat: z.boolean().default(true),
   /** Most new companies the prospect search adds per run. */
   prospectsPerRun: z.coerce.number().int().min(1).max(50).default(15),
   /** On scheduled runs, also search for new prospects on this weekday (0 = Sunday … 6 = Saturday, -1 = never). */

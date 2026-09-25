@@ -6,6 +6,8 @@ import { settingsSchema, type Settings } from '@/lib/settings';
 import { executeRun, startRun } from '@/lib/runs';
 import type { Services } from '@/lib/pipeline/services';
 import { fakeFetch, type FakeLog } from './fake-apis';
+import { findEmail } from '@/lib/pipeline/emails';
+import { EMPTY_CONTACT } from '@/lib/pipeline/contacts';
 
 const TEST_LEADS = [
   { company: 'Tata Motors', website: 'https://www.tatamotors.com/', city: 'Pune', segment: 'Manufacturing & 3PL' },
@@ -22,6 +24,7 @@ const TEST_LEADS = [
   { company: 'Finder Co', website: 'findr.in' },
   { company: 'Catchall Co', website: 'catchall.in' },
   { company: 'Ash Logistics and Traders Pvt Ltd', website: 'ash-logistics.com', city: 'Pune' },
+  { company: 'Honeywell', website: 'honeywell.com', city: 'Pune' },
 ];
 
 let db: Db;
@@ -98,7 +101,7 @@ describe('full run with DeepSeek-style messy answers', () => {
 
     // Company pattern from Hunter → verified guess; draft missing a body → Error.
     expect(L['No Draft Industries'].contactEmail).toBe('ravi.shah@nodraft.in');
-    expect(L['No Draft Industries'].emailStatus).toBe("valid (company's email format)");
+    expect(L['No Draft Industries'].emailStatus).toBe("valid (company's email format: first.last per Hunter)");
     expect(L['No Draft Industries'].status).toBe('Error');
 
     // Email search, cheapest first.
@@ -108,7 +111,11 @@ describe('full run with DeepSeek-style messy answers', () => {
 
     expect(L['Format Guess Co'].contactEmail).toBe('nkapoor@formatguess.in');
     // Stops at the first valid guess.
-    expect(log.verified.filter((e) => e.endsWith('formatguess.in'))).toEqual(['neha.kapoor@formatguess.in', 'nkapoor@formatguess.in']);
+    expect(log.verified.filter((e) => e.endsWith('formatguess.in'))).toEqual([
+      'neha.kapoor@formatguess.in',
+      'neha@formatguess.in',
+      'nkapoor@formatguess.in',
+    ]);
 
     // No LinkedIn hits: leadership from company records is used; invented names are dropped.
     expect(L['Ash Logistics and Traders Pvt Ltd'].contactName).toBe('Jitendra Govind Joshi');
@@ -116,6 +123,12 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).toContain('Vidya Girish Pathak | CFO');
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Invented Person');
     expect(L['Ash Logistics and Traders Pvt Ltd'].contactEmail).toBe('jg.joshi@ash-logistics.com');
+
+    // Catch-all server, but the company's format is published (RocketReach-style page):
+    // the address is saved as "likely", like ZoomInfo's business emails.
+    expect(L['Honeywell'].contactEmail).toBe('mayank.singh@honeywell.com');
+    expect(L['Honeywell'].emailStatus).toBe("likely (company's email format: first.last, 88.4% of honeywell.com emails)");
+    expect(L['Honeywell'].status).toBe('Awaiting Approval');
 
     expect(L['Finder Co'].contactEmail).toBe('k.rao@findr.in');
     expect(L['Finder Co'].emailStatus).toBe('valid (Hunter finder)');
@@ -185,6 +198,30 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Tata Motors'].lastError).toContain('DEEPSEEK_API_KEY is not set');
     const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
     expect(events.some((e) => e.level === 'error')).toBe(true);
+  });
+});
+
+describe('finding emails', () => {
+  const soni = { ...EMPTY_CONTACT, name: 'Sanjay Soni', title: 'Factory Manager' };
+
+  it('uses a published company format even when Hunter is out of credits', async () => {
+    const r = await findEmail(services(), soni, { company: 'John Deere', domain: '', pattern: '', websiteEmails: [] });
+    expect(r.email).toBe('sonisanjay@johndeere.com');
+    expect(r.status).toBe('likely');
+    expect(r.detail).toBe('lastfirst, 67% of johndeere.com emails');
+  });
+
+  it('saves nothing unconfirmed when the company-format setting is off', async () => {
+    const r = await findEmail(services({ useCompanyFormat: false }), soni, { company: 'John Deere', domain: '', pattern: '', websiteEmails: [] });
+    expect(r.email).toBe('');
+    expect(r.reason).toMatch(/^Hunter error/);
+    expect(r.notes.join('\n')).toContain('Likely email');
+  });
+
+  it("uses the person's own address when a people-search page shows it", async () => {
+    const r = await findEmail(services(), { ...EMPTY_CONTACT, name: 'Priya Nair' }, { company: 'Kappa Metals', domain: 'kappametals.com', pattern: '', websiteEmails: [] });
+    expect(r.email).toBe('priya.nair@kappametals.com');
+    expect(r.source).toBe('web');
   });
 });
 

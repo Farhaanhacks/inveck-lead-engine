@@ -1,6 +1,6 @@
 import type { SerperResult, Services } from './services';
 import { googleSearch } from './services';
-import { domainOf } from './text';
+import { rootDomain } from './text';
 
 // Directories, social networks, marketplaces and news sites are never a company's own website.
 export const BLOCKED_DOMAINS =
@@ -15,26 +15,44 @@ const GENERIC = new Set(
   'pvt private ltd limited llp inc india indian the and company group industries industry chemicals chemical pharma pharmaceuticals pharmaceutical works systems solutions technologies technology enterprises international global services logistics manufacturing products engineering corporation corp'.split(' '),
 );
 
-function nameTokens(company: string): string[] {
+export function nameTokens(company: string): string[] {
   const words = company.toLowerCase().replace(/&/g, ' ').split(/[^a-z0-9]+/).filter(Boolean);
   const distinctive = words.filter((w) => !GENERIC.has(w) && (w.length >= 3 || /\d/.test(w)));
   return distinctive.length ? distinctive : words.filter((w) => w.length >= 3);
 }
 
+// Extra words in a domain that say it belongs to another organisation ("cumminscollege.org").
+const OTHER_ORG = /(college|school|university|institute|academy|hospital|news|jobs|careers|alumni|foundation|trust|blog)/;
+// Extra words that still mean the same company ("cumminsindia.com", "yazaki-group.com").
+const SAME_ORG = /^(?:india|group|global|intl|international|in|ind|co|corp|ltd|pvt|hq|the|world|online)*$/;
+
 /**
- * The company's own domain among search results: the first non-directory result whose
- * domain contains the most distinctive words of the company name ("Bodal Chemicals" → bodal.com).
+ * How well a domain matches a company name: 0 = not this company; 3+ = the domain is the
+ * company's name, give or take words like "india" or "group" ("Honeywell" → honeywell.com).
+ */
+export function domainScore(company: string, domain: string): number {
+  const tokens = nameTokens(company);
+  const root = rootDomain(domain);
+  if (!tokens.length || !root || isBlockedDomain(root)) return 0;
+  const label = root.split('.')[0].replace(/-/g, '');
+  const matched = tokens.filter((t) => label.includes(t));
+  if (!matched.length) return 0;
+  const rest = matched.reduce((r, t) => r.replace(t, ''), label);
+  if (OTHER_ORG.test(rest) && !OTHER_ORG.test(company.toLowerCase())) return 0;
+  const clean = SAME_ORG.test(rest);
+  return matched.length + (clean && matched.length === tokens.length ? 1 : 0) + (clean ? 1 : 0);
+}
+
+/**
+ * The company's own domain among search results: the non-directory result whose domain best
+ * matches the company name ("Bodal Chemicals" → bodal.com). Earlier results win ties.
  */
 export function pickOfficialDomain(company: string, results: SerperResult[]): string {
-  const tokens = nameTokens(company);
-  if (!tokens.length) return '';
   let best = '';
   let bestScore = 0;
   for (const r of results.slice(0, 10)) {
-    const domain = domainOf(r.link);
-    if (!domain || isBlockedDomain(domain)) continue;
-    const label = domain.split('.')[0].replace(/-/g, '');
-    const score = tokens.filter((t) => label.includes(t)).length;
+    const domain = rootDomain(r.link);
+    const score = domain ? domainScore(company, domain) : 0;
     if (score > bestScore) {
       best = domain;
       bestScore = score;

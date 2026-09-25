@@ -14,6 +14,16 @@ Everything happens in one run. Nobody needs Airtable or n8n.
 4. **Score and draft**: reachable leads above the minimum score get a personalised
    email draft.
 
+### How emails are found
+
+Most trustworthy and cheapest first: an address the team typed in or Hunter already knows →
+the person's address published on the company website or the web → the company's proven
+email format (from Hunter, or the formats RocketReach/ZoomInfo/LeadIQ publish, read through
+Google) → Hunter's email finder → common formats, kept only when Hunter confirms them.
+Many company mail servers can't confirm single addresses; there, an address built from the
+company's proven format is saved as **likely** (the way ZoomInfo shows business emails).
+This can be switched off in Settings. Plain guesses are never saved.
+
 The one human step is **approval**. A person reads the draft, edits it if needed, approves
 it and marks it as sent. Nothing is ever sent automatically.
 

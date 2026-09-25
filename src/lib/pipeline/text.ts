@@ -47,6 +47,25 @@ export function domainOf(s: string | null | undefined): string {
     .split(/[/?#\s]/)[0];
 }
 
+const SECOND_LEVEL = /^(co|com|net|org|gov|ac|edu|res|gen|firm|ind)$/;
+
+/** The registrable domain: "buildings.honeywell.com" → "honeywell.com", "www.cwls.co.in" → "cwls.co.in". */
+export function rootDomain(s: string | null | undefined): string {
+  const parts = domainOf(s).split('.').filter(Boolean);
+  if (parts.length <= 2) return parts.join('.');
+  const keep = SECOND_LEVEL.test(parts[parts.length - 2]) && parts[parts.length - 1].length === 2 ? 3 : 2;
+  return parts.slice(-keep).join('.');
+}
+
+/** The name people actually search by: "Ash Logistics and Traders Pvt Ltd" → "Ash Logistics and Traders". */
+export function searchName(company: string): string {
+  return company
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(pvt|private|ltd|limited|llp|inc|opc)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Adds https:// to a bare domain; '' stays ''. */
 export function normalizeWebsite(s: string | null | undefined): string {
   const w = String(s || '').trim();
@@ -76,6 +95,8 @@ export function splitName(name: string | null | undefined): { first: string; las
     .map((p) => p.replace(/[^A-Za-z'-]/g, ''))
     .filter((p) => p && !HONORIFICS.test(p));
   const full = parts.filter((p) => p.length > 1);
+  // "Ashamol A P": a first name followed by initials, no surname.
+  if (parts.length > 1 && full.length === 1 && parts[0] === full[0]) return { first: full[0], last: '', middle: '' };
   // "R P Sharma" has no full first name, so fall back to the first initial.
   const first = full.length > 1 ? full[0] : parts.length > 1 ? parts[0] : '';
   const last = full.length ? full[full.length - 1] : '';

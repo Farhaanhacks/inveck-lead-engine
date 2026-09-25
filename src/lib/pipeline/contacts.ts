@@ -4,7 +4,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { fetchWebsiteText, googleSearch, hunter } from './services';
-import { asBool, asList, asText, asTextList, errorMessage } from './text';
+import { asBool, asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
 
 export type Candidate = {
@@ -48,15 +48,6 @@ export function linkedinQuery(company: string, city: string, research: Research,
   ]
     .filter(Boolean)
     .join(' ');
-}
-
-/** The name people actually search by: "Ash Logistics and Traders Pvt Ltd" → "Ash Logistics and Traders". */
-export function searchName(company: string): string {
-  return company
-    .replace(/[.,]/g, ' ')
-    .replace(/\b(pvt|private|ltd|limited|llp|inc|opc)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 type LinkedInPerson = Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>;

@@ -287,6 +287,7 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
     dailyLimit: str(form, 'dailyLimit'),
     minScore: str(form, 'minScore'),
     maxEmailGuesses: str(form, 'maxEmailGuesses'),
+    useCompanyFormat: form.get('useCompanyFormat') === 'on',
     prospectsPerRun: str(form, 'prospectsPerRun'),
     prospectDay: str(form, 'prospectDay'),
     aiProvider: provider,
