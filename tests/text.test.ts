@@ -67,3 +67,15 @@ describe('scoring', () => {
     expect(scoreLead(4, withLinkedIn, 'no email found', 55)).toMatchObject({ readyForDraft: false, statusWithoutDraft: 'Low Score' });
   });
 });
+
+describe('apiKeys', () => {
+  it('cleans up pasted keys', async () => {
+    const { apiKeys } = await import('@/lib/settings');
+    process.env.DEEPSEEK_API_KEY = '  Bearer sk-abc123\n';
+    process.env.SERPER_API_KEY = '"serper1"';
+    expect(apiKeys().deepseek).toBe('sk-abc123');
+    expect(apiKeys().serper).toBe('serper1');
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.SERPER_API_KEY;
+  });
+});

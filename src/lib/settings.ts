@@ -54,13 +54,18 @@ export async function saveSettings(db: Db, value: Settings) {
     .onConflictDoUpdate({ target: settingsTable.key, set: { value } });
 }
 
+/** Tolerates keys pasted with quotes, spaces, line breaks or a "Bearer " prefix. */
+function envKey(name: string): string {
+  return (process.env[name] || '').trim().replace(/^["']|["']$/g, '').replace(/^bearer\s+/i, '').trim();
+}
+
 /** API keys come from environment variables, never from the database. */
 export function apiKeys() {
   return {
-    deepseek: process.env.DEEPSEEK_API_KEY || '',
-    anthropic: process.env.ANTHROPIC_API_KEY || '',
-    serper: process.env.SERPER_API_KEY || '',
-    hunter: process.env.HUNTER_API_KEY || '',
+    deepseek: envKey('DEEPSEEK_API_KEY'),
+    anthropic: envKey('ANTHROPIC_API_KEY'),
+    serper: envKey('SERPER_API_KEY'),
+    hunter: envKey('HUNTER_API_KEY'),
   };
 }
 export type ApiKeys = ReturnType<typeof apiKeys>;
