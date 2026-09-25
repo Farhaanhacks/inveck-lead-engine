@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# INVECK Lead Engine
 
-## Getting Started
+A web app that finds, researches and drafts outreach for INVECK India's prospects.
+Everything happens in one run. Nobody needs Airtable or n8n.
 
-First, run the development server:
+1. **Find prospects** (optional): the AI plans Google searches from the target segments
+   and existing clients, then picks real companies. Existing clients and known leads
+   are skipped.
+2. **Research**: for each new company it reads the website and scores the fit. It
+   skips existing clients by name and by domain.
+3. **Contact**: it searches LinkedIn (via Google) and Hunter, and the AI picks the best
+   person. It finds the email cheapest-first: emails already known, emails on the
+   website, the company's email pattern, then Hunter's finder.
+4. **Score and draft**: reachable leads above the minimum score get a personalised
+   email draft.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The one human step is **approval**. A person reads the draft, edits it if needed, approves
+it and marks it as sent. Nothing is ever sent automatically.
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Import this repository at [vercel.com/new](https://vercel.com/new).
+2. In the project, open **Storage → Create Database → Neon (Postgres)** and connect it.
+   That sets `DATABASE_URL` / `POSTGRES_URL`. Tables are created automatically on first use.
+3. Add these under **Settings → Environment Variables**:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+   | Variable | Required | What it is |
+   |---|---|---|
+   | `APP_PASSWORD` | yes | The shared login password |
+   | `CRON_SECRET` | yes | Any long random string (protects the scheduled run) |
+   | `DEEPSEEK_API_KEY` | yes* | DeepSeek key (the default AI) |
+   | `ANTHROPIC_API_KEY` | optional* | Only needed if you switch the AI to Claude in Settings |
+   | `SERPER_API_KEY` | yes | serper.dev key for Google / LinkedIn search |
+   | `HUNTER_API_KEY` | yes | hunter.io key for emails |
+   | `APP_URL` | optional | Your public URL, if you use a custom domain |
+
+   \* You need the key for whichever AI provider is selected in Settings.
+4. Redeploy so the variables take effect, then open the site and log in.
+
+A scheduled run starts at 09:00 IST on weekdays (`vercel.json`). It researches new
+leads and runs the prospect search on the day chosen in Settings. Long runs continue
+in the background automatically, within Vercel's 300-second function limit.
+
+## Using it
+
+- **Targets**: edit the segments (ICPs) and paste the current client list, so no one
+  who's already a client gets contacted.
+- **Add companies**: add one company, or paste many as `Company, website, city, segment`.
+- **Dashboard → Find prospects & research**: starts a run you can watch live on the **Runs** page.
+- **Leads**: filter by status, open a lead, edit the draft, then **Approve** and **Mark as sent**.
+- **Settings**: daily limit, minimum score, AI provider/model, sender details and the
+  product description the AI is allowed to use.
+
+## Local development
+
+```bash
+npm install
+npm run dev        # http://localhost:3000 with an embedded database in ./.data (no Postgres needed)
+npm test           # pipeline tests with fake APIs
+npm run lint && npm run typecheck
+```
+
+Put the API keys in `.env.local` to run real research locally. Without `APP_PASSWORD`,
+login is off in local development only.

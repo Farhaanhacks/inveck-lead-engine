@@ -36,6 +36,10 @@ async function connect(): Promise<Db> {
     const { PGlite } = await import('@electric-sql/pglite');
     const { drizzle } = await import('drizzle-orm/pglite');
     const dir = url.startsWith('pglite://') ? url.slice('pglite://'.length) : url ? undefined : './.data/pglite';
+    if (dir) {
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(dir, { recursive: true });
+    }
     const client = dir ? new PGlite(dir) : new PGlite();
     db = drizzle(client, { schema }) as unknown as Db;
   }
