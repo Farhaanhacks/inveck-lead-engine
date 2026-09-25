@@ -18,7 +18,7 @@ export type Card = {
 const HINT: Record<PipelineStage, string> = {
   'Awaiting Approval': 'Drafts to review',
   Approved: 'Ready to send',
-  Contacted: 'Follow-ups run here',
+  Contacted: 'Sent, waiting for a reply',
   Replied: 'Conversation started',
   'Meeting Booked': 'Demo scheduled',
   Won: 'Added to your client sheet',

@@ -350,3 +350,23 @@ describe('new facility radar', () => {
     expect(await addOpportunityAsLead(db, o.id)).toBeNull();
   });
 });
+
+describe('dashboard and board agree', () => {
+  it('a lead sent and then moved back before sending is no longer counted as contacted', async () => {
+    const [a, b] = await db
+      .insert(leads)
+      .values([
+        { company: 'Sent Co', status: 'Approved', qualified: true },
+        { company: 'Undo Co', status: 'Approved', qualified: true },
+      ])
+      .returning();
+    await applyStage(db, [a.id, b.id], 'Contacted');
+    await applyStage(db, [b.id], 'New'); // "Research again"
+    const [undone] = await db.select().from(leads).where(eq(leads.id, b.id));
+    expect(undone.sentAt).toBeNull();
+    expect(undone.nextFollowUpAt).toBeNull();
+    const stats = await getAnalytics(db);
+    expect(stats.funnel[2]).toMatchObject({ label: 'Contacted', value: 1 });
+    expect(stats.awaitingReply).toBe(1);
+  });
+});

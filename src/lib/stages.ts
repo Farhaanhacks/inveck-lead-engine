@@ -5,6 +5,8 @@ import { logActivity } from './activity';
 import { nextFollowUpAt } from './pipeline/follow-ups';
 import { importClients } from './clients';
 
+const BEFORE_SENDING: LeadStatus[] = ['New', 'Awaiting Approval', 'Approved', 'Rejected'];
+
 const WHAT: Partial<Record<LeadStatus, string>> = {
   New: 'Queued for research again',
   'Awaiting Approval': 'Moved back to Awaiting Approval',
@@ -38,6 +40,12 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
       set.followUpSubject = '';
       set.followUpBody = '';
     }
+    // Back before sending (re-research, or moved back on the board): it hasn't been sent.
+    const unsent = BEFORE_SENDING.includes(status) && !!lead.sentAt;
+    if (unsent) {
+      set.sentAt = null;
+      set.followUpStep = 0;
+    }
     if (status === 'New') set.lastError = '';
     await db.update(leads).set(set).where(eq(leads.id, lead.id));
 
@@ -46,6 +54,7 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
       await logActivity(db, lead.id, 'sent', `First email sent${lead.emailSubject ? `: “${lead.emailSubject}”` : ''}. Follow-ups scheduled for day 3 and day 7.`, status);
     } else await logActivity(db, lead.id, 'stage', WHAT[status] ?? `Moved to ${status}`, status);
     if (ENGAGED_STAGES.includes(status) && lead.nextFollowUpAt) await logActivity(db, lead.id, 'note', 'Follow-ups stopped');
+    if (unsent) await logActivity(db, lead.id, 'note', 'Moved back before sending: no longer counted as contacted');
     // Won means they became a client: put them on the client sheet, so they're never prospected again.
     if (status === 'Won') {
       const r = await importClients(db, [{ company: lead.company, website: lead.website, industry: lead.segment, whyBought: whyBought ?? '' }]);

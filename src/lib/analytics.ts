@@ -68,9 +68,12 @@ export async function getAnalytics(db: Db, now = new Date()) {
 
   const researched = all.filter((l) => !['New', 'Processing', 'Existing Client'].includes(l.status));
   const qualified = researched.filter((l) => l.qualified);
-  const contacted = all.filter((l) => l.sentAt || ever(l, ['Contacted', ...REPLIED]));
-  const replied = contacted.filter((l) => ever(l, REPLIED));
-  const meetings = contacted.filter((l) => ever(l, MEETING));
+  // Counted by where leads are now, like the pipeline board. Lost leads count for the steps
+  // they reached before they were lost.
+  const lost = (l: Lead) => l.status === 'Lost';
+  const contacted = all.filter((l) => ['Contacted', ...REPLIED].includes(l.status) || (lost(l) && !!l.sentAt));
+  const replied = contacted.filter((l) => REPLIED.includes(l.status) || (lost(l) && ever(l, REPLIED)));
+  const meetings = contacted.filter((l) => MEETING.includes(l.status) || (lost(l) && ever(l, MEETING)));
   const won = all.filter((l) => l.status === 'Won');
 
   const funnel: FunnelStep[] = [
@@ -117,5 +120,6 @@ export async function getAnalytics(db: Db, now = new Date()) {
     bestSource: best(base, (l) => sourceGroup(l.source), hit, metric),
     followUpsDue: due,
     replyRate: pct(replied.length, contacted.length),
+    awaitingReply: all.filter((l) => l.status === 'Contacted').length,
   };
 }

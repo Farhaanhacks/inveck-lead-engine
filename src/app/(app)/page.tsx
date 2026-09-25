@@ -59,7 +59,6 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
         contacts: sql<number>`(count(*) filter (where contact_name <> ''))::int`,
         emails: sql<number>`(count(*) filter (where contact_email <> ''))::int`,
         drafts: sql<number>`(count(*) filter (where status = 'Awaiting Approval'))::int`,
-        contacted: sql<number>`(count(*) filter (where sent_at is not null))::int`,
       })
       .from(leads),
     db.select().from(leads).where(eq(leads.status, 'Awaiting Approval')).orderBy(desc(leads.finalScore)).limit(6),
@@ -90,7 +89,11 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
         <StatTile label="Companies" value={totals.total} note={`${counts.New ?? 0} waiting for research`} />
         <StatTile label="Qualified" value={totals.qualified} note={`${totals.contacts} decision-makers, ${totals.emails} emails`} />
         <StatTile label="Drafts to approve" value={totals.drafts} />
-        <StatTile label="Contacted" value={totals.contacted} note={`${analytics.followUpsDue.length} follow-ups due`} />
+        <StatTile
+          label="Emails sent"
+          value={analytics.funnel[2].value}
+          note={`${analytics.awaitingReply} awaiting reply · ${analytics.followUpsDue.length} follow-ups due`}
+        />
         <StatTile label="Replied" value={analytics.funnel[3].value} note={analytics.replyRate != null ? `${analytics.replyRate}% reply rate` : 'No emails sent yet'} />
       </div>
 
