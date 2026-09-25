@@ -110,3 +110,14 @@ describe('email formats and phones', () => {
     expect(websitePhone('Annual report 2019-2020 and 2020-2021')).toBe('');
   });
 });
+
+describe('readDraft', () => {
+  it('reads drafts whatever the fields are called', async () => {
+    const { readDraft } = await import('@/lib/pipeline/draft');
+    expect(readDraft({ email_subject: 'S', email_body: 'B', linkedin_message: 'L' })).toEqual({ subject: 'S', body: 'B', linkedin: 'L' });
+    expect(readDraft({ subject: 'S', body: 'B' })).toEqual({ subject: 'S', body: 'B', linkedin: '' });
+    expect(readDraft({ email: { subject: 'S', body: 'B' }, linkedin: { message: 'L' } })).toEqual({ subject: 'S', body: 'B', linkedin: 'L' });
+    expect(readDraft({ emailSubject: 'S', emailContent: 'B', linkedinMessage: 'L' })).toEqual({ subject: 'S', body: 'B', linkedin: 'L' });
+    expect(readDraft({ email_subject: 'S' }).body).toBe('');
+  });
+});
