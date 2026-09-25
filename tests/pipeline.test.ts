@@ -21,6 +21,7 @@ const TEST_LEADS = [
   { company: 'Format Guess Co', website: 'formatguess.in' },
   { company: 'Finder Co', website: 'findr.in' },
   { company: 'Catchall Co', website: 'catchall.in' },
+  { company: 'Ash Logistics and Traders Pvt Ltd', website: 'ash-logistics.com', city: 'Pune' },
 ];
 
 let db: Db;
@@ -107,6 +108,13 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Format Guess Co'].contactEmail).toBe('nkapoor@formatguess.in');
     // Stops at the first valid guess.
     expect(log.verified.filter((e) => e.endsWith('formatguess.in'))).toEqual(['neha.kapoor@formatguess.in', 'nkapoor@formatguess.in']);
+
+    // No LinkedIn hits: leadership from company records is used; invented names are dropped.
+    expect(L['Ash Logistics and Traders Pvt Ltd'].contactName).toBe('Jitendra Govind Joshi');
+    expect(L['Ash Logistics and Traders Pvt Ltd'].contactTitle).toBe('Founder, Chairman and Managing Director');
+    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).toContain('Vidya Girish Pathak | CFO');
+    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Invented Person');
+    expect(L['Ash Logistics and Traders Pvt Ltd'].contactEmail).toBe('jg.joshi@ash-logistics.com');
 
     expect(L['Finder Co'].contactEmail).toBe('k.rao@findr.in');
     expect(L['Finder Co'].emailStatus).toBe('valid (Hunter finder)');

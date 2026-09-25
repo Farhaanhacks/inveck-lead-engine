@@ -44,6 +44,16 @@ function aiReply(system: string, user: string): unknown {
     if (!ids.length) return { chosen_id: '', role_match: false, reason: 'none', other_ids: [], roles_to_find_on_linkedin: ['Plant Head'] };
     return { chosen_id: ids[0], role_match: 'true', reason: ['Plant Head at Pune'], other_ids: ids.slice(1).join(', ') + ', Z9', roles_to_find_on_linkedin: [{ role: 'CFO' }] };
   }
+  if (system.startsWith('You extract the people who run a company')) {
+    if (!user.startsWith('Company: Ash Logistics')) return { people: [] };
+    return {
+      people: [
+        { name: 'Dr. Jitendra Govind Joshi', title: 'Founder, Chairman and Managing Director' },
+        { name: 'Vidya Girish Pathak', title: 'CFO' },
+        { name: 'Invented Person', title: 'COO' }, // not in the text: must be dropped
+      ],
+    };
+  }
   if (system.startsWith('You write first-touch')) {
     const c = (user.match(/## Company: ([^\n(]+)/) || [])[1]?.trim();
     if (c === 'No Draft Industries') return { email_subject: 'Hi' };
@@ -88,6 +98,14 @@ const handlers: Record<string, Handler> = {
       });
     }
     if (/Mystery/.test(q)) return text('boom', 500);
+    if (/Ash Logistics/.test(q)) {
+      if (q.startsWith('site:')) return json({ organic: [] });
+      return json({
+        organic: [
+          { title: 'Ash Logistics leadership', link: 'https://www.zaubacorp.com/ash', snippet: 'Dr. Jitendra Govind Joshi – Founder, Chairman and MD. Mrs. Vidya Girish Pathak – CFO and Director.' },
+        ],
+      });
+    }
     for (const [co, who] of Object.entries(PEOPLE)) {
       if (q.includes(`"${co}"`)) return json({ organic: [{ title: `${who} - ${co} | LinkedIn`, link: 'https://in.linkedin.com/in/' + who.split(' ')[0].toLowerCase(), snippet: '' }] });
     }

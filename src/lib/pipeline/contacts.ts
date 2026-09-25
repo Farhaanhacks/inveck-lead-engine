@@ -1,14 +1,15 @@
 import type { Icp } from '../db/schema';
 import { askJson } from './ai';
-import { CONTACT_PROMPT } from './prompts';
+import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
-import { googleSearch, hunter } from './services';
-import { asBool, asText, asTextList, errorMessage } from './text';
+import { fetchWebsiteText, googleSearch, hunter } from './services';
+import { asBool, asList, asText, asTextList, errorMessage } from './text';
+import { isBlockedDomain } from './website';
 
 export type Candidate = {
   id: string;
-  source: 'Sales team' | 'LinkedIn' | 'Email database';
+  source: 'Sales team' | 'LinkedIn' | 'Email database' | 'Web';
   name: string;
   title: string;
   email: string;
@@ -49,18 +50,118 @@ export function linkedinQuery(company: string, city: string, research: Research,
     .join(' ');
 }
 
-/** Google results → LinkedIn people. Titles look like "Ravi Kumar - Plant Head - Tata Motors | LinkedIn". */
-export async function searchLinkedIn(svc: Services, query: string): Promise<{ people: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[]; error: string }> {
+/** The name people actually search by: "Ash Logistics and Traders Pvt Ltd" → "Ash Logistics and Traders". */
+export function searchName(company: string): string {
+  return company
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(pvt|private|ltd|limited|llp|inc|opc)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+type LinkedInPerson = Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>;
+
+function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string }[]): LinkedInPerson[] {
+  return results
+    .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
+    .map((r) => {
+      const title = String(r.title || '').replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '');
+      const [name, ...rest] = title.split(/\s+[-–|]\s+/);
+      return { name: (name || '').trim(), title: rest.join(' - ').trim(), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
+    })
+    .filter((p) => p.name);
+}
+
+/**
+ * Public LinkedIn profiles via Google. Runs the targeted query (company + roles + city) and a
+ * broad one (company + any senior role), since small companies rarely match the targeted one.
+ */
+export async function searchLinkedIn(svc: Services, query: string, company = ''): Promise<{ people: LinkedInPerson[]; error: string }> {
+  const name = searchName(company);
+  const queries = [query];
+  if (name) queries.push(`site:linkedin.com/in "${name}" (founder OR director OR CEO OR owner OR partner OR head OR manager OR president)`);
+  const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q)));
+  const people: LinkedInPerson[] = [];
+  const seen = new Set<string>();
+  for (const s of settled) {
+    if (s.status !== 'fulfilled') continue;
+    for (const p of toLinkedInPeople(s.value)) {
+      const key = p.linkedin.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      people.push(p);
+    }
+  }
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  return { people, error: failed && !people.length ? errorMessage(failed.reason) : '' };
+}
+
+const leaderSchema = {
+  type: 'object',
+  properties: {
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, title: { type: 'string' } },
+        required: ['name', 'title'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['people'],
+  additionalProperties: false,
+};
+
+const HONORIFIC = /^(mr|mrs|ms|dr|er|ca|cs|cma|prof|shri|smt|capt)\.?\s+/i;
+
+/**
+ * Leadership named on the company's own pages (its about/leadership page and home page) and
+ * in Google results (company records, news). The AI only extracts; a name is kept only if it
+ * really appears in the text.
+ */
+export async function searchLeaders(
+  svc: Services,
+  company: string,
+  domain: string,
+  homeText: string,
+): Promise<{ people: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[]; error: string }> {
+  const name = searchName(company);
+  if (!name) return { people: [], error: '' };
   try {
-    const results = await googleSearch(svc, query);
-    const people = results
-      .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
-      .map((r) => {
-        const title = String(r.title || '').replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '');
-        const [name, ...rest] = title.split(/\s+[-–|]\s+/);
-        return { name: (name || '').trim(), title: rest.join(' - ').trim(), linkedin: r.link || '', snippet: r.snippet || '' };
+    const [web, pages] = await Promise.all([
+      googleSearch(svc, `"${name}" (founder OR director OR CEO OR "managing director" OR chairman OR partner OR "head of")`).catch(() => []),
+      domain ? googleSearch(svc, `site:${domain} (leadership OR management OR team OR directors OR "about us" OR founder)`).catch(() => []) : Promise.resolve([]),
+    ]);
+    const home = homeText.replace(/\s+/g, ' ');
+    const pageLink = pages.map((r) => r.link || '').find((l) => l && !/\.(pdf|jpg|png)$/i.test(l));
+    const page = pageLink ? await fetchWebsiteText(svc, pageLink) : { text: '', error: '' };
+
+    const webLines = web
+      .filter((r) => !isBlockedDomain((r.link || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0]) || /zaubacorp|tofler|thecompanycheck|instafinancials/.test(r.link || ''))
+      .slice(0, 10)
+      .map((r) => `- ${r.title || ''}: ${r.snippet || ''} (${r.link || ''})`);
+    const source = [
+      page.text ? `## ${pageLink}\n${page.text.replace(/\s+/g, ' ').slice(0, 15000)}` : '',
+      home ? `## Home page\n${home.slice(0, 8000)}` : '',
+      webLines.length ? `## Google results\n${webLines.join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    if (!source) return { people: [], error: '' };
+
+    const result = await askJson(svc, LEADERS_PROMPT, `Company: ${company}${domain ? ` (${domain})` : ''}\n\n${source}`, leaderSchema);
+    if (result.error !== undefined) return { people: [], error: result.error };
+    const haystack = source.toLowerCase();
+    const people = asList(result.data.people)
+      .map((p) => (p && typeof p === 'object' ? (p as Record<string, unknown>) : {}))
+      .map((p) => ({ name: asText(p.name).replace(HONORIFIC, '').trim(), title: asText(p.title) }))
+      .filter((p) => {
+        const parts = p.name.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+        return parts.length >= 2 && parts.every((w) => haystack.includes(w));
       })
-      .filter((p) => p.name);
+      .slice(0, 10)
+      .map((p) => ({ ...p, linkedin: '', snippet: 'Named on the company website or in public company records' }));
     return { people, error: '' };
   } catch (e) {
     return { people: [], error: errorMessage(e) };
@@ -80,15 +181,32 @@ export async function hunterDomainSearch(svc: Services, domain: string): Promise
   }
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
+const norm = (s: string) => s.toLowerCase().replace(HONORIFIC, '').replace(/[^a-z]/g, '');
+/** "Dr. Jitendra Govind Joshi" and "Jitendra Joshi" are the same person. */
+function sameName(a: string, b: string): boolean {
+  if (norm(a) === norm(b)) return true;
+  const words = (s: string) => s.toLowerCase().replace(HONORIFIC, '').split(/[^a-z]+/).filter((w) => w.length > 1);
+  const [wa, wb] = [words(a), words(b)];
+  return wa.length > 1 && wb.length > 1 && wa[0] === wb[0] && wa[wa.length - 1] === wb[wb.length - 1];
+}
 
 /** One candidate list from the sales team's contact, LinkedIn and Hunter; the same person on two lists is merged. */
 export function buildCandidates(
   manual: ManualContact,
   linkedin: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[],
   hunterEmails: HunterEmail[],
+  leaders: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[] = [],
 ): Candidate[] {
   const candidates: Candidate[] = linkedin.map((p, i) => ({ id: `L${i + 1}`, source: 'LinkedIn', email: '', phone: '', ...p }));
+  // Leaders from the website and company records; someone also found on LinkedIn keeps their profile.
+  leaders.forEach((p, i) => {
+    const twin = candidates.find((c) => sameName(c.name, p.name));
+    if (twin) {
+      if (!twin.title || twin.title.length < 4) twin.title = p.title;
+    } else {
+      candidates.push({ id: `W${i + 1}`, source: 'Web', email: '', phone: '', ...p });
+    }
+  });
   hunterEmails.forEach((e, i) => {
     const person = {
       name: [e.first_name, e.last_name].filter(Boolean).join(' '),
@@ -97,7 +215,7 @@ export function buildCandidates(
       phone: e.phone_number || '',
       linkedin: e.linkedin || '',
     };
-    const twin = candidates.find((c) => c.source === 'LinkedIn' && person.name && norm(c.name) === norm(person.name));
+    const twin = candidates.find((c) => (c.source === 'LinkedIn' || c.source === 'Web') && person.name && sameName(c.name, person.name));
     if (twin) {
       twin.email = person.email;
       twin.phone = person.phone;

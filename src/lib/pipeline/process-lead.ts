@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead } from '../db/schema';
-import { buildCandidates, hunterDomainSearch, linkedinQuery, pickContact, searchLinkedIn } from './contacts';
+import { buildCandidates, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn } from './contacts';
 import { writeOutreach } from './draft';
 import { findEmail, searchWebEmails, SOURCE_LABELS } from './emails';
 import { researchLead, websiteEmails, websitePhone } from './research';
@@ -95,15 +95,17 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     linkedin: lead.contactLinkedin,
   };
   const notes: string[] = [];
-  const [linkedin, people, webEmails] = await Promise.all([
-    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, research, icp)),
+  const [linkedin, people, webEmails, leaders] = await Promise.all([
+    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, research, icp), lead.company),
     manual.email ? Promise.resolve({ emails: [], pattern: '', error: '' }) : hunterDomainSearch(svc, domain),
     manual.email ? Promise.resolve([]) : searchWebEmails(svc, domain),
+    searchLeaders(svc, lead.company, domain, site.text),
   ]);
   if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
   if (people.error) notes.push('Email search error: ' + people.error);
+  if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
 
-  const candidates = buildCandidates(manual, linkedin.people, people.emails);
+  const candidates = buildCandidates(manual, linkedin.people, people.emails, leaders.people);
   const picked = await pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, candidates);
   notes.unshift(...picked.notes);
   if (picked.error) notes.push('Contact step error: ' + picked.error);
