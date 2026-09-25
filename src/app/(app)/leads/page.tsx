@@ -85,7 +85,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
           <button name="action" value="delete" className="btn-danger px-2.5 py-1 text-xs">Delete</button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[940px] text-sm">
             <thead>
               <tr className="text-left text-xs text-muted">
                 <th className="w-10 px-4 py-2"><span className="sr-only">Select</span></th>
@@ -93,6 +93,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                 <th className="px-2 py-2 font-medium">Status</th>
                 <th className="px-2 py-2 font-medium">Decision-maker</th>
                 <th className="px-2 py-2 font-medium">Email</th>
+                <th className="px-2 py-2 font-medium">Phone</th>
+                <th className="px-2 py-2 font-medium">LinkedIn</th>
                 <th className="px-4 py-2 text-right font-medium">Score</th>
               </tr>
             </thead>
@@ -111,7 +113,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                     {l.contactName ? (
                       <>
                         <div>{l.contactName}</div>
-                        <div className="max-w-[16rem] truncate text-xs text-muted">{l.contactTitle}</div>
+                        <div className="max-w-[13rem] truncate text-xs text-muted">{l.contactTitle}</div>
                       </>
                     ) : (
                       <span className="text-muted">—</span>
@@ -119,12 +121,22 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                   </td>
                   <td className="px-2 py-3">
                     {l.contactEmail ? (
-                      <>
-                        <div className="max-w-[14rem] truncate">{l.contactEmail}</div>
-                        <div className="text-xs text-muted">{l.emailStatus}</div>
-                      </>
-                    ) : l.contactLinkedin ? (
-                      <a href={l.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>
+                      <a href={`mailto:${l.contactEmail}`} className="block max-w-[13rem] truncate hover:underline" title={l.contactEmail}>{l.contactEmail}</a>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                    {l.emailStatus && <div className="text-xs text-muted">{l.emailStatus}</div>}
+                  </td>
+                  <td className="px-2 py-3 whitespace-nowrap">
+                    {l.contactPhone ? (
+                      <a href={`tel:${l.contactPhone.replace(/[^+\d]/g, '')}`} className="hover:underline">{l.contactPhone}</a>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-3 whitespace-nowrap">
+                    {l.contactLinkedin ? (
+                      <a href={l.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">Profile ↗</a>
                     ) : (
                       <span className="text-muted">—</span>
                     )}
@@ -134,7 +146,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-muted">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted">
                     No leads here. <Link href="/leads/new" className="text-accent hover:underline">Add companies</Link> or run a prospect search.
                   </td>
                 </tr>
