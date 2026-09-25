@@ -1,4 +1,5 @@
 import { Nav } from '@/components/nav';
+import { Logo } from '@/components/logo';
 import { logout } from '../actions';
 import { authDisabled } from '@/lib/auth';
 
@@ -11,8 +12,8 @@ export default function AppLayout({ children }: LayoutProps<'/'>) {
       <aside className="border-b border-line px-4 py-4 md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:border-r md:border-b-0 md:py-6">
         <div className="mb-4 flex items-center justify-between md:mb-8 md:block">
           <div>
-            <div className="text-base font-semibold tracking-tight">INVECK</div>
-            <div className="text-xs text-muted">Lead Engine</div>
+            <Logo className="h-8 w-auto text-ink" />
+            <div className="mt-1 text-xs text-muted">Lead Engine</div>
           </div>
           {!authDisabled() && (
             <form action={logout} className="md:hidden">
