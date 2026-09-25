@@ -62,7 +62,7 @@ export function rowsToClients(rows: string[][], { header = true }: { header?: bo
 }
 
 /**
- * Leads that belong to these clients (same company name or website domain) are marked
+ * Leads that belong to these clients (won leads keep their Won stage) (same company name or website domain) are marked
  * "Existing Client" so nobody cold-emails a customer. Contacted leads are left alone.
  */
 export async function markClientLeads(db: Db, list: { company: string; website: string }[]): Promise<number> {
@@ -71,7 +71,9 @@ export async function markClientLeads(db: Db, list: { company: string; website: 
   if (!names.size && !domains.size) return 0;
   const all = await db.select({ id: leads.id, company: leads.company, website: leads.website, status: leads.status }).from(leads);
   const clash = all.filter(
-    (l) => l.status !== 'Contacted' && l.status !== 'Existing Client' && (names.has(normCompany(l.company)) || (l.website && domains.has(rootDomain(l.website)))),
+    (l) =>
+      !['Contacted', 'Existing Client', 'Won'].includes(l.status) &&
+      (names.has(normCompany(l.company)) || (l.website && domains.has(rootDomain(l.website)))),
   );
   if (clash.length) await db.update(leads).set({ status: 'Existing Client' }).where(inArray(leads.id, clash.map((l) => l.id)));
   return clash.length;

@@ -86,9 +86,9 @@ export default async function TargetsPage() {
         </details>
       </div>
 
-      <h2 className="mt-10 mb-1 text-sm font-semibold">Current clients</h2>
+      <h2 id="clients" className="mt-10 mb-1 scroll-mt-6 text-sm font-semibold">Current clients</h2>
       <p className="mb-3 text-sm text-ink-2">
-        Clients are never researched or contacted, and the prospect search finds companies like them.
+        Clients are never researched or contacted, and the prospect search finds companies like them. Leads marked Won are added here automatically.
       </p>
       <ClientsGrid clients={clientList} />
     </>

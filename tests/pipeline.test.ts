@@ -295,3 +295,27 @@ describe('full run with Claude', () => {
     expect(log.calls.some((c) => c.includes('deepseek'))).toBe(false);
   });
 });
+
+describe('winning a lead', () => {
+  it('adds the company to the client sheet, keeps the lead Won, and marks its duplicates', async () => {
+    const [won, dup] = await db
+      .insert(leads)
+      .values([
+        { company: 'Acme Forge Pvt Ltd', website: 'acmeforge.in', segment: 'Manufacturing & 3PL', status: 'Meeting Booked' },
+        { company: 'Acme Forge', website: 'https://www.acmeforge.in', status: 'New' },
+      ])
+      .returning();
+    await applyStage(db, [won.id], 'Won', 'Stock verification across 4 plants');
+    const client = (await db.select().from(clients)).find((c) => c.company === 'Acme Forge Pvt Ltd');
+    expect(client).toMatchObject({ website: 'acmeforge.in', industry: 'Manufacturing & 3PL', whyBought: 'Stock verification across 4 plants' });
+    const statuses = Object.fromEntries((await db.select().from(leads)).map((l) => [l.id, l.status]));
+    expect(statuses[won.id]).toBe('Won');
+    expect(statuses[dup.id]).toBe('Existing Client');
+    const notes = (await db.select().from(activities).where(eq(activities.leadId, won.id))).map((a) => a.text);
+    expect(notes).toContain('Added to current clients');
+    // Winning again doesn't duplicate the client.
+    await applyStage(db, [won.id], 'Lost');
+    await applyStage(db, [won.id], 'Won');
+    expect((await db.select().from(clients)).filter((c) => c.company.startsWith('Acme')).length).toBe(1);
+  });
+});

@@ -21,7 +21,7 @@ const HINT: Record<PipelineStage, string> = {
   Contacted: 'Follow-ups run here',
   Replied: 'Conversation started',
   'Meeting Booked': 'Demo scheduled',
-  Won: 'Became a client',
+  Won: 'Added to your client sheet',
   Lost: 'Not now',
 };
 

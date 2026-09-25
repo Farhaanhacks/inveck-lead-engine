@@ -204,11 +204,21 @@ export async function bulkLeadAction(form: FormData) {
   refreshLeadPages();
 }
 
+/** Won: moves the lead to Won and adds the company to the current-clients sheet. */
+export async function addLeadAsClientAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!id) return;
+  await applyStage(await getDb(), [id], 'Won', str(form, 'whyBought'));
+  refreshLeadPages(id);
+  revalidatePath('/targets');
+}
+
 /** Drag and drop on the pipeline board. */
 export async function moveLeadStageAction(id: number, stage: PipelineStage) {
   if (!Number.isInteger(id) || !PIPELINE_STAGES.includes(stage)) return { ok: false };
   await applyStage(await getDb(), [id], stage);
   refreshLeadPages(id);
+  if (stage === 'Won') revalidatePath('/targets');
   return { ok: true };
 }
 

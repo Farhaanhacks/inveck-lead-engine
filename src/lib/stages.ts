@@ -3,6 +3,7 @@ import type { Db } from './db';
 import { ENGAGED_STAGES, leads, type LeadStatus } from './db/schema';
 import { logActivity } from './activity';
 import { nextFollowUpAt } from './pipeline/follow-ups';
+import { importClients } from './clients';
 
 const WHAT: Partial<Record<LeadStatus, string>> = {
   New: 'Queued for research again',
@@ -18,7 +19,7 @@ const WHAT: Partial<Record<LeadStatus, string>> = {
  * Moves leads to a stage with everything that goes with it: sending starts the follow-up
  * schedule, a reply (or any later stage) stops it, and every move goes on the timeline.
  */
-export async function applyStage(db: Db, ids: number[], status: LeadStatus): Promise<void> {
+export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyBought?: string): Promise<void> {
   if (!ids.length) return;
   const rows = await db.select().from(leads).where(inArray(leads.id, ids));
   const now = new Date();
@@ -45,5 +46,10 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus): Pro
       await logActivity(db, lead.id, 'sent', `First email sent${lead.emailSubject ? `: “${lead.emailSubject}”` : ''}. Follow-ups scheduled for day 3 and day 7.`, status);
     } else await logActivity(db, lead.id, 'stage', WHAT[status] ?? `Moved to ${status}`, status);
     if (ENGAGED_STAGES.includes(status) && lead.nextFollowUpAt) await logActivity(db, lead.id, 'note', 'Follow-ups stopped');
+    // Won means they became a client: put them on the client sheet, so they're never prospected again.
+    if (status === 'Won') {
+      const r = await importClients(db, [{ company: lead.company, website: lead.website, industry: lead.segment, whyBought: whyBought ?? '' }]);
+      await logActivity(db, lead.id, 'note', r.added ? 'Added to current clients' : 'Already on the current clients sheet');
+    }
   }
 }

@@ -11,6 +11,7 @@ import { StatusPill } from '@/components/status-pill';
 import { CopyButton } from '@/components/copy-button';
 import { SubmitButton } from '@/components/submit-button';
 import {
+  addLeadAsClientAction,
   deleteLeadAction,
   refreshSignalsAction,
   sendFollowUpAction,
@@ -194,9 +195,22 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           {(lead.status === 'Contacted' || lead.status === 'Replied') && <StatusButton id={id} action="meeting" label="Meeting booked" />}
           {(lead.status === 'Contacted' || lead.status === 'Replied' || lead.status === 'Meeting Booked') && (
             <>
-              <StatusButton id={id} action="won" label="Won" />
+              <details className="relative">
+                <summary className="btn-secondary list-none [&::-webkit-details-marker]:hidden">Won · add as client</summary>
+                <form action={addLeadAsClientAction} className="card absolute right-0 z-10 mt-2 w-80 space-y-2 p-4 shadow-lg">
+                  <input type="hidden" name="id" value={id} />
+                  <p className="text-sm font-medium">Add {lead.company} to current clients?</p>
+                  <label htmlFor="whyBought" className="label">Why they bought INVECK (optional)</label>
+                  <textarea id="whyBought" name="whyBought" rows={3} className="field" placeholder="e.g. Quarterly stock verification across 4 plants" />
+                  <p className="text-xs text-muted">Marks the lead as Won and adds a row to the client sheet, so it&apos;s never prospected again.</p>
+                  <SubmitButton pendingText="Adding…">Add as client</SubmitButton>
+                </form>
+              </details>
               <StatusButton id={id} action="lost" label="Lost" />
             </>
+          )}
+          {lead.status === 'Won' && (
+            <Link href="/targets#clients" className="btn-secondary">View in clients</Link>
           )}
           {!['New', 'Processing', 'Contacted', 'Replied', 'Meeting Booked', 'Won'].includes(lead.status) && (
             <StatusButton id={id} action="requeue" label="Research again" />
