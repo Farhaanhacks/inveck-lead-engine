@@ -53,13 +53,13 @@ export async function startRunAction(form: FormData) {
     const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;
     after(() => driveRun(run.id, origin));
   }
-  redirect(`/runs?id=${run.id}`);
+  redirect(`/?run=${run.id}#activity`);
 }
 
 export async function stopRunAction(form: FormData) {
   const db = await getDb();
   await db.update(runs).set({ cancelRequested: true }).where(eq(runs.id, Number(str(form, 'id'))));
-  revalidatePath('/runs');
+  revalidatePath('/');
 }
 
 // ─── Leads ────────────────────────────────────────────────────────────────

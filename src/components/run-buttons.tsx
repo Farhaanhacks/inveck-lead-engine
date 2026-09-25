@@ -6,7 +6,7 @@ import { SubmitButton } from './submit-button';
 export function RunButtons({ running, runId }: { running: boolean; runId?: number }) {
   if (running) {
     return (
-      <Link href={`/runs?id=${runId}`} className="btn-secondary">
+      <Link href={`/?run=${runId}#activity`} className="btn-secondary">
         <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden /> Run in progress
       </Link>
     );

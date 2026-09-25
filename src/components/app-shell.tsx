@@ -1,6 +1,7 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { SIDEBAR_COOKIE } from './sidebar-cookie';
+import { RunIndicator } from './run-indicator';
 
 function remember(collapsed: boolean) {
   document.cookie = `${SIDEBAR_COOKIE}=${collapsed ? 'hidden' : 'shown'}; path=/; max-age=31536000; samesite=lax`;
@@ -28,6 +29,7 @@ export function AppShell({ initialHidden, sidebar, children }: { initialHidden: 
             <span aria-hidden>«</span>
           </button>
           {sidebar}
+          <RunIndicator />
         </aside>
       )}
       <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">

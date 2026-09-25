@@ -1,13 +1,14 @@
 import Link from 'next/link';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { leads, runs } from '@/lib/db/schema';
+import { leads } from '@/lib/db/schema';
 import { getAnalytics, type Best } from '@/lib/analytics';
 import { Funnel, WeeklyColumns } from '@/components/charts';
 import { relativeDays } from '@/lib/dates';
 import { activeRun } from '@/lib/runs';
+import { getRunView, listRuns } from '@/lib/run-view';
+import { RunPanel } from '@/components/run-panel';
 import { PageHeader } from '@/components/page-header';
-import { StatusPill } from '@/components/status-pill';
 import { RunButtons } from '@/components/run-buttons';
 import { HunterNotice } from '@/components/hunter-notice';
 
@@ -44,9 +45,10 @@ function BestRow({ label, best }: { label: string; best: Best }) {
   );
 }
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: PageProps<'/'>) {
+  const wanted = Number((await searchParams).run) || 0;
   const db = await getDb();
-  const [byStatus, analytics, [totals], topLeads, [lastRun], running] = await Promise.all([
+  const [byStatus, analytics, [totals], topLeads, runList, running] = await Promise.all([
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).groupBy(leads.status),
     getAnalytics(db),
     db
@@ -60,10 +62,13 @@ export default async function Dashboard() {
       })
       .from(leads),
     db.select().from(leads).where(eq(leads.status, 'Awaiting Approval')).orderBy(desc(leads.finalScore)).limit(6),
-    db.select().from(runs).orderBy(desc(runs.id)).limit(1),
+    listRuns(db),
     activeRun(db),
   ]);
   const counts: Record<string, number> = Object.fromEntries(byStatus.map((r) => [r.status, r.n]));
+  const shownRun = wanted || running?.id || runList[0]?.id;
+  const runView = shownRun ? await getRunView(db, shownRun) : null;
+  const activity = <RunPanel key={shownRun ?? 0} runs={runList} initial={runView ? JSON.parse(JSON.stringify(runView)) : null} />;
 
   return (
     <>
@@ -74,6 +79,8 @@ export default async function Dashboard() {
       <div className="mb-6 empty:hidden">
         <HunterNotice />
       </div>
+
+      {running && <div className="mb-6">{activity}</div>}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Companies" value={totals.total} note={`${counts.New ?? 0} waiting for research`} />
@@ -140,54 +147,30 @@ export default async function Dashboard() {
           </div>
         </section>
 
-        <section className="card p-5 lg:col-span-2">
-          <h2 className="text-sm font-semibold">Last run</h2>
-          {lastRun ? (
-            <div className="mt-2 text-sm text-ink-2">
-              <Link href={`/runs?id=${lastRun.id}`} className="font-medium text-accent hover:underline">
-                Run #{lastRun.id}
-              </Link>{' '}
-              · {lastRun.status} · {new Date(lastRun.startedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}
-              <div className="mt-1 text-xs text-muted">
-                {lastRun.stats.processed} researched · {lastRun.stats.drafted} drafts · {lastRun.stats.prospectsAdded} new prospects
-              </div>
-            </div>
+        <section className="card overflow-hidden lg:col-span-2">
+          <div className="flex items-center justify-between px-5 pt-5 pb-3">
+            <h2 className="text-sm font-semibold">Top drafts to approve</h2>
+            <Link href="/leads?status=Awaiting%20Approval" className="text-sm text-accent hover:underline">See all</Link>
+          </div>
+          {topLeads.length ? (
+            <ul>
+              {topLeads.map((l) => (
+                <li key={l.id} className="flex items-center justify-between gap-3 border-t border-line px-5 py-2.5 text-sm hover:bg-surface-2">
+                  <span className="min-w-0">
+                    <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
+                    <span className="block truncate text-xs text-muted">{[l.contactName, l.contactTitle].filter(Boolean).join(' · ') || l.segment}</span>
+                  </span>
+                  <span className="shrink-0 tabular-nums text-ink-2" title="Score out of 100">{l.finalScore ?? '—'}</span>
+                </li>
+              ))}
+            </ul>
           ) : (
-            <p className="mt-2 text-sm text-muted">No runs yet. Add companies, or click “Find prospects &amp; research”.</p>
+            <p className="px-5 pb-5 text-sm text-muted">No drafts waiting.</p>
           )}
         </section>
       </div>
 
-      <section className="card mt-6 overflow-hidden">
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <h2 className="text-sm font-semibold">Top drafts waiting for approval</h2>
-          <Link href="/leads?status=Awaiting%20Approval" className="text-sm text-accent hover:underline">
-            See all
-          </Link>
-        </div>
-        {topLeads.length ? (
-          <table className="w-full text-sm">
-            <tbody>
-              {topLeads.map((l) => (
-                <tr key={l.id} className="border-t border-line hover:bg-surface-2">
-                  <td className="px-5 py-3">
-                    <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
-                    <div className="text-xs text-muted">{l.segment}</div>
-                  </td>
-                  <td className="hidden px-5 py-3 text-ink-2 sm:table-cell">
-                    {l.contactName || '—'}
-                    <div className="text-xs text-muted">{l.contactTitle}</div>
-                  </td>
-                  <td className="px-5 py-3 text-right tabular-nums" title="Score out of 100">{l.finalScore ?? '—'}</td>
-                  <td className="px-5 py-3 text-right"><StatusPill status={l.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="px-5 pb-5 text-sm text-muted">No drafts waiting.</p>
-        )}
-      </section>
+      {!running && <div className="mt-6">{activity}</div>}
     </>
   );
 }
