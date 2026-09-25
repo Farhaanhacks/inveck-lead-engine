@@ -100,9 +100,8 @@ function belongsTo(local: string, first: string, last: string): boolean {
  *  2. the person's address published on the company website or elsewhere on the web
  *  3. the company's email format (from Hunter, or learned from its addresses on the web), then common formats
  *  4. Hunter's email finder
- *  5. the best guess, when the mail server can't confirm addresses (catch-all) or checks fail
- * Known and published addresses are kept unless Hunter says invalid; guesses need "valid",
- * and an unconfirmable guess is returned only as a last resort, marked as a guess.
+ * Known and published addresses are kept unless Hunter says invalid. A guessed address is
+ * only ever used when Hunter confirms it "valid"; unconfirmed guesses are never saved.
  */
 export async function findEmail(
   svc: Services,
@@ -145,14 +144,14 @@ export async function findEmail(
   if (!first || !last || !ctx.domain) return { email: '', status: 'no email found', source: '', notes };
 
   // 3. The company's format, then common formats. A guess must come back "valid"; on a
-  //    catch-all server every address "works", so there the best guess is kept for step 5.
+  //    catch-all server every address "works", so a guess there proves nothing.
   const pattern = ctx.pattern || inferPattern([...ctx.websiteEmails, ...webEmails]);
   const common = [...(middle ? MIDDLE_FORMATS : []), ...COMMON_FORMATS].filter((p) => p !== pattern);
   const formats = [
     ...(pattern ? [{ format: pattern, source: 'pattern' as const }] : []),
     ...common.slice(0, Math.max(0, svc.settings.maxEmailGuesses - (pattern ? 1 : 0))).map((format) => ({ format, source: 'format' as const })),
   ];
-  let bestGuess: EmailResult | null = null;
+  let unconfirmable = '';
   for (const { format, source } of formats) {
     const local = fillPattern(format, first, last, middle);
     if (!local) continue;
@@ -160,7 +159,7 @@ export async function findEmail(
     if (!r) continue;
     if (r.status === 'valid') return { ...r, source, notes };
     if (r.status === 'accept_all' || r.status === 'unknown') {
-      bestGuess ??= { ...r, source, notes };
+      unconfirmable = r.status === 'accept_all' ? "the company's mail server accepts every address" : 'the email check was unavailable';
       // Every other guess on this domain would get the same answer.
       break;
     }
@@ -177,10 +176,6 @@ export async function findEmail(
     notes.push(`Email finder failed: ${errorMessage(e)}`);
   }
 
-  // 5. Nothing confirmed: keep the best guess, clearly marked, rather than nothing.
-  if (bestGuess) {
-    notes.push(`Email not confirmed: ${bestGuess.email} is our best guess (${bestGuess.status === 'accept_all' ? "the company's mail server accepts every address" : 'the email check was unavailable'}).`);
-    return { ...bestGuess, notes };
-  }
+  if (unconfirmable) notes.push(`No confirmed email: ${unconfirmable}, so addresses can't be verified.`);
   return { email: '', status: 'no email found', source: '', notes };
 }

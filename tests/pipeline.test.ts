@@ -119,11 +119,11 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Finder Co'].contactEmail).toBe('k.rao@findr.in');
     expect(L['Finder Co'].emailStatus).toBe('valid (Hunter finder)');
 
-    // A catch-all server can't confirm a guess: the best guess is saved, marked as a guess,
+    // A catch-all server can't confirm a guess: nothing is saved (no unconfirmed guesses),
     // and it stops guessing after the first address.
-    expect(L['Catchall Co'].contactEmail).toBe('amit.joshi@catchall.in');
-    expect(L['Catchall Co'].emailStatus).toBe("best guess, not confirmed (common email format)");
-    expect(L['Catchall Co'].otherDecisionMakers).toContain('Email not confirmed');
+    expect(L['Catchall Co'].contactEmail).toBe('');
+    expect(L['Catchall Co'].emailStatus).toBe('no email found');
+    expect(L['Catchall Co'].otherDecisionMakers).toContain('No confirmed email');
     expect(log.verified.filter((e) => e.endsWith('catchall.in'))).toEqual(['amit.joshi@catchall.in']);
     expect(L['Catchall Co'].status).toBe('Awaiting Approval'); // reachable on LinkedIn
 

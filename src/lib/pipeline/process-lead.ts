@@ -120,11 +120,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const score = scoreLead(research.fitScore, contact, email.status, svc.settings.minScore);
   const update: LeadUpdate = {
     ...base,
-    emailStatus: !email.email || !email.source
-      ? email.status
-      : (email.source === 'pattern' || email.source === 'format') && email.status !== 'valid'
-        ? `best guess, not confirmed (${SOURCE_LABELS[email.source]})`
-        : `${email.status} (${SOURCE_LABELS[email.source]})`,
+    emailStatus: email.email && email.source ? `${email.status} (${SOURCE_LABELS[email.source]})` : email.status,
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,
     otherDecisionMakers: notes.join('\n\n'),

@@ -83,4 +83,6 @@ export const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)`,
   // Added after the first release.
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_phone TEXT NOT NULL DEFAULT ''`,
+  // Unconfirmed guessed emails were briefly saved; they're not trusted, so clear them.
+  `UPDATE leads SET contact_email = '', email_status = 'no email found' WHERE email_status LIKE 'best guess%'`,
 ];

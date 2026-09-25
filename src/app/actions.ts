@@ -228,16 +228,21 @@ export async function deleteIcpAction(form: FormData) {
 }
 
 export async function addClientsAction(_prev: { message: string } | undefined, form: FormData) {
-  const lines = str(form, 'bulk').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const db = await getDb();
   const existing = await db.select().from(clients);
   const names = new Set(existing.map((c) => normCompany(c.company)));
   const rows: (typeof clients.$inferInsert)[] = [];
-  for (const line of lines) {
-    const [company = '', website = '', industry = '', ...why] = line.split(/\t|,/).map((c) => c.trim().replace(/^"|"$/g, ''));
-    if (!company || /^company$/i.test(company) || names.has(normCompany(company))) continue;
+  const add = (company: string, website: string, industry: string, whyBought: string) => {
+    if (!company || /^company$/i.test(company) || names.has(normCompany(company))) return;
     names.add(normCompany(company));
-    rows.push({ company, website: domainOf(website), industry, whyBought: why.join(', ') });
+    rows.push({ company, website: domainOf(website), industry, whyBought });
+  };
+  // One client from the form fields…
+  add(str(form, 'company'), str(form, 'website'), str(form, 'industry'), str(form, 'whyBought'));
+  // …and/or many pasted as lines.
+  for (const line of str(form, 'bulk').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+    const [company = '', website = '', industry = '', ...why] = line.split(/\t|,/).map((c) => c.trim().replace(/^"|"$/g, ''));
+    add(company, website, industry, why.join(', '));
   }
   if (rows.length) {
     await db.insert(clients).values(rows);
@@ -252,6 +257,15 @@ export async function addClientsAction(_prev: { message: string } | undefined, f
   }
   revalidatePath('/targets');
   return { message: rows.length ? `Added ${rows.length} ${rows.length === 1 ? 'client' : 'clients'}.` : 'Nothing new to add.' };
+}
+
+export async function updateClientAction(form: FormData) {
+  const db = await getDb();
+  await db
+    .update(clients)
+    .set({ website: domainOf(str(form, 'website')), industry: str(form, 'industry'), whyBought: str(form, 'whyBought') })
+    .where(eq(clients.id, Number(str(form, 'id'))));
+  revalidatePath('/targets');
 }
 
 export async function deleteClientAction(form: FormData) {

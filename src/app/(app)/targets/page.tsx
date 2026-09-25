@@ -3,7 +3,7 @@ import { getDb } from '@/lib/db';
 import { clients, icps, type Icp } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
-import { deleteClientAction, deleteIcpAction, saveIcpAction } from '../../actions';
+import { deleteClientAction, deleteIcpAction, saveIcpAction, updateClientAction } from '../../actions';
 import { AddClientsForm } from './add-clients-form';
 
 const ICP_FIELDS: { name: keyof Icp; label: string; rows?: number; hint?: string }[] = [
@@ -91,40 +91,37 @@ export default async function TargetsPage() {
         Clients are never researched or contacted, and the prospect search finds companies like them.
       </p>
       <div className="grid gap-6 lg:grid-cols-5">
-        <div className="card overflow-x-auto lg:col-span-3">
-          <table className="w-full min-w-[480px] text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted">
-                <th className="px-4 py-2 font-medium">Company</th>
-                <th className="px-2 py-2 font-medium">Industry</th>
-                <th className="px-2 py-2 font-medium">Why they bought</th>
-                <th className="px-4 py-2"><span className="sr-only">Remove</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {clientList.map((c) => (
-                <tr key={c.id} className="border-t border-line align-top">
-                  <td className="px-4 py-2.5">
-                    <div className="font-medium">{c.company}</div>
-                    <div className="text-xs text-muted">{c.website}</div>
-                  </td>
-                  <td className="px-2 py-2.5 text-ink-2">{c.industry || '—'}</td>
-                  <td className="px-2 py-2.5 text-ink-2">{c.whyBought || '—'}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <form action={deleteClientAction}>
-                      <input type="hidden" name="id" value={c.id} />
-                      <button className="text-xs text-muted hover:text-critical-ink">Remove</button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
-              {!clientList.length && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-muted">No clients yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="card lg:col-span-3">
+          {clientList.map((c, i) => (
+            <div key={c.id} className={`space-y-2 p-4 ${i ? 'border-t border-line' : ''}`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-medium">{c.company}</div>
+                <form action={deleteClientAction}>
+                  <input type="hidden" name="id" value={c.id} />
+                  <button className="text-xs text-muted hover:text-critical-ink">Remove</button>
+                </form>
+              </div>
+              <form action={updateClientAction} className="grid gap-2 sm:grid-cols-2">
+                <input type="hidden" name="id" value={c.id} />
+                <label className="text-xs text-muted">
+                  Website
+                  <input name="website" defaultValue={c.website} aria-label={`${c.company} website`} className="field mt-1" />
+                </label>
+                <label className="text-xs text-muted">
+                  Industry
+                  <input name="industry" defaultValue={c.industry} aria-label={`${c.company} industry`} className="field mt-1" />
+                </label>
+                <label className="text-xs text-muted sm:col-span-2">
+                  Why they bought INVECK
+                  <textarea name="whyBought" defaultValue={c.whyBought} rows={2} aria-label={`${c.company}: why they bought`} className="field mt-1" />
+                </label>
+                <div className="sm:col-span-2">
+                  <SubmitButton className="btn-secondary" pendingText="Saving…">Save</SubmitButton>
+                </div>
+              </form>
+            </div>
+          ))}
+          {!clientList.length && <p className="px-4 py-6 text-center text-sm text-muted">No clients yet.</p>}
         </div>
         <div className="lg:col-span-2">
           <AddClientsForm />
