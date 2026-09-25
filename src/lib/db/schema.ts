@@ -12,10 +12,23 @@ export const LEAD_STATUSES = [
   'Awaiting Approval',
   'Approved',
   'Contacted',
+  'Replied',
+  'Meeting Booked',
+  'Won',
+  'Lost',
   'Rejected',
   'Error',
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
+
+/** The sales pipeline, as columns on the board. */
+export const PIPELINE_STAGES = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost'] as const satisfies readonly LeadStatus[];
+export type PipelineStage = (typeof PIPELINE_STAGES)[number];
+/** Stages where the conversation has moved on, so no more follow-ups. */
+export const ENGAGED_STAGES: readonly LeadStatus[] = ['Replied', 'Meeting Booked', 'Won', 'Lost'];
+
+/** A recent news item that suggests the company needs INVECK now. */
+export type Signal = { headline: string; date: string; url: string; source: string; kind: string };
 
 export const leads = pgTable('leads', {
   id: serial('id').primaryKey(),
@@ -44,6 +57,13 @@ export const leads = pgTable('leads', {
   linkedinMessage: text('linkedin_message').notNull().default(''),
   lastError: text('last_error').notNull().default(''),
   sentAt: timestamp('sent_at', { withTimezone: true }),
+  /** Follow-ups sent so far (0–2); the next one is due at nextFollowUpAt. */
+  followUpStep: integer('follow_up_step').notNull().default(0),
+  nextFollowUpAt: timestamp('next_follow_up_at', { withTimezone: true }),
+  followUpSubject: text('follow_up_subject').notNull().default(''),
+  followUpBody: text('follow_up_body').notNull().default(''),
+  signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
+  signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -115,3 +135,21 @@ export const runEvents = pgTable('run_events', {
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type RunEvent = typeof runEvents.$inferSelect;
+
+export const ACTIVITY_KINDS = [
+  'added', 'researched', 'contact', 'draft', 'approved', 'sent', 'follow_up_drafted', 'follow_up_sent',
+  'stage', 'note', 'call', 'meeting', 'signal', 'error',
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+
+/** Everything that happened to a lead, for its timeline and the analytics. */
+export const activities = pgTable('activities', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').notNull(),
+  kind: text('kind').$type<ActivityKind>().notNull(),
+  text: text('text').notNull().default(''),
+  /** For stage changes: the stage moved to. */
+  stage: text('stage').notNull().default(''),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type Activity = typeof activities.$inferSelect;

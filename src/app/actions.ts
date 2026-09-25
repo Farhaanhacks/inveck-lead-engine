@@ -6,9 +6,13 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { clients, icps, leads, runs, type LeadStatus } from '@/lib/db/schema';
+import { activities, clients, icps, leads, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { applyStage } from '@/lib/stages';
+import { logActivity } from '@/lib/activity';
+import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
+import { findSignals } from '@/lib/pipeline/signals';
 import { appPassword, SESSION_COOKIE, sessionToken } from '@/lib/auth';
-import { driveRun } from '@/lib/run-driver';
+import { driveRun, liveServices } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
 import { domainOf, normCompany } from '@/lib/pipeline/text';
@@ -88,7 +92,7 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     return { ok: false, message: `${company} is already a lead or a client.` };
   }
   const db = await getDb();
-  await db.insert(leads).values({
+  const [row] = await db.insert(leads).values({
     company,
     website,
     city: str(form, 'city'),
@@ -99,7 +103,8 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     contactEmail: str(form, 'contactEmail'),
     contactPhone: str(form, 'contactPhone'),
     contactLinkedin: str(form, 'contactLinkedin'),
-  });
+  }).returning({ id: leads.id });
+  await logActivity(db, row.id, 'added', 'Added by hand');
   revalidatePath('/leads');
   revalidatePath('/');
   return { ok: true, message: `Added ${company}. It will be researched on the next run.` };
@@ -123,7 +128,11 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
     if (domain) known.domains.add(domain);
     toAdd.push({ company, website: domain, city, segment: await matchSegment(segment), source: 'Added by hand' });
   }
-  if (toAdd.length) await (await getDb()).insert(leads).values(toAdd);
+  if (toAdd.length) {
+    const db = await getDb();
+    const rows = await db.insert(leads).values(toAdd).returning({ id: leads.id });
+    for (const r of rows) await logActivity(db, r.id, 'added', 'Added by hand (bulk)');
+  }
   revalidatePath('/leads');
   revalidatePath('/');
   return {
@@ -162,20 +171,25 @@ const STATUS_ACTIONS: Record<string, LeadStatus> = {
   sent: 'Contacted',
   reject: 'Rejected',
   requeue: 'New',
+  replied: 'Replied',
+  meeting: 'Meeting Booked',
+  won: 'Won',
+  lost: 'Lost',
 };
+
+function refreshLeadPages(id?: number) {
+  if (id) revalidatePath(`/leads/${id}`);
+  revalidatePath('/leads');
+  revalidatePath('/pipeline');
+  revalidatePath('/');
+}
 
 export async function setLeadStatusAction(form: FormData) {
   const id = Number(str(form, 'id'));
   const status = STATUS_ACTIONS[str(form, 'action')];
-  if (!status) return;
-  const db = await getDb();
-  await db
-    .update(leads)
-    .set({ status, updatedAt: new Date(), ...(status === 'Contacted' ? { sentAt: new Date() } : {}), ...(status === 'New' ? { lastError: '' } : {}) })
-    .where(eq(leads.id, id));
-  revalidatePath(`/leads/${id}`);
-  revalidatePath('/leads');
-  revalidatePath('/');
+  if (!id || !status) return;
+  await applyStage(await getDb(), [id], status);
+  refreshLeadPages(id);
 }
 
 export async function bulkLeadAction(form: FormData) {
@@ -183,15 +197,86 @@ export async function bulkLeadAction(form: FormData) {
   const action = str(form, 'action');
   if (!ids.length) return;
   const db = await getDb();
-  if (action === 'delete') await db.delete(leads).where(inArray(leads.id, ids));
-  else if (STATUS_ACTIONS[action]) await db.update(leads).set({ status: STATUS_ACTIONS[action], updatedAt: new Date() }).where(inArray(leads.id, ids));
-  revalidatePath('/leads');
-  revalidatePath('/');
+  if (action === 'delete') {
+    await db.delete(leads).where(inArray(leads.id, ids));
+    await db.delete(activities).where(inArray(activities.leadId, ids));
+  } else if (STATUS_ACTIONS[action]) await applyStage(db, ids, STATUS_ACTIONS[action]);
+  refreshLeadPages();
+}
+
+/** Drag and drop on the pipeline board. */
+export async function moveLeadStageAction(id: number, stage: PipelineStage) {
+  if (!Number.isInteger(id) || !PIPELINE_STAGES.includes(stage)) return { ok: false };
+  await applyStage(await getDb(), [id], stage);
+  refreshLeadPages(id);
+  return { ok: true };
+}
+
+/** A note, call or meeting logged by the team on the lead's timeline. */
+export async function addActivityAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  const kind = str(form, 'kind');
+  const text = str(form, 'text');
+  if (!id || !text || !['note', 'call', 'meeting'].includes(kind)) return;
+  await logActivity(await getDb(), id, kind as 'note' | 'call' | 'meeting', text);
+  refreshLeadPages(id);
+}
+
+/** Writes the next follow-up now instead of waiting for the next run. */
+export async function writeFollowUpAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  const db = await getDb();
+  const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!lead || lead.status !== 'Contacted' || lead.followUpStep >= FOLLOW_UP_DAYS.length) return;
+  const r = await draftFollowUp(db, await liveServices(), lead);
+  if (!r.ok) await logActivity(db, id, 'error', `Couldn't draft the follow-up: ${r.error}`);
+  refreshLeadPages(id);
+}
+
+/** The follow-up (as edited) has been sent: schedule the next one, if any. */
+export async function sendFollowUpAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  const skip = str(form, 'skip') === '1';
+  const db = await getDb();
+  const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!lead || lead.status !== 'Contacted') return;
+  const step = lead.followUpStep + 1;
+  const subject = str(form, 'followUpSubject') || lead.followUpSubject;
+  await db
+    .update(leads)
+    .set({
+      followUpStep: step,
+      nextFollowUpAt: lead.sentAt ? nextFollowUpAt(lead.sentAt, step) : null,
+      followUpSubject: '',
+      followUpBody: '',
+      updatedAt: new Date(),
+    })
+    .where(eq(leads.id, id));
+  await logActivity(db, id, skip ? 'note' : 'follow_up_sent', skip ? `Follow-up ${step} skipped` : `Follow-up ${step} sent${subject ? `: “${subject}”` : ''}`);
+  refreshLeadPages(id);
+}
+
+/** Looks for fresh buying signals for one lead. */
+export async function refreshSignalsAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  const db = await getDb();
+  const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!lead) return;
+  const { signals, error } = await findSignals(await liveServices(), lead.company);
+  if (error) await logActivity(db, id, 'error', `News search failed: ${error}`);
+  else {
+    const known = new Set(lead.signals.map((s) => s.url));
+    for (const s of signals) if (!known.has(s.url)) await logActivity(db, id, 'signal', `${s.headline}${s.source ? ` (${s.source}${s.date ? `, ${s.date}` : ''})` : ''}`);
+    await db.update(leads).set({ signals, signalsCheckedAt: new Date() }).where(eq(leads.id, id));
+  }
+  refreshLeadPages(id);
 }
 
 export async function deleteLeadAction(form: FormData) {
   const db = await getDb();
-  await db.delete(leads).where(eq(leads.id, Number(str(form, 'id'))));
+  const id = Number(str(form, 'id'));
+  await db.delete(leads).where(eq(leads.id, id));
+  await db.delete(activities).where(eq(activities.leadId, id));
   revalidatePath('/leads');
   redirect('/leads');
 }

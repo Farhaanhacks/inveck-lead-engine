@@ -55,6 +55,14 @@ function aiReply(system: string, user: string): unknown {
       ],
     };
   }
+  if (system.startsWith('You spot buying signals')) {
+    // Item 7 doesn't exist: it must be ignored, never invented.
+    return { signals: [{ id: '1', headline: 'Opening a new plant in Chakan', kind: 'new_facility' }, { id: '7', headline: 'Made up', kind: 'funding' }] };
+  }
+  if (system.startsWith('You write a follow-up')) {
+    const step = (user.match(/This is follow-up (\d)/) || [])[1];
+    return { email: { subject: `Re: original`, body: `Follow-up ${step} body` } };
+  }
   if (system.startsWith('You write first-touch')) {
     const c = (user.match(/## Company: ([^\n(]+)/) || [])[1]?.trim();
     if (c === 'No Draft Industries') return { email_subject: 'Hi' };
@@ -87,9 +95,18 @@ const handlers: Record<string, Handler> = {
     if (target.includes('websiteemail')) return text('Contact our plant head Arjun Mehta at Arjun.Mehta@websiteemail.in or info@websiteemail.in. Partner: someone@gmail.com.' + filler);
     return text(`Website text for ${target}. We run 6 plants across Maharashtra with SAP.` + filler);
   },
-  'google.serper.dev': (_url, init) => {
+  'google.serper.dev': (url, init) => {
     if ((init.headers as Record<string, string>)['X-API-KEY'] !== 'serper-test') return json({ message: 'Unauthorized. Sign up for a free account.' }, 403);
     const { q } = JSON.parse(init.body!);
+    if (url.pathname === '/news') {
+      if (!/Honeywell/.test(q)) return json({ news: [] });
+      return json({
+        news: [
+          { title: 'Honeywell to open new warehouse automation plant in Pune', link: 'https://news.example/hw-pune', snippet: 'Honeywell will invest ₹400 crore in a new facility in Chakan.', date: '3 weeks ago', source: 'Economic Times' },
+          { title: 'Honda launches new scooter', link: 'https://news.example/honda', snippet: 'Not about Honeywell at all? It mentions honeywell once.', date: '1 week ago', source: 'Autocar' },
+        ],
+      });
+    }
     if (/Tata Motors/.test(q)) {
       return json({
         organic: [

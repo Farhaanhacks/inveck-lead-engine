@@ -8,6 +8,7 @@ import type { Services } from './services';
 import { fetchWebsiteText } from './site-reader';
 import { domainOf, normalizeWebsite, normCompany, rootDomain } from './text';
 import { findOfficialWebsite } from './website';
+import { findSignals } from './signals';
 
 export type LeadUpdate = Partial<Omit<NewLead, 'id' | 'createdAt'>>;
 export type Log = (msg: string, level?: 'info' | 'warn' | 'error') => Promise<void> | void;
@@ -98,12 +99,14 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     linkedin: lead.contactLinkedin,
   };
   const notes: string[] = [];
-  const [linkedin, people, webEmails, leaders] = await Promise.all([
+  const [linkedin, people, webEmails, leaders, news] = await Promise.all([
     searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, research, icp), lead.company),
     manual.email ? Promise.resolve({ emails: [], pattern: '', error: '' }) : hunterDomainSearch(svc, domain),
     manual.email ? Promise.resolve([]) : searchWebEmails(svc, domain),
     searchLeaders(svc, lead.company, domain, site.text),
+    findSignals(svc, lead.company),
   ]);
+  if (news.signals.length) await log(`${lead.company}: 🔔 ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
   if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
   if (people.error) notes.push('Email search error: ' + people.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
@@ -129,6 +132,8 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,
     otherDecisionMakers: notes.join('\n\n'),
+    signals: news.signals,
+    signalsCheckedAt: new Date(),
   };
   // Never wipe contact details the sales team typed in.
   if (contact.name) update.contactName = contact.name;
@@ -142,7 +147,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     return { ...update, status: score.statusWithoutDraft };
   }
 
-  const out = await writeOutreach(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, contact);
+  const out = await writeOutreach(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, contact, news.signals);
   if (!out.draft) {
     await log(`${lead.company}: drafting failed: ${out.error}`, 'error');
     return { ...update, status: 'Error', lastError: out.error || 'Drafting failed' };

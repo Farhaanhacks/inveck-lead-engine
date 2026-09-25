@@ -27,6 +27,14 @@ This can be switched off in Settings. Plain guesses are never saved.
 The one human step is **approval**. A person reads the draft, edits it if needed, approves
 it and marks it as sent. Nothing is ever sent automatically.
 
+### After the first email
+
+- **Follow-ups**: marking a lead as sent schedules follow-up 1 (day 3) and 2 (day 7). Each run drafts the ones that are due; the team approves and sends them like the first email. A reply, meeting, win or loss stops the sequence.
+- **Buying signals**: qualified leads get a Google News check for new plants, expansions, acquisitions, funding or audit news. The best one opens the draft, and each links to its article.
+- **Pipeline**: a board from Awaiting Approval to Won/Lost; drag cards or use their menu.
+- **Timeline**: every lead shows what happened and when, and the team can add notes, calls and meetings.
+- **Dashboard**: the funnel with conversion rates, weekly emails and replies, the best segment and lead source, and follow-ups due.
+
 ## Deploy on Vercel
 
 1. Import this repository at [vercel.com/new](https://vercel.com/new).

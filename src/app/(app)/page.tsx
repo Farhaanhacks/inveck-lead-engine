@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { leads, LEAD_STATUSES, runs } from '@/lib/db/schema';
+import { leads, runs } from '@/lib/db/schema';
+import { getAnalytics, type Best } from '@/lib/analytics';
+import { Funnel, WeeklyColumns } from '@/components/charts';
+import { relativeDays } from '@/lib/dates';
 import { activeRun } from '@/lib/runs';
 import { PageHeader } from '@/components/page-header';
 import { StatusPill } from '@/components/status-pill';
@@ -21,34 +24,31 @@ function StatTile({ label, value, note }: { label: string; value: number | strin
   );
 }
 
-/** Horizontal bars, one hue, each labelled with its count; the label carries identity. */
-function BarList({ rows }: { rows: { label: React.ReactNode; key: string; value: number; href?: string }[] }) {
-  const max = Math.max(1, ...rows.map((r) => r.value));
+function BestRow({ label, best }: { label: string; best: Best }) {
   return (
-    <ul className="space-y-2">
-      {rows.map((r) => {
-        const content = (
-          <div className="grid grid-cols-[8.5rem_1fr_2.5rem] sm:grid-cols-[11.5rem_1fr_2.5rem] items-center gap-3 rounded-md px-1 py-0.5 hover:bg-surface-2" title={`${r.key}: ${r.value}`}>
-            <div className="truncate text-sm text-ink-2">{r.label}</div>
-            <div className="h-3 rounded-r-[4px] bg-bar" style={{ width: r.value ? `max(4px, ${(r.value / max) * 100}%)` : 0 }} />
-            <div className="text-right text-sm tabular-nums">{r.value}</div>
-          </div>
-        );
-        return <li key={r.key}>{r.href ? <Link href={r.href}>{content}</Link> : content}</li>;
-      })}
-    </ul>
+    <div>
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className="mt-0.5 text-sm">
+        {best ? (
+          <>
+            <span className="font-medium">{best.name}</span>
+            <span className="text-ink-2">
+              {' '}· {best.hits} of {best.total} {best.metric === 'replied' ? 'replied' : 'qualified'} ({best.rate}%)
+            </span>
+          </>
+        ) : (
+          <span className="text-muted">Not enough data yet</span>
+        )}
+      </dd>
+    </div>
   );
 }
 
 export default async function Dashboard() {
   const db = await getDb();
-  const [byStatus, bySegment, [totals], topLeads, [lastRun], running] = await Promise.all([
+  const [byStatus, analytics, [totals], topLeads, [lastRun], running] = await Promise.all([
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).groupBy(leads.status),
-    db
-      .select({ segment: leads.segment, n: sql<number>`count(*)::int` })
-      .from(leads)
-      .where(eq(leads.qualified, true))
-      .groupBy(leads.segment),
+    getAnalytics(db),
     db
       .select({
         total: sql<number>`count(*)::int`,
@@ -56,7 +56,7 @@ export default async function Dashboard() {
         contacts: sql<number>`(count(*) filter (where contact_name <> ''))::int`,
         emails: sql<number>`(count(*) filter (where contact_email <> ''))::int`,
         drafts: sql<number>`(count(*) filter (where status = 'Awaiting Approval'))::int`,
-        contacted: sql<number>`(count(*) filter (where status = 'Contacted'))::int`,
+        contacted: sql<number>`(count(*) filter (where sent_at is not null))::int`,
       })
       .from(leads),
     db.select().from(leads).where(eq(leads.status, 'Awaiting Approval')).orderBy(desc(leads.finalScore)).limit(6),
@@ -77,54 +77,85 @@ export default async function Dashboard() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Companies" value={totals.total} note={`${counts.New ?? 0} waiting for research`} />
-        <StatTile label="Qualified" value={totals.qualified} note="Match an ICP" />
-        <StatTile label="Decision-makers found" value={totals.contacts} note={`${totals.emails} with email`} />
+        <StatTile label="Qualified" value={totals.qualified} note={`${totals.contacts} decision-makers, ${totals.emails} emails`} />
         <StatTile label="Drafts to approve" value={totals.drafts} />
-        <StatTile label="Contacted" value={totals.contacted} />
+        <StatTile label="Contacted" value={totals.contacted} note={`${analytics.followUpsDue.length} follow-ups due`} />
+        <StatTile label="Replied" value={analytics.funnel[3].value} note={analytics.replyRate != null ? `${analytics.replyRate}% reply rate` : 'No emails sent yet'} />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-5">
         <section className="card p-5 lg:col-span-3">
-          <h2 className="text-sm font-semibold">Pipeline by status</h2>
-          <p className="mb-4 text-xs text-muted">Number of companies in each status. Click a row to see them.</p>
-          <BarList
-            rows={LEAD_STATUSES.filter((s) => s !== 'Processing' || counts[s]).map((s) => ({
-              key: s,
-              label: s,
-              value: counts[s] ?? 0,
-              href: `/leads?status=${encodeURIComponent(s)}`,
-            }))}
-          />
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold">Funnel</h2>
+            <Link href="/pipeline" className="text-sm text-accent hover:underline">Open pipeline board</Link>
+          </div>
+          <p className="mb-4 text-xs text-muted">Companies at each step, and how many made it from the step before.</p>
+          <Funnel steps={analytics.funnel} />
         </section>
 
         <div className="space-y-6 lg:col-span-2">
           <section className="card p-5">
-            <h2 className="text-sm font-semibold">Qualified by segment</h2>
-            <p className="mb-4 text-xs text-muted">Qualified companies per ICP.</p>
-            {bySegment.length ? (
-              <BarList rows={bySegment.map((r) => ({ key: r.segment || 'None', label: r.segment || 'None', value: r.n }))} />
-            ) : (
-              <p className="text-sm text-muted">Nothing qualified yet.</p>
-            )}
+            <h2 className="text-sm font-semibold">What’s working</h2>
+            <p className="mb-3 text-xs text-muted">
+              {analytics.bestSegment?.metric === 'replied' ? 'By reply rate.' : 'By qualification rate, until replies come in.'}
+            </p>
+            <dl className="space-y-3">
+              <BestRow label="Best segment" best={analytics.bestSegment} />
+              <BestRow label="Best lead source" best={analytics.bestSource} />
+            </dl>
           </section>
 
           <section className="card p-5">
-            <h2 className="text-sm font-semibold">Last run</h2>
-            {lastRun ? (
-              <div className="mt-2 text-sm text-ink-2">
-                <Link href={`/runs?id=${lastRun.id}`} className="font-medium text-accent hover:underline">
-                  Run #{lastRun.id}
-                </Link>{' '}
-                · {lastRun.status} · {new Date(lastRun.startedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-                <div className="mt-1 text-xs text-muted">
-                  {lastRun.stats.processed} researched · {lastRun.stats.drafted} drafts · {lastRun.stats.prospectsAdded} new prospects
-                </div>
-              </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold">Follow-ups due</h2>
+              <span className="text-xs text-muted tabular-nums">{analytics.followUpsDue.length}</span>
+            </div>
+            {analytics.followUpsDue.length ? (
+              <ul className="mt-2 divide-y divide-line">
+                {analytics.followUpsDue.map((l) => (
+                  <li key={l.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                    <Link href={`/leads/${l.id}`} className="min-w-0 truncate font-medium hover:underline">
+                      {l.company}
+                    </Link>
+                    <span className="shrink-0 text-xs text-warning-ink">
+                      Follow-up {l.followUpStep + 1} · {l.followUpBody ? 'draft ready' : 'due'} {l.nextFollowUpAt ? relativeDays(l.nextFollowUpAt) : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             ) : (
-              <p className="mt-2 text-sm text-muted">No runs yet. Add companies, or click “Find prospects &amp; research”.</p>
+              <p className="mt-2 text-sm text-muted">Nothing due. Follow-ups are scheduled for day 3 and day 7 after a lead is marked as sent.</p>
             )}
           </section>
         </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-5">
+        <section className="card p-5 lg:col-span-3">
+          <h2 className="text-sm font-semibold">Weekly activity</h2>
+          <p className="mb-4 text-xs text-muted">Last 8 weeks, Monday to Sunday. Hover a column for its value.</p>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <WeeklyColumns title="First emails sent" weeks={analytics.weeks} pick={(w) => w.sent} max={Math.max(...analytics.weeks.flatMap((w) => [w.sent, w.replied]))} />
+            <WeeklyColumns title="Replies" weeks={analytics.weeks} pick={(w) => w.replied} max={Math.max(...analytics.weeks.flatMap((w) => [w.sent, w.replied]))} />
+          </div>
+        </section>
+
+        <section className="card p-5 lg:col-span-2">
+          <h2 className="text-sm font-semibold">Last run</h2>
+          {lastRun ? (
+            <div className="mt-2 text-sm text-ink-2">
+              <Link href={`/runs?id=${lastRun.id}`} className="font-medium text-accent hover:underline">
+                Run #{lastRun.id}
+              </Link>{' '}
+              · {lastRun.status} · {new Date(lastRun.startedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}
+              <div className="mt-1 text-xs text-muted">
+                {lastRun.stats.processed} researched · {lastRun.stats.drafted} drafts · {lastRun.stats.prospectsAdded} new prospects
+              </div>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-muted">No runs yet. Add companies, or click “Find prospects &amp; research”.</p>
+          )}
+        </section>
       </div>
 
       <section className="card mt-6 overflow-hidden">

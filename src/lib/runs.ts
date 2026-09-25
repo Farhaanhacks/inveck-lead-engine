@@ -6,6 +6,9 @@ import { findProspects } from './pipeline/prospects';
 import type { Services } from './pipeline/services';
 import { hunterCredits, mapLimit } from './pipeline/services';
 import { errorMessage } from './pipeline/text';
+import { draftDueFollowUps } from './pipeline/follow-ups';
+import { logActivity } from './activity';
+import type { LeadUpdate } from './pipeline/process-lead';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, existingClients: 0, errors: 0 };
 /** A run with no heartbeat for this long is considered dead (its function timed out or crashed). */
@@ -84,7 +87,10 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       try {
         const known = await db.select({ company: leads.company, website: leads.website }).from(leads);
         const found = await findProspects(svc, activeIcps, clientList, known, (m, l) => log(m, l));
-        if (found.length) await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const })));
+        if (found.length) {
+          const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
+          for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);
+        }
         stats.prospectsAdded += found.length;
         await log(found.length ? `Added ${found.length} new prospects: ${found.map((p) => p.company).join(', ')}` : 'No new prospects found');
       } catch (e) {
@@ -102,6 +108,15 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
             'Until then only emails published on the web can be found; guessed emails can\'t be confirmed.',
           'warn',
         );
+      }
+    }
+
+    // Follow-ups that fell due since the last run.
+    if (stats.processed === 0) {
+      try {
+        await draftDueFollowUps(db, svc, (m, l) => log(m, l));
+      } catch (e) {
+        await log('Follow-up drafting failed: ' + errorMessage(e), 'warn');
       }
     }
 
@@ -130,6 +145,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);
         }
         await db.update(leads).set({ ...update, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
+        await recordOutcome(db, lead.id, update);
         stats.processed++;
         if (update.status === 'Awaiting Approval') stats.drafted++;
         if (update.status === 'Disqualified') stats.disqualified++;
@@ -147,4 +163,19 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     await save({ status: 'failed', error: errorMessage(e), finishedAt: new Date() });
     return 'done';
   }
+}
+
+/** What research found, as entries on the lead's timeline. */
+async function recordOutcome(db: Db, leadId: number, u: LeadUpdate) {
+  if (u.status === 'Existing Client') return logActivity(db, leadId, 'researched', u.fitReason || 'Matches a current client; not contacted');
+  if (u.status === 'Error') return logActivity(db, leadId, 'error', `Research stopped: ${u.lastError || 'unknown error'}`);
+  const fit = u.fitScore != null ? `fit ${u.fitScore}/10` : '';
+  await logActivity(db, leadId, 'researched', [u.status === 'Disqualified' ? `Disqualified (${fit})` : `Researched: ${fit}`, u.fitReason].filter(Boolean).join('. '));
+  if (u.status === 'Disqualified') return;
+  for (const s of u.signals || []) await logActivity(db, leadId, 'signal', `${s.headline}${s.source ? ` (${s.source}${s.date ? `, ${s.date}` : ''})` : ''}`);
+  if (u.contactName) {
+    await logActivity(db, leadId, 'contact', `Decision-maker: ${[u.contactName, u.contactTitle].filter(Boolean).join(', ')}${u.emailStatus ? `. Email: ${u.contactEmail || '—'} (${u.emailStatus})` : ''}`);
+  }
+  if (u.status === 'Awaiting Approval') await logActivity(db, leadId, 'draft', `Outreach draft ready (score ${u.finalScore})`);
+  else await logActivity(db, leadId, 'stage', `${u.status} (score ${u.finalScore ?? '—'})`, u.status ?? '');
 }

@@ -11,6 +11,10 @@ const TONE: Record<LeadStatus, string> = {
   'Awaiting Approval': 'bg-accent-soft text-accent',
   Approved: 'bg-good-soft text-good-ink',
   Contacted: 'bg-good-soft text-good-ink',
+  Replied: 'bg-good-soft text-good-ink',
+  'Meeting Booked': 'bg-good-soft text-good-ink',
+  Won: 'bg-good-soft text-good-ink',
+  Lost: 'bg-neutral-soft text-ink-2',
   Rejected: 'bg-neutral-soft text-ink-2',
   Error: 'bg-critical-soft text-critical-ink',
 };

@@ -1,10 +1,11 @@
-import type { Icp } from '../db/schema';
+import type { Icp, Signal } from '../db/schema';
 import { askJson } from './ai';
 import type { Contact } from './contacts';
 import { DRAFT_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { asText } from './text';
+import { signalLines } from './signals';
 
 export type Draft = { subject: string; body: string; linkedin: string };
 
@@ -51,6 +52,7 @@ export async function writeOutreach(
   research: Research,
   icp: Icp,
   contact: Contact,
+  signals: Signal[] = [],
 ): Promise<{ draft?: Draft; error?: string }> {
   const s = svc.settings;
   const userText = [
@@ -60,6 +62,7 @@ export async function writeOutreach(
     `## ICP segment: ${lead.segment}`,
     `Pitch angle: ${icp.pitchAngle}`,
     '',
+    ...(signals.length ? ['## Recent news (buying signals)', signalLines(signals), ''] : []),
     '## Contact',
     `Name: ${contact.name}`,
     `Title: ${contact.title}`,

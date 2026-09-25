@@ -5,6 +5,7 @@ import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { StatusPill } from '@/components/status-pill';
 import { bulkLeadAction } from '../../actions';
+import { isPast, relativeDays } from '@/lib/dates';
 
 const PAGE_SIZE = 100;
 
@@ -109,9 +110,19 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                   </td>
                   <td className="px-2 py-3">
                     <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
+                    {l.signals.length > 0 && (
+                      <span className="ml-1.5 cursor-help text-xs" title={`Buying signal: ${l.signals[0].headline}`} aria-label={`Buying signal: ${l.signals[0].headline}`}>🔔</span>
+                    )}
                     <div className="text-xs text-muted">{[l.segment, l.city, l.website].filter(Boolean).join(' · ')}</div>
                   </td>
-                  <td className="px-2 py-3"><StatusPill status={l.status} /></td>
+                  <td className="px-2 py-3">
+                    <StatusPill status={l.status} />
+                    {l.status === 'Contacted' && l.nextFollowUpAt && (
+                      <div className={`mt-1 text-xs ${isPast(l.nextFollowUpAt) ? 'font-medium text-warning-ink' : 'text-muted'}`}>
+                        Follow-up {l.followUpStep + 1} {isPast(l.nextFollowUpAt) ? 'due' : relativeDays(l.nextFollowUpAt)}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-2 py-3">
                     {l.contactName ? (
                       <>

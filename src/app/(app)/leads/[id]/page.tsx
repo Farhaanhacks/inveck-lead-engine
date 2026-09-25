@@ -1,12 +1,23 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { icps, leads } from '@/lib/db/schema';
+import { activities, icps, leads, type Lead } from '@/lib/db/schema';
+import { Timeline } from '@/components/timeline';
+import { FOLLOW_UP_DAYS } from '@/lib/pipeline/follow-ups';
+import { SIGNAL_LABELS } from '@/lib/pipeline/signals';
+import { formatDate, isPast, relativeDays } from '@/lib/dates';
 import { StatusPill } from '@/components/status-pill';
 import { CopyButton } from '@/components/copy-button';
 import { SubmitButton } from '@/components/submit-button';
-import { deleteLeadAction, setLeadStatusAction, updateLeadAction } from '../../../actions';
+import {
+  deleteLeadAction,
+  refreshSignalsAction,
+  sendFollowUpAction,
+  setLeadStatusAction,
+  updateLeadAction,
+  writeFollowUpAction,
+} from '../../../actions';
 
 function Section({ title, children, aside }: { title: string; children: React.ReactNode; aside?: React.ReactNode }) {
   return (
@@ -30,13 +41,123 @@ function StatusButton({ id, action, label, primary }: { id: number; action: stri
   );
 }
 
+function FollowUpCard({ lead }: { lead: Lead }) {
+  const step = lead.followUpStep + 1;
+  const total = FOLLOW_UP_DAYS.length;
+  if (lead.followUpStep >= total) {
+    return (
+      <Section title="Follow-ups">
+        <p className="text-sm text-ink-2">
+          Sequence finished: first email and {total} follow-ups sent. Mark the lead as replied, won or lost when you hear back.
+        </p>
+      </Section>
+    );
+  }
+  const due = lead.nextFollowUpAt;
+  const overdue = !!due && isPast(due);
+  const mailto = lead.contactEmail && lead.followUpBody
+    ? `mailto:${lead.contactEmail}?subject=${encodeURIComponent(lead.followUpSubject)}&body=${encodeURIComponent(lead.followUpBody)}`
+    : '';
+  return (
+    <Section
+      title={`Follow-up ${step} of ${total}`}
+      aside={
+        due && (
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${overdue ? 'bg-warning-soft text-warning-ink' : 'bg-neutral-soft text-ink-2'}`}>
+            Due {relativeDays(due)} · {formatDate(due)}
+          </span>
+        )
+      }
+    >
+      {lead.followUpBody ? (
+        <form action={sendFollowUpAction} className="space-y-3">
+          <input type="hidden" name="id" value={lead.id} />
+          <div>
+            <div className="flex items-center justify-between">
+              <label htmlFor="followUpSubject" className="label">Subject</label>
+              <CopyButton text={lead.followUpSubject} />
+            </div>
+            <input id="followUpSubject" name="followUpSubject" defaultValue={lead.followUpSubject} className="field" />
+          </div>
+          <div>
+            <div className="flex items-center justify-between">
+              <label htmlFor="followUpBody" className="label">Body</label>
+              <CopyButton text={lead.followUpBody} />
+            </div>
+            <textarea id="followUpBody" name="followUpBody" defaultValue={lead.followUpBody} rows={6} className="field leading-relaxed" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SubmitButton pendingText="Saving…">Mark follow-up {step} as sent</SubmitButton>
+            {mailto && <a href={mailto} className="btn-secondary">Open in email app</a>}
+            <button name="skip" value="1" className="btn-secondary">Skip</button>
+          </div>
+          <p className="text-xs text-muted">Send it as a reply to your first email, then mark it as sent. The next follow-up is scheduled automatically.</p>
+        </form>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-ink-2">
+            {due ? (overdue ? 'Due now. ' : `Scheduled ${relativeDays(due)}. `) : ''}The AI writes it on the next run, or now if you prefer.
+          </p>
+          <form action={writeFollowUpAction}>
+            <input type="hidden" name="id" value={lead.id} />
+            <SubmitButton className="btn-secondary" pendingText="Writing…">Write it now</SubmitButton>
+          </form>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function SignalsCard({ lead }: { lead: Lead }) {
+  return (
+    <Section
+      title="Buying signals"
+      aside={
+        <form action={refreshSignalsAction}>
+          <input type="hidden" name="id" value={lead.id} />
+          <SubmitButton className="btn-secondary px-2.5 py-1 text-xs" pendingText="Checking…">
+            {lead.signalsCheckedAt ? 'Check again' : 'Check news'}
+          </SubmitButton>
+        </form>
+      }
+    >
+      {lead.signals.length ? (
+        <ul className="space-y-2.5">
+          {lead.signals.map((s) => (
+            <li key={s.url} className="flex gap-3 text-sm">
+              <span aria-hidden>🔔</span>
+              <span>
+                <a href={s.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{s.headline}</a>
+                <span className="block text-xs text-muted">
+                  {[SIGNAL_LABELS[s.kind] ?? 'News', s.source, s.date].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted">
+          {lead.signalsCheckedAt
+            ? `No recent expansion, acquisition, funding or audit news (checked ${relativeDays(lead.signalsCheckedAt)}).`
+            : 'Not checked yet. News is checked when a qualified lead is researched.'}
+        </p>
+      )}
+    </Section>
+  );
+}
+
 export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
   if (!lead) notFound();
-  const segments = (await db.select({ segment: icps.segment }).from(icps)).map((s) => s.segment);
+  const [segmentRows, timeline] = await Promise.all([
+    db.select({ segment: icps.segment }).from(icps),
+    db.select().from(activities).where(eq(activities.leadId, id)).orderBy(desc(activities.at), desc(activities.id)),
+  ]);
+  const segments = segmentRows.map((s) => s.segment);
+  const inSequence = lead.status === 'Contacted';
 
   const mailto = lead.contactEmail
     ? `mailto:${lead.contactEmail}?subject=${encodeURIComponent(lead.emailSubject)}&body=${encodeURIComponent(lead.emailBody)}`
@@ -69,13 +190,36 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           {lead.status === 'Awaiting Approval' && <StatusButton id={id} action="approve" label="Approve" primary />}
           {(lead.status === 'Approved' || lead.status === 'Awaiting Approval') && <StatusButton id={id} action="sent" label="Mark as sent" />}
           {(lead.status === 'Awaiting Approval' || lead.status === 'Approved') && <StatusButton id={id} action="reject" label="Reject" />}
-          {lead.status !== 'New' && lead.status !== 'Processing' && <StatusButton id={id} action="requeue" label="Research again" />}
+          {lead.status === 'Contacted' && <StatusButton id={id} action="replied" label="They replied" primary />}
+          {(lead.status === 'Contacted' || lead.status === 'Replied') && <StatusButton id={id} action="meeting" label="Meeting booked" />}
+          {(lead.status === 'Contacted' || lead.status === 'Replied' || lead.status === 'Meeting Booked') && (
+            <>
+              <StatusButton id={id} action="won" label="Won" />
+              <StatusButton id={id} action="lost" label="Lost" />
+            </>
+          )}
+          {!['New', 'Processing', 'Contacted', 'Replied', 'Meeting Booked', 'Won'].includes(lead.status) && (
+            <StatusButton id={id} action="requeue" label="Research again" />
+          )}
         </div>
       </div>
 
       {lead.lastError && (
         <div className="mb-6 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink" role="alert">
           <span className="font-medium">Last error:</span> {lead.lastError}
+        </div>
+      )}
+
+      {(inSequence || lead.signals.length > 0 || lead.qualified) && (
+        <div className="mb-6 grid gap-6 lg:grid-cols-5">
+          {inSequence && (
+            <div className="lg:col-span-3">
+              <FollowUpCard lead={lead} />
+            </div>
+          )}
+          <div className={inSequence ? 'lg:col-span-2' : 'lg:col-span-5'}>
+            <SignalsCard lead={lead} />
+          </div>
         </div>
       )}
 
@@ -215,6 +359,10 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           </p>
         </div>
       </form>
+
+      <div className="mt-6">
+        <Timeline leadId={id} items={timeline} />
+      </div>
     </>
   );
 }

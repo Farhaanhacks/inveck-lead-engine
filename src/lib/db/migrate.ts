@@ -85,4 +85,22 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_phone TEXT NOT NULL DEFAULT ''`,
   // Unconfirmed guessed emails were briefly saved; they're not trusted, so clear them.
   `UPDATE leads SET contact_email = '', email_status = 'no email found' WHERE email_status LIKE 'best guess%'`,
+  // Follow-ups, buying signals and the activity timeline.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_step INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up_at TIMESTAMPTZ`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_subject TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_body TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS signals JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS signals_checked_at TIMESTAMPTZ`,
+  `CREATE TABLE IF NOT EXISTS activities (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT '',
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS activities_lead_idx ON activities (lead_id, at)`,
+  `CREATE INDEX IF NOT EXISTS activities_kind_idx ON activities (kind, at)`,
+  `CREATE INDEX IF NOT EXISTS leads_follow_up_idx ON leads (next_follow_up_at)`,
 ];

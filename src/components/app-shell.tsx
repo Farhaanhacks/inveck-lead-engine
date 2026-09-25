@@ -15,7 +15,7 @@ export function AppShell({ initialHidden, sidebar, children }: { initialHidden: 
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-7xl flex-col md:flex-row">
+    <div className="mx-auto flex min-h-screen max-w-[96rem] flex-col md:flex-row">
       {!hidden && (
         <aside className="relative border-b border-line px-4 py-4 md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:border-r md:border-b-0 md:py-6">
           <button
