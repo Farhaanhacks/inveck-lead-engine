@@ -4,7 +4,7 @@ import { clients, icps, leads, runEvents, runs, type Lead, type Run, type RunSta
 import { processLead } from './pipeline/process-lead';
 import { findProspects } from './pipeline/prospects';
 import type { Services } from './pipeline/services';
-import { mapLimit } from './pipeline/services';
+import { hunterCredits, mapLimit } from './pipeline/services';
 import { errorMessage } from './pipeline/text';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, existingClients: 0, errors: 0 };
@@ -91,6 +91,18 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         await log('Prospect search failed: ' + errorMessage(e), 'error');
       }
       await save({ prospectsDone: true });
+    }
+
+    if (stats.processed === 0) {
+      const credits = await hunterCredits(svc);
+      if (credits.error) await log(`Couldn't read Hunter credits: ${credits.error}`, 'warn');
+      else if (!credits.verificationsLeft || !credits.searchesLeft) {
+        await log(
+          `Hunter has ${credits.searchesLeft} searches and ${credits.verificationsLeft} email checks left${credits.resetDate ? ` (resets ${credits.resetDate})` : ''}. ` +
+            'Until then only emails published on the web can be found; guessed emails can\'t be confirmed.',
+          'warn',
+        );
+      }
     }
 
     const limit = svc.settings.dailyLimit;

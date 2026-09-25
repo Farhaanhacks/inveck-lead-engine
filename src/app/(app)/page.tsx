@@ -6,6 +6,7 @@ import { activeRun } from '@/lib/runs';
 import { PageHeader } from '@/components/page-header';
 import { StatusPill } from '@/components/status-pill';
 import { RunButtons } from '@/components/run-buttons';
+import { HunterNotice } from '@/components/hunter-notice';
 
 // Runs started from this page keep working after the response (see actions.ts).
 export const maxDuration = 300;
@@ -69,6 +70,10 @@ export default async function Dashboard() {
       <PageHeader title="Dashboard" description="Prospects found, researched and ready for outreach.">
         <RunButtons running={!!running} runId={running?.id} />
       </PageHeader>
+
+      <div className="mb-6 empty:hidden">
+        <HunterNotice />
+      </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Companies" value={totals.total} note={`${counts.New ?? 0} waiting for research`} />

@@ -2,6 +2,7 @@ import { getDb, databaseUrl } from '@/lib/db';
 import { apiKeys, getSettings } from '@/lib/settings';
 import { PageHeader } from '@/components/page-header';
 import { SettingsForm } from './settings-form';
+import { HunterNotice } from '@/components/hunter-notice';
 
 export default async function SettingsPage() {
   const db = await getDb();
@@ -45,6 +46,9 @@ export default async function SettingsPage() {
                 </li>
               ))}
             </ul>
+            <div className="mt-4">
+              <HunterNotice always />
+            </div>
           </section>
           <section className="card p-5 text-sm text-ink-2">
             <h2 className="mb-2 text-sm font-semibold text-ink">Schedule & database</h2>
