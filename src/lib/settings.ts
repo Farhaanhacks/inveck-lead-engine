@@ -71,6 +71,8 @@ export function apiKeys() {
     anthropic: envKey('ANTHROPIC_API_KEY'),
     serper: envKey('SERPER_API_KEY'),
     hunter: envKey('HUNTER_API_KEY'),
+    /** Optional: Jina Reader works without a key, but with lower rate limits. */
+    jina: envKey('JINA_API_KEY'),
   };
 }
 export type ApiKeys = ReturnType<typeof apiKeys>;

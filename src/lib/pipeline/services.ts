@@ -44,16 +44,6 @@ export async function getJson<T = unknown>(svc: Services, url: string, init: Req
   return JSON.parse(await request(svc, url, init, timeoutMs)) as T;
 }
 
-/** Website text via Jina Reader. Returns '' when the site can't be read. */
-export async function fetchWebsiteText(svc: Services, website: string): Promise<{ text: string; error: string }> {
-  if (!website) return { text: '', error: '' };
-  try {
-    return { text: await request(svc, `https://r.jina.ai/${website}`, {}, 45_000), error: '' };
-  } catch (e) {
-    return { text: '', error: errorMessage(e) };
-  }
-}
-
 export type SerperResult = { title?: string; link?: string; snippet?: string };
 
 /** Google search through Serper. */

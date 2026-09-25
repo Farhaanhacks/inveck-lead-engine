@@ -3,7 +3,8 @@ import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
-import { fetchWebsiteText, googleSearch, hunter } from './services';
+import { googleSearch, hunter } from './services';
+import { fetchWebsiteText } from './site-reader';
 import { asBool, asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
 
@@ -126,7 +127,7 @@ export async function searchLeaders(
     ]);
     const home = homeText.replace(/\s+/g, ' ');
     const pageLink = pages.map((r) => r.link || '').find((l) => l && !/\.(pdf|jpg|png)$/i.test(l));
-    const page = pageLink ? await fetchWebsiteText(svc, pageLink) : { text: '', error: '' };
+    const page = pageLink ? await fetchWebsiteText(svc, pageLink, { useGoogle: false }) : { text: '', error: '' };
 
     const webLines = web
       .filter((r) => !isBlockedDomain((r.link || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0]) || /zaubacorp|tofler|thecompanycheck|instafinancials/.test(r.link || ''))

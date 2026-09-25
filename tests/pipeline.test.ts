@@ -33,7 +33,7 @@ let log: FakeLog;
 function services(overrides: Partial<Settings> = {}): Services {
   return {
     fetch: fakeFetch(log),
-    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', hunter: 'hunter-test' },
+    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', hunter: 'hunter-test', jina: '' },
     settings: settingsSchema.parse({ dailyLimit: 50, ...overrides }),
   };
 }

@@ -5,7 +5,7 @@ import { findEmail, searchWebEmails, SOURCE_LABELS } from './emails';
 import { researchLead, websiteEmails, websitePhone } from './research';
 import { scoreLead } from './scoring';
 import type { Services } from './services';
-import { fetchWebsiteText } from './services';
+import { fetchWebsiteText } from './site-reader';
 import { domainOf, normalizeWebsite, normCompany, rootDomain } from './text';
 import { findOfficialWebsite } from './website';
 
@@ -63,6 +63,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
       }
     }
   }
+  if (site.via === 'google') await log(`${lead.company}: website blocks automated reading; researched from Google's index of its pages`);
   if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
   const domain = rootDomain(website);
   const input = { company: lead.company, website, domain, city: lead.city };

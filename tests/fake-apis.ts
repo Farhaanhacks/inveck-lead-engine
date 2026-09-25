@@ -83,8 +83,9 @@ const handlers: Record<string, Handler> = {
     const target = url.pathname.slice(1);
     if (!target) return text('Jina Reader homepage');
     if (target.includes('bajajfinserv')) return text('rate limited', 429);
-    if (target.includes('websiteemail')) return text('Contact our plant head Arjun Mehta at Arjun.Mehta@websiteemail.in or info@websiteemail.in. Partner: someone@gmail.com');
-    return text(`Website text for ${target}. We run 6 plants across Maharashtra with SAP.`);
+    const filler = ' We make precision components for leading automotive OEMs from plants in Pune and Chakan.'.repeat(3);
+    if (target.includes('websiteemail')) return text('Contact our plant head Arjun Mehta at Arjun.Mehta@websiteemail.in or info@websiteemail.in. Partner: someone@gmail.com.' + filler);
+    return text(`Website text for ${target}. We run 6 plants across Maharashtra with SAP.` + filler);
   },
   'google.serper.dev': (_url, init) => {
     if ((init.headers as Record<string, string>)['X-API-KEY'] !== 'serper-test') return json({ message: 'Unauthorized. Sign up for a free account.' }, 403);
