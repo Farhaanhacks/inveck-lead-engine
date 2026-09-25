@@ -4,6 +4,7 @@ import { PROSPECT_EXTRACT_PROMPT, PROSPECT_QUERIES_PROMPT } from './prompts';
 import type { SerperResult, Services } from './services';
 import { googleSearch, mapLimit } from './services';
 import { asList, asText, domainOf, errorMessage, normCompany } from './text';
+import { isBlockedDomain } from './website';
 
 export type Prospect = { company: string; website: string; city: string; segment: string; source: string };
 
@@ -48,8 +49,6 @@ const companySchema = {
   additionalProperties: false,
 };
 
-// Directories, social networks and news sites are never a prospect's own website.
-const BLOCKED_DOMAINS = /(linkedin|indiamart|justdial|naukri|wikipedia|zaubacorp|tofler|facebook|instagram|twitter|x\.com|youtube|glassdoor|ambitionbox|crunchbase|tracxn|economictimes|moneycontrol)\./;
 
 /**
  * Finds new companies like the current clients and matching the ICPs: the AI plans
@@ -121,6 +120,9 @@ export async function findProspects(
   const seenNames = new Set([...known.map((k) => normCompany(k.company)), ...clients.map((c) => normCompany(c.company))].filter(Boolean));
   const seenDomains = new Set([...known.map((k) => domainOf(k.website)), ...clients.map((c) => domainOf(c.website))].filter(Boolean));
   const segmentNames = icps.map((i) => i.segment);
+  // Only trust a website that actually appeared in the results. The AI's guesses are often
+  // wrong (bodalchemicals.com for bodal.com); research looks the real one up instead.
+  const resultDomains = new Set(results.map((r) => domainOf(r.link)).filter(Boolean));
 
   const prospects: Prospect[] = [];
   for (const raw of asList(picked.data.companies)) {
@@ -128,7 +130,7 @@ export async function findProspects(
     const c = raw as Record<string, unknown>;
     const company = asText(c.company);
     let domain = domainOf(asText(c.website));
-    if (BLOCKED_DOMAINS.test(domain + '.')) domain = '';
+    if (isBlockedDomain(domain) || !resultDomains.has(domain)) domain = '';
     if (!company || seenNames.has(normCompany(company)) || (domain && seenDomains.has(domain))) continue;
     seenNames.add(normCompany(company));
     if (domain) seenDomains.add(domain);

@@ -79,3 +79,15 @@ describe('apiKeys', () => {
     delete process.env.SERPER_API_KEY;
   });
 });
+
+describe('pickOfficialDomain', () => {
+  it('finds the company site among search results', async () => {
+    const { pickOfficialDomain } = await import('@/lib/pipeline/website');
+    const r = (link: string) => ({ link, title: '' });
+    expect(pickOfficialDomain('Bodal Chemicals Ltd.', [r('https://www.indiamart.com/bodal'), r('https://www.bodal.com/')])).toBe('bodal.com');
+    expect(pickOfficialDomain('West Coast Pharmaceuticals Works Ltd.', [r('https://in.linkedin.com/company/wc'), r('https://westcoastin.com/')])).toBe('westcoastin.com');
+    expect(pickOfficialDomain('Tata AutoComp Systems', [r('https://www.tatamotors.com'), r('https://www.tatautocomp.com')])).toBe('tatautocomp.com');
+    expect(pickOfficialDomain('20 Microns Ltd', [r('https://www.20microns.com')])).toBe('20microns.com');
+    expect(pickOfficialDomain('Bajaj Finance', [r('https://www.bharatforge.com'), r('https://www.justdial.com/bajaj')])).toBe('');
+  });
+});

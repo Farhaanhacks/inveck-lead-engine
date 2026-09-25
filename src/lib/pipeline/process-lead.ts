@@ -7,6 +7,7 @@ import { scoreLead } from './scoring';
 import type { Services } from './services';
 import { fetchWebsiteText } from './services';
 import { domainOf, normalizeWebsite, normCompany } from './text';
+import { findOfficialWebsite } from './website';
 
 export type LeadUpdate = Partial<Omit<NewLead, 'id' | 'createdAt'>>;
 export type Log = (msg: string, level?: 'info' | 'warn' | 'error') => Promise<void> | void;
@@ -39,19 +40,38 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const icp = icpFor(lead.segment, ctx.icps);
   if (!icp) return { status: 'Error', lastError: 'No active ICP. Turn on at least one ICP.' };
 
-  const website = normalizeWebsite(lead.website);
+  let website = normalizeWebsite(lead.website);
+  let site = await fetchWebsiteText(svc, website);
+  // No website, or one that doesn't load (often a wrong domain): look the real one up.
+  const corrected: LeadUpdate = {};
+  if (!website || site.error) {
+    const found = await findOfficialWebsite(svc, lead.company, lead.city);
+    if (found && found !== domainOf(website)) {
+      const retry = await fetchWebsiteText(svc, normalizeWebsite(found));
+      if (!retry.error) {
+        await log(`${lead.company}: website ${website ? `corrected from ${domainOf(website)} ` : ''}to ${found}`);
+        website = normalizeWebsite(found);
+        site = retry;
+        corrected.website = found;
+        const client = matchClient({ company: lead.company, website }, ctx.clients);
+        if (client) {
+          await log(`${lead.company}: already a client (${client.company}), skipped`);
+          return { ...corrected, status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
+        }
+      }
+    }
+  }
+  if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
   const domain = domainOf(website);
   const input = { company: lead.company, website, domain, city: lead.city };
-
-  const site = await fetchWebsiteText(svc, website);
-  if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
 
   const { research, error } = await researchLead(svc, input, icp, site.text);
   if (!research) {
     await log(`${lead.company}: research failed: ${error}`, 'error');
-    return { status: 'Error', lastError: error || 'Research failed' };
+    return { ...corrected, status: 'Error', lastError: error || 'Research failed' };
   }
   const base: LeadUpdate = {
+    ...corrected,
     segment: icp.segment,
     researchSummary: research.text,
     qualified: research.qualified,
