@@ -6,7 +6,7 @@ import { errorMessage, splitName } from './text';
 export type EmailSource = 'hunter' | 'manual' | 'website' | 'web' | 'pattern' | 'format' | 'hunter-finder';
 export type EmailStatus = 'valid' | 'accept_all' | 'invalid' | 'unknown' | 'no email found';
 
-export type EmailResult = { email: string; status: EmailStatus; source: EmailSource | ''; notes: string[] };
+export type EmailResult = { email: string; status: EmailStatus; source: EmailSource | ''; notes: string[]; reason?: string };
 
 export const SOURCE_LABELS: Record<EmailSource, string> = {
   hunter: 'Hunter',
@@ -110,12 +110,17 @@ export async function findEmail(
 ): Promise<EmailResult> {
   const notes: string[] = [];
   const tried = new Set<string>();
+  let hunterError = '';
+  const none = (reason: string): EmailResult => ({ email: '', status: 'no email found', source: '', notes, reason });
   const check = async (raw: string) => {
     const email = raw.trim().toLowerCase();
     if (!EMAIL_RE.test(email) || tried.has(email)) return null;
     tried.add(email);
     const v = await verifyEmail(svc, email);
-    if (v.error) notes.push(`Email check failed for ${email}: ${v.error}`);
+    if (v.error) {
+      notes.push(`Email check failed for ${email}: ${v.error}`);
+      hunterError ||= v.error;
+    }
     return { email, status: v.status };
   };
 
@@ -127,7 +132,7 @@ export async function findEmail(
   }
 
   const { first, last, middle } = splitName(contact.name);
-  if (!first && !last) return { email: '', status: 'no email found', source: '', notes };
+  if (!first && !last) return none('no contact name');
   const f = first.toLowerCase().replace(/[^a-z]/g, '');
   const l = last.toLowerCase().replace(/[^a-z]/g, '');
 
@@ -141,7 +146,8 @@ export async function findEmail(
     }
   }
 
-  if (!first || !last || !ctx.domain) return { email: '', status: 'no email found', source: '', notes };
+  if (!ctx.domain) return none('company website unknown');
+  if (!first || !last) return none('need a first and last name');
 
   // 3. The company's format, then common formats. A guess must come back "valid"; on a
   //    catch-all server every address "works", so a guess there proves nothing.
@@ -165,17 +171,28 @@ export async function findEmail(
     }
   }
 
-  // 4. Last resort: Hunter's finder.
+  // 4. Last resort: Hunter's finder. It reports its own check, so no extra credit is spent re-checking.
   try {
-    const found = await hunter<{ email?: string | null }>(svc, 'email-finder', { domain: ctx.domain, first_name: first, last_name: last });
-    if (found.email) {
-      const r = await check(found.email);
+    const found = await hunter<{ email?: string | null; verification?: { status?: string | null } }>(svc, 'email-finder', {
+      domain: ctx.domain,
+      first_name: first,
+      last_name: last,
+    });
+    if (found.email && !tried.has(found.email.toLowerCase())) {
+      const own = found.verification?.status;
+      const r =
+        own === 'valid' || own === 'accept_all' || own === 'invalid'
+          ? (tried.add(found.email.toLowerCase()), { email: found.email.toLowerCase(), status: own as EmailStatus })
+          : await check(found.email);
       if (r && r.status !== 'invalid') return { ...r, source: 'hunter-finder', notes };
     }
   } catch (e) {
     notes.push(`Email finder failed: ${errorMessage(e)}`);
+    hunterError ||= errorMessage(e);
   }
 
   if (unconfirmable) notes.push(`No confirmed email: ${unconfirmable}, so addresses can't be verified.`);
-  return { email: '', status: 'no email found', source: '', notes };
+  if (hunterError) return none(`Hunter error: ${hunterError.slice(0, 80)}`);
+  if (unconfirmable === "the company's mail server accepts every address") return none("company's mail server can't confirm addresses");
+  return none('Hunter has no email for this person');
 }

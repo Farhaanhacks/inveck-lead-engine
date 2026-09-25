@@ -48,8 +48,10 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     const found = await findOfficialWebsite(svc, lead.company, lead.city);
     if (found && found !== domainOf(website)) {
       const retry = await fetchWebsiteText(svc, normalizeWebsite(found));
-      if (!retry.error) {
-        await log(`${lead.company}: website ${website ? `corrected from ${domainOf(website)} ` : ''}to ${found}`);
+      // Keep a found address even when its page can't be read (big sites often block
+      // automated readers): it's still the domain the company's emails are on.
+      if (!retry.error || !website) {
+        await log(`${lead.company}: website ${website ? `corrected from ${domainOf(website)} ` : ''}set to ${found}`);
         website = normalizeWebsite(found);
         site = retry;
         corrected.website = found;
@@ -113,14 +115,16 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
 
   const email = contact.name || contact.email
     ? await findEmail(svc, contact, { domain, pattern: people.pattern, websiteEmails: websiteEmails(site.text, domain), webEmails })
-    : { email: '', status: 'no email found' as const, source: '' as const, notes: [] };
+    : { email: '', status: 'no email found' as const, source: '' as const, notes: [], reason: 'no contact found' };
   notes.push(...email.notes);
   contact.email = email.email;
 
   const score = scoreLead(research.fitScore, contact, email.status, svc.settings.minScore);
   const update: LeadUpdate = {
     ...base,
-    emailStatus: email.email && email.source ? `${email.status} (${SOURCE_LABELS[email.source]})` : email.status,
+    emailStatus: email.email && email.source
+      ? `${email.status} (${SOURCE_LABELS[email.source]})`
+      : email.reason ? `no email found: ${email.reason}` : email.status,
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,
     otherDecisionMakers: notes.join('\n\n'),

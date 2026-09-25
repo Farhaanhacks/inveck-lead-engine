@@ -83,6 +83,7 @@ describe('full run with DeepSeek-style messy answers', () => {
 
     expect(L['Kirtane & Pandit'].status).toBe('Needs Manual Contact');
     expect(L['Kirtane & Pandit'].otherDecisionMakers).toContain('Email search error: 429 usage limit');
+    expect(L['Kirtane & Pandit'].emailStatus).toMatch(/^no email found: /);
 
     expect(L['Mystery Castings'].status).toBe('Needs Manual Contact');
     expect(L['Mystery Castings'].otherDecisionMakers).toContain('LinkedIn search error');
@@ -122,7 +123,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     // A catch-all server can't confirm a guess: nothing is saved (no unconfirmed guesses),
     // and it stops guessing after the first address.
     expect(L['Catchall Co'].contactEmail).toBe('');
-    expect(L['Catchall Co'].emailStatus).toBe('no email found');
+    expect(L['Catchall Co'].emailStatus).toBe("no email found: company's mail server can't confirm addresses");
     expect(L['Catchall Co'].otherDecisionMakers).toContain('No confirmed email');
     expect(log.verified.filter((e) => e.endsWith('catchall.in'))).toEqual(['amit.joshi@catchall.in']);
     expect(L['Catchall Co'].status).toBe('Awaiting Approval'); // reachable on LinkedIn
