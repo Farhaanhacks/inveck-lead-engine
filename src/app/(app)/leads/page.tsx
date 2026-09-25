@@ -128,11 +128,15 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                     {l.emailStatus && <div className="text-xs text-muted">{l.emailStatus}</div>}
                   </td>
                   <td className="px-2 py-3 whitespace-nowrap">
-                    {l.contactPhone ? (
-                      <a href={`tel:${l.contactPhone.replace(/[^+\d]/g, '')}`} className="hover:underline">{l.contactPhone}</a>
-                    ) : (
-                      <span className="text-muted">—</span>
+                    {l.contactPhone && (
+                      <a href={`tel:${l.contactPhone.replace(/[^+\d]/g, '')}`} className="block hover:underline">{l.contactPhone}</a>
                     )}
+                    {l.companyPhone && (
+                      <a href={`tel:${l.companyPhone.replace(/[^+\d]/g, '')}`} className={`block hover:underline ${l.contactPhone ? 'text-xs text-muted' : ''}`}>
+                        {l.companyPhone} <span className="text-xs text-muted">(HQ)</span>
+                      </a>
+                    )}
+                    {!l.contactPhone && !l.companyPhone && <span className="text-muted">—</span>}
                   </td>
                   <td className="px-2 py-3 whitespace-nowrap">
                     {l.contactLinkedin ? (

@@ -57,6 +57,24 @@ export function websiteEmails(text: string, domain: string): string[] {
   return [...new Set(found.filter((e) => e.endsWith('@' + domain) || e.endsWith('.' + domain)))];
 }
 
+const PHONE_NEAR_LABEL = /(?:tel|phone|ph|call|mobile|mob|contact|board)\b[^0-9+\n]{0,15}(\+?\d[\d ()./-]{8,18}\d)/gi;
+const PHONE_INTL = /(?:\+91|0091)[ .-]*\(?\d[\d ()./-]{8,14}\d/g;
+
+/** The company's main phone number from its website text, e.g. "+91 20 6608 5000". */
+export function websitePhone(text: string): string {
+  const candidates = [
+    ...[...text.matchAll(PHONE_INTL)].map((m) => m[0]),
+    ...[...text.matchAll(PHONE_NEAR_LABEL)].map((m) => m[1]),
+  ];
+  for (const raw of candidates) {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 13) continue;
+    if (/^(19|20)\d{2}(19|20)\d{2}/.test(digits)) continue; // "2019-2020", not a phone
+    return raw.replace(/\s+/g, ' ').replace(/[ .-]+$/, '').trim();
+  }
+  return '';
+}
+
 export async function researchLead(
   svc: Services,
   lead: LeadInput,

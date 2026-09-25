@@ -159,7 +159,8 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
                   ['contactName', 'Name', lead.contactName],
                   ['contactTitle', 'Title', lead.contactTitle],
                   ['contactEmail', 'Email', lead.contactEmail],
-                  ['contactPhone', 'Phone', lead.contactPhone],
+                  ['contactPhone', 'Direct phone', lead.contactPhone],
+                  ['companyPhone', 'Office phone (HQ)', lead.companyPhone],
                   ['contactLinkedin', 'LinkedIn URL', lead.contactLinkedin],
                 ] as const
               ).map(([name, label, value]) => (

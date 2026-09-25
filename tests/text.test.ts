@@ -34,15 +34,16 @@ describe('reading AI answers', () => {
 
 describe('names, domains and companies', () => {
   it.each([
-    ['Sangamnath S Digge', 'Sangamnath', 'Digge'],
-    ['R P Sharma', 'R', 'Sharma'],
-    ['Dr. Anil Kumar', 'Anil', 'Kumar'],
-    ['Sandeep Welling, CA', 'Sandeep', 'Welling'],
-    ['Vijay Agrawal (He/Him)', 'Vijay', 'Agrawal'],
-    ['CA Manish Shah', 'Manish', 'Shah'],
-    ['Madonna', '', 'Madonna'],
-  ])('splits %s', (name, first, last) => {
-    expect(splitName(name)).toEqual({ first, last });
+    ['Sangamnath S Digge', 'Sangamnath', 'Digge', 's'],
+    ['R P Sharma', 'R', 'Sharma', 'p'],
+    ['RABINDRA PRATAP SINGH', 'RABINDRA', 'SINGH', 'p'],
+    ['Dr. Anil Kumar', 'Anil', 'Kumar', ''],
+    ['Sandeep Welling, CA', 'Sandeep', 'Welling', ''],
+    ['Vijay Agrawal (He/Him)', 'Vijay', 'Agrawal', ''],
+    ['CA Manish Shah', 'Manish', 'Shah', ''],
+    ['Madonna', '', 'Madonna', ''],
+  ])('splits %s', (name, first, last, middle) => {
+    expect(splitName(name)).toEqual({ first, last, middle });
   });
   it('normalises domains and company names', () => {
     expect(domainOf('https://www.Haldex.com/en/')).toBe('haldex.com');
@@ -89,5 +90,23 @@ describe('pickOfficialDomain', () => {
     expect(pickOfficialDomain('Tata AutoComp Systems', [r('https://www.tatamotors.com'), r('https://www.tatautocomp.com')])).toBe('tatautocomp.com');
     expect(pickOfficialDomain('20 Microns Ltd', [r('https://www.20microns.com')])).toBe('20microns.com');
     expect(pickOfficialDomain('Bajaj Finance', [r('https://www.bharatforge.com'), r('https://www.justdial.com/bajaj')])).toBe('');
+  });
+});
+
+describe('email formats and phones', () => {
+  it('uses middle initials and learns a company format from the web', async () => {
+    const { fillPattern, inferPattern, personalEmails } = await import('@/lib/pipeline/emails');
+    expect(fillPattern('{f}{m}.{last}', 'Rabindra', 'Singh', 'p')).toBe('rp.singh');
+    expect(fillPattern('{f}{m}.{last}', 'Anil', 'Kumar')).toBe('');
+    const found = personalEmails(['info@tataautocomp.com', 'A.Kumar@tataautocomp.com', 'sm.patil@tataautocomp.com', 'x@gmail.com', 'r.shah@tataautocomp.com.'], 'tataautocomp.com');
+    expect(found).toEqual(['a.kumar@tataautocomp.com', 'sm.patil@tataautocomp.com', 'r.shah@tataautocomp.com']);
+    expect(inferPattern(found)).toBe('{f}.{last}');
+    expect(inferPattern(['ravi.shah@x.com', 'neha.kapoor@x.com'])).toBe('{first}.{last}');
+  });
+  it('reads the office phone off a website', async () => {
+    const { websitePhone } = await import('@/lib/pipeline/research');
+    expect(websitePhone('Corporate office, Pune. Tel: +91 20 6608 5000. Founded 1995.')).toBe('+91 20 6608 5000');
+    expect(websitePhone('Call us 020-66085000 today')).toBe('020-66085000');
+    expect(websitePhone('Annual report 2019-2020 and 2020-2021')).toBe('');
   });
 });

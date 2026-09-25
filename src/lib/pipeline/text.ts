@@ -68,7 +68,7 @@ const HONORIFICS = /^(mr|mrs|ms|dr|er|ca|cs|cma|prof|shri|smt)\.?$/i;
  * Splits a LinkedIn name for email lookups, dropping titles, credentials and initials:
  * "R P Sharma" → R / Sharma, "Dr. Anil Kumar" → Anil / Kumar, "Sandeep Welling, CA" → Sandeep / Welling.
  */
-export function splitName(name: string | null | undefined): { first: string; last: string } {
+export function splitName(name: string | null | undefined): { first: string; last: string; middle: string } {
   const parts = String(name || '')
     .replace(/\(.*?\)/g, ' ')
     .split(',')[0]
@@ -79,7 +79,13 @@ export function splitName(name: string | null | undefined): { first: string; las
   // "R P Sharma" has no full first name, so fall back to the first initial.
   const first = full.length > 1 ? full[0] : parts.length > 1 ? parts[0] : '';
   const last = full.length ? full[full.length - 1] : '';
-  return { first, last };
+  // Initials of any names in between: "Rabindra Pratap Singh" → "p", "R P Sharma" → "p".
+  const firstIdx = first ? parts.indexOf(first) : -1;
+  const lastIdx = last ? parts.lastIndexOf(last) : -1;
+  const middle = firstIdx >= 0 && lastIdx > firstIdx + 1
+    ? parts.slice(firstIdx + 1, lastIdx).map((p) => p.charAt(0).toLowerCase()).join('')
+    : '';
+  return { first, last, middle };
 }
 
 export function errorMessage(e: unknown): string {

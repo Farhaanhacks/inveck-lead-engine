@@ -81,4 +81,6 @@ export const SCHEMA_STATEMENTS = [
     at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)`,
+  // Added after the first release.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_phone TEXT NOT NULL DEFAULT ''`,
 ];

@@ -29,6 +29,7 @@ export const leads = pgTable('leads', {
   contactTitle: text('contact_title').notNull().default(''),
   contactEmail: text('contact_email').notNull().default(''),
   contactPhone: text('contact_phone').notNull().default(''),
+  companyPhone: text('company_phone').notNull().default(''),
   contactLinkedin: text('contact_linkedin').notNull().default(''),
   otherDecisionMakers: text('other_decision_makers').notNull().default(''),
   researchSummary: text('research_summary').notNull().default(''),

@@ -144,6 +144,7 @@ export async function updateLeadAction(form: FormData) {
       contactTitle: str(form, 'contactTitle'),
       contactEmail: str(form, 'contactEmail'),
       contactPhone: str(form, 'contactPhone'),
+      companyPhone: str(form, 'companyPhone'),
       contactLinkedin: str(form, 'contactLinkedin'),
       emailSubject: str(form, 'emailSubject'),
       emailBody: String(form.get('emailBody') ?? ''),

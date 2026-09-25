@@ -1,8 +1,8 @@
 import type { Client, Icp, Lead, NewLead } from '../db/schema';
 import { buildCandidates, hunterDomainSearch, linkedinQuery, pickContact, searchLinkedIn } from './contacts';
 import { writeOutreach } from './draft';
-import { findEmail, SOURCE_LABELS } from './emails';
-import { researchLead, websiteEmails } from './research';
+import { findEmail, searchWebEmails, SOURCE_LABELS } from './emails';
+import { researchLead, websiteEmails, websitePhone } from './research';
 import { scoreLead } from './scoring';
 import type { Services } from './services';
 import { fetchWebsiteText } from './services';
@@ -70,8 +70,10 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     await log(`${lead.company}: research failed: ${error}`, 'error');
     return { ...corrected, status: 'Error', lastError: error || 'Research failed' };
   }
+  const companyPhone = websitePhone(site.text);
   const base: LeadUpdate = {
     ...corrected,
+    ...(companyPhone ? { companyPhone } : {}),
     segment: icp.segment,
     researchSummary: research.text,
     qualified: research.qualified,
@@ -93,9 +95,10 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     linkedin: lead.contactLinkedin,
   };
   const notes: string[] = [];
-  const [linkedin, people] = await Promise.all([
+  const [linkedin, people, webEmails] = await Promise.all([
     searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, research, icp)),
     manual.email ? Promise.resolve({ emails: [], pattern: '', error: '' }) : hunterDomainSearch(svc, domain),
+    manual.email ? Promise.resolve([]) : searchWebEmails(svc, domain),
   ]);
   if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
   if (people.error) notes.push('Email search error: ' + people.error);
@@ -107,7 +110,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const contact = picked.contact;
 
   const email = contact.name || contact.email
-    ? await findEmail(svc, contact, { domain, pattern: people.pattern, websiteEmails: websiteEmails(site.text, domain) })
+    ? await findEmail(svc, contact, { domain, pattern: people.pattern, websiteEmails: websiteEmails(site.text, domain), webEmails })
     : { email: '', status: 'no email found' as const, source: '' as const, notes: [] };
   notes.push(...email.notes);
   contact.email = email.email;
@@ -115,7 +118,11 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const score = scoreLead(research.fitScore, contact, email.status, svc.settings.minScore);
   const update: LeadUpdate = {
     ...base,
-    emailStatus: email.email && email.source ? `${email.status} (${SOURCE_LABELS[email.source]})` : email.status,
+    emailStatus: !email.email || !email.source
+      ? email.status
+      : (email.source === 'pattern' || email.source === 'format') && email.status !== 'valid'
+        ? `best guess, not confirmed (${SOURCE_LABELS[email.source]})`
+        : `${email.status} (${SOURCE_LABELS[email.source]})`,
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,
     otherDecisionMakers: notes.join('\n\n'),
