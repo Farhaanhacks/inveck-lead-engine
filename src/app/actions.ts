@@ -6,7 +6,8 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, clients, icps, leads, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { activities, clients, icps, leads, opportunities, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { applyStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
@@ -213,6 +214,25 @@ export async function addLeadAsClientAction(form: FormData) {
   revalidatePath('/targets');
 }
 
+/** Scans the news for new plants and warehouses right now. */
+export async function scanRadarAction() {
+  const r = await scanRadar(await getDb(), await liveServices(), undefined, { force: true });
+  revalidatePath('/');
+  return r.error ? { ok: false, message: `The news scan failed: ${r.error}` } : { ok: true, message: r.added ? `Found ${r.added} new opening${r.added === 1 ? '' : 's'}.` : 'No new openings since the last scan.' };
+}
+
+/** A new facility from the news becomes a lead, with the article as its buying signal. */
+export async function addOpportunityAction(form: FormData) {
+  await addOpportunityAsLead(await getDb(), Number(str(form, 'id')));
+  refreshLeadPages();
+}
+
+export async function dismissOpportunityAction(form: FormData) {
+  const db = await getDb();
+  await db.update(opportunities).set({ status: 'dismissed' }).where(eq(opportunities.id, Number(str(form, 'id'))));
+  revalidatePath('/');
+}
+
 /** Drag and drop on the pipeline board. */
 export async function moveLeadStageAction(id: number, stage: PipelineStage) {
   if (!Number.isInteger(id) || !PIPELINE_STAGES.includes(stage)) return { ok: false };
@@ -390,6 +410,7 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
     minScore: str(form, 'minScore'),
     maxEmailGuesses: str(form, 'maxEmailGuesses'),
     useCompanyFormat: form.get('useCompanyFormat') === 'on',
+    radarEnabled: form.get('radarEnabled') === 'on',
     prospectsPerRun: str(form, 'prospectsPerRun'),
     prospectDay: str(form, 'prospectDay'),
     aiProvider: provider,

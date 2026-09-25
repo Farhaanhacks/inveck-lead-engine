@@ -25,6 +25,8 @@ export const settingsSchema = z.object({
    * confirm single addresses (marked "likely"). Plain guesses are never saved.
    */
   useCompanyFormat: z.boolean().default(true),
+  /** Scan the news for new plants and warehouses on each run. */
+  radarEnabled: z.boolean().default(true),
   /** Most new companies the prospect search adds per run. */
   prospectsPerRun: z.coerce.number().int().min(1).max(50).default(15),
   /** On scheduled runs, also search for new prospects on this weekday (0 = Sunday … 6 = Saturday, -1 = never). */

@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { leads } from '@/lib/db/schema';
+import { leads, opportunities } from '@/lib/db/schema';
+import { RadarCard } from '@/components/radar-card';
 import { getAnalytics, type Best } from '@/lib/analytics';
 import { Funnel, WeeklyColumns } from '@/components/charts';
 import { relativeDays } from '@/lib/dates';
@@ -48,7 +49,7 @@ function BestRow({ label, best }: { label: string; best: Best }) {
 export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   const wanted = Number((await searchParams).run) || 0;
   const db = await getDb();
-  const [byStatus, analytics, [totals], topLeads, runList, running] = await Promise.all([
+  const [byStatus, analytics, [totals], topLeads, runList, running, fresh, added, [{ waiting }]] = await Promise.all([
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).groupBy(leads.status),
     getAnalytics(db),
     db
@@ -64,6 +65,9 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
     db.select().from(leads).where(eq(leads.status, 'Awaiting Approval')).orderBy(desc(leads.finalScore)).limit(6),
     listRuns(db),
     activeRun(db),
+    db.select().from(opportunities).where(eq(opportunities.status, 'new')).orderBy(desc(opportunities.id)).limit(6),
+    db.select().from(opportunities).where(eq(opportunities.status, 'added')).orderBy(desc(opportunities.id)).limit(3),
+    db.select({ waiting: sql<number>`count(*)::int` }).from(opportunities).where(eq(opportunities.status, 'new')),
   ]);
   const counts: Record<string, number> = Object.fromEntries(byStatus.map((r) => [r.status, r.n]));
   const shownRun = wanted || running?.id || runList[0]?.id;
@@ -88,6 +92,10 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
         <StatTile label="Drafts to approve" value={totals.drafts} />
         <StatTile label="Contacted" value={totals.contacted} note={`${analytics.followUpsDue.length} follow-ups due`} />
         <StatTile label="Replied" value={analytics.funnel[3].value} note={analytics.replyRate != null ? `${analytics.replyRate}% reply rate` : 'No emails sent yet'} />
+      </div>
+
+      <div className="mt-6">
+        <RadarCard fresh={fresh} added={added} total={waiting} />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-5">

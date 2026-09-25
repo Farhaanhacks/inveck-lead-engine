@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { activities, clients, leads, runEvents, runs } from '@/lib/db/schema';
+import { activities, clients, leads, opportunities, runEvents, runs } from '@/lib/db/schema';
+import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { settingsSchema, type Settings } from '@/lib/settings';
 import { executeRun, startRun } from '@/lib/runs';
 import type { Services } from '@/lib/pipeline/services';
@@ -317,5 +318,35 @@ describe('winning a lead', () => {
     await applyStage(db, [won.id], 'Lost');
     await applyStage(db, [won.id], 'Won');
     expect((await db.select().from(clients)).filter((c) => c.company.startsWith('Acme')).length).toBe(1);
+  });
+});
+
+describe('new facility radar', () => {
+  it('finds real new openings, skips known companies and invented ones, and adds them as leads', async () => {
+    await db.insert(leads).values({ company: 'Tata Motors', status: 'New' });
+    const r = await scanRadar(db, services(), undefined, { force: true });
+    expect(r).toEqual({ added: 1, error: '' });
+    const [o] = await db.select().from(opportunities);
+    expect(o).toMatchObject({
+      company: 'Varroc Engineering',
+      headline: 'New lighting plant in Chakan',
+      location: 'Chakan, Maharashtra',
+      segment: 'Manufacturing & 3PL',
+      url: 'https://news.example/varroc',
+      source: 'Economic Times',
+      status: 'new',
+    });
+
+    // Scans at most every 12 hours, and never duplicates an opening.
+    expect(await scanRadar(db, services())).toEqual({ added: 0, error: '' });
+    expect(await scanRadar(db, services(), undefined, { force: true })).toEqual({ added: 0, error: '' });
+
+    const leadId = await addOpportunityAsLead(db, o.id);
+    const [lead] = await db.select().from(leads).where(eq(leads.id, leadId!));
+    expect(lead).toMatchObject({ company: 'Varroc Engineering', city: 'Chakan', status: 'New', segment: 'Manufacturing & 3PL' });
+    expect(lead.signals[0]).toMatchObject({ headline: 'New lighting plant in Chakan', url: 'https://news.example/varroc', kind: 'new_facility' });
+    expect((await db.select().from(opportunities))[0]).toMatchObject({ status: 'added', leadId });
+    // Adding twice does nothing.
+    expect(await addOpportunityAsLead(db, o.id)).toBeNull();
   });
 });

@@ -103,4 +103,21 @@ export const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS activities_lead_idx ON activities (lead_id, at)`,
   `CREATE INDEX IF NOT EXISTS activities_kind_idx ON activities (kind, at)`,
   `CREATE INDEX IF NOT EXISTS leads_follow_up_idx ON leads (next_follow_up_at)`,
+  // New facility radar.
+  `CREATE TABLE IF NOT EXISTS opportunities (
+    id SERIAL PRIMARY KEY,
+    company TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    location TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'new_plant',
+    segment TEXT NOT NULL DEFAULT '',
+    why TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'new',
+    lead_id INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS opportunities_status_idx ON opportunities (status, created_at)`,
 ];

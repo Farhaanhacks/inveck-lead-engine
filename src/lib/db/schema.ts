@@ -153,3 +153,21 @@ export const activities = pgTable('activities', {
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Activity = typeof activities.$inferSelect;
+
+/** A new plant, warehouse or facility spotted in the news: a chance to be the first to approach it. */
+export const opportunities = pgTable('opportunities', {
+  id: serial('id').primaryKey(),
+  company: text('company').notNull(),
+  headline: text('headline').notNull(),
+  location: text('location').notNull().default(''),
+  kind: text('kind').notNull().default('new_plant'),
+  segment: text('segment').notNull().default(''),
+  why: text('why').notNull().default(''),
+  url: text('url').notNull(),
+  source: text('source').notNull().default(''),
+  date: text('date').notNull().default(''),
+  status: text('status').$type<'new' | 'added' | 'dismissed'>().notNull().default('new'),
+  leadId: integer('lead_id'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type Opportunity = typeof opportunities.$inferSelect;

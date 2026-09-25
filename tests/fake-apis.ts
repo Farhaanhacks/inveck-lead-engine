@@ -55,6 +55,16 @@ function aiReply(system: string, user: string): unknown {
       ],
     };
   }
+  if (system.startsWith('You find new-facility openings')) {
+    return {
+      openings: [
+        { id: '1', company: 'Tata Motors', headline: 'New EV plant in Sanand', location: 'Sanand, Gujarat', kind: 'new_plant', segment: 'Manufacturing & 3PL', why: 'x' },
+        { id: '2', company: 'Varroc Engineering Ltd', headline: 'New lighting plant in Chakan', location: 'Chakan, Maharashtra', kind: 'new_plant', segment: 'manufacturing & 3pl', why: 'New plant, new stock to verify' },
+        { id: '3', company: 'Invented Industries', headline: 'Not in the article', location: '', kind: 'new_plant', segment: 'Manufacturing & 3PL', why: 'x' },
+        { id: '9', company: 'Ghost Co', headline: 'No such item', location: '', kind: 'new_plant', segment: 'CA Firms', why: 'x' },
+      ],
+    };
+  }
   if (system.startsWith('You spot buying signals')) {
     // Item 7 doesn't exist: it must be ignored, never invented.
     return { signals: [{ id: '1', headline: 'Opening a new plant in Chakan', kind: 'new_facility' }, { id: '7', headline: 'Made up', kind: 'funding' }] };
@@ -99,6 +109,15 @@ const handlers: Record<string, Handler> = {
     if ((init.headers as Record<string, string>)['X-API-KEY'] !== 'serper-test') return json({ message: 'Unauthorized. Sign up for a free account.' }, 403);
     const { q } = JSON.parse(init.body!);
     if (url.pathname === '/news') {
+      if (/inaugurates new manufacturing plant/.test(q)) {
+        return json({
+          news: [
+            { title: 'Tata Motors inaugurates new EV plant in Sanand', link: 'https://news.example/tata-ev', snippet: 'Tata Motors opened...', date: '2 days ago', source: 'Mint' },
+            { title: 'Varroc Engineering lays foundation stone for new plant in Chakan', link: 'https://news.example/varroc', snippet: 'Varroc will build a lighting plant in Chakan, Pune.', date: '5 days ago', source: 'Economic Times' },
+            { title: 'State announces new industrial policy', link: 'https://news.example/policy', snippet: 'Incentives for manufacturers.', date: '1 week ago', source: 'PTI' },
+          ],
+        });
+      }
       if (!/Honeywell/.test(q)) return json({ news: [] });
       return json({
         news: [

@@ -7,6 +7,7 @@ import type { Services } from './pipeline/services';
 import { hunterCredits, mapLimit } from './pipeline/services';
 import { errorMessage } from './pipeline/text';
 import { draftDueFollowUps } from './pipeline/follow-ups';
+import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
 import type { LeadUpdate } from './pipeline/process-lead';
 
@@ -108,6 +109,16 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
             'Until then only emails published on the web can be found; guessed emails can\'t be confirmed.',
           'warn',
         );
+      }
+    }
+
+    // New plants and warehouses in the news (at most every 12 hours).
+    if (stats.processed === 0 && svc.settings.radarEnabled) {
+      try {
+        const r = await scanRadar(db, svc, (m, l) => log(m, l));
+        if (r.error) await log('New facility radar: ' + r.error, 'warn');
+      } catch (e) {
+        await log('New facility radar failed: ' + errorMessage(e), 'warn');
       }
     }
 

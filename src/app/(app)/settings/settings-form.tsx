@@ -36,6 +36,15 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
               </span>
             </span>
           </label>
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" name="radarEnabled" defaultChecked={s.radarEnabled} className="mt-1" />
+            <span>
+              New facility radar
+              <span className="block text-xs text-muted">
+                Scans the news for new plants, warehouses and facilities in your segments (twice a day at most) and shows them on the dashboard to add as leads.
+              </span>
+            </span>
+          </label>
           <div>
             <label htmlFor="prospectDay" className="label">Prospect search on scheduled runs</label>
             <select id="prospectDay" name="prospectDay" defaultValue={s.prospectDay} className="field">

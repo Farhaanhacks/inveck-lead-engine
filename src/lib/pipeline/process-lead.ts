@@ -132,7 +132,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,
     otherDecisionMakers: notes.join('\n\n'),
-    signals: news.signals,
+    signals: news.signals.length ? news.signals : lead.signals,
     signalsCheckedAt: new Date(),
   };
   // Never wipe contact details the sales team typed in.
@@ -147,7 +147,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     return { ...update, status: score.statusWithoutDraft };
   }
 
-  const out = await writeOutreach(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, contact, news.signals);
+  const out = await writeOutreach(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, contact, news.signals.length ? news.signals : lead.signals);
   if (!out.draft) {
     await log(`${lead.company}: drafting failed: ${out.error}`, 'error');
     return { ...update, status: 'Error', lastError: out.error || 'Drafting failed' };
