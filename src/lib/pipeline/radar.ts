@@ -127,7 +127,7 @@ export async function scanRadar(
     });
   }
   if (rows.length) await db.insert(opportunities).values(rows);
-  if (rows.length) await log(`🏭 New facility radar: ${rows.length} new opening${rows.length === 1 ? '' : 's'} (${rows.map((r) => r.company).join(', ')})`);
+  if (rows.length) await log(`New facility radar: ${rows.length} new opening${rows.length === 1 ? '' : 's'} (${rows.map((r) => r.company).join(', ')})`);
   return { added: rows.length, error: '' };
 }
 

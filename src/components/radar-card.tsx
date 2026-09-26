@@ -11,7 +11,7 @@ export function RadarCard({ fresh, added, total }: { fresh: Opportunity[]; added
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
         <div>
-          <h2 className="text-sm font-semibold">🏭 New facility radar</h2>
+          <h2 className="text-sm font-semibold">New facility radar</h2>
           <p className="text-xs text-muted">New plants and warehouses in the news. Be the first to reach them.</p>
         </div>
         <RadarScanButton />
