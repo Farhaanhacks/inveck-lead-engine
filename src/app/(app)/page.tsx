@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
+import { ensureResearch, requestOrigin } from '@/lib/run-driver';
 import { leads, opportunities } from '@/lib/db/schema';
 import { RadarCard } from '@/components/radar-card';
 import { getAnalytics, type Best } from '@/lib/analytics';
@@ -48,6 +49,7 @@ function BestRow({ label, best }: { label: string; best: Best }) {
 
 export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   const wanted = Number((await searchParams).run) || 0;
+  await ensureResearch(await requestOrigin());
   const db = await getDb();
   const [byStatus, analytics, [totals], topLeads, runList, running, fresh, added, [{ waiting }]] = await Promise.all([
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).groupBy(leads.status),

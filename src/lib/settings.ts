@@ -14,7 +14,7 @@ export const DEFAULT_PRODUCT_DESCRIPTION = [
 ].join(' ');
 
 export const settingsSchema = z.object({
-  /** Most leads researched per run. */
+  /** No longer used: every waiting company is researched. Kept so saved settings still parse. */
   dailyLimit: z.coerce.number().int().min(1).max(500).default(25),
   /** Leads scoring below this (0-100) get no draft. */
   minScore: z.coerce.number().int().min(0).max(100).default(55),

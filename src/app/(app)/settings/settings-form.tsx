@@ -23,7 +23,6 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
       <section className="card space-y-4 p-5">
         <h2 className="text-sm font-semibold">Pipeline</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Num name="dailyLimit" label="Companies researched per run" value={s.dailyLimit} min={1} max={500} hint="Keeps cost and the approval queue manageable." />
           <Num name="minScore" label="Minimum score for a draft (0–100)" value={s.minScore} min={0} max={100} hint="Lower-scoring leads are saved as “Low Score”." />
           <Num name="prospectsPerRun" label="New prospects per search" value={s.prospectsPerRun} min={1} max={50} hint="How many companies the prospect search adds at most." />
           <Num name="maxEmailGuesses" label="Email formats to try" value={s.maxEmailGuesses} min={0} max={6} hint="When the company's format is unknown. Each try uses one Hunter verification; only confirmed addresses are kept." />

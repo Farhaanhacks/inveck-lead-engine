@@ -183,12 +183,13 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(Object.values(L).every((l) => l.status !== 'New' && l.status !== 'Processing')).toBe(true);
   });
 
-  it('respects the daily limit and continues later', async () => {
+  it('researches every waiting company in one run: nothing is left at New', async () => {
     await db.insert(leads).values(TEST_LEADS.slice(0, 5));
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    // The old per-run cap is ignored.
     await executeRun(db, run.id, services({ dailyLimit: 2 }), Number.POSITIVE_INFINITY);
     const rows = await db.select().from(leads);
-    expect(rows.filter((r) => r.status === 'New')).toHaveLength(3);
+    expect(rows.filter((r) => r.status === 'New')).toHaveLength(0);
   });
 
   it('hands over to a new invocation when out of time', async () => {

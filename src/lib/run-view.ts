@@ -1,7 +1,6 @@
 import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, runEvents, runs, type Run, type RunEvent } from './db/schema';
-import { getSettings } from './settings';
 
 export type RunLead = {
   id: number;
@@ -69,12 +68,11 @@ export async function getRunView(db: Db, id: number): Promise<RunView | null> {
 
   let total = run.stats.processed;
   if (run.status === 'running') {
-    const settings = await getSettings(db);
     const [{ waiting }] = await db
       .select({ waiting: sql<number>`count(*)::int` })
       .from(leads)
       .where(inArray(leads.status, ['New', 'Processing']));
-    total = Math.min(settings.dailyLimit, run.stats.processed + waiting);
+    total = run.stats.processed + waiting;
   }
   const last = events.at(-1)?.message ?? '';
   return { run, events, leads: list, total: Math.max(total, run.stats.processed), current: last };

@@ -132,8 +132,9 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       }
     }
 
-    const limit = svc.settings.dailyLimit;
-    while (stats.processed < limit) {
+    // Every waiting company gets researched: there's no per-run cap. Long runs hand over to
+    // a fresh invocation when this one's time runs out.
+    for (;;) {
       const [fresh] = await db.select({ cancel: runs.cancelRequested }).from(runs).where(eq(runs.id, runId));
       if (fresh?.cancel) {
         await log('Stopped by user', 'warn');
@@ -145,7 +146,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         await save();
         return 'continue';
       }
-      const batch = await claimLeads(db, Math.min(CONCURRENCY, limit - stats.processed));
+      const batch = await claimLeads(db, CONCURRENCY);
       if (!batch.length) break;
 
       await mapLimit(batch, CONCURRENCY, async (lead) => {

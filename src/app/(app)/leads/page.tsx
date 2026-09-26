@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
+import { ensureResearch, requestOrigin } from '@/lib/run-driver';
 import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { StatusPill } from '@/components/status-pill';
@@ -19,6 +20,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const q = typeof sp.q === 'string' ? sp.q.trim() : '';
   const page = Math.max(1, Number(sp.page) || 1);
 
+  await ensureResearch(await requestOrigin());
   const db = await getDb();
   const filters: SQL[] = [];
   if (segment) filters.push(eq(leads.segment, segment));

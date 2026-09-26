@@ -1,7 +1,10 @@
 import 'server-only';
 import { getDb } from './db';
 import { apiKeys, getSettings } from './settings';
-import { executeRun } from './runs';
+import { activeRun, executeRun, startRun } from './runs';
+import { desc, eq, sql } from 'drizzle-orm';
+import { after } from 'next/server';
+import { leads, runs } from './db/schema';
 import { runSecret } from './auth';
 import type { Services } from './pipeline/services';
 import { errorMessage } from './pipeline/text';
@@ -43,4 +46,32 @@ export async function driveRun(runId: number, origin: string) {
   } catch (e) {
     console.error(`Run ${runId}: could not continue: ${errorMessage(e)}`);
   }
+}
+
+/**
+ * The safety net behind "everything in Leads gets researched": if companies are waiting and
+ * nothing is running, start research in the background. Pages call this when they load.
+ * A run that started in the last 5 minutes and left companies waiting (e.g. a missing API
+ * key) isn't retried on every page view.
+ */
+export async function ensureResearch(origin: string): Promise<void> {
+  try {
+    const db = await getDb();
+    const [{ waiting }] = await db
+      .select({ waiting: sql<number>`count(*)::int` })
+      .from(leads)
+      .where(eq(leads.status, 'New'));
+    if (!waiting || (await activeRun(db))) return;
+    const [last] = await db.select().from(runs).orderBy(desc(runs.id)).limit(1);
+    if (last && Date.now() - new Date(last.startedAt).getTime() < 5 * 60 * 1000) return;
+    const { run, created } = await startRun(db, { findProspects: false, trigger: 'auto' });
+    if (created) after(() => driveRun(run.id, origin));
+  } catch {}
+}
+
+/** This deployment's address, from the current request. */
+export async function requestOrigin(): Promise<string> {
+  const { headers } = await import('next/headers');
+  const h = await headers();
+  return `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;
 }
