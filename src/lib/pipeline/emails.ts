@@ -10,7 +10,17 @@ export type EmailSource = 'hunter' | 'manual' | 'website' | 'web' | 'pattern' | 
 /** `likely`: follows the company's proven email format, but its mail server can't confirm single addresses. */
 export type EmailStatus = 'valid' | 'accept_all' | 'likely' | 'invalid' | 'unknown' | 'no email found';
 
-export type EmailResult = { email: string; status: EmailStatus; source: EmailSource | ''; notes: string[]; reason?: string; detail?: string };
+export type EmailFormatUsed = { pattern: string; domain: string; strong: boolean; detail: string };
+export type EmailResult = {
+  email: string;
+  status: EmailStatus;
+  source: EmailSource | '';
+  notes: string[];
+  reason?: string;
+  detail?: string;
+  /** The company's email format, when one was found; used for the company's other people too. */
+  format?: EmailFormatUsed;
+};
 
 export const SOURCE_LABELS: Record<EmailSource, string> = {
   hunter: 'Hunter',
@@ -76,7 +86,7 @@ export function inferPattern(emails: string[], minVotes = 1): string {
 }
 
 /** Does this published address belong to the person? Needs their surname and first initial, or their first name. */
-function belongsTo(local: string, first: string, last: string): boolean {
+export function belongsTo(local: string, first: string, last: string): boolean {
   if (first.length > 2 && local.includes(first)) return true;
   return last.length > 2 && local.includes(last) && local.startsWith(first.charAt(0));
 }
@@ -102,6 +112,17 @@ export async function findEmail(
   svc: Services,
   contact: Contact,
   ctx: { company?: string; domain: string; pattern: string; websiteEmails: string[]; webEmails?: string[] },
+): Promise<EmailResult> {
+  const used: { format?: EmailFormatUsed } = {};
+  const result = await findEmailInner(svc, contact, ctx, used);
+  return used.format ? { ...result, format: used.format } : result;
+}
+
+async function findEmailInner(
+  svc: Services,
+  contact: Contact,
+  ctx: { company?: string; domain: string; pattern: string; websiteEmails: string[]; webEmails?: string[] },
+  used: { format?: EmailFormatUsed },
 ): Promise<EmailResult> {
   const notes: string[] = [];
   const checked = new Map<string, EmailStatus>();
@@ -177,6 +198,7 @@ export async function findEmail(
   }
   domain ||= person?.domain || '';
   if (!domain) return none('company website unknown');
+  if (format) used.format = { ...format, domain };
 
   if (format) {
     const local = fillPattern(format.pattern, first, last, middle);

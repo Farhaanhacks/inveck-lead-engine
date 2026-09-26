@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { desc, eq } from 'drizzle-orm';
+import { asc, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, icps, leads, type Lead } from '@/lib/db/schema';
+import { activities, icps, leads, people, type Lead, type Person } from '@/lib/db/schema';
 import { Timeline } from '@/components/timeline';
 import { FOLLOW_UP_DAYS } from '@/lib/pipeline/follow-ups';
 import { SIGNAL_LABELS } from '@/lib/pipeline/signals';
@@ -12,6 +12,7 @@ import { CopyButton } from '@/components/copy-button';
 import { SubmitButton } from '@/components/submit-button';
 import {
   addLeadAsClientAction,
+  makePrimaryAction,
   deleteLeadAction,
   refreshSignalsAction,
   sendFollowUpAction,
@@ -147,15 +148,74 @@ function SignalsCard({ lead }: { lead: Lead }) {
   );
 }
 
+function PeopleCard({ company, list }: { company: string; list: Person[] }) {
+  return (
+    <section className="card overflow-hidden">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
+        <h2 className="text-sm font-semibold">People at {company}</h2>
+        <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.email).length} with email</span>
+      </div>
+      <div className="relative overflow-x-auto">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="px-5 py-2 font-medium">Name</th>
+              <th className="px-2 py-2 font-medium">Email</th>
+              <th className="px-2 py-2 font-medium">Phone</th>
+              <th className="px-2 py-2 font-medium">LinkedIn</th>
+              <th className="px-2 py-2 font-medium">Found via</th>
+              <th className="px-5 py-2"><span className="sr-only">Action</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((p) => (
+              <tr key={p.id} className="border-t border-line align-top">
+                <td className="px-5 py-2.5">
+                  <div className="font-medium">
+                    {p.name}
+                    {p.isPrimary && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
+                  </div>
+                  <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>
+                </td>
+                <td className="px-2 py-2.5">
+                  {p.email ? <a href={`mailto:${p.email}`} className="hover:underline">{p.email}</a> : <span className="text-muted">—</span>}
+                  {p.emailStatus && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.emailStatus}>{p.emailStatus}</div>}
+                </td>
+                <td className="px-2 py-2.5 whitespace-nowrap">{p.phone || <span className="text-muted">—</span>}</td>
+                <td className="px-2 py-2.5">
+                  {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">Profile ↗</a> : <span className="text-muted">—</span>}
+                </td>
+                <td className="px-2 py-2.5 text-xs text-ink-2">{p.source}</td>
+                <td className="px-5 py-2.5 text-right">
+                  {!p.isPrimary && (
+                    <form action={makePrimaryAction}>
+                      <input type="hidden" name="personId" value={p.id} />
+                      <SubmitButton className="btn-secondary h-7 px-2 py-0.5 text-xs" pendingText="…">Make main contact</SubmitButton>
+                    </form>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-line px-5 py-2.5 text-xs text-muted">
+        Changing the main contact keeps the draft as it is: edit the greeting, or click “Research again” to redraft for them.
+      </p>
+    </section>
+  );
+}
+
 export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
   if (!lead) notFound();
-  const [segmentRows, timeline] = await Promise.all([
+  const [segmentRows, timeline, team] = await Promise.all([
     db.select({ segment: icps.segment }).from(icps),
     db.select().from(activities).where(eq(activities.leadId, id)).orderBy(desc(activities.at), desc(activities.id)),
+    db.select().from(people).where(eq(people.leadId, id)).orderBy(desc(people.isPrimary), asc(people.id)),
   ]);
   const segments = segmentRows.map((s) => s.segment);
   const inSequence = lead.status === 'Contacted';
@@ -373,6 +433,12 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           </p>
         </div>
       </form>
+
+      {team.length > 0 && (
+        <div className="mt-6">
+          <PeopleCard company={lead.company} list={team} />
+        </div>
+      )}
 
       <div className="mt-6">
         <Timeline leadId={id} items={timeline} />

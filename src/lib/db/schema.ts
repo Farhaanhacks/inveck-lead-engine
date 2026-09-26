@@ -171,3 +171,21 @@ export const opportunities = pgTable('opportunities', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Opportunity = typeof opportunities.$inferSelect;
+
+/** Everyone found at a lead's company: the main contact and the other decision-makers. */
+export const people = pgTable('people', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').notNull(),
+  name: text('name').notNull(),
+  title: text('title').notNull().default(''),
+  email: text('email').notNull().default(''),
+  emailStatus: text('email_status').notNull().default(''),
+  phone: text('phone').notNull().default(''),
+  linkedin: text('linkedin').notNull().default(''),
+  /** Where they were found: LinkedIn, Company website / records, Hunter, Sales team. */
+  source: text('source').notNull().default(''),
+  isPrimary: boolean('is_primary').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type Person = typeof people.$inferSelect;
+export type NewPerson = typeof people.$inferInsert;

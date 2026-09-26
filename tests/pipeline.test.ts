@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { activities, clients, leads, opportunities, runEvents, runs } from '@/lib/db/schema';
+import { activities, clients, leads, opportunities, people, runEvents, runs } from '@/lib/db/schema';
+import { makePrimary } from '@/lib/people';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { settingsSchema, type Settings } from '@/lib/settings';
 import { executeRun, startRun } from '@/lib/runs';
@@ -140,6 +141,23 @@ describe('full run with DeepSeek-style messy answers', () => {
     // The timeline records what research found.
     const hwTimeline = (await db.select().from(activities).where(eq(activities.leadId, L['Honeywell'].id))).map((a) => a.kind);
     expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'signal', 'contact', 'draft']));
+
+    // Everyone found at the company is kept, best first, with the best free email.
+    const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));
+    expect(tataPeople[0]).toMatchObject({ name: 'Sangamnath Digge', isPrimary: true, email: 'sangamnath.digge@tatamotors.com' });
+    expect(tataPeople.find((p) => p.name === 'Anita Rao')).toMatchObject({ email: 'anita.rao@tatamotors.com', emailStatus: 'known (Hunter)', source: 'LinkedIn', isPrimary: false });
+    const ashPeople = await db.select().from(people).where(eq(people.leadId, L['Ash Logistics and Traders Pvt Ltd'].id));
+    expect(ashPeople.map((p) => [p.name, p.source, p.isPrimary])).toEqual([
+      ['Jitendra Govind Joshi', 'Company website / records', true],
+      ['Vidya Girish Pathak', 'Company website / records', false],
+    ]);
+
+    // Switching the main contact updates the lead.
+    const anita = tataPeople.find((p) => p.name === 'Anita Rao')!;
+    await makePrimary(db, anita.id);
+    const [tata] = await db.select().from(leads).where(eq(leads.id, L['Tata Motors'].id));
+    expect(tata).toMatchObject({ contactName: 'Anita Rao', contactEmail: 'anita.rao@tatamotors.com' });
+    expect((await db.select().from(people).where(eq(people.leadId, tata.id))).filter((p) => p.isPrimary).map((p) => p.name)).toEqual(['Anita Rao']);
 
     expect(L['Finder Co'].contactEmail).toBe('k.rao@findr.in');
     expect(L['Finder Co'].emailStatus).toBe('valid (Hunter finder)');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchWebsiteText, htmlToText, urlVariants } from '@/lib/pipeline/site-reader';
+import { crawlSite, fetchWebsiteText, htmlToText, pickCrawlLinks, siteLinks, urlVariants } from '@/lib/pipeline/site-reader';
 import type { Services } from '@/lib/pipeline/services';
 import { settingsSchema } from '@/lib/settings';
 
@@ -21,7 +21,8 @@ function services(routes: Record<string, (url: string) => Response | Promise<Res
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((v, k) => (headers[k] = v));
     calls.push({ url, headers });
-    const route = Object.keys(routes).find((k) => url.startsWith(k));
+    // Exact addresses; the reader and search services match by prefix.
+    const route = routes[url] ? url : Object.keys(routes).find((k) => /jina\.ai|serper\.dev/.test(k) && url.startsWith(k));
     if (!route) throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } });
     return routes[route](url);
   }) as typeof fetch;
@@ -135,5 +136,52 @@ describe('reading company websites', () => {
     expect(urlVariants('bodal.com')).toEqual(['https://bodal.com/', 'https://www.bodal.com/']);
     expect(urlVariants('http://www.honeywell.com/in/en')).toEqual(['https://www.honeywell.com/in/en', 'https://honeywell.com/in/en']);
     expect(urlVariants('not a url')).toEqual([]);
+  });
+});
+
+describe('crawling the rest of a company site', () => {
+  const HOME = `<html><head><title>Acme Forge</title></head><body>
+    <p>${'Acme Forge makes precision forgings for OEMs from three plants in Maharashtra. '.repeat(6)}</p>
+    <a href="/contact-us">Contact</a> <a href="/about-us/">About</a> <a href="/leadership">Leadership</a>
+    <a href="/infrastructure/plants">Our plants</a> <a href="/investors/annual-reports">Investors</a>
+    <a href="/products/forgings">Products</a> <a href="/blog/2024/why-forging">Blog</a>
+    <a href="https://www.linkedin.com/company/acme">LinkedIn</a> <a href="/brochure.pdf">Brochure</a>
+    <a href="mailto:info@acmeforge.in">Mail</a> <a href="#top">Top</a>
+  </body></html>`;
+
+  it('finds same-site links and picks the pages worth reading, one of each kind first', () => {
+    const links = siteLinks(HOME, 'https://www.acmeforge.in/');
+    expect(links).toContain('https://www.acmeforge.in/contact-us');
+    expect(links.some((l) => l.includes('linkedin'))).toBe(false);
+    expect(links.some((l) => l.endsWith('.pdf'))).toBe(false);
+    expect(pickCrawlLinks(links, 'https://www.acmeforge.in/', 4)).toEqual([
+      'https://www.acmeforge.in/contact-us',
+      'https://www.acmeforge.in/leadership',
+      'https://www.acmeforge.in/about-us/',
+      'https://www.acmeforge.in/infrastructure/plants',
+    ]);
+    // Links in the reader's markdown count too.
+    expect(siteLinks('See [our team](https://acmeforge.in/team) and [x](https://other.com/a)', 'https://acmeforge.in/')).toEqual(['https://acmeforge.in/team']);
+  });
+
+  it('reads those pages and brings back their people, emails and phones', async () => {
+    const calls: Call[] = [];
+    const svc = services(
+      {
+        'https://acmeforge.in/': () => html(HOME),
+        'https://acmeforge.in/contact-us': () => html('<html><body><h1>Contact us</h1><p>Plant 1, Chakan. Tel: +91 20 6712 3400</p><a href="mailto:ravi.shah@acmeforge.in">Ravi Shah, Plant Head</a></body></html>'),
+        'https://acmeforge.in/leadership': () => html('<html><body><h2>Leadership</h2><p>Sunil Mehta — Managing Director. Priya Nair — Head of Supply Chain.</p></body></html>'),
+        'https://acmeforge.in/about-us/': () => html('<html><body>About Acme Forge: founded 1985, three plants, SAP ERP across sites.</body></html>'),
+      },
+      calls,
+    );
+    const home = await fetchWebsiteText(svc, 'acmeforge.in');
+    expect(home.via).toBe('direct');
+    const pages = await crawlSite(svc, home);
+    const text = pages.map((p) => p.text).join('\n');
+    expect(pages.map((p) => new URL(p.url).pathname)).toEqual(['/contact-us', '/leadership', '/about-us/']);
+    expect(text).toContain('Email: ravi.shah@acmeforge.in');
+    expect(text).toContain('+91 20 6712 3400');
+    expect(text).toContain('Priya Nair — Head of Supply Chain');
   });
 });

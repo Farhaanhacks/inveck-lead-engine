@@ -117,22 +117,36 @@ export async function searchLeaders(
   company: string,
   domain: string,
   homeText: string,
-): Promise<{ people: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[]; error: string }> {
+  crawled: { url: string; text: string }[] = [],
+): Promise<{ people: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[]; emails: string[]; error: string }> {
   const name = searchName(company);
-  if (!name) return { people: [], error: '' };
+  if (!name) return { people: [], emails: [], error: '' };
+  // A team/leadership page from the site crawl saves a search and a fetch.
+  const teamPage = crawled.find((p) => /team|leadership|management|board|directors|people|key-?(managerial|person)/i.test(new URL(p.url).pathname));
   try {
-    const [web, pages] = await Promise.all([
+    const [web, filings, pages] = await Promise.all([
       googleSearch(svc, `"${name}" (founder OR director OR CEO OR "managing director" OR chairman OR partner OR "head of")`).catch(() => []),
-      domain ? googleSearch(svc, `site:${domain} (leadership OR management OR team OR directors OR "about us" OR founder)`).catch(() => []) : Promise.resolve([]),
+      // Official records: annual reports and stock-exchange filings name these officers, often with emails.
+      googleSearch(svc, `"${name}" ("company secretary" OR "compliance officer" OR "chief financial officer" OR "plant head" OR "works manager" OR "general manager")`).catch(() => []),
+      domain && !teamPage
+        ? googleSearch(svc, `site:${domain} (leadership OR management OR team OR directors OR "about us" OR founder)`).catch(() => [])
+        : Promise.resolve([]),
     ]);
     const home = homeText.replace(/\s+/g, ' ');
-    const pageLink = pages.map((r) => r.link || '').find((l) => l && !/\.(pdf|jpg|png)$/i.test(l));
-    const page = pageLink ? await fetchWebsiteText(svc, pageLink, { useGoogle: false }) : { text: '', error: '' };
+    const pageLink = teamPage?.url || pages.map((r) => r.link || '').find((l) => l && !/\.(pdf|jpg|png)$/i.test(l));
+    const page = teamPage ?? (pageLink ? await fetchWebsiteText(svc, pageLink, { useGoogle: false }) : { text: '' });
 
-    const webLines = web
-      .filter((r) => !isBlockedDomain((r.link || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0]) || /zaubacorp|tofler|thecompanycheck|instafinancials/.test(r.link || ''))
-      .slice(0, 10)
+    const results = [...web, ...filings];
+    const webLines = results
+      .filter((r) => !isBlockedDomain((r.link || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0]) || /zaubacorp|tofler|thecompanycheck|instafinancials|bseindia|nseindia/.test(r.link || ''))
+      .slice(0, 16)
       .map((r) => `- ${r.title || ''}: ${r.snippet || ''} (${r.link || ''})`);
+    // Emails at the company's domain published in those results (e.g. the company secretary's).
+    const emails = domain
+      ? [...new Set(results.flatMap((r) => `${r.title} ${r.snippet}`.toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || []))].filter((e) =>
+          e.endsWith('@' + domain),
+        )
+      : [];
     const source = [
       page.text ? `## ${pageLink}\n${page.text.replace(/\s+/g, ' ').slice(0, 15000)}` : '',
       home ? `## Home page\n${home.slice(0, 8000)}` : '',
@@ -140,10 +154,10 @@ export async function searchLeaders(
     ]
       .filter(Boolean)
       .join('\n\n');
-    if (!source) return { people: [], error: '' };
+    if (!source) return { people: [], emails, error: '' };
 
     const result = await askJson(svc, LEADERS_PROMPT, `Company: ${company}${domain ? ` (${domain})` : ''}\n\n${source}`, leaderSchema);
-    if (result.error !== undefined) return { people: [], error: result.error };
+    if (result.error !== undefined) return { people: [], emails, error: result.error };
     const haystack = source.toLowerCase();
     const people = asList(result.data.people)
       .map((p) => (p && typeof p === 'object' ? (p as Record<string, unknown>) : {}))
@@ -152,11 +166,11 @@ export async function searchLeaders(
         const parts = p.name.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
         return parts.length >= 2 && parts.every((w) => haystack.includes(w));
       })
-      .slice(0, 10)
+      .slice(0, 12)
       .map((p) => ({ ...p, linkedin: '', snippet: 'Named on the company website or in public company records' }));
-    return { people, error: '' };
+    return { people, emails, error: '' };
   } catch (e) {
-    return { people: [], error: errorMessage(e) };
+    return { people: [], emails: [], error: errorMessage(e) };
   }
 }
 
@@ -243,7 +257,7 @@ export async function pickContact(
   research: Research,
   icp: Icp,
   candidates: Candidate[],
-): Promise<{ contact: Contact; notes: string[]; error: string }> {
+): Promise<{ contact: Contact; notes: string[]; error: string; ranked: Candidate[] }> {
   const userText = [
     `Company: ${lead.company} (${lead.domain || 'no domain'})${lead.city ? `, focus location: ${lead.city}` : ''}`,
     `Segment: ${lead.segment}`,
@@ -266,26 +280,27 @@ export async function pickContact(
     reason,
   });
 
-  if (!candidates.length) return { contact: { ...EMPTY_CONTACT }, notes: [], error: '' };
+  if (!candidates.length) return { contact: { ...EMPTY_CONTACT }, notes: [], error: '', ranked: [] };
 
   const result = await askJson(svc, CONTACT_PROMPT, userText, schema);
   if (result.error !== undefined) {
     const manual = byId.get('M');
-    return { contact: manual ? toContact(manual, false, 'Supplied by the sales team') : { ...EMPTY_CONTACT }, notes: [], error: result.error };
+    return { contact: manual ? toContact(manual, false, 'Supplied by the sales team') : { ...EMPTY_CONTACT }, notes: [], error: result.error, ranked: candidates };
   }
   const d = result.data;
   const chosen = byId.get(asText(d.chosen_id));
   const contact = chosen ? toContact(chosen, asBool(d.role_match), asText(d.reason)) : { ...EMPTY_CONTACT };
 
-  const others = asTextList(d.other_ids)
+  const otherCandidates = asTextList(d.other_ids)
     .map((id) => byId.get(id.trim()))
-    .filter((c): c is Candidate => !!c && c !== chosen)
-    .slice(0, 4)
-    .map((c) => [c.name, c.title, c.email || c.linkedin].filter(Boolean).join(' | '));
+    .filter((c): c is Candidate => !!c && c !== chosen);
+  const others = otherCandidates.slice(0, 4).map((c) => [c.name, c.title, c.email || c.linkedin].filter(Boolean).join(' | '));
+  // Everyone found, best first: the chosen contact, the AI's other picks, then the rest.
+  const ranked = [...(chosen ? [chosen] : []), ...otherCandidates, ...candidates.filter((c) => c !== chosen && !otherCandidates.includes(c))];
   const rolesToFind = asTextList(d.roles_to_find_on_linkedin);
 
   const notes: string[] = [];
   if (others.length) notes.push('Other decision-makers:\n' + others.join('\n'));
   if (rolesToFind.length) notes.push('Still to find on LinkedIn: ' + rolesToFind.join(', '));
-  return { contact, notes, error: '' };
+  return { contact, notes, error: '', ranked };
 }

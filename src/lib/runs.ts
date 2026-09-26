@@ -9,7 +9,8 @@ import { errorMessage } from './pipeline/text';
 import { draftDueFollowUps } from './pipeline/follow-ups';
 import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
-import type { LeadUpdate } from './pipeline/process-lead';
+import type { LeadResult, LeadUpdate } from './pipeline/process-lead';
+import { savePeople } from './people';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, existingClients: 0, errors: 0 };
 /** A run with no heartbeat for this long is considered dead (its function timed out or crashed). */
@@ -148,14 +149,16 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       if (!batch.length) break;
 
       await mapLimit(batch, CONCURRENCY, async (lead) => {
-        let update;
+        let result: LeadResult;
         try {
-          update = await processLead(svc, lead, { icps: activeIcps, clients: clientList }, (m, l) => log(m, l, lead.id));
+          result = await processLead(svc, lead, { icps: activeIcps, clients: clientList }, (m, l) => log(m, l, lead.id));
         } catch (e) {
-          update = { status: 'Error' as const, lastError: errorMessage(e) };
+          result = { status: 'Error' as const, lastError: errorMessage(e) };
           await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);
         }
+        const { people: found, ...update } = result;
         await db.update(leads).set({ ...update, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
+        if (found) await savePeople(db, lead.id, found);
         await recordOutcome(db, lead.id, update);
         stats.processed++;
         if (update.status === 'Awaiting Approval') stats.drafted++;

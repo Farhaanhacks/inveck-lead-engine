@@ -106,6 +106,21 @@ export const SCHEMA_STATEMENTS = [
   // Leads moved back before sending used to keep their sent date; they weren't really contacted.
   `UPDATE leads SET sent_at = NULL, follow_up_step = 0, next_follow_up_at = NULL, follow_up_subject = '', follow_up_body = ''
      WHERE sent_at IS NOT NULL AND status IN ('New', 'Processing', 'Awaiting Approval', 'Approved', 'Rejected', 'Low Score', 'Needs Manual Contact', 'Disqualified', 'Error')`,
+  // Every decision-maker found per company.
+  `CREATE TABLE IF NOT EXISTS people (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    email_status TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    linkedin TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    is_primary BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS people_lead_idx ON people (lead_id)`,
   // New facility radar.
   `CREATE TABLE IF NOT EXISTS opportunities (
     id SERIAL PRIMARY KEY,

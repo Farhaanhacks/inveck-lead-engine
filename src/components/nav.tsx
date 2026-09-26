@@ -6,6 +6,7 @@ const LINKS = [
   { href: '/', label: 'Dashboard' },
   { href: '/leads', label: 'Leads' },
   { href: '/pipeline', label: 'Pipeline' },
+  { href: '/contacts', label: 'Contacts' },
   { href: '/leads/new', label: 'Add companies' },
   { href: '/targets', label: 'ICPs & clients' },
   { href: '/settings', label: 'Settings' },

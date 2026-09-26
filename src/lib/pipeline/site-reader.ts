@@ -1,5 +1,5 @@
 import type { Services } from './services';
-import { googleSearch } from './services';
+import { googleSearch, mapLimit } from './services';
 import { errorMessage, rootDomain } from './text';
 
 /**
@@ -10,7 +10,95 @@ import { errorMessage, rootDomain } from './text';
  *  3. Google's index of the site (titles and snippets of its pages)
  */
 
-export type SiteText = { text: string; error: string; via: '' | 'direct' | 'reader' | 'google' };
+export type SiteText = {
+  text: string;
+  error: string;
+  via: '' | 'direct' | 'reader' | 'google';
+  /** The address that worked, and links from it to other pages on the same site. */
+  url?: string;
+  links?: string[];
+};
+
+/** Links to other pages of the same site, from HTML (href) or the reader's markdown ([text](url)). */
+export function siteLinks(content: string, pageUrl: string): string[] {
+  let base: URL;
+  try {
+    base = new URL(pageUrl);
+  } catch {
+    return [];
+  }
+  const root = rootDomain(base.hostname);
+  const raw = [
+    ...[...content.matchAll(/href\s*=\s*["']([^"'#]+)["']/gi)].map((m) => m[1]),
+    ...[...content.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g)].map((m) => m[1]),
+  ];
+  const out = new Set<string>();
+  for (const href of raw) {
+    if (/^(mailto|tel|javascript):/i.test(href)) continue;
+    try {
+      const u = new URL(href, base);
+      if (!/^https?:$/.test(u.protocol) || rootDomain(u.hostname) !== root) continue;
+      if (/\.(pdf|jpe?g|png|gif|svg|webp|zip|docx?|xlsx?|pptx?|mp4|css|js)$/i.test(u.pathname)) continue;
+      u.hash = '';
+      out.add(u.toString());
+    } catch {}
+  }
+  return [...out];
+}
+
+// The pages worth reading, most useful first.
+const CRAWL_PRIORITY = [
+  /contact|reach-?us|get-?in-?touch|enquir/,
+  /team|leadership|management|board|directors|key-?(managerial|person)|people/,
+  /about|who-?we-?are|overview|profile|company/,
+  /locations?|plants?|facilit|infrastructure|manufactur|network|branch|offices?|warehous/,
+  /investor|annual-?report|governance|compliance|shareholder/,
+  /press|news|media/,
+];
+
+/** Up to `max` links to read, one per kind of page first (contact, team, about…). */
+export function pickCrawlLinks(links: string[], homeUrl: string, max = 6): string[] {
+  const home = homeUrl.replace(/\/$/, '');
+  const scored = links
+    .filter((l) => l.replace(/\/$/, '') !== home)
+    .map((l) => {
+      const path = new URL(l).pathname.toLowerCase();
+      const rank = CRAWL_PRIORITY.findIndex((re) => re.test(path));
+      return { l, rank, depth: path.split('/').filter(Boolean).length };
+    })
+    .filter((x) => x.rank >= 0 && x.depth <= 3)
+    .sort((a, b) => a.rank - b.rank || a.depth - b.depth || a.l.length - b.l.length);
+  const picked: string[] = [];
+  const kinds = new Set<number>();
+  for (const x of scored) {
+    if (kinds.has(x.rank) || picked.length >= max) continue;
+    kinds.add(x.rank);
+    picked.push(x.l);
+  }
+  for (const x of scored) if (!picked.includes(x.l) && picked.length < max) picked.push(x.l);
+  return picked;
+}
+
+export type CrawledPage = { url: string; text: string };
+
+/**
+ * Reads the site's contact, team, about, locations and investor pages (not just the home
+ * page): that's where named managers, emails and plant phone numbers usually are.
+ */
+export async function crawlSite(svc: Services, site: SiteText, max = 6): Promise<CrawledPage[]> {
+  if (!site.url || !site.links?.length || site.via === 'google') return [];
+  const targets = pickCrawlLinks(site.links, site.url, max);
+  const pages = await mapLimit(targets, 3, async (url): Promise<CrawledPage | null> => {
+    try {
+      const text = site.via === 'reader' ? await fetchReader(svc, url) : htmlToText(await fetchHtml(svc, url));
+      // Short pages count: a leadership page can be just a few names.
+      return text.length >= 40 && !(text.length < 2000 && CHALLENGE.test(text)) ? { url, text: text.slice(0, 20_000) } : null;
+    } catch {
+      return null;
+    }
+  });
+  return pages.filter((p): p is CrawledPage => !!p);
+}
 
 const DIRECT_TIMEOUT = 10_000;
 const READER_TIMEOUT = 30_000;
@@ -150,7 +238,7 @@ export async function fetchWebsiteText(svc: Services, website: string, { useGoog
       const html = await fetchHtml(svc, url);
       reachable ||= url;
       const text = htmlToText(html);
-      if (text.length >= MIN_TEXT && !(text.length < 2000 && CHALLENGE.test(text))) return { text, error: '', via: 'direct' };
+      if (text.length >= MIN_TEXT && !(text.length < 2000 && CHALLENGE.test(text))) return { text, error: '', via: 'direct', url, links: siteLinks(html, url) };
       problems.push(CHALLENGE.test(text) ? 'bot check page' : 'page needs JavaScript');
       break; // the other variant serves the same site
     } catch (e) {
@@ -160,8 +248,9 @@ export async function fetchWebsiteText(svc: Services, website: string, { useGoog
 
   // 2. Jina Reader renders the page in a browser.
   try {
-    const text = await fetchReader(svc, reachable || urls[0]);
-    if (text.trim().length >= 200 && !(text.length < 2000 && CHALLENGE.test(text))) return { text, error: '', via: 'reader' };
+    const url = reachable || urls[0];
+    const text = await fetchReader(svc, url);
+    if (text.trim().length >= 200 && !(text.length < 2000 && CHALLENGE.test(text))) return { text, error: '', via: 'reader', url, links: siteLinks(text, url) };
     problems.push('reader got no text');
   } catch (e) {
     problems.push(shortReason(e));

@@ -6,9 +6,10 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, clients, icps, leads, opportunities, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { activities, clients, icps, leads, opportunities, people, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { applyStage } from '@/lib/stages';
+import { makePrimary } from '@/lib/people';
 import { logActivity } from '@/lib/activity';
 import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
 import { findSignals } from '@/lib/pipeline/signals';
@@ -201,6 +202,7 @@ export async function bulkLeadAction(form: FormData) {
   if (action === 'delete') {
     await db.delete(leads).where(inArray(leads.id, ids));
     await db.delete(activities).where(inArray(activities.leadId, ids));
+    await db.delete(people).where(inArray(people.leadId, ids));
   } else if (STATUS_ACTIONS[action]) await applyStage(db, ids, STATUS_ACTIONS[action]);
   refreshLeadPages();
 }
@@ -231,6 +233,13 @@ export async function dismissOpportunityAction(form: FormData) {
   const db = await getDb();
   await db.update(opportunities).set({ status: 'dismissed' }).where(eq(opportunities.id, Number(str(form, 'id'))));
   revalidatePath('/');
+}
+
+/** Makes someone else at the company the lead's main contact. */
+export async function makePrimaryAction(form: FormData) {
+  const leadId = await makePrimary(await getDb(), Number(str(form, 'personId')));
+  if (leadId) refreshLeadPages(leadId);
+  revalidatePath('/contacts');
 }
 
 /** Drag and drop on the pipeline board. */
@@ -307,6 +316,7 @@ export async function deleteLeadAction(form: FormData) {
   const id = Number(str(form, 'id'));
   await db.delete(leads).where(eq(leads.id, id));
   await db.delete(activities).where(eq(activities.leadId, id));
+  await db.delete(people).where(eq(people.leadId, id));
   revalidatePath('/leads');
   redirect('/leads');
 }
