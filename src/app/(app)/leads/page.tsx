@@ -9,6 +9,9 @@ import { isPast, relativeDays } from '@/lib/dates';
 
 const PAGE_SIZE = 100;
 
+// Research started from this page keeps working after the response.
+export const maxDuration = 300;
+
 export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const sp = await searchParams;
   const status = typeof sp.status === 'string' ? sp.status : '';

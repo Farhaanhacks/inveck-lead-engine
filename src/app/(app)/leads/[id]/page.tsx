@@ -98,7 +98,7 @@ function FollowUpCard({ lead }: { lead: Lead }) {
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-ink-2">
-            {due ? (overdue ? 'Due now. ' : `Scheduled ${relativeDays(due)}. `) : ''}The AI writes it on the next run, or now if you prefer.
+            {due ? (overdue ? 'Due now. ' : `Scheduled ${relativeDays(due)}. `) : ''}The AI writes it with the next research run, or now if you prefer.
           </p>
           <form action={writeFollowUpAction}>
             <input type="hidden" name="id" value={lead.id} />
@@ -205,6 +205,9 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
     </section>
   );
 }
+
+// Research started from this page keeps working after the response.
+export const maxDuration = 300;
 
 export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const id = Number((await params).id);

@@ -47,6 +47,20 @@ export async function logout() {
 
 // ─── Runs ─────────────────────────────────────────────────────────────────
 
+/**
+ * Researches new companies right away: starts a run in the background (or lets the one
+ * already running pick them up). Nobody has to press a button for it.
+ */
+async function researchNow() {
+  const db = await getDb();
+  const { run, created } = await startRun(db, { findProspects: false, trigger: 'auto' });
+  if (created) {
+    const h = await headers();
+    const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;
+    after(() => driveRun(run.id, origin));
+  }
+}
+
 export async function startRunAction(form: FormData) {
   const db = await getDb();
   const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual' });
@@ -109,7 +123,8 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
   await logActivity(db, row.id, 'added', 'Added by hand');
   revalidatePath('/leads');
   revalidatePath('/');
-  return { ok: true, message: `Added ${company}. It will be researched on the next run.` };
+  await researchNow();
+  return { ok: true, message: `Added ${company}. Researching it now; progress is on the dashboard.` };
 }
 
 /** Bulk add: one company per line, "Company, website, city, segment" (comma or tab separated). */
@@ -134,12 +149,13 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
     const db = await getDb();
     const rows = await db.insert(leads).values(toAdd).returning({ id: leads.id });
     for (const r of rows) await logActivity(db, r.id, 'added', 'Added by hand (bulk)');
+    await researchNow();
   }
   revalidatePath('/leads');
   revalidatePath('/');
   return {
     ok: toAdd.length > 0,
-    message: `Added ${toAdd.length} ${toAdd.length === 1 ? 'company' : 'companies'}${skipped ? `, skipped ${skipped} already a lead or a client` : ''}.`,
+    message: `Added ${toAdd.length} ${toAdd.length === 1 ? 'company' : 'companies'}${skipped ? `, skipped ${skipped} already a lead or a client` : ''}.${toAdd.length ? ' Researching now; progress is on the dashboard.' : ''}`,
   };
 }
 
@@ -191,6 +207,7 @@ export async function setLeadStatusAction(form: FormData) {
   const status = STATUS_ACTIONS[str(form, 'action')];
   if (!id || !status) return;
   await applyStage(await getDb(), [id], status);
+  if (status === 'New') await researchNow();
   refreshLeadPages(id);
 }
 
@@ -203,7 +220,10 @@ export async function bulkLeadAction(form: FormData) {
     await db.delete(leads).where(inArray(leads.id, ids));
     await db.delete(activities).where(inArray(activities.leadId, ids));
     await db.delete(people).where(inArray(people.leadId, ids));
-  } else if (STATUS_ACTIONS[action]) await applyStage(db, ids, STATUS_ACTIONS[action]);
+  } else if (STATUS_ACTIONS[action]) {
+    await applyStage(db, ids, STATUS_ACTIONS[action]);
+    if (STATUS_ACTIONS[action] === 'New') await researchNow();
+  }
   refreshLeadPages();
 }
 
@@ -225,7 +245,8 @@ export async function scanRadarAction() {
 
 /** A new facility from the news becomes a lead, with the article as its buying signal. */
 export async function addOpportunityAction(form: FormData) {
-  await addOpportunityAsLead(await getDb(), Number(str(form, 'id')));
+  const leadId = await addOpportunityAsLead(await getDb(), Number(str(form, 'id')));
+  if (leadId) await researchNow();
   refreshLeadPages();
 }
 

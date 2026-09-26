@@ -52,7 +52,7 @@ export function RadarCard({ fresh, added, total }: { fresh: Opportunity[]; added
         </ul>
       ) : (
         <p className="px-5 pt-3 pb-5 text-sm text-muted">
-          No new openings waiting. The radar scans the news with every research run (at most twice a day), or click Scan now.
+          No new openings waiting. The radar scans the news when research runs (at most twice a day), or click Scan now.
         </p>
       )}
 
@@ -69,7 +69,7 @@ export function RadarCard({ fresh, added, total }: { fresh: Opportunity[]; added
               )}
             </span>
           ))}
-          . They&apos;re researched on the next run, and their first email opens with the news.
+          . They&apos;re researched right away, and their first email opens with the news.
         </p>
       )}
     </section>
