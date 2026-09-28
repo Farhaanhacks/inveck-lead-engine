@@ -115,7 +115,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
   ]);
-  if (news.signals.length) await log(`${lead.company}: 🔔 ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
+  if (news.signals.length) await log(`${lead.company}: buying signal: ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
   if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
   if (people.error) notes.push('Email search error: ' + people.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-/** "● Research running" in the side menu while a run is going, on every page. */
+/** "Research running" in the side menu while a run is going, on every page. */
 export function RunIndicator() {
   const [run, setRun] = useState<{ id: number; processed: number } | null>(null);
   useEffect(() => {

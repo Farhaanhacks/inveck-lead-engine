@@ -116,7 +116,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                   <td className="px-2 py-3">
                     <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
                     {l.signals.length > 0 && (
-                      <span className="ml-1.5 cursor-help text-xs" title={`Buying signal: ${l.signals[0].headline}`} aria-label={`Buying signal: ${l.signals[0].headline}`}>🔔</span>
+                      <span className="ml-1.5 cursor-help rounded bg-warning-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-warning-ink" title={`Buying signal: ${l.signals[0].headline}`}>Signal</span>
                     )}
                     <div className="text-xs text-muted">{[l.segment, l.city, l.website].filter(Boolean).join(' · ')}</div>
                   </td>
@@ -159,7 +159,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                   </td>
                   <td className="px-2 py-3 whitespace-nowrap">
                     {l.contactLinkedin ? (
-                      <a href={l.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">Profile ↗</a>
+                      <a href={l.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>
                     ) : (
                       <span className="text-muted">—</span>
                     )}

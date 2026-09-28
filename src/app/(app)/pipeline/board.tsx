@@ -101,13 +101,12 @@ export function Board({ cards }: { cards: Card[] }) {
                     {c.contact && <p className="mt-0.5 truncate text-xs text-ink-2" title={c.contact}>{c.contact}</p>}
                     {c.signal && (
                       <p className="mt-1.5 line-clamp-2 text-xs text-warning-ink" title={c.signal}>
-                        <span aria-hidden>🔔 </span>
                         {c.signal}
                       </p>
                     )}
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <span className={`text-xs ${c.followUp?.due ? 'font-medium text-warning-ink' : 'text-muted'}`}>
-                        {c.followUp?.label ?? (c.email ? 'Email ✓' : 'LinkedIn only')}
+                        {c.followUp?.label ?? (c.email ? 'Email found' : 'LinkedIn only')}
                       </span>
                       <label className="sr-only" htmlFor={`move-${c.id}`}>Move {c.company} to</label>
                       <select

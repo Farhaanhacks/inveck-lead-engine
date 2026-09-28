@@ -126,8 +126,7 @@ function SignalsCard({ lead }: { lead: Lead }) {
       {lead.signals.length ? (
         <ul className="space-y-2.5">
           {lead.signals.map((s) => (
-            <li key={s.url} className="flex gap-3 text-sm">
-              <span aria-hidden>🔔</span>
+            <li key={s.url} className="border-l-2 border-warning-ink/40 pl-3 text-sm">
               <span>
                 <a href={s.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{s.headline}</a>
                 <span className="block text-xs text-muted">
@@ -183,7 +182,7 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
                 </td>
                 <td className="px-2 py-2.5 whitespace-nowrap">{p.phone || <span className="text-muted">—</span>}</td>
                 <td className="px-2 py-2.5">
-                  {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">Profile ↗</a> : <span className="text-muted">—</span>}
+                  {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
                 </td>
                 <td className="px-2 py-2.5 text-xs text-ink-2">{p.source}</td>
                 <td className="px-5 py-2.5 text-right">
@@ -231,7 +230,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   return (
     <>
       <div className="mb-2 text-sm">
-        <Link href="/leads" className="text-ink-2 hover:text-ink">← Leads</Link>
+        <Link href="/leads" className="inline-flex items-center gap-1 text-ink-2 hover:text-ink"><svg aria-hidden width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5" /></svg>Leads</Link>
       </div>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>

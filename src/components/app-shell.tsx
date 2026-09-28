@@ -26,7 +26,7 @@ export function AppShell({ initialHidden, sidebar, children }: { initialHidden: 
             aria-label="Hide menu"
             title="Hide menu"
           >
-            <span aria-hidden>«</span>
+            <svg aria-hidden width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5" /></svg>
           </button>
           {sidebar}
           <RunIndicator />
@@ -35,7 +35,7 @@ export function AppShell({ initialHidden, sidebar, children }: { initialHidden: 
       <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
         {hidden && (
           <button type="button" onClick={toggle} className="btn-secondary mb-4 gap-2 text-sm" aria-label="Show menu">
-            <span aria-hidden>☰</span> Menu
+            <svg aria-hidden width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" /></svg> Menu
           </button>
         )}
         {children}

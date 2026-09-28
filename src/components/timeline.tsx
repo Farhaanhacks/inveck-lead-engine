@@ -3,22 +3,22 @@ import { formatDateTime, relativeDays } from '@/lib/dates';
 import { addActivityAction } from '@/app/actions';
 import { SubmitButton } from './submit-button';
 
-// Marker per kind: a symbol plus the text, never colour alone.
-const MARK: Record<string, { symbol: string; label: string; tone: string }> = {
-  added: { symbol: '+', label: 'Added', tone: 'bg-neutral-soft text-ink-2' },
-  researched: { symbol: '⌕', label: 'Research', tone: 'bg-accent-soft text-accent' },
-  contact: { symbol: '👤', label: 'Contact found', tone: 'bg-accent-soft text-accent' },
-  signal: { symbol: '🔔', label: 'Buying signal', tone: 'bg-warning-soft text-warning-ink' },
-  draft: { symbol: '✎', label: 'Draft', tone: 'bg-accent-soft text-accent' },
-  approved: { symbol: '✓', label: 'Approved', tone: 'bg-good-soft text-good-ink' },
-  sent: { symbol: '✉', label: 'Sent', tone: 'bg-good-soft text-good-ink' },
-  follow_up_drafted: { symbol: '✎', label: 'Follow-up drafted', tone: 'bg-accent-soft text-accent' },
-  follow_up_sent: { symbol: '✉', label: 'Follow-up sent', tone: 'bg-good-soft text-good-ink' },
-  stage: { symbol: '→', label: 'Stage', tone: 'bg-neutral-soft text-ink-2' },
-  note: { symbol: '✱', label: 'Note', tone: 'bg-neutral-soft text-ink-2' },
-  call: { symbol: '☎', label: 'Call', tone: 'bg-neutral-soft text-ink-2' },
-  meeting: { symbol: '◷', label: 'Meeting', tone: 'bg-good-soft text-good-ink' },
-  error: { symbol: '!', label: 'Problem', tone: 'bg-critical-soft text-critical-ink' },
+// Marker per kind: a coloured dot plus the label text, never colour alone.
+const MARK: Record<string, { label: string; tone: string }> = {
+  added: { label: 'Added', tone: 'text-muted' },
+  researched: { label: 'Research', tone: 'text-accent' },
+  contact: { label: 'Contact found', tone: 'text-accent' },
+  signal: { label: 'Buying signal', tone: 'text-warning-ink' },
+  draft: { label: 'Draft', tone: 'text-accent' },
+  approved: { label: 'Approved', tone: 'text-good-ink' },
+  sent: { label: 'Sent', tone: 'text-good-ink' },
+  follow_up_drafted: { label: 'Follow-up drafted', tone: 'text-accent' },
+  follow_up_sent: { label: 'Follow-up sent', tone: 'text-good-ink' },
+  stage: { label: 'Stage', tone: 'text-muted' },
+  note: { label: 'Note', tone: 'text-muted' },
+  call: { label: 'Call', tone: 'text-muted' },
+  meeting: { label: 'Meeting', tone: 'text-good-ink' },
+  error: { label: 'Problem', tone: 'text-critical-ink' },
 };
 
 export function Timeline({ leadId, items }: { leadId: number; items: Activity[] }) {
@@ -46,12 +46,7 @@ export function Timeline({ leadId, items }: { leadId: number; items: Activity[] 
             const m = MARK[a.kind] ?? MARK.note;
             return (
               <li key={a.id} className="relative">
-                <span
-                  className={`absolute top-0 -left-[2.3rem] flex h-6 w-6 items-center justify-center rounded-full text-xs ring-4 ring-surface ${m.tone}`}
-                  aria-hidden
-                >
-                  {m.symbol}
-                </span>
+                <span className={`absolute top-1 -left-[1.95rem] h-2.5 w-2.5 rounded-full bg-current ring-4 ring-surface ${m.tone}`} aria-hidden />
                 <div className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted">
                   <span className="font-medium text-ink-2">{m.label}</span>
                   <time dateTime={a.at.toISOString()} title={formatDateTime(a.at)}>
