@@ -62,6 +62,10 @@ export const leads = pgTable('leads', {
   nextFollowUpAt: timestamp('next_follow_up_at', { withTimezone: true }),
   followUpSubject: text('follow_up_subject').notNull().default(''),
   followUpBody: text('follow_up_body').notNull().default(''),
+  /** The BDA who works this lead. */
+  ownerId: integer('owner_id'),
+  /** Came in from ads, the website or a campaign: shared equally between the team and must never sit untouched. */
+  inbound: boolean('inbound').notNull().default(false),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
@@ -189,3 +193,56 @@ export const people = pgTable('people', {
 });
 export type Person = typeof people.$inferSelect;
 export type NewPerson = typeof people.$inferInsert;
+
+export const USER_ROLES = ['admin', 'bda'] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
+/** Team members. Usernames look like parimal@inveck. */
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  username: text('username').notNull().unique(),
+  name: text('name').notNull(),
+  role: text('role').$type<UserRole>().notNull().default('bda'),
+  passwordHash: text('password_hash').notNull(),
+  mustChangePassword: boolean('must_change_password').notNull().default(true),
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type User = typeof users.$inferSelect;
+
+export const TASK_KINDS = ['call', 'whatsapp', 'email', 'linkedin'] as const;
+export type TaskKind = (typeof TASK_KINDS)[number];
+
+/** One thing a BDA has to do for a lead on a given day: the P1 outreach sequence, and promised callbacks. */
+export const tasks = pgTable('tasks', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').notNull(),
+  ownerId: integer('owner_id').notNull(),
+  kind: text('kind').$type<TaskKind>().notNull(),
+  /** "Day 1", "Follow-up 2"... */
+  step: text('step').notNull().default(''),
+  title: text('title').notNull().default(''),
+  /** Indian date, YYYY-MM-DD. */
+  dueDate: text('due_date').notNull(),
+  slot: text('slot').$type<'morning' | 'day' | 'evening'>().notNull().default('day'),
+  /** Promised callbacks: worked before everything else. */
+  priority: boolean('priority').notNull().default(false),
+  note: text('note').notNull().default(''),
+  doneAt: timestamp('done_at', { withTimezone: true }),
+  /** connected, no_answer, busy, wrong_number, sent, done or skipped. */
+  outcome: text('outcome').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type Task = typeof tasks.$inferSelect;
+
+/** One row per person per Indian day: when they first showed up, last showed up, and clocked in and out. */
+export const attendance = pgTable('attendance', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull(),
+  day: text('day').notNull(),
+  firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  clockInAt: timestamp('clock_in_at', { withTimezone: true }),
+  clockOutAt: timestamp('clock_out_at', { withTimezone: true }),
+});
+export type Attendance = typeof attendance.$inferSelect;

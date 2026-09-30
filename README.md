@@ -44,7 +44,7 @@ it and marks it as sent. Nothing is ever sent automatically.
 
    | Variable | Required | What it is |
    |---|---|---|
-   | `APP_PASSWORD` | yes | The shared login password |
+   | `APP_PASSWORD` | yes | The administrator password (log in with the username left empty) |
    | `CRON_SECRET` | yes | Any long random string (protects the scheduled run) |
    | `DEEPSEEK_API_KEY` | yes* | DeepSeek key (the default AI) |
    | `ANTHROPIC_API_KEY` | optional* | Only needed if you switch the AI to Claude in Settings |
@@ -58,6 +58,25 @@ it and marks it as sent. Nothing is ever sent automatically.
 A scheduled run starts at 09:00 IST on weekdays (`vercel.json`). It researches new
 leads and runs the prospect search on the day chosen in Settings. Long runs continue
 in the background automatically, within Vercel's 300-second function limit.
+
+## The team
+
+Each BDA has their own login: `name@inveck` (for example `parimal@inveck`) with the starting password
+`inveck123`, which the app asks them to change on first use (**Account**). Administrators log in with
+the username empty and the `APP_PASSWORD`, and can reset a team member's password on the Account page.
+
+- **Owners**: every lead has an owner. New leads, whether found by the engine or inbound, are shared out
+  in turn (Parimal, Anuradha, Anchal, Puja, and round again). **Leads** opens on "My leads".
+- **Inbound leads**: tick "Inbound lead" when adding companies. One nobody has touched after two hours is
+  flagged at the top of the owner's Today list.
+- **Today**: each person's work list. For every lead with a decision-maker the app plans the P1 sequence:
+  LinkedIn request, WhatsApp introduction and first call on day 1, then call + WhatsApp + email on the
+  evening of day 1, day 2 and day 3 (working days). Calls are logged as connected, no answer, busy or
+  wrong number; a connected call needs a note, ends the rest of the sequence and can set a callback, which
+  goes to the top of the list. Counters show connected calls (50 a day, 10 with CAs) and LinkedIn
+  requests (50 a day).
+- **Attendance**: first and last time seen each day, plus Clock in and Clock out. Administrators can read
+  it at `/api/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD` until the admin dashboard exists.
 
 ## Using it
 

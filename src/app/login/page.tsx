@@ -9,7 +9,7 @@ export default async function LoginPage({ searchParams }: PageProps<'/login'>) {
         <div className="mb-6">
           <Logo className="h-10 w-auto text-ink" />
           <div className="mt-2 text-sm font-medium text-ink-2">Lead Engine</div>
-          <p className="mt-3 text-sm text-ink-2">Enter the team password to continue.</p>
+          <p className="mt-3 text-sm text-ink-2">Log in with your username and password. Administrators leave the username empty and use the shared password.</p>
         </div>
         <LoginForm next={typeof next === 'string' ? next : '/'} />
       </div>

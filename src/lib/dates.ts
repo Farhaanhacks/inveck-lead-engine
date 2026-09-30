@@ -23,3 +23,8 @@ export function relativeDays(d: Date, now = new Date()): string {
 export function isPast(d: Date): boolean {
   return d.getTime() <= Date.now();
 }
+
+/** "14:05" in Indian time. */
+export function formatTime(d: Date): string {
+  return new Intl.DateTimeFormat('en-IN', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+}

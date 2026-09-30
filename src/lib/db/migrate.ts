@@ -140,4 +140,45 @@ export const SCHEMA_STATEMENTS = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS opportunities_status_idx ON opportunities (status, created_at)`,
+  // Team: owners, tasks and attendance.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS owner_id INTEGER`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS inbound BOOLEAN NOT NULL DEFAULT false`,
+  `CREATE INDEX IF NOT EXISTS leads_owner_idx ON leads (owner_id)`,
+  `CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'bda',
+    password_hash TEXT NOT NULL,
+    must_change_password BOOLEAN NOT NULL DEFAULT true,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS tasks (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    owner_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    step TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    due_date TEXT NOT NULL,
+    slot TEXT NOT NULL DEFAULT 'day',
+    priority BOOLEAN NOT NULL DEFAULT false,
+    note TEXT NOT NULL DEFAULT '',
+    done_at TIMESTAMPTZ,
+    outcome TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS tasks_owner_due_idx ON tasks (owner_id, due_date)`,
+  `CREATE INDEX IF NOT EXISTS tasks_lead_idx ON tasks (lead_id)`,
+  `CREATE TABLE IF NOT EXISTS attendance (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    clock_in_at TIMESTAMPTZ,
+    clock_out_at TIMESTAMPTZ,
+    UNIQUE (user_id, day)
+  )`,
 ];

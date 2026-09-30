@@ -1,0 +1,297 @@
+import Link from 'next/link';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/lib/db';
+import { leads, type Lead, type Task } from '@/lib/db/schema';
+import { getCurrentUser, listBdas } from '@/lib/users';
+import { assignUnowned } from '@/lib/assign';
+import { getAttendance } from '@/lib/attendance';
+import {
+  DAILY_CA_CONNECTED_CALLS,
+  DAILY_CONNECTED_CALLS,
+  DAILY_LINKEDIN_LIMIT,
+  dayCounts,
+  ensureSequences,
+  istDay,
+  loadTodayTasks,
+  unattendedInbound,
+  UNATTENDED_AFTER_HOURS,
+  type TodayTask,
+} from '@/lib/tasks';
+import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLink } from '@/lib/talk';
+import { formatDate, formatTime, relativeDays } from '@/lib/dates';
+import { PageHeader } from '@/components/page-header';
+import { CopyButton } from '@/components/copy-button';
+import { clockInAction, clockOutAction, completeTaskAction } from '../../team-actions';
+
+const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
+
+function Counter({ label, done, goal }: { label: string; done: number; goal?: number }) {
+  const pct = goal ? Math.min(100, Math.round((done / goal) * 100)) : 0;
+  return (
+    <div className="card p-4">
+      <div className="text-xs text-muted">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">
+        {done}
+        {goal ? <span className="text-sm font-normal text-muted"> / {goal}</span> : null}
+      </div>
+      {goal ? (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2" role="img" aria-label={`${pct}% of the daily target`}>
+          <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Who({ lead, task }: { lead: Lead; task: Task }) {
+  return (
+    <div className="min-w-0">
+      <Link href={`/leads/${lead.id}`} className="font-medium hover:underline">{lead.company}</Link>
+      <div className="text-sm text-ink-2">
+        {lead.contactName}
+        {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
+      </div>
+      <div className="mt-0.5 text-xs text-muted">
+        {task.step}
+        {task.slot !== 'day' && !task.step.toLowerCase().includes(task.slot) ? ` · ${task.slot}` : ''}
+      </div>
+    </div>
+  );
+}
+
+function Reach({ lead }: { lead: Lead }) {
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      {lead.contactPhone ? (
+        <a href={`tel:${lead.contactPhone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{lead.contactPhone}</a>
+      ) : (
+        <span className="text-warning-ink">No number yet. Find it with ContactOut from the LinkedIn profile.</span>
+      )}
+      {lead.contactLinkedin && <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn profile</a>}
+      {lead.contactEmail && <span className="text-muted">{lead.contactEmail}</span>}
+    </div>
+  );
+}
+
+function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
+  return (
+    <form action={completeTaskAction} className="flex flex-wrap gap-2">
+      <input type="hidden" name="id" value={id} />
+      {buttons.map(([value, label]) => (
+        <button key={value} name="outcome" value={value} className={SMALL}>{label}</button>
+      ))}
+    </form>
+  );
+}
+
+function CallActions({ task }: { task: Task }) {
+  return (
+    <div className="flex flex-wrap items-start gap-2">
+      <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number']]} />
+      <details className="relative">
+        <summary className="btn-primary list-none px-2.5 py-1 text-xs [&::-webkit-details-marker]:hidden">Connected</summary>
+        <form action={completeTaskAction} className="card absolute right-0 z-10 mt-2 w-80 space-y-2 p-4 shadow-lg">
+          <input type="hidden" name="id" value={task.id} />
+          <label htmlFor={`note-${task.id}`} className="label">What was discussed *</label>
+          <textarea id={`note-${task.id}`} name="note" rows={3} required className="field" placeholder="Spoke with the Plant Head about their current stock count process." />
+          <label htmlFor={`cb-${task.id}`} className="label">Next call on (optional)</label>
+          <input id={`cb-${task.id}`} name="callbackDate" type="date" min={istDay()} className="field" />
+          <p className="text-xs text-muted">Saves the call and stops the rest of this sequence. A date adds a callback to the top of your list.</p>
+          <button name="outcome" value="connected" className="btn-primary">Save call</button>
+        </form>
+      </details>
+    </div>
+  );
+}
+
+function TaskRow({ item, bda }: { item: TodayTask; bda: string }) {
+  const { task, lead } = item;
+  const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
+  return (
+    <li className="px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <Who lead={lead} task={task} />
+          {item.overdue && <div className="mt-0.5 text-xs font-medium text-critical-ink">Overdue since {relativeDays(new Date(`${task.dueDate}T12:00:00+05:30`))}</div>}
+          {task.priority && task.note && <div className="mt-0.5 text-xs text-ink-2">Note: {task.note}</div>}
+          <Reach lead={lead} />
+        </div>
+        <div className="flex flex-wrap items-start gap-2">
+          {task.kind === 'call' && <CallActions task={task} />}
+          {task.kind === 'whatsapp' && (
+            <>
+              {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
+              <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+            </>
+          )}
+          {task.kind === 'linkedin' && (
+            <>
+              {lead.contactLinkedin ? <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open profile</a> : null}
+              <CopyButton text={linkedinNote(lead, bda)} label="Copy note" />
+              <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+            </>
+          )}
+          {task.kind === 'email' && (
+            <>
+              <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
+              <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
+            </>
+          )}
+        </div>
+      </div>
+      <details className="mt-2">
+        <summary className="cursor-pointer text-xs text-muted hover:text-ink">{task.kind === 'call' ? 'Talk track' : 'Message'}</summary>
+        <div className="mt-2 space-y-2 rounded-md bg-surface-2 p-3 text-sm">
+          {task.kind === 'call' && (
+            <>
+              <p>{callOpener(lead, bda)}</p>
+              <ul className="list-disc space-y-0.5 pl-5 text-ink-2">
+                {discoveryQuestions(lead).map((q) => <li key={q}>{q}</li>)}
+              </ul>
+            </>
+          )}
+          {task.kind === 'whatsapp' && (
+            <>
+              <p>{whatsappIntro(lead, bda)}</p>
+              <CopyButton text={whatsappIntro(lead, bda)} label="Copy message" />
+            </>
+          )}
+          {task.kind === 'linkedin' && <p>{linkedinNote(lead, bda)}</p>}
+          {task.kind === 'email' && <p className="whitespace-pre-line">{lead.emailSubject ? `Subject: ${lead.emailSubject}\n\n` : ''}{lead.emailBody || 'No draft yet.'}</p>}
+        </div>
+      </details>
+    </li>
+  );
+}
+
+function Section({ title, hint, items, bda }: { title: string; hint?: string; items: TodayTask[]; bda: string }) {
+  if (!items.length) return null;
+  return (
+    <section className="card mb-6 overflow-hidden">
+      <div className="border-b border-line px-5 py-3">
+        <h2 className="text-sm font-semibold">
+          {title} <span className="font-normal text-muted tabular-nums">{items.length}</span>
+        </h2>
+        {hint && <p className="text-xs text-muted">{hint}</p>}
+      </div>
+      <ul className="divide-y divide-line">
+        {items.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} />)}
+      </ul>
+    </section>
+  );
+}
+
+export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
+  const me = (await getCurrentUser())!;
+  const db = await getDb();
+  await assignUnowned(db);
+  await ensureSequences(db);
+
+  const team = await listBdas(db);
+  const sp = await searchParams;
+  const asked = Number(typeof sp.user === 'string' ? sp.user : 0);
+  const viewId = me.role === 'admin' ? (team.find((b) => b.id === asked)?.id ?? team[0]?.id ?? 0) : me.id;
+  const viewing = team.find((b) => b.id === viewId);
+  const bda = viewing?.name ?? me.name;
+  const own = me.id === viewId;
+
+  const day = istDay();
+  const [items, counts, attendance, unattended, demos] = await Promise.all([
+    loadTodayTasks(db, viewId, day),
+    dayCounts(db, viewId, day),
+    getAttendance(db, viewId, day),
+    unattendedInbound(db, viewId),
+    db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
+  ]);
+  const callbacks = items.filter((i) => i.task.priority);
+  const rest = items.filter((i) => !i.task.priority);
+  const byKind = (k: Task['kind']) => rest.filter((i) => i.task.kind === k);
+  const startHere = unattended.length + callbacks.length + demos.length;
+
+  return (
+    <>
+      <PageHeader title="Today" description={`${formatDate(new Date())}. Work the list from the top: callbacks, demos and new inbound leads come first.`}>
+        {me.role === 'admin' && team.length > 0 && (
+          <form action="/today" className="flex items-center gap-2">
+            <label htmlFor="user" className="sr-only">Show the list of</label>
+            <select id="user" name="user" defaultValue={viewId} className="field w-auto py-1.5">
+              {team.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <button className="btn-secondary">Show</button>
+          </form>
+        )}
+      </PageHeader>
+
+      {me.role === 'admin' && !team.length && <p className="mb-6 text-sm text-muted">No team members yet.</p>}
+
+      <section className="card mb-6 flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+        <div>
+          <span className="font-medium">{bda}</span>
+          <span className="ml-3 text-ink-2">
+            {attendance?.clockInAt
+              ? attendance.clockOutAt
+                ? `Clocked in ${formatTime(attendance.clockInAt)}, out ${formatTime(attendance.clockOutAt)}`
+                : `Clocked in at ${formatTime(attendance.clockInAt)}`
+              : 'Not clocked in'}
+            {attendance ? <span className="text-muted">{` · first seen ${formatTime(attendance.firstSeenAt)}`}</span> : null}
+          </span>
+        </div>
+        {own && me.id ? (
+          attendance?.clockInAt && !attendance.clockOutAt ? (
+            <form action={clockOutAction}><button className="btn-secondary">Clock out</button></form>
+          ) : (
+            <form action={clockInAction}><button className="btn-primary">{attendance?.clockOutAt ? 'Clock in again' : 'Clock in'}</button></form>
+          )
+        ) : null}
+      </section>
+
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Counter label="Connected calls today" done={counts.connectedCalls} goal={DAILY_CONNECTED_CALLS} />
+        <Counter label="Connected calls with CAs" done={counts.caConnectedCalls} goal={DAILY_CA_CONNECTED_CALLS} />
+        <Counter label="LinkedIn requests sent" done={counts.linkedinSent} goal={DAILY_LINKEDIN_LIMIT} />
+        <Counter label={`Call attempts · WhatsApp · emails`} done={counts.callAttempts + counts.whatsappSent + counts.emailsDone} />
+      </div>
+
+      {startHere > 0 && (
+        <section className="card mb-6 overflow-hidden border-warning-ink/40">
+          <div className="border-b border-line bg-warning-soft px-5 py-3">
+            <h2 className="text-sm font-semibold text-warning-ink">Start here <span className="font-normal tabular-nums">{startHere}</span></h2>
+          </div>
+          <ul className="divide-y divide-line">
+            {unattended.map((l) => (
+              <li key={`in-${l.id}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div>
+                  <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
+                  <div className="text-xs font-medium text-critical-ink">Inbound lead untouched for over {UNATTENDED_AFTER_HOURS} hours. Call, understand, qualify.</div>
+                </div>
+                <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
+              </li>
+            ))}
+            {demos.map((l) => (
+              <li key={`demo-${l.id}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div>
+                  <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
+                  <div className="text-xs text-ink-2">Demo or meeting booked{l.contactName ? ` with ${l.contactName}` : ''}. Customer meetings come first.</div>
+                </div>
+                <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
+              </li>
+            ))}
+            {callbacks.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} />)}
+          </ul>
+        </section>
+      )}
+
+      <Section title="Calls" hint="Connected means a live conversation with the decision-maker, not an attempt." items={byKind('call')} bda={bda} />
+      <Section title="WhatsApp" items={byKind('whatsapp')} bda={bda} />
+      <Section title="Emails" items={byKind('email')} bda={bda} />
+      <Section title="LinkedIn requests" hint={`At most ${DAILY_LINKEDIN_LIMIT} a day. ${Math.max(0, DAILY_LINKEDIN_LIMIT - counts.linkedinSent)} left today.`} items={byKind('linkedin')} bda={bda} />
+
+      {!items.length && !startHere && (
+        <div className="card p-8 text-center text-sm text-muted">
+          Nothing due. New companies the engine researches appear here with their calls, WhatsApp messages, emails and LinkedIn requests.
+          <div className="mt-3"><Link href="/leads" className="btn-secondary">See your leads</Link></div>
+        </div>
+      )}
+    </>
+  );
+}

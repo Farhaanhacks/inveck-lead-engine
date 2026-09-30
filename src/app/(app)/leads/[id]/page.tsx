@@ -10,6 +10,8 @@ import { formatDate, isPast, relativeDays } from '@/lib/dates';
 import { StatusPill } from '@/components/status-pill';
 import { CopyButton } from '@/components/copy-button';
 import { SubmitButton } from '@/components/submit-button';
+import { listBdas } from '@/lib/users';
+import { assignOwnerAction } from '../../../team-actions';
 import {
   addLeadAsClientAction,
   makePrimaryAction,
@@ -213,6 +215,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   if (!Number.isInteger(id)) notFound();
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  const bdas = await listBdas(db);
   if (!lead) notFound();
   const [segmentRows, timeline, team] = await Promise.all([
     db.select({ segment: icps.segment }).from(icps),
@@ -248,6 +251,18 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
             )}
           </p>
           {lead.source && <p className="mt-1 text-xs text-muted">Source: {lead.source}</p>}
+          {bdas.length > 0 && (
+            <form action={assignOwnerAction} className="mt-2 flex items-center gap-2 text-xs">
+              <input type="hidden" name="id" value={id} />
+              <label htmlFor="ownerId" className="text-muted">Owner</label>
+              <select id="ownerId" name="ownerId" defaultValue={lead.ownerId ?? ''} className="field w-auto py-1 text-xs">
+                {!lead.ownerId && <option value="">Not assigned yet</option>}
+                {bdas.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+              <button className="btn-secondary px-2.5 py-1 text-xs">Change owner</button>
+              {lead.inbound && <span className="text-muted">Inbound lead</span>}
+            </form>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {lead.status === 'Awaiting Approval' && <StatusButton id={id} action="approve" label="Approve" primary />}

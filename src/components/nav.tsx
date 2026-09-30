@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const LINKS = [
+  { href: '/today', label: 'Today' },
   { href: '/', label: 'Dashboard' },
   { href: '/leads', label: 'Leads' },
   { href: '/pipeline', label: 'Pipeline' },

@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 import { SCHEMA_STATEMENTS } from './migrate';
 import { seedIfEmpty } from './seed';
+import { seedUsers } from '../passwords';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -45,6 +46,7 @@ async function connect(): Promise<Db> {
   }
   for (const statement of SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
   await seedIfEmpty(db);
+  await seedUsers(db);
   return db;
 }
 

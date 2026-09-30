@@ -64,6 +64,13 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
             </div>
           </div>
         </details>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" name="inbound" value="yes" className="mt-1" />
+          <span>
+            Inbound lead (from ads, the website or a campaign)
+            <span className="block text-xs text-muted">Shared equally between the team. Gets flagged if nobody touches it.</span>
+          </span>
+        </label>
         <div className="flex items-center gap-3">
           <SubmitButton pendingText="Adding…">Add company</SubmitButton>
           <Message state={one} />
@@ -84,6 +91,13 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
           className="field font-mono text-xs"
           placeholder={`Bajaj Auto, bajajauto.com, Pune, Manufacturing & 3PL\nKirtane & Pandit, kirtanepandit.com, Pune, CA Firms\nMahindra Logistics`}
         />
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" name="inbound" value="yes" className="mt-1" />
+          <span>
+            Inbound lead (from ads, the website or a campaign)
+            <span className="block text-xs text-muted">Shared equally between the team. Gets flagged if nobody touches it.</span>
+          </span>
+        </label>
         <div className="flex items-center gap-3">
           <SubmitButton pendingText="Adding…">Add companies</SubmitButton>
           <Message state={many} />

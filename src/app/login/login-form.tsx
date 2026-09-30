@@ -9,8 +9,12 @@ export function LoginForm({ next }: { next: string }) {
     <form action={action} className="space-y-4">
       <input type="hidden" name="next" value={next} />
       <div>
+        <label htmlFor="username" className="label">Username</label>
+        <input id="username" name="username" autoComplete="username" autoCapitalize="none" placeholder="name@inveck" autoFocus className="field" />
+      </div>
+      <div>
         <label htmlFor="password" className="label">Password</label>
-        <input id="password" name="password" type="password" required autoFocus className="field" />
+        <input id="password" name="password" type="password" autoComplete="current-password" required className="field" />
       </div>
       {state?.error && <p className="text-sm text-critical-ink" role="alert">{state.error}</p>}
       <SubmitButton className="btn-primary w-full" pendingText="Checking…">Log in</SubmitButton>

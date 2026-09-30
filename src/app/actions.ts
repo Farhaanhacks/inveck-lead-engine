@@ -13,7 +13,10 @@ import { makePrimary } from '@/lib/people';
 import { logActivity } from '@/lib/activity';
 import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
 import { findSignals } from '@/lib/pipeline/signals';
-import { appPassword, SESSION_COOKIE, sessionToken } from '@/lib/auth';
+import { appPassword, createSession, SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/auth';
+import { assignUnowned } from '@/lib/assign';
+import { recordPresence } from '@/lib/attendance';
+import { getCurrentUser, verifyLogin } from '@/lib/users';
 import { driveRun, liveServices } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
@@ -25,19 +28,37 @@ const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
 // ─── Login ────────────────────────────────────────────────────────────────
 
+/**
+ * Team members log in with name@inveck and their own password. A blank username (or "admin")
+ * with the shared APP_PASSWORD is the admin login, which sees everything.
+ */
 export async function login(_prev: { error: string } | undefined, form: FormData) {
-  const password = appPassword();
-  if (!password) return { error: 'APP_PASSWORD is not set on the server.' };
-  if (str(form, 'password') !== password) return { error: 'Wrong password.' };
-  (await cookies()).set(SESSION_COOKIE, await sessionToken(), {
+  const username = str(form, 'username');
+  const password = String(form.get('password') ?? '');
+  let subject = '';
+  if (!username || username.toLowerCase() === 'admin') {
+    if (!appPassword()) return { error: 'APP_PASSWORD is not set on the server.' };
+    if (password === appPassword()) subject = 'admin';
+  } else {
+    const db = await getDb();
+    const user = await verifyLogin(db, username, password);
+    if (user) {
+      subject = `u${user.id}`;
+      await recordPresence(db, user.id);
+    }
+  }
+  if (!subject) return { error: 'Wrong username or password.' };
+  (await cookies()).set(SESSION_COOKIE, await createSession(subject), {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: SESSION_MAX_AGE,
   });
+  // Team members start on their list for the day, unless they were sent to a page before logging in.
   const next = str(form, 'next');
-  redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/');
+  const wanted = next.startsWith('/') && !next.startsWith('//') && next !== '/' ? next : '';
+  redirect(wanted || (subject === 'admin' ? '/' : '/today'));
 }
 
 export async function logout() {
@@ -108,19 +129,25 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     return { ok: false, message: `${company} is already a lead or a client.` };
   }
   const db = await getDb();
+  const inbound = str(form, 'inbound') === 'yes';
+  const me = await getCurrentUser();
   const [row] = await db.insert(leads).values({
+    // A team member who adds a company works it; inbound leads are shared out in turn.
+    ownerId: me?.role === 'bda' && !inbound ? me.id : null,
+    inbound,
     company,
     website,
     city: str(form, 'city'),
     segment: await matchSegment(str(form, 'segment')),
-    source: 'Added by hand',
+    source: inbound ? 'Inbound lead' : 'Added by hand',
     contactName: str(form, 'contactName'),
     contactTitle: str(form, 'contactTitle'),
     contactEmail: str(form, 'contactEmail'),
     contactPhone: str(form, 'contactPhone'),
     contactLinkedin: str(form, 'contactLinkedin'),
   }).returning({ id: leads.id });
-  await logActivity(db, row.id, 'added', 'Added by hand');
+  await logActivity(db, row.id, 'added', inbound ? 'Inbound lead' : 'Added by hand');
+  await assignUnowned(db);
   revalidatePath('/leads');
   revalidatePath('/');
   await researchNow();
@@ -130,6 +157,9 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
 /** Bulk add: one company per line, "Company, website, city, segment" (comma or tab separated). */
 export async function addLeadsBulkAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
   const lines = str(form, 'bulk').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const inbound = str(form, 'inbound') === 'yes';
+  const me = await getCurrentUser();
+  const ownerId = me?.role === 'bda' && !inbound ? me.id : null;
   const known = await knownCompanies();
   const toAdd: (typeof leads.$inferInsert)[] = [];
   let skipped = 0;
@@ -143,12 +173,13 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
     }
     known.names.add(normCompany(company));
     if (domain) known.domains.add(domain);
-    toAdd.push({ company, website: domain, city, segment: await matchSegment(segment), source: 'Added by hand' });
+    toAdd.push({ company, website: domain, city, segment: await matchSegment(segment), source: inbound ? 'Inbound lead' : 'Added by hand', inbound, ownerId });
   }
   if (toAdd.length) {
     const db = await getDb();
     const rows = await db.insert(leads).values(toAdd).returning({ id: leads.id });
-    for (const r of rows) await logActivity(db, r.id, 'added', 'Added by hand (bulk)');
+    for (const r of rows) await logActivity(db, r.id, 'added', inbound ? 'Inbound lead (bulk)' : 'Added by hand (bulk)');
+    await assignUnowned(db);
     await researchNow();
   }
   revalidatePath('/leads');
@@ -245,8 +276,12 @@ export async function scanRadarAction() {
 
 /** A new facility from the news becomes a lead, with the article as its buying signal. */
 export async function addOpportunityAction(form: FormData) {
-  const leadId = await addOpportunityAsLead(await getDb(), Number(str(form, 'id')));
-  if (leadId) await researchNow();
+  const db = await getDb();
+  const leadId = await addOpportunityAsLead(db, Number(str(form, 'id')));
+  if (leadId) {
+    await assignUnowned(db);
+    await researchNow();
+  }
   refreshLeadPages();
 }
 

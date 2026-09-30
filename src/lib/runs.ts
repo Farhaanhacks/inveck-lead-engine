@@ -11,6 +11,7 @@ import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
 import type { LeadResult, LeadUpdate } from './pipeline/process-lead';
 import { savePeople } from './people';
+import { assignUnowned } from './assign';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, existingClients: 0, errors: 0 };
 /** A run with no heartbeat for this long is considered dead (its function timed out or crashed). */
@@ -92,6 +93,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
           for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);
+          await assignUnowned(db);
         }
         stats.prospectsAdded += found.length;
         await log(found.length ? `Added ${found.length} new prospects: ${found.map((p) => p.company).join(', ')}` : 'No new prospects found');

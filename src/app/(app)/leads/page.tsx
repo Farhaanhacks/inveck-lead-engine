@@ -3,6 +3,8 @@ import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { ensureResearch, requestOrigin } from '@/lib/run-driver';
 import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
+import { getCurrentUser, listBdas } from '@/lib/users';
+import { assignUnowned } from '@/lib/assign';
 import { PageHeader } from '@/components/page-header';
 import { StatusPill } from '@/components/status-pill';
 import { bulkLeadAction } from '../../actions';
@@ -22,7 +24,15 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
 
   await ensureResearch(await requestOrigin());
   const db = await getDb();
+  await assignUnowned(db);
+  const me = await getCurrentUser();
+  const team = await listBdas(db);
+  const names = new Map(team.map((b) => [b.id, b.name]));
+  // Team members see their own leads first; administrators see everyone's.
+  const ownerParam = typeof sp.owner === 'string' ? sp.owner : me?.role === 'bda' ? 'me' : 'all';
+  const ownerId = ownerParam === 'me' ? me?.id : Number(ownerParam) || 0;
   const filters: SQL[] = [];
+  if (ownerId) filters.push(eq(leads.ownerId, ownerId));
   if (segment) filters.push(eq(leads.segment, segment));
   if (q) filters.push(or(ilike(leads.company, `%${q}%`), ilike(leads.contactName, `%${q}%`), ilike(leads.city, `%${q}%`))!);
   const where = filters.length ? and(...filters) : undefined;
@@ -47,7 +57,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const all = Object.entries(counts).reduce((a, [s, n]) => (s === 'Disqualified' ? a : a + n), 0);
 
   const link = (next: Record<string, string>) => {
-    const p = new URLSearchParams({ ...(status && { status }), ...(segment && { segment }), ...(q && { q }), ...next });
+    const p = new URLSearchParams({ ...(status && { status }), ...(segment && { segment }), ...(q && { q }), owner: ownerParam, ...next });
     for (const [k, v] of [...p]) if (!v) p.delete(k);
     return `/leads${p.size ? `?${p}` : ''}`;
   };
@@ -60,6 +70,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
 
       <form className="mb-4 flex flex-wrap gap-2" action="/leads">
         {status && <input type="hidden" name="status" value={status} />}
+        <input type="hidden" name="owner" value={ownerParam} />
         <input name="q" defaultValue={q} placeholder="Search company, contact or city" className="field max-w-xs" />
         <select name="segment" defaultValue={segment} className="field w-auto">
           <option value="">All segments</option>
@@ -69,6 +80,19 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
         </select>
         <button className="btn-secondary">Filter</button>
       </form>
+
+      {team.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="mr-1 text-muted">Showing</span>
+          {me && me.id ? (
+            <Link href={link({ owner: 'me', page: '' })} className={`rounded-full border px-3 py-1 ${ownerParam === 'me' ? 'border-accent bg-accent-soft text-accent' : 'border-line text-ink-2 hover:bg-surface-2'}`}>My leads</Link>
+          ) : null}
+          <Link href={link({ owner: 'all', page: '' })} className={`rounded-full border px-3 py-1 ${ownerParam === 'all' ? 'border-accent bg-accent-soft text-accent' : 'border-line text-ink-2 hover:bg-surface-2'}`}>Everyone</Link>
+          {team.filter((b) => b.id !== me?.id).map((b) => (
+            <Link key={b.id} href={link({ owner: String(b.id), page: '' })} className={`rounded-full border px-3 py-1 ${ownerParam === String(b.id) ? 'border-accent bg-accent-soft text-accent' : 'border-line text-ink-2 hover:bg-surface-2'}`}>{b.name}</Link>
+          ))}
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         <Link href={link({ status: '', page: '' })} className={`rounded-full border px-3 py-1 text-xs ${!status ? 'border-accent bg-accent-soft text-accent' : 'border-line text-ink-2 hover:bg-surface-2'}`}>
@@ -94,12 +118,13 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
           <button name="action" value="delete" className="btn-danger px-2.5 py-1 text-xs">Delete</button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[940px] text-sm">
+          <table className="w-full min-w-[1020px] text-sm">
             <thead>
               <tr className="text-left text-xs text-muted">
                 <th className="w-10 px-4 py-2"><span className="sr-only">Select</span></th>
                 <th className="px-2 py-2 font-medium">Company</th>
                 <th className="px-2 py-2 font-medium">Status</th>
+                <th className="px-2 py-2 font-medium">Owner</th>
                 <th className="px-2 py-2 font-medium">Decision-maker</th>
                 <th className="px-2 py-2 font-medium">Email</th>
                 <th className="px-2 py-2 font-medium">Phone</th>
@@ -127,6 +152,10 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                         Follow-up {l.followUpStep + 1} {isPast(l.nextFollowUpAt) ? 'due' : relativeDays(l.nextFollowUpAt)}
                       </div>
                     )}
+                  </td>
+                  <td className="px-2 py-3 text-ink-2">
+                    {l.ownerId ? names.get(l.ownerId) ?? '' : <span className="text-muted">—</span>}
+                    {l.inbound && <div className="text-xs text-muted">Inbound</div>}
                   </td>
                   <td className="px-2 py-3">
                     {l.contactName ? (
