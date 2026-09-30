@@ -2,6 +2,11 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, settings, users } from './db/schema';
 
+/** A team member can hand over their own leads, or take one nobody owns; only an administrator can move someone else's. */
+export function canReassign(user: { id: number; role: 'admin' | 'bda' }, lead: { ownerId: number | null }): boolean {
+  return user.role === 'admin' || lead.ownerId === null || lead.ownerId === user.id;
+}
+
 /**
  * Gives every lead without an owner to the team in turn: the first to Parimal, the next to
  * Anuradha, then Anchal, then Puja, and round again. Inbound and engine-found leads share the order.

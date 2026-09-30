@@ -6,6 +6,7 @@ import { getDb } from '@/lib/db';
 import { leads, tasks, users, type TaskKind } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
+import { canReassign } from '@/lib/assign';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
 import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay } from '@/lib/tasks';
 
@@ -128,12 +129,13 @@ export async function resetPasswordAction(form: FormData) {
 }
 
 export async function assignOwnerAction(form: FormData) {
-  await requireUser();
+  const user = await requireUser();
   const id = Number(str(form, 'id'));
   const ownerId = Number(str(form, 'ownerId'));
   const db = await getDb();
   const [owner] = await db.select().from(users).where(and(eq(users.id, ownerId), eq(users.active, true)));
-  if (!owner || !id) return;
+  const [lead] = id ? await db.select({ ownerId: leads.ownerId }).from(leads).where(eq(leads.id, id)) : [];
+  if (!owner || !lead || !canReassign(user, lead)) return;
   await db.update(leads).set({ ownerId }).where(eq(leads.id, id));
   // Open tasks go with the lead.
   await db.update(tasks).set({ ownerId }).where(and(eq(tasks.leadId, id), isNull(tasks.doneAt)));

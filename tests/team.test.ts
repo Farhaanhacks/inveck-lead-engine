@@ -5,7 +5,7 @@ import { leads, tasks, users, attendance, activities } from '@/lib/db/schema';
 import { checkPassword, hashPassword, normaliseUsername } from '@/lib/passwords';
 import { verifyLogin } from '@/lib/users';
 import { createSession, readSession } from '@/lib/auth';
-import { assignUnowned } from '@/lib/assign';
+import { assignUnowned, canReassign } from '@/lib/assign';
 import { addWorkingDays, dayCounts, ensureSequences, firstWorkingDay, istDay, loadTodayTasks, planSequence, unattendedInbound } from '@/lib/tasks';
 import { clockIn, clockOut, getAttendance, recordPresence } from '@/lib/attendance';
 import { callOpener, linkedinNote, whatsappLink } from '@/lib/talk';
@@ -63,6 +63,28 @@ describe('round-robin', () => {
     await assignUnowned(db);
     expect((await owners()).slice(5)).toEqual([ids[1], ids[2]]);
     expect(await assignUnowned(db)).toBe(0);
+  });
+});
+
+describe('one owner per lead', () => {
+  it('never gives a lead to two people, even when two assignments run at once', async () => {
+    const db = await getDb();
+    await db.insert(leads).values(Array.from({ length: 40 }, (_, i) => lead(`Company ${i}`)));
+    const [a, b] = await Promise.all([assignUnowned(db), assignUnowned(db)]);
+    expect(a + b).toBeGreaterThanOrEqual(40);
+    const rows = await db.select().from(leads);
+    const team = new Set((await db.select().from(users)).map((u) => u.id));
+    expect(rows.every((l) => l.ownerId !== null && team.has(l.ownerId))).toBe(true);
+    // A second pass finds nothing left to give out.
+    expect(await assignUnowned(db)).toBe(0);
+  });
+
+  it('lets a team member hand over only their own leads; an administrator can move any', () => {
+    const bda = { id: 2, role: 'bda' as const };
+    expect(canReassign(bda, { ownerId: 2 })).toBe(true);
+    expect(canReassign(bda, { ownerId: null })).toBe(true);
+    expect(canReassign(bda, { ownerId: 3 })).toBe(false);
+    expect(canReassign({ id: 0, role: 'admin' }, { ownerId: 3 })).toBe(true);
   });
 });
 
