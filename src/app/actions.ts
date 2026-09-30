@@ -17,6 +17,7 @@ import { appPassword, createSession, SESSION_COOKIE, SESSION_MAX_AGE } from '@/l
 import { assignUnowned } from '@/lib/assign';
 import { recordPresence } from '@/lib/attendance';
 import { getCurrentUser, verifyLogin } from '@/lib/users';
+import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
@@ -83,6 +84,7 @@ async function researchNow() {
 }
 
 export async function startRunAction(form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual' });
   if (created) {
@@ -94,6 +96,7 @@ export async function startRunAction(form: FormData) {
 }
 
 export async function stopRunAction(form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   await db.update(runs).set({ cancelRequested: true }).where(eq(runs.id, Number(str(form, 'id'))));
   revalidatePath('/');
@@ -191,6 +194,7 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
 }
 
 export async function updateLeadAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const db = await getDb();
   await db
@@ -234,6 +238,7 @@ function refreshLeadPages(id?: number) {
 }
 
 export async function setLeadStatusAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const status = STATUS_ACTIONS[str(form, 'action')];
   if (!id || !status) return;
@@ -243,7 +248,7 @@ export async function setLeadStatusAction(form: FormData) {
 }
 
 export async function bulkLeadAction(form: FormData) {
-  const ids = form.getAll('ids').map(Number).filter(Boolean);
+  const ids = await ownedIds(form.getAll('ids').map(Number).filter(Boolean));
   const action = str(form, 'action');
   if (!ids.length) return;
   const db = await getDb();
@@ -260,6 +265,7 @@ export async function bulkLeadAction(form: FormData) {
 
 /** Won: moves the lead to Won and adds the company to the current-clients sheet. */
 export async function addLeadAsClientAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   if (!id) return;
   await applyStage(await getDb(), [id], 'Won', str(form, 'whyBought'));
@@ -269,6 +275,7 @@ export async function addLeadAsClientAction(form: FormData) {
 
 /** Scans the news for new plants and warehouses right now. */
 export async function scanRadarAction() {
+  await requireAdmin();
   const r = await scanRadar(await getDb(), await liveServices(), undefined, { force: true });
   revalidatePath('/');
   return r.error ? { ok: false, message: `The news scan failed: ${r.error}` } : { ok: true, message: r.added ? `Found ${r.added} new opening${r.added === 1 ? '' : 's'}.` : 'No new openings since the last scan.' };
@@ -276,6 +283,7 @@ export async function scanRadarAction() {
 
 /** A new facility from the news becomes a lead, with the article as its buying signal. */
 export async function addOpportunityAction(form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   const leadId = await addOpportunityAsLead(db, Number(str(form, 'id')));
   if (leadId) {
@@ -286,6 +294,7 @@ export async function addOpportunityAction(form: FormData) {
 }
 
 export async function dismissOpportunityAction(form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   await db.update(opportunities).set({ status: 'dismissed' }).where(eq(opportunities.id, Number(str(form, 'id'))));
   revalidatePath('/');
@@ -293,6 +302,7 @@ export async function dismissOpportunityAction(form: FormData) {
 
 /** Makes someone else at the company the lead's main contact. */
 export async function makePrimaryAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const leadId = await makePrimary(await getDb(), Number(str(form, 'personId')));
   if (leadId) refreshLeadPages(leadId);
   revalidatePath('/contacts');
@@ -300,6 +310,7 @@ export async function makePrimaryAction(form: FormData) {
 
 /** Drag and drop on the pipeline board. */
 export async function moveLeadStageAction(id: number, stage: PipelineStage) {
+  if (!(await mayActOn(id))) return { ok: false };
   if (!Number.isInteger(id) || !PIPELINE_STAGES.includes(stage)) return { ok: false };
   await applyStage(await getDb(), [id], stage);
   refreshLeadPages(id);
@@ -309,6 +320,7 @@ export async function moveLeadStageAction(id: number, stage: PipelineStage) {
 
 /** A note, call or meeting logged by the team on the lead's timeline. */
 export async function addActivityAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const kind = str(form, 'kind');
   const text = str(form, 'text');
@@ -319,6 +331,7 @@ export async function addActivityAction(form: FormData) {
 
 /** Writes the next follow-up now instead of waiting for the next run. */
 export async function writeFollowUpAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
@@ -330,6 +343,7 @@ export async function writeFollowUpAction(form: FormData) {
 
 /** The follow-up (as edited) has been sent: schedule the next one, if any. */
 export async function sendFollowUpAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const skip = str(form, 'skip') === '1';
   const db = await getDb();
@@ -353,6 +367,7 @@ export async function sendFollowUpAction(form: FormData) {
 
 /** Looks for fresh buying signals for one lead. */
 export async function refreshSignalsAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
@@ -368,6 +383,7 @@ export async function refreshSignalsAction(form: FormData) {
 }
 
 export async function deleteLeadAction(form: FormData) {
+  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const db = await getDb();
   const id = Number(str(form, 'id'));
   await db.delete(leads).where(eq(leads.id, id));
@@ -395,6 +411,7 @@ function icpFields(form: FormData) {
 }
 
 export async function saveIcpAction(form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   const id = Number(str(form, 'id'));
   const fields = icpFields(form);
@@ -405,6 +422,7 @@ export async function saveIcpAction(form: FormData) {
 }
 
 export async function deleteIcpAction(form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   await db.delete(icps).where(eq(icps.id, Number(str(form, 'id'))));
   revalidatePath('/targets');
@@ -412,6 +430,7 @@ export async function deleteIcpAction(form: FormData) {
 
 /** The last row of the client grid: one client typed in by hand. */
 export async function addClientsAction(_prev: { message: string } | undefined, form: FormData) {
+  await requireAdmin();
   const records = rowsToClients([[str(form, 'company'), str(form, 'website'), str(form, 'industry'), str(form, 'whyBought')]], { header: false });
   if (!records.length) return { message: 'Type a company name first.' };
   const result = await importClients(await getDb(), records);
@@ -421,6 +440,7 @@ export async function addClientsAction(_prev: { message: string } | undefined, f
 
 /** Rows pasted from Excel or Google Sheets (tab separated), or any CSV text. */
 export async function importClientsTextAction(text: string) {
+  await requireAdmin();
   const rows = parseCsv(String(text ?? '').slice(0, 2_000_000));
   if (!rows.length) return { ok: false, message: 'Nothing to import.' };
   const result = await importClients(await getDb(), rowsToClients(rows));
@@ -430,6 +450,7 @@ export async function importClientsTextAction(text: string) {
 
 /** A CSV file exported from Excel, Google Sheets, Airtable or a CRM. */
 export async function importClientsFileAction(form: FormData) {
+  await requireAdmin();
   const file = form.get('file');
   if (!(file instanceof File) || !file.size) return { ok: false, message: 'Choose a CSV file.' };
   if (file.size > 2_000_000) return { ok: false, message: 'That file is over 2 MB. Split it into smaller files.' };
@@ -443,6 +464,7 @@ export async function importClientsFileAction(form: FormData) {
 
 /** One cell edited in the client grid. */
 export async function updateClientFieldAction(id: number, field: ClientField, value: string) {
+  await requireAdmin();
   if (!Number.isInteger(id) || !CLIENT_FIELDS.includes(field)) return { ok: false, value: '', message: 'Unknown cell.' };
   let v = String(value ?? '').trim().slice(0, 1000);
   if (field === 'website') v = domainOf(v);
@@ -456,6 +478,7 @@ export async function updateClientFieldAction(id: number, field: ClientField, va
 }
 
 export async function removeClientAction(id: number) {
+  await requireAdmin();
   if (!Number.isInteger(id)) return;
   const db = await getDb();
   await db.delete(clients).where(eq(clients.id, id));
@@ -465,6 +488,7 @@ export async function removeClientAction(id: number) {
 // ─── Settings ─────────────────────────────────────────────────────────────
 
 export async function saveSettingsAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
+  await requireAdmin();
   const db = await getDb();
   const current = await getSettings(db);
   const provider = str(form, 'aiProvider') as 'deepseek' | 'anthropic';

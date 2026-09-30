@@ -31,7 +31,7 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
           </form>
         )}
       </div>
-      <Nav />
+      <Nav admin={user?.role === 'admin'} />
       {user && !authDisabled() && (
         <div className="mt-8 hidden px-3 md:block">
           <Link href="/account" className="block text-sm font-medium text-ink-2 hover:text-ink">{user.name}</Link>
@@ -44,7 +44,7 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
     </>
   );
   return (
-    <AppShell initialHidden={hidden} sidebar={sidebar}>
+    <AppShell initialHidden={hidden} sidebar={sidebar} showRunStatus={user?.role === 'admin'}>
       {user?.mustChangePassword && (
         <div className="mb-6 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm text-warning-ink" role="status">
           You are still on the starting password. <Link href="/account" className="font-medium underline">Change it now</Link>.

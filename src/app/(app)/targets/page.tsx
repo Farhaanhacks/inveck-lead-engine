@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
 import { deleteIcpAction, saveIcpAction } from '../../actions';
 import { ClientsGrid } from './clients-grid';
+import { adminPage } from '@/lib/access';
 
 const ICP_FIELDS: { name: keyof Icp; label: string; rows?: number; hint?: string }[] = [
   { name: 'description', label: 'Description', rows: 2 },
@@ -52,6 +53,7 @@ function IcpForm({ icp }: { icp?: Icp }) {
 }
 
 export default async function TargetsPage() {
+  await adminPage();
   const db = await getDb();
   const [icpList, clientList] = await Promise.all([
     db.select().from(icps).orderBy(asc(icps.id)),

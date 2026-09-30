@@ -28,8 +28,9 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const me = await getCurrentUser();
   const team = await listBdas(db);
   const names = new Map(team.map((b) => [b.id, b.name]));
-  // Team members see their own leads first; administrators see everyone's.
-  const ownerParam = typeof sp.owner === 'string' ? sp.owner : me?.role === 'bda' ? 'me' : 'all';
+  // Team members see only their own leads. Administrators can look at everyone's or one person's.
+  const isAdmin = me?.role === 'admin';
+  const ownerParam = !isAdmin ? 'me' : typeof sp.owner === 'string' ? sp.owner : 'all';
   const ownerId = ownerParam === 'me' ? me?.id : Number(ownerParam) || 0;
   const filters: SQL[] = [];
   if (ownerId) filters.push(eq(leads.ownerId, ownerId));
@@ -81,7 +82,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
         <button className="btn-secondary">Filter</button>
       </form>
 
-      {team.length > 0 && (
+      {isAdmin && team.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
           <span className="mr-1 text-muted">Showing</span>
           {me && me.id ? (

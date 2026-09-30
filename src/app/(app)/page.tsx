@@ -13,6 +13,7 @@ import { RunPanel } from '@/components/run-panel';
 import { PageHeader } from '@/components/page-header';
 import { RunButtons } from '@/components/run-buttons';
 import { HunterNotice } from '@/components/hunter-notice';
+import { adminPage } from '@/lib/access';
 
 // Runs started from this page keep working after the response (see actions.ts).
 export const maxDuration = 300;
@@ -48,6 +49,7 @@ function BestRow({ label, best }: { label: string; best: Best }) {
 }
 
 export default async function Dashboard({ searchParams }: PageProps<'/'>) {
+  await adminPage();
   const wanted = Number((await searchParams).run) || 0;
   await ensureResearch(await requestOrigin());
   const db = await getDb();

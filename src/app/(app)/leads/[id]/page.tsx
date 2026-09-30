@@ -218,6 +218,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
   const bdas = await listBdas(db);
   const me = await getCurrentUser();
+  if (me?.role === 'bda' && lead.ownerId !== me.id) notFound();
   if (!lead) notFound();
   const [segmentRows, timeline, team] = await Promise.all([
     db.select({ segment: icps.segment }).from(icps),

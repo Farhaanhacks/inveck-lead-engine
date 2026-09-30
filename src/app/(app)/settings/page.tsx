@@ -3,8 +3,10 @@ import { apiKeys, getSettings } from '@/lib/settings';
 import { PageHeader } from '@/components/page-header';
 import { SettingsForm } from './settings-form';
 import { HunterNotice } from '@/components/hunter-notice';
+import { adminPage } from '@/lib/access';
 
 export default async function SettingsPage() {
+  await adminPage();
   const db = await getDb();
   const settings = await getSettings(db);
   const keys = apiKeys();

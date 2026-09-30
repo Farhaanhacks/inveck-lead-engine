@@ -1,4 +1,6 @@
-import { desc, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import { getCurrentUser } from '@/lib/users';
+import { ownerScope } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { leads, PIPELINE_STAGES } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
@@ -7,10 +9,12 @@ import { Board, type Card } from './board';
 
 export default async function PipelinePage() {
   const db = await getDb();
+  const me = (await getCurrentUser())!;
+  const owner = ownerScope(me);
   const rows = await db
     .select()
     .from(leads)
-    .where(inArray(leads.status, [...PIPELINE_STAGES]))
+    .where(and(inArray(leads.status, [...PIPELINE_STAGES]), owner === null ? undefined : eq(leads.ownerId, owner)))
     .orderBy(desc(leads.finalScore), desc(leads.updatedAt));
 
   const cards: Card[] = rows.map((l) => ({

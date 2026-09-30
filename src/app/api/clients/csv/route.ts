@@ -3,9 +3,11 @@ import { getDb } from '@/lib/db';
 import { clients } from '@/lib/db/schema';
 import { CLIENT_FIELDS, CLIENT_HEADERS } from '@/lib/clients';
 import { toCsv } from '@/lib/csv';
+import { getCurrentUser } from '@/lib/users';
 
 /** The client list as a CSV file that opens straight in Excel. Behind the login, like every API route. */
 export async function GET() {
+  if ((await getCurrentUser())?.role !== 'admin') return Response.json({ error: 'Administrators only' }, { status: 403 });
   const db = await getDb();
   const rows = await db.select().from(clients).orderBy(asc(clients.id));
   const csv = toCsv([CLIENT_FIELDS.map((f) => CLIENT_HEADERS[f]), ...rows.map((r) => CLIENT_FIELDS.map((f) => r[f]))]);

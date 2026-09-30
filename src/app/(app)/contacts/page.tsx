@@ -3,6 +3,8 @@ import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { leads, people } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
+import { getCurrentUser } from '@/lib/users';
+import { ownerScope } from '@/lib/access';
 
 const PAGE_SIZE = 100;
 
@@ -14,6 +16,8 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   const db = await getDb();
 
   const filters: SQL[] = [];
+  const owner = ownerScope((await getCurrentUser())!);
+  if (owner !== null) filters.push(eq(leads.ownerId, owner));
   if (q) filters.push(or(ilike(people.name, `%${q}%`), ilike(people.title, `%${q}%`), ilike(leads.company, `%${q}%`))!);
   if (withEmail) filters.push(ne(people.email, ''));
   const where = filters.length ? and(...filters) : undefined;
