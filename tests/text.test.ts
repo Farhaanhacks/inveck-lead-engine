@@ -62,11 +62,19 @@ describe('names, domains and companies', () => {
 describe('scoring', () => {
   it('drafts for a verified email or a LinkedIn profile', () => {
     const withLinkedIn = { ...EMPTY_CONTACT, name: 'A B', linkedin: 'u', roleMatch: true };
-    expect(scoreLead(8, withLinkedIn, 'no email found', 55)).toMatchObject({ finalScore: 65, readyForDraft: true });
+    expect(scoreLead(8, withLinkedIn, 'no email found')).toMatchObject({ finalScore: 65, readyForDraft: true });
     const withEmail = { ...EMPTY_CONTACT, name: 'A B', email: 'a@b.com', roleMatch: true };
-    expect(scoreLead(8, withEmail, 'valid', 55)).toMatchObject({ finalScore: 80, readyForDraft: true });
-    expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found', 55)).toMatchObject({ readyForDraft: false, statusWithoutDraft: 'Needs Manual Contact' });
-    expect(scoreLead(4, withLinkedIn, 'no email found', 55)).toMatchObject({ readyForDraft: false, statusWithoutDraft: 'Low Score' });
+    expect(scoreLead(8, withEmail, 'valid')).toMatchObject({ finalScore: 80, readyForDraft: true });
+    expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found')).toMatchObject({ readyForDraft: false, statusWithoutDraft: 'Needs Manual Contact' });
+  });
+
+  it('never holds back a reachable, qualified lead because of its score', () => {
+    // Assam Petro-Chemicals: strong fit, Managing Director, a likely (unconfirmed) email.
+    const md = { ...EMPTY_CONTACT, name: 'R G', title: 'Managing Director', email: 'r@a.co.in', roleMatch: false };
+    expect(scoreLead(8, md, 'likely')).toMatchObject({ finalScore: 65, readyForDraft: true });
+    // Weaker fit, reachable only through LinkedIn: still gets a draft to review.
+    const linkedinOnly = { ...EMPTY_CONTACT, name: 'A B', title: 'Store Manager', linkedin: 'u', roleMatch: false };
+    expect(scoreLead(6, linkedinOnly, 'no email found')).toMatchObject({ finalScore: 35, readyForDraft: true });
   });
 });
 

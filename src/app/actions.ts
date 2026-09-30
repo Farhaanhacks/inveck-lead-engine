@@ -437,7 +437,6 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   // Switching provider without touching the model: use that provider's default model.
   if (provider !== current.aiProvider && model === current.aiModel) model = DEFAULT_MODELS[provider] ?? model;
   const parsed = settingsSchema.safeParse({
-    minScore: str(form, 'minScore'),
     maxEmailGuesses: str(form, 'maxEmailGuesses'),
     useCompanyFormat: form.get('useCompanyFormat') === 'on',
     radarEnabled: form.get('radarEnabled') === 'on',

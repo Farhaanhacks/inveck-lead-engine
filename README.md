@@ -11,7 +11,7 @@ Everything happens in one run. Nobody needs Airtable or n8n.
 3. **Contact**: it searches LinkedIn (via Google) and Hunter, and the AI picks the best
    person. It finds the email cheapest-first: emails already known, emails on the
    website, the company's email pattern, then Hunter's finder.
-4. **Score and draft**: reachable leads above the minimum score get a personalised
+4. **Score and draft**: every qualified lead that can be reached gets a personalised
    email draft.
 
 ### How emails are found
@@ -66,7 +66,7 @@ in the background automatically, within Vercel's 300-second function limit.
 - **Add companies**: add one company, or paste many as `Company, website, city, segment`.
 - **Dashboard → Find prospects & research**: starts a run you can watch live on the **Runs** page.
 - **Leads**: filter by status, open a lead, edit the draft, then **Approve** and **Mark as sent**.
-- **Settings**: daily limit, minimum score, AI provider/model, sender details and the
+- **Settings**: AI provider/model, sender details and the
   product description the AI is allowed to use.
 
 ## Local development

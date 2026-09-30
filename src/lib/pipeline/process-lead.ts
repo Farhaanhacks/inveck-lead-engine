@@ -133,7 +133,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   notes.push(...email.notes);
   contact.email = email.email;
 
-  const score = scoreLead(research.fitScore, contact, email.status, svc.settings.minScore);
+  const score = scoreLead(research.fitScore, contact, email.status);
   const update: LeadResult = {
     ...base,
     emailStatus: email.email && email.source

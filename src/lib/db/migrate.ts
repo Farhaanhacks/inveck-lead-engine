@@ -106,6 +106,8 @@ export const SCHEMA_STATEMENTS = [
   // Leads moved back before sending used to keep their sent date; they weren't really contacted.
   `UPDATE leads SET sent_at = NULL, follow_up_step = 0, next_follow_up_at = NULL, follow_up_subject = '', follow_up_body = ''
      WHERE sent_at IS NOT NULL AND status IN ('New', 'Processing', 'Awaiting Approval', 'Approved', 'Rejected', 'Low Score', 'Needs Manual Contact', 'Disqualified', 'Error')`,
+  // The minimum-score gate is gone: leads it held back as "Low Score" are researched again and get a draft.
+  `UPDATE leads SET status = 'New' WHERE status = 'Low Score'`,
   // Every decision-maker found per company.
   `CREATE TABLE IF NOT EXISTS people (
     id SERIAL PRIMARY KEY,
