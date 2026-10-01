@@ -62,8 +62,11 @@ export async function completeTaskAction(form: FormData) {
     .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
   // Keep the tracker's outcome columns in step with what was logged.
   const feedback = str(form, 'feedback');
-  if (task.kind === 'call' && outcome === 'connected' && (CALL_FEEDBACK as readonly string[]).includes(feedback)) {
-    await db.update(leads).set({ callFeedback: feedback }).where(eq(leads.id, task.leadId));
+  if (task.kind === 'call' && outcome === 'connected') {
+    await db
+      .update(leads)
+      .set({ callRemark: note, ...((CALL_FEEDBACK as readonly string[]).includes(feedback) ? { callFeedback: feedback } : {}) })
+      .where(eq(leads.id, task.leadId));
   }
   if (task.kind === 'call' && outcome === 'wrong_number') await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
   if (task.kind === 'email' && outcome === 'done') {
@@ -196,7 +199,7 @@ export async function resetTodayLogAction(form: FormData) {
   await db.delete(tasks).where(eq(tasks.ownerId, id));
   await db.delete(attendance).where(eq(attendance.userId, id));
   // The tracker's outcome columns start empty again too.
-  await db.update(leads).set({ callFeedback: '', mailOutcome: '', linkedinOutcome: '' }).where(eq(leads.ownerId, id));
+  await db.update(leads).set({ callFeedback: '', callRemark: '', mailOutcome: '', linkedinOutcome: '' }).where(eq(leads.ownerId, id));
   revalidatePath('/today');
   revalidatePath('/tracker');
 }
@@ -233,12 +236,12 @@ export async function undoTaskAction(form: FormData) {
 
 /** A cell on the tracker sheet: call outcome, mail outcome, LinkedIn outcome or remark. */
 export async function updateTrackerFieldAction(id: number, field: TrackerField, value: string): Promise<{ ok: boolean }> {
-  if (!['callFeedback', 'mailOutcome', 'linkedinOutcome', 'remark'].includes(field)) return { ok: false };
+  if (!['callFeedback', 'mailOutcome', 'linkedinOutcome', 'remark', 'callRemark'].includes(field)) return { ok: false };
   const clean = String(value ?? '').trim();
   if (!validTrackerValue(field, clean) || !(await mayActOn(id))) return { ok: false };
   const db = await getDb();
   await db.update(leads).set({ [field]: clean, updatedAt: new Date() }).where(eq(leads.id, id));
-  if (field !== 'remark' && clean) {
+  if (field !== 'remark' && field !== 'callRemark' && clean) {
     const label = field === 'callFeedback' ? 'Call outcome' : field === 'mailOutcome' ? 'Mail outcome' : 'LinkedIn outcome';
     await logActivity(db, id, 'note', `${label}: ${clean}`);
   }

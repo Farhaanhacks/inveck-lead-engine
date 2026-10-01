@@ -67,6 +67,8 @@ export const leads = pgTable('leads', {
   /** Tracker sheet: what the last conversation came to, a free remark, and how email and LinkedIn outreach went. */
   callFeedback: text('call_feedback').notNull().default(''),
   remark: text('remark').notNull().default(''),
+  /** What was said on the last call; filled from a connected call's note and editable on the tracker. */
+  callRemark: text('call_remark').notNull().default(''),
   mailOutcome: text('mail_outcome').notNull().default(''),
   linkedinOutcome: text('linkedin_outcome').notNull().default(''),
   /** Came in from ads, the website or a campaign: shared equally between the team and must never sit untouched. */

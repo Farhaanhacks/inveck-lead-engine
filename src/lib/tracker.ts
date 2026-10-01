@@ -25,10 +25,10 @@ export const TRACKER_FIELDS = {
   mailOutcome: MAIL_OUTCOMES,
   linkedinOutcome: LINKEDIN_OUTCOMES,
 } as const;
-export type TrackerField = keyof typeof TRACKER_FIELDS | 'remark';
+export type TrackerField = keyof typeof TRACKER_FIELDS | 'remark' | 'callRemark';
 
 export function validTrackerValue(field: TrackerField, value: string): boolean {
-  if (field === 'remark') return value.length <= 1000;
+  if (field === 'remark' || field === 'callRemark') return value.length <= 1000;
   return value === '' || (TRACKER_FIELDS[field] as readonly string[]).includes(value);
 }
 
@@ -81,13 +81,12 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
   return rows.map((lead) => {
     const mine = calls.filter((c) => c.leadId === lead.id);
     const last = mine[0];
-    const lastConnected = mine.find((c) => c.outcome === 'connected');
     const tier = tierOf(lead.contactTitle, icpBySegment.get(lead.segment.toLowerCase()));
     return {
       lead,
       owner: lead.ownerId ? names.get(lead.ownerId) ?? '' : '',
       callStatus: last ? CALL_STATUS[last.outcome] : 'Not called yet',
-      callRemark: lastConnected?.note ?? '',
+      callRemark: lead.callRemark,
       callsDone: mine.length,
       lastCallAt: last?.doneAt ?? null,
       pointOfContact: tier === 'Avoid' ? '' : tier,

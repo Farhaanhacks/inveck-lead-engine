@@ -14,7 +14,7 @@ export type TrackerViewRow = {
   website: string;
 };
 
-type Field = 'callFeedback' | 'mailOutcome' | 'linkedinOutcome' | 'remark';
+type Field = 'callFeedback' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
 
 const CELL = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink hover:border-line focus:border-accent focus:outline-none';
 
@@ -44,18 +44,18 @@ function Choice({ id, field, value, options, label }: { id: number; field: Field
   );
 }
 
-function Remark({ id, value, label }: { id: number; value: string; label: string }) {
+function Remark({ id, value, label, field = 'remark', placeholder = 'Add a remark' }: { id: number; value: string; label: string; field?: 'remark' | 'callRemark'; placeholder?: string }) {
   const [saved, setSaved] = useState(value);
   const [error, setError] = useState(false);
   return (
     <input
       aria-label={label}
       defaultValue={value}
-      placeholder="Add a remark"
+      placeholder={placeholder}
       onBlur={async (e) => {
         const next = e.currentTarget.value.trim();
         if (next === saved) return;
-        const r = await updateTrackerFieldAction(id, 'remark', next);
+        const r = await updateTrackerFieldAction(id, field, next);
         if (r.ok) {
           setSaved(next);
           setError(false);
@@ -126,7 +126,7 @@ export function TrackerTable({
               <td className={td}>{r.cells.email}</td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callStatus}</td>
               <td className={`${td} p-1`}><Choice id={r.id} field="callFeedback" value={r.callFeedback} options={options.callFeedback} label={`${r.cells.company}: call outcome`} /></td>
-              <td className={`${td} max-w-[16rem]`}>{r.cells.callRemark}</td>
+              <td className={`${td} p-1`}><Remark id={r.id} field="callRemark" value={r.cells.callRemark} placeholder="Add a call remark" label={`${r.cells.company}: call remark`} /></td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callsDone}</td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callDate}</td>
               <td className={`${td} p-1`}><Choice id={r.id} field="mailOutcome" value={r.mailOutcome} options={options.mailOutcome} label={`${r.cells.company}: mail outcome`} /></td>

@@ -189,4 +189,10 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS remark TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS mail_outcome TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_outcome TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS call_remark TEXT NOT NULL DEFAULT ''`,
+  // Call remarks written before they were editable lived only on the logged call: copy the latest one over, once.
+  `UPDATE leads SET call_remark = t.note FROM (
+     SELECT DISTINCT ON (lead_id) lead_id, note FROM tasks WHERE kind = 'call' AND outcome = 'connected' AND note <> '' ORDER BY lead_id, done_at DESC
+   ) t WHERE leads.id = t.lead_id AND leads.call_remark = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'callRemarkV1')`,
+  `INSERT INTO settings (key, value) VALUES ('callRemarkV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
 ];
