@@ -55,8 +55,15 @@ it and marks it as sent. Nothing is ever sent automatically.
    \* You need the key for whichever AI provider is selected in Settings.
 4. Redeploy so the variables take effect, then open the site and log in.
 
-A scheduled run starts at 09:00 IST on weekdays (`vercel.json`). It researches new
-leads and runs the prospect search on the day chosen in Settings. Long runs continue
+A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new
+leads and runs the prospect search on the day chosen in Settings.
+
+At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands out the day's leads: 100 by
+default (Settings, "Leads handed out each morning"), picked at random from researched leads nobody has
+been given yet, shuffled and split evenly across the active team (25 each for four people). A lead is
+drawn only once. Inbound leads still go out in turn the moment they arrive, and a lead a BDA adds by
+hand stays theirs. If the schedule runs late, the first page opened after 08:00 runs the draw. The
+Team page shows today's draw and how many leads are left for tomorrow. Long runs continue
 in the background automatically, within Vercel's 300-second function limit.
 
 ## The team

@@ -4,6 +4,9 @@ import { adminPage } from '@/lib/access';
 import { PERIODS, periodDays, teamReport, type Period } from '@/lib/team-report';
 import { formatTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
+import { drawPool, getDraw, runDailyDraw } from '@/lib/draw';
+import { getSettings } from '@/lib/settings';
+import { drawNowAction } from '@/app/team-actions';
 
 const hours = (m: number) => (m ? `${Math.floor(m / 60)}h ${String(Math.round(m % 60)).padStart(2, '0')}m` : '—');
 const rate = (r: number | null) => (r === null ? '—' : `${r}%`);
@@ -14,7 +17,9 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   const sp = await searchParams;
   const period: Period = PERIODS.some((p) => p.key === sp.period) ? (sp.period as Period) : 'today';
   const { from, to } = periodDays(period);
-  const { people, attendance } = await teamReport(await getDb(), from, to);
+  const db = await getDb();
+  await runDailyDraw(db);
+  const [{ people, attendance }, draw, pool, { leadsPerMorning }] = await Promise.all([teamReport(db, from, to), getDraw(db), drawPool(db), getSettings(db)]);
   const totals = people.reduce(
     (t, p) => ({ attempts: t.attempts + p.callAttempts, connected: t.connected + p.connected, meetings: t.meetings + p.meetings, won: t.won + p.won }),
     { attempts: 0, connected: 0, meetings: 0, won: 0 },
@@ -54,6 +59,42 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
           </div>
         ))}
       </div>
+
+      <section className="card mb-6 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Morning draw</h2>
+            <p className="text-xs text-muted">
+              Every working day at 8:00 am, {leadsPerMorning} researched leads nobody has had yet are picked at random and split evenly across the team.
+            </p>
+          </div>
+          {(!draw || (draw.short && pool.total > 0)) && (
+            <form action={drawNowAction}>
+              <button className="btn-secondary px-3 py-1.5 text-sm">{draw ? `Top up to ${draw.wanted}` : 'Draw today\'s leads now'}</button>
+            </form>
+          )}
+        </div>
+        <p className="mt-3 text-sm">
+          {draw ? (
+            <>
+              Today: <span className="font-medium tabular-nums">{draw.drawn}</span> of {draw.wanted} handed out at {formatTime(new Date(draw.at))}
+              {people.length > 0 && ' (' + people.map((p) => `${p.name} ${draw.perOwner[p.id] ?? 0}`).join(', ') + ')'}.
+            </>
+          ) : (
+            'Not drawn yet today.'
+          )}{' '}
+          <span className="text-ink-2">
+            Ready for the next draw: <span className="tabular-nums">{pool.total}</span> {pool.total === 1 ? 'lead' : 'leads'}
+            {pool.total > 0 && pool.withContact < pool.total && `, ${pool.withContact} with a named decision-maker`}.
+          </span>
+        </p>
+        {(draw?.short || pool.total < leadsPerMorning) && (
+          <p className="mt-2 text-xs text-warning-ink">
+            {draw?.short ? `Only ${draw.drawn} of ${draw.wanted} were available today. ` : ''}
+            {pool.total < leadsPerMorning && `The list has ${pool.total} researched ${pool.total === 1 ? 'lead' : 'leads'} left, short of the ${leadsPerMorning} needed for the next morning. Add companies to keep the draw full.`}
+          </p>
+        )}
+      </section>
 
       <section className="card mb-6 overflow-x-auto">
         <div className="border-b border-line px-4 py-3">

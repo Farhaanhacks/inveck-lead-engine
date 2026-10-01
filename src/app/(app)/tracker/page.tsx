@@ -1,6 +1,7 @@
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
+import { runDailyDraw } from '@/lib/draw';
 import { ownerScope } from '@/lib/access';
 import { CALL_FEEDBACK, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCells } from '@/lib/tracker';
 import { PageHeader } from '@/components/page-header';
@@ -12,6 +13,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   const me = (await getCurrentUser())!;
   const db = await getDb();
   await assignUnowned(db);
+  await runDailyDraw(db);
   const sp = await searchParams;
   const q = typeof sp.q === 'string' ? sp.q.trim().toLowerCase() : '';
   const feedback = typeof sp.feedback === 'string' ? sp.feedback : '';

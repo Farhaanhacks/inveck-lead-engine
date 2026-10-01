@@ -18,6 +18,8 @@ export const settingsSchema = z.object({
   dailyLimit: z.coerce.number().int().min(1).max(500).default(25),
   /** No longer used: every reachable, qualified lead gets a draft. Kept so saved settings still parse. */
   minScore: z.coerce.number().int().min(0).max(100).default(55),
+  /** Companies handed out to the team each working morning, split evenly between them. */
+  leadsPerMorning: z.coerce.number().int().min(0).max(500).default(100),
   /** Common email formats to try, and verify with Hunter, when the company's format is unknown. */
   maxEmailGuesses: z.coerce.number().int().min(0).max(6).default(3),
   /**

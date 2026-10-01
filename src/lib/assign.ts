@@ -8,13 +8,19 @@ export function canReassign(user: { id: number; role: 'admin' | 'bda' }, lead: {
 }
 
 /**
- * Gives every lead without an owner to the team in turn: the first to Parimal, the next to
- * Anuradha, then Anchal, then Puja, and round again. Inbound and engine-found leads share the order.
+ * Gives inbound leads without an owner to the team in turn as soon as they arrive: the first to
+ * Parimal, the next to Anuradha, then Anchal, then Puja, and round again. Everything else waits in
+ * the list for the morning draw (see ./draw.ts). `everything` hands out the whole list in turn instead.
  */
-export async function assignUnowned(db: Db): Promise<number> {
+export async function assignUnowned(db: Db, opts: { everything?: boolean } = {}): Promise<number> {
   const team = await db.select({ id: users.id }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(users.id);
   if (!team.length) return 0;
-  const waiting = await db.select({ id: leads.id }).from(leads).where(isNull(leads.ownerId)).orderBy(leads.id).limit(2000);
+  const waiting = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(and(isNull(leads.ownerId), opts.everything ? undefined : eq(leads.inbound, true)))
+    .orderBy(leads.id)
+    .limit(2000);
   if (!waiting.length) return 0;
 
   const [pointer] = await db.select().from(settings).where(eq(settings.key, 'rrNext'));

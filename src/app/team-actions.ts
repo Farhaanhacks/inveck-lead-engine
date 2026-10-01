@@ -7,6 +7,7 @@ import { attendance, leads, people, tasks, users, type TaskKind } from '@/lib/db
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
+import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { CALL_FEEDBACK, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
@@ -333,4 +334,13 @@ export async function updateContactAction(form: FormData) {
   revalidatePath('/today');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
+}
+
+/** Runs today's morning draw straight away (administrators), or tops up a short one from companies added since. */
+export async function drawNowAction() {
+  const user = await requireUser();
+  if (user.role !== 'admin') return;
+  const db = await getDb();
+  if (!(await runDailyDraw(db, { force: true }))) await topUpDraw(db);
+  for (const p of ['/team', '/today', '/tracker', '/leads']) revalidatePath(p);
 }

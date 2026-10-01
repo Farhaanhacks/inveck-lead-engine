@@ -154,7 +154,13 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
   revalidatePath('/leads');
   revalidatePath('/');
   await researchNow();
-  return { ok: true, message: `Added ${company}. Researching it now; its calls, WhatsApp and email show on Today when it's ready.` };
+  const later = !inbound && me?.role !== 'bda';
+  return {
+    ok: true,
+    message: later
+      ? `Added ${company} to the list. Researching it now; it goes to someone in a morning draw.`
+      : `Added ${company}. Researching it now; its calls, WhatsApp and email show on Today when it's ready.`,
+  };
 }
 
 /** Bulk add: one company per line, "Company, website, city, segment" (comma or tab separated). */
@@ -499,6 +505,7 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   // Switching provider without touching the model: use that provider's default model.
   if (provider !== current.aiProvider && model === current.aiModel) model = DEFAULT_MODELS[provider] ?? model;
   const parsed = settingsSchema.safeParse({
+    leadsPerMorning: str(form, 'leadsPerMorning'),
     maxEmailGuesses: str(form, 'maxEmailGuesses'),
     useCompanyFormat: form.get('useCompanyFormat') === 'on',
     radarEnabled: form.get('radarEnabled') === 'on',

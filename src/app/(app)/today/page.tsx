@@ -4,6 +4,7 @@ import { getDb } from '@/lib/db';
 import { leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
+import { runDailyDraw } from '@/lib/draw';
 import { getAttendance } from '@/lib/attendance';
 import {
   DAILY_CONNECTED_CALLS,
@@ -268,6 +269,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const me = (await getCurrentUser())!;
   const db = await getDb();
   await assignUnowned(db);
+  await runDailyDraw(db);
   await ensureSequences(db);
 
   const team = await listBdas(db);

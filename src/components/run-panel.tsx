@@ -55,7 +55,7 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
     return (
       <section id="activity" className="card scroll-mt-6 p-5">
         <h2 className="text-sm font-semibold">Research activity</h2>
-        <p className="mt-2 text-sm text-muted">No research yet. Add companies and they’re researched straight away, or click “Find new prospects”. Research also runs every weekday at 9:00 IST.</p>
+        <p className="mt-2 text-sm text-muted">No research yet. Add companies and they’re researched straight away, or click “Find new prospects”. Research also runs every weekday at 6:00 am IST.</p>
       </section>
     );
   }

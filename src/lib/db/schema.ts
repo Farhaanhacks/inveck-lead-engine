@@ -73,6 +73,8 @@ export const leads = pgTable('leads', {
   linkedinOutcome: text('linkedin_outcome').notNull().default(''),
   /** Came in from ads, the website or a campaign: shared equally between the team and must never sit untouched. */
   inbound: boolean('inbound').notNull().default(false),
+  /** The India day (YYYY-MM-DD) this lead was handed out in the morning draw; empty when it came another way. */
+  drawnOn: text('drawn_on').notNull().default(''),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),

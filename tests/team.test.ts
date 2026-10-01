@@ -55,14 +55,14 @@ describe('round-robin', () => {
   it('gives leads to the team in turn and carries on where it stopped', async () => {
     const db = await getDb();
     await db.insert(leads).values([lead('A'), lead('B'), lead('C'), lead('D'), lead('E')]);
-    expect(await assignUnowned(db)).toBe(5);
+    expect(await assignUnowned(db, { everything: true })).toBe(5);
     const owners = async () => (await db.select().from(leads).orderBy(leads.id)).map((l) => l.ownerId);
     const ids = (await db.select().from(users).orderBy(users.id)).map((u) => u.id);
     expect(await owners()).toEqual([ids[0], ids[1], ids[2], ids[3], ids[0]]);
     await db.insert(leads).values([lead('F'), lead('G')]);
-    await assignUnowned(db);
+    await assignUnowned(db, { everything: true });
     expect((await owners()).slice(5)).toEqual([ids[1], ids[2]]);
-    expect(await assignUnowned(db)).toBe(0);
+    expect(await assignUnowned(db, { everything: true })).toBe(0);
   });
 });
 
@@ -70,13 +70,13 @@ describe('one owner per lead', () => {
   it('never gives a lead to two people, even when two assignments run at once', async () => {
     const db = await getDb();
     await db.insert(leads).values(Array.from({ length: 40 }, (_, i) => lead(`Company ${i}`)));
-    const [a, b] = await Promise.all([assignUnowned(db), assignUnowned(db)]);
+    const [a, b] = await Promise.all([assignUnowned(db, { everything: true }), assignUnowned(db, { everything: true })]);
     expect(a + b).toBeGreaterThanOrEqual(40);
     const rows = await db.select().from(leads);
     const team = new Set((await db.select().from(users)).map((u) => u.id));
     expect(rows.every((l) => l.ownerId !== null && team.has(l.ownerId))).toBe(true);
     // A second pass finds nothing left to give out.
-    expect(await assignUnowned(db)).toBe(0);
+    expect(await assignUnowned(db, { everything: true })).toBe(0);
   });
 
   it('lets a team member hand over only their own leads; an administrator can move any', () => {
@@ -113,7 +113,7 @@ describe('the P1 sequence', () => {
   it('plans once per lead with a decision-maker, for its owner only', async () => {
     const db = await getDb();
     await db.insert(leads).values([lead('Has contact'), lead('No contact', { contactName: '' }), lead('Disqualified', { status: 'Disqualified' })]);
-    await assignUnowned(db);
+    await assignUnowned(db, { everything: true });
     expect(await ensureSequences(db, '2026-09-28')).toBe(1);
     expect(await ensureSequences(db, '2026-09-28')).toBe(0);
     const made = await db.select().from(tasks);
@@ -124,7 +124,7 @@ describe('the P1 sequence', () => {
   it('lists what is due for one person, priority callbacks first, and stops when the lead moves on', async () => {
     const db = await getDb();
     await db.insert(leads).values(lead('Acme'));
-    await assignUnowned(db);
+    await assignUnowned(db, { everything: true });
     await ensureSequences(db, '2026-09-28');
     const [l] = await db.select().from(leads);
     const today = await loadTodayTasks(db, l.ownerId!, '2026-09-28');
@@ -140,7 +140,7 @@ describe('the P1 sequence', () => {
   it('counts connected calls as conversations, not attempts', async () => {
     const db = await getDb();
     await db.insert(leads).values([lead('Acme'), lead('Kirtane & Pandit', { segment: 'CA Firms' })]);
-    await assignUnowned(db);
+    await assignUnowned(db, { everything: true });
     const ls = await db.select().from(leads).orderBy(leads.id);
     const now = new Date();
     const call = (leadId: number, ownerId: number, outcome: string) => ({ leadId, ownerId, kind: 'call' as const, title: 'c', dueDate: istDay(), doneAt: now, outcome });
@@ -237,7 +237,7 @@ describe('team report', () => {
     const db = await getDb();
     const { teamReport, periodDays } = await import('@/lib/team-report');
     const [a] = await db.insert(leads).values(lead('Acme')).returning();
-    await assignUnowned(db);
+    await assignUnowned(db, { everything: true });
     const [l] = await db.select().from(leads).where(eq(leads.id, a.id));
     const owner = l.ownerId!;
     const now = new Date();
@@ -253,5 +253,75 @@ describe('team report', () => {
     expect(Math.round(me.minutesClocked)).toBe(180);
     expect(r.attendance[0]).toMatchObject({ name: me.name });
     expect(r.attendance[0].clockOutAt?.getTime()).toBe(now.getTime());
+  });
+});
+
+describe('morning draw', () => {
+  const nine = new Date('2026-09-28T03:30:00Z'); // Monday 09:00 India time
+
+  it('keeps the list for the draw and hands out only inbound leads straight away', async () => {
+    const db = await getDb();
+    await db.insert(leads).values([lead('Pool'), lead('Inbound', { inbound: true })]);
+    expect(await assignUnowned(db)).toBe(1);
+    const rows = await db.select().from(leads).orderBy(leads.id);
+    expect(rows.map((l) => l.ownerId === null)).toEqual([true, false]);
+  });
+
+  it('draws the day’s leads at random, splits them evenly, and never draws a lead twice', async () => {
+    const db = await getDb();
+    const { runDailyDraw, drawPool } = await import('@/lib/draw');
+    await db.insert(leads).values(Array.from({ length: 130 }, (_, i) => lead(`Co ${i}`)));
+    await db.insert(leads).values([lead('Not researched', { status: 'New' }), lead('Ruled out', { status: 'Disqualified' })]);
+    expect(await runDailyDraw(db, { now: new Date('2026-09-28T02:00:00Z') })).toBeNull(); // 07:30, too early
+    const first = await runDailyDraw(db, { now: nine });
+    expect(first).toMatchObject({ day: '2026-09-28', wanted: 100, drawn: 100, short: false });
+    expect(Object.values(first!.perOwner)).toEqual([25, 25, 25, 25]);
+    expect(await runDailyDraw(db, { now: nine })).toBeNull(); // once a day
+    expect((await drawPool(db)).total).toBe(30);
+
+    const owned = await db.select().from(leads).where(eq(leads.drawnOn, '2026-09-28'));
+    expect(owned).toHaveLength(100);
+    // Shuffled: the first four companies by id don't simply go to the team in order.
+    const ids = owned.map((l) => l.id).sort((a, b) => a - b);
+    expect(ids).not.toEqual(Array.from({ length: 100 }, (_, i) => ids[0] + i));
+
+    const next = await runDailyDraw(db, { now: new Date('2026-09-29T03:30:00Z') });
+    expect(next).toMatchObject({ drawn: 30, short: true });
+    const all = await db.select().from(leads);
+    expect(all.filter((l) => l.drawnOn).length).toBe(130);
+    expect(all.find((l) => l.company === 'Not researched')!.ownerId).toBeNull();
+    expect(all.find((l) => l.company === 'Ruled out')!.ownerId).toBeNull();
+  });
+
+  it('leaves the day open when the list is empty, and tops up a short draw later', async () => {
+    const db = await getDb();
+    const { runDailyDraw, topUpDraw, getDraw } = await import('@/lib/draw');
+    expect(await runDailyDraw(db, { now: nine })).toMatchObject({ drawn: 0 });
+    expect(await getDraw(db, '2026-09-28')).toBeNull();
+    await db.insert(leads).values(Array.from({ length: 10 }, (_, i) => lead(`Co ${i}`)));
+    expect(await runDailyDraw(db, { now: nine })).toMatchObject({ drawn: 10, short: true });
+    await db.insert(leads).values(Array.from({ length: 200 }, (_, i) => lead(`More ${i}`)));
+    const topped = await topUpDraw(db, { now: nine });
+    expect(topped).toMatchObject({ drawn: 100, short: false });
+    expect(Object.values(topped!.perOwner).reduce((a, b) => a + b, 0)).toBe(100);
+    expect(await topUpDraw(db, { now: nine })).toBeNull();
+  });
+
+  it('skips weekends, and two draws at once hand out each lead only once', async () => {
+    const db = await getDb();
+    const { runDailyDraw } = await import('@/lib/draw');
+    await db.insert(leads).values(Array.from({ length: 20 }, (_, i) => lead(`Co ${i}`)));
+    expect(await runDailyDraw(db, { now: new Date('2026-09-26T05:00:00Z') })).toBeNull(); // Saturday
+    const [a, b] = await Promise.all([runDailyDraw(db, { now: nine }), runDailyDraw(db, { now: nine })]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect((await db.select().from(leads)).every((l) => l.ownerId !== null)).toBe(true);
+  });
+
+  it('shuffles without losing anyone and deals the remainder from a random start', async () => {
+    const { shuffle, deal } = await import('@/lib/draw');
+    const items = Array.from({ length: 10 }, (_, i) => i);
+    expect(shuffle(items).sort((a, b) => a - b)).toEqual(items);
+    const hands = deal(items, [1, 2, 3], () => 0.5);
+    expect([...hands.values()].map((h) => h.length)).toEqual([3, 4, 3]);
   });
 });
