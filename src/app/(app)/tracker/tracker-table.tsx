@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { updateTrackerFieldAction } from '../../team-actions';
+import { AddLeadRow } from './add-lead';
 
 export type TrackerViewRow = {
   id: number;
@@ -73,7 +74,9 @@ export function TrackerTable({
   rows,
   options,
   showOwner,
+  segments,
 }: {
+  segments: string[];
   rows: TrackerViewRow[];
   options: { callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
   showOwner: boolean;
@@ -107,6 +110,7 @@ export function TrackerTable({
           </tr>
         </thead>
         <tbody>
+          <AddLeadRow segments={segments} columns={showOwner ? 19 : 18} showOwner={showOwner} />
           {rows.map((r) => (
             <tr key={r.id} className="hover:bg-surface-2/50">
               <td className={`${td} sticky left-0 z-[5] bg-surface font-medium`}>

@@ -6,7 +6,6 @@ import { CALL_FEEDBACK, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCe
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TrackerTable, type TrackerViewRow } from './tracker-table';
-import { AddLead } from './add-lead';
 import { icps } from '@/lib/db/schema';
 
 export default async function TrackerPage({ searchParams }: PageProps<'/tracker'>) {
@@ -58,7 +57,6 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       <PageHeader title="Tracker" description="Every lead in one table, with the columns INVECK asked for plus mail and LinkedIn outcomes. Outcomes and remarks save as you change them.">
         <a href="/api/tracker/csv" download className="btn-secondary">Download CSV</a>
       </PageHeader>
-      <AddLead segments={segments} />
       <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-3 text-sm">
         <input type="search" name="q" defaultValue={q} aria-label="Search company, person or city" placeholder="Search company, person or city" className="field h-9 max-w-xs py-1.5" />
         <select name="feedback" defaultValue={feedback} aria-label="Call outcome" className="field h-9 w-auto py-1.5">
@@ -68,11 +66,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
         </select>
         <span className="ml-auto text-xs text-muted tabular-nums">{rows.length} of {all.length} leads</span>
       </AutoFilterForm>
-      {view.length ? (
-        <TrackerTable rows={view} options={{ callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} />
-      ) : (
-        <div className="card p-8 text-center text-sm text-muted">No leads here yet. Researched leads appear here.</div>
-      )}
+      <TrackerTable rows={view} options={{ callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} segments={segments} />
     </>
   );
 }
