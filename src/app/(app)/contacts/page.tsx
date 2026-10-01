@@ -3,6 +3,7 @@ import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { leads, people } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
+import { AutoFilterForm } from '@/components/auto-filter-form';
 import { getCurrentUser } from '@/lib/users';
 import { ownerScope } from '@/lib/access';
 
@@ -53,16 +54,15 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
         <a href="/api/contacts/csv" download className="btn-secondary">Download CSV</a>
       </PageHeader>
 
-      <form className="mb-4 flex flex-wrap items-center gap-2" action="/contacts">
-        <input name="q" defaultValue={q} placeholder="Search name, title or company" className="field max-w-xs" />
+      <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-2">
+        <input type="search" aria-label="Search name, title or company" name="q" defaultValue={q} placeholder="Search name, title or company" className="field max-w-xs" />
         <label className="flex items-center gap-2 text-sm text-ink-2">
           <input type="checkbox" name="email" value="1" defaultChecked={withEmail} /> With email only
         </label>
-        <button className="btn-secondary">Filter</button>
         <span className="ml-auto text-xs text-muted tabular-nums">
           {total} people · {emails} with email · {phones} with phone
         </span>
-      </form>
+      </AutoFilterForm>
 
       <div className="card overflow-hidden">
         <div className="relative overflow-x-auto">

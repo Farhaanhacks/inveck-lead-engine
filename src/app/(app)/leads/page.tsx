@@ -6,6 +6,7 @@ import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { PageHeader } from '@/components/page-header';
+import { AutoFilterForm } from '@/components/auto-filter-form';
 import { StatusPill } from '@/components/status-pill';
 import { bulkLeadAction } from '../../actions';
 import { isPast, relativeDays } from '@/lib/dates';
@@ -69,18 +70,17 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
         <Link href="/leads/new" className="btn-primary">Add companies</Link>
       </PageHeader>
 
-      <form className="mb-4 flex flex-wrap gap-2" action="/leads">
+      <AutoFilterForm className="mb-4 flex flex-wrap gap-2">
         {status && <input type="hidden" name="status" value={status} />}
         <input type="hidden" name="owner" value={ownerParam} />
-        <input name="q" defaultValue={q} placeholder="Search company, contact or city" className="field max-w-xs" />
-        <select name="segment" defaultValue={segment} className="field w-auto">
+        <input type="search" aria-label="Search company, contact or city" name="q" defaultValue={q} placeholder="Search company, contact or city" className="field max-w-xs" />
+        <select aria-label="Segment" name="segment" defaultValue={segment} className="field w-auto">
           <option value="">All segments</option>
           {segments.map((s) => (
             <option key={s.segment} value={s.segment}>{s.segment}</option>
           ))}
         </select>
-        <button className="btn-secondary">Filter</button>
-      </form>
+      </AutoFilterForm>
 
       {isAdmin && team.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">

@@ -20,6 +20,7 @@ import {
 import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLink } from '@/lib/talk';
 import { formatDate, formatTime, relativeDays } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
+import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CopyButton } from '@/components/copy-button';
 import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction } from '../../team-actions';
 
@@ -257,13 +258,12 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     <>
       <PageHeader title="Today" description={`${formatDate(new Date())}. Work the list from the top: callbacks, demos and new inbound leads come first.`}>
         {me.role === 'admin' && team.length > 0 && (
-          <form action="/today" className="flex items-center gap-2">
+          <AutoFilterForm className="flex items-center gap-2">
             <label htmlFor="user" className="sr-only">Show the list of</label>
             <select id="user" name="user" defaultValue={viewId} className="field w-auto py-1.5">
               {team.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
-            <button className="btn-secondary">Show</button>
-          </form>
+          </AutoFilterForm>
         )}
       </PageHeader>
 
@@ -369,7 +369,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
             </Link>
           ))}
         </nav>
-        <form action="/today" className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+        <AutoFilterForm className="mt-3 flex flex-wrap items-center gap-3 text-sm">
           {me.role === 'admin' && viewId ? <input type="hidden" name="user" value={viewId} /> : null}
           {tab !== 'all' && <input type="hidden" name="view" value={tab} />}
           <label htmlFor="today-q" className="sr-only">Search company or person</label>
@@ -380,11 +380,10 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           <label className="flex items-center gap-1.5 text-ink-2">
             <input type="checkbox" name="overdue" value="1" defaultChecked={overdueOnly} /> Overdue only
           </label>
-          <button className="btn-secondary h-9 py-1.5">Apply</button>
           {(q || withPhone || overdueOnly) && (
             <Link href={link({ q: '', phone: '', overdue: '' })} className="text-xs text-muted hover:text-ink">Clear filters</Link>
           )}
-        </form>
+        </AutoFilterForm>
       </div>
 
       {show('call') && <Section title="Calls" hint="Connected means a live conversation with the decision-maker, not an attempt." items={byKind('call')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'call' })} />}
