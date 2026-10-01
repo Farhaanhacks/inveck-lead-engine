@@ -136,6 +136,7 @@ export async function dayCounts(db: Db, ownerId: number, day = istDay()): Promis
     .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end)));
   const c: DayCounts = { connectedCalls: 0, caConnectedCalls: 0, callAttempts: 0, linkedinSent: 0, whatsappSent: 0, emailsDone: 0 };
   for (const r of rows) {
+    if (r.outcome === 'closed') continue;
     if (r.kind === 'call' && r.outcome !== 'skipped') {
       c.callAttempts++;
       if (r.outcome === 'connected') {
@@ -169,4 +170,15 @@ export async function unattendedInbound(db: Db, ownerId: number | null, now = ne
       ),
     )
     .orderBy(leads.createdAt);
+}
+
+/** What a person logged on an Indian day, newest first, so they can see where an item went and undo it. */
+export async function loadDoneToday(db: Db, ownerId: number, day = istDay()): Promise<{ task: Task; lead: Lead }[]> {
+  const { start, end } = istDayBounds(day);
+  return db
+    .select({ task: tasks, lead: leads })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), ne(tasks.outcome, 'closed')))
+    .orderBy(sql`${tasks.doneAt} desc`, sql`${tasks.id} desc`);
 }

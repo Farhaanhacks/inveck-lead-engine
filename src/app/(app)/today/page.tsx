@@ -12,6 +12,7 @@ import {
   dayCounts,
   ensureSequences,
   istDay,
+  loadDoneToday,
   loadTodayTasks,
   unattendedInbound,
   UNATTENDED_AFTER_HOURS,
@@ -22,9 +23,19 @@ import { formatDate, formatTime, relativeDays } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction } from '../../team-actions';
+import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, undoTaskAction } from '../../team-actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
+
+const OUTCOME_LABEL: Record<string, string> = {
+  connected: 'Connected',
+  no_answer: 'No answer',
+  busy: 'Busy or voicemail',
+  wrong_number: 'Wrong number',
+  sent: 'Sent',
+  done: 'Sent',
+  skipped: 'Skipped',
+};
 
 function Counter({ label, done, goal }: { label: string; done: number; goal?: number }) {
   const pct = goal ? Math.min(100, Math.round((done / goal) * 100)) : 0;
@@ -198,6 +209,7 @@ const TABS = [
   { key: 'whatsapp', label: 'WhatsApp' },
   { key: 'email', label: 'Emails' },
   { key: 'linkedin', label: 'LinkedIn' },
+  { key: 'done', label: 'Done today' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
@@ -237,7 +249,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const callbacks = filtered.filter((i) => i.task.priority);
   const rest = filtered.filter((i) => !i.task.priority);
   const byKind = (k: Task['kind']) => rest.filter((i) => i.task.kind === k);
-  const tabCount = (k: TabKey) => (k === 'all' ? rest.length : byKind(k).length);
+  const done = (await loadDoneToday(db, viewId, day)).filter((d) => !needle || [d.lead.company, d.lead.contactName].some((v) => v.toLowerCase().includes(needle)));
+  const tabCount = (k: TabKey) => (k === 'all' ? rest.length : k === 'done' ? done.length : byKind(k).length);
   const link = (next: Record<string, string>) => {
     const p = new URLSearchParams({
       ...(me.role === 'admin' && viewId ? { user: String(viewId) } : {}),
@@ -251,6 +264,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     return `/today${p.size ? `?${p}` : ''}`;
   };
   const show = (k: Task['kind']) => tab === 'all' || tab === k;
+  const showDone = tab === 'done';
   const limit = tab === 'all' ? PREVIEW : undefined;
   const startHere = unattended.length + callbacks.length + demos.length;
 
@@ -386,6 +400,47 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         </AutoFilterForm>
       </div>
 
+      {!showDone && done.length > 0 && (
+        <p className="-mt-3 mb-4 text-xs text-muted">
+          Logged items leave the list. {done.length} done today:{' '}
+          <Link href={link({ view: 'done' })} className="text-accent hover:underline">see them or undo</Link>.
+        </p>
+      )}
+
+      {showDone && (
+        <section className="card mb-6 overflow-hidden">
+          <div className="border-b border-line px-5 py-3">
+            <h2 className="text-sm font-semibold">Done today <span className="font-normal text-muted tabular-nums">{done.length}</span></h2>
+            <p className="text-xs text-muted">Everything logged today. The lead stays in Leads, and its next step comes back on the day it is due. Undo puts an item back on today&apos;s list.</p>
+          </div>
+          {done.length ? (
+            <ul className="divide-y divide-line">
+              {done.map(({ task, lead }) => (
+                <li key={task.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <Link href={`/leads/${lead.id}`} className="font-medium hover:underline">{lead.company}</Link>
+                    <span className="text-sm text-ink-2">{lead.contactName ? ` · ${lead.contactName}` : ''}</span>
+                    <div className="text-xs text-ink-2">
+                      <span className="font-medium">{OUTCOME_LABEL[task.outcome] ?? task.outcome}</span>
+                      {' · '}{task.title}{task.doneAt ? ` · ${formatTime(task.doneAt)}` : ''}
+                    </div>
+                    {task.note && task.outcome === 'connected' && <div className="text-xs text-muted">{task.note}</div>}
+                  </div>
+                  {own && (
+                    <form action={undoTaskAction}>
+                      <input type="hidden" name="id" value={task.id} />
+                      <button className={SMALL}>Undo</button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-5 py-6 text-sm text-muted">Nothing logged yet today.</p>
+          )}
+        </section>
+      )}
+
       {show('call') && <Section title="Calls" hint="Connected means a live conversation with the decision-maker, not an attempt." items={byKind('call')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'call' })} />}
       {show('whatsapp') && <Section title="WhatsApp" items={byKind('whatsapp')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'whatsapp' })} />}
       {show('email') && <Section title="Emails" items={byKind('email')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'email' })} />}
@@ -396,7 +451,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           Nothing matches these filters. <Link href={link({ q: '', phone: '', overdue: '' })} className="text-accent hover:underline">Clear filters</Link>
         </div>
       )}
-      {items.length > 0 && filtered.length > 0 && tab !== 'all' && !tabCount(tab) && (
+      {items.length > 0 && filtered.length > 0 && tab !== 'all' && tab !== 'done' && !tabCount(tab) && (
         <div className="card p-8 text-center text-sm text-muted">Nothing due here. <Link href={link({ view: 'all' })} className="text-accent hover:underline">See everything due</Link></div>
       )}
 

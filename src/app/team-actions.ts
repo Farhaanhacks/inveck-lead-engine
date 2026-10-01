@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, tasks, users, type TaskKind } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
@@ -18,6 +18,8 @@ const OUTCOMES: Record<TaskKind, string[]> = {
   linkedin: ['sent', 'skipped'],
   email: ['done', 'skipped'],
 };
+
+const WRONG_PREFIX = 'Wrong number: ';
 
 const OUTCOME_TEXT: Record<string, string> = {
   connected: 'Call connected',
@@ -48,7 +50,18 @@ export async function completeTaskAction(form: FormData) {
     if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return;
   }
 
-  await db.update(tasks).set({ doneAt: new Date(), outcome, note: note || task.note }).where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
+  const now = new Date();
+  // A wrong number is taken off the lead (and kept on the task, so Undo can put it back).
+  const [lead] = await db.select({ phone: leads.contactPhone }).from(leads).where(eq(leads.id, task.leadId));
+  const wrong = task.kind === 'call' && outcome === 'wrong_number' && !!lead?.phone;
+  await db
+    .update(tasks)
+    .set({ doneAt: now, outcome, note: wrong ? `${WRONG_PREFIX}${lead!.phone}` : note || task.note })
+    .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
+  if (wrong) {
+    await db.update(leads).set({ contactPhone: '' }).where(eq(leads.id, task.leadId));
+    await logActivity(db, task.leadId, 'note', `Number ${lead!.phone} marked wrong and removed. Find the right one with ContactOut.`);
+  }
 
   const what =
     task.kind === 'call'
@@ -65,7 +78,7 @@ export async function completeTaskAction(form: FormData) {
     // Spoke to them: the rest of the automatic sequence is no longer needed.
     await db
       .update(tasks)
-      .set({ doneAt: new Date(), outcome: 'skipped' })
+      .set({ doneAt: now, outcome: 'closed' })
       .where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false)));
     const callback = futureDay(str(form, 'callbackDate'));
     if (callback) {
@@ -162,4 +175,34 @@ export async function resetTodayLogAction(form: FormData) {
   await db.delete(tasks).where(eq(tasks.ownerId, id));
   await db.delete(attendance).where(eq(attendance.userId, id));
   revalidatePath('/today');
+}
+
+/**
+ * Puts a logged item back on today's list. Works on today's items only. Undoing a connected call
+ * also brings back the rest of that lead's sequence and removes the callback it set; undoing a
+ * wrong number puts the number back on the lead.
+ */
+export async function undoTaskAction(form: FormData) {
+  const user = await requireUser();
+  const id = Number(str(form, 'id'));
+  const db = await getDb();
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+  if (!task?.doneAt || task.ownerId !== user.id || task.outcome === 'closed') return;
+  if (istDay(task.doneAt) !== istDay()) return;
+  const wasWrong = task.outcome === 'wrong_number' && task.note.startsWith(WRONG_PREFIX);
+  await db
+    .update(tasks)
+    .set({ doneAt: null, outcome: '', note: wasWrong ? '' : task.note })
+    .where(eq(tasks.id, id));
+  if (wasWrong) {
+    const phone = task.note.slice(WRONG_PREFIX.length);
+    await db.update(leads).set({ contactPhone: phone }).where(and(eq(leads.id, task.leadId), eq(leads.contactPhone, '')));
+  }
+  if (task.kind === 'call' && task.outcome === 'connected') {
+    await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));
+    await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.priority, true), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
+  }
+  await logActivity(db, task.leadId, 'note', `Undone: ${task.title}${task.step && !task.title.startsWith(task.step) ? ` (${task.step})` : ''}`);
+  revalidatePath('/today');
+  revalidatePath(`/leads/${task.leadId}`);
 }
