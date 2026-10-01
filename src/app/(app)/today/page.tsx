@@ -336,7 +336,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
   return (
     <>
-      <PageHeader title="Today" description={`${formatDate(new Date())}. Work the list from the top: callbacks, demos and new inbound leads come first.`}>
+      <PageHeader title={own ? `Hello ${bda}!` : `${bda}'s day`} description={`${formatDate(new Date())}. Work the list from the top: callbacks, demos and new inbound leads come first.`}>
         {me.role === 'admin' && team.length > 0 && (
           <AutoFilterForm className="flex items-center gap-2">
             <label htmlFor="user" className="sr-only">Show the list of</label>
