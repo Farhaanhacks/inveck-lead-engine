@@ -154,7 +154,7 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
   revalidatePath('/leads');
   revalidatePath('/');
   await researchNow();
-  return { ok: true, message: `Added ${company}. Researching it now; progress is on the dashboard.` };
+  return { ok: true, message: `Added ${company}. Researching it now; its calls, WhatsApp and email show on Today when it's ready.` };
 }
 
 /** Bulk add: one company per line, "Company, website, city, segment" (comma or tab separated). */

@@ -56,7 +56,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
   const rows = await db
     .select()
     .from(leads)
-    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), ne(leads.status, 'Disqualified'), ne(leads.status, 'New'), ne(leads.status, 'Processing')))
+    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), ne(leads.status, 'Disqualified')))
     .orderBy(desc(leads.updatedAt))
     .limit(2000);
   if (!rows.length) return [];

@@ -195,4 +195,7 @@ export const SCHEMA_STATEMENTS = [
      SELECT DISTINCT ON (lead_id) lead_id, note FROM tasks WHERE kind = 'call' AND outcome = 'connected' AND note <> '' ORDER BY lead_id, done_at DESC
    ) t WHERE leads.id = t.lead_id AND leads.call_remark = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'callRemarkV1')`,
   `INSERT INTO settings (key, value) VALUES ('callRemarkV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // LinkedIn is no longer an outreach step: close the LinkedIn tasks still open (once; they don't count as work).
+  `UPDATE tasks SET done_at = now(), outcome = 'closed' WHERE kind = 'linkedin' AND done_at IS NULL AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'noLinkedinTasks')`,
+  `INSERT INTO settings (key, value) VALUES ('noLinkedinTasks', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
 ];

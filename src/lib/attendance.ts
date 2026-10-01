@@ -20,7 +20,13 @@ export async function recordPresence(db: Db, userId: number, now = new Date()) {
 export async function clockIn(db: Db, userId: number, now = new Date()) {
   const day = istDay(now);
   await recordPresence(db, userId, now);
-  await db.update(attendance).set({ clockInAt: now, clockOutAt: null }).where(and(eq(attendance.userId, userId), eq(attendance.day, day), sql`${attendance.clockInAt} is null`));
+  const row = await getAttendance(db, userId, day);
+  if (!row?.clockInAt) {
+    await db.update(attendance).set({ clockInAt: now, clockOutAt: null }).where(and(eq(attendance.userId, userId), eq(attendance.day, day)));
+  } else if (row.clockOutAt) {
+    // Back after clocking out: keep the first clock-in of the day and clear the clock-out.
+    await db.update(attendance).set({ clockOutAt: null }).where(and(eq(attendance.userId, userId), eq(attendance.day, day)));
+  }
 }
 
 export async function clockOut(db: Db, userId: number, now = new Date()) {

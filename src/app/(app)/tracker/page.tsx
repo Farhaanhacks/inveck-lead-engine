@@ -6,6 +6,8 @@ import { CALL_FEEDBACK, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCe
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TrackerTable, type TrackerViewRow } from './tracker-table';
+import { AddLead } from './add-lead';
+import { icps } from '@/lib/db/schema';
 
 export default async function TrackerPage({ searchParams }: PageProps<'/tracker'>) {
   const me = (await getCurrentUser())!;
@@ -14,7 +16,8 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   const sp = await searchParams;
   const q = typeof sp.q === 'string' ? sp.q.trim().toLowerCase() : '';
   const feedback = typeof sp.feedback === 'string' ? sp.feedback : '';
-  const all = await loadTracker(db, ownerScope(me));
+  const [all, segmentRows] = await Promise.all([loadTracker(db, ownerScope(me)), db.select({ segment: icps.segment, active: icps.active }).from(icps)]);
+  const segments = segmentRows.filter((r) => r.active).map((r) => r.segment);
   const rows = all.filter(
     (r) =>
       (!q || [r.lead.company, r.lead.contactName, r.lead.city].some((v) => v.toLowerCase().includes(q))) &&
@@ -55,6 +58,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       <PageHeader title="Tracker" description="Every lead in one table, with the columns INVECK asked for plus mail and LinkedIn outcomes. Outcomes and remarks save as you change them.">
         <a href="/api/tracker/csv" download className="btn-secondary">Download CSV</a>
       </PageHeader>
+      <AddLead segments={segments} />
       <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-3 text-sm">
         <input type="search" name="q" defaultValue={q} aria-label="Search company, person or city" placeholder="Search company, person or city" className="field h-9 max-w-xs py-1.5" />
         <select name="feedback" defaultValue={feedback} aria-label="Call outcome" className="field h-9 w-auto py-1.5">

@@ -95,7 +95,6 @@ describe('the P1 sequence', () => {
     expect(addWorkingDays('2026-09-25', 1)).toBe('2026-09-28');
     const plan = planSequence('2026-09-25', true);
     expect(plan.map((t) => `${t.kind}:${t.step}:${t.dueDate}:${t.slot}`)).toEqual([
-      'linkedin:Day 1:2026-09-25:morning',
       'whatsapp:Day 1:2026-09-25:morning',
       'call:Day 1 morning:2026-09-25:morning',
       'call:Follow-up 1:2026-09-25:evening',
@@ -118,7 +117,7 @@ describe('the P1 sequence', () => {
     expect(await ensureSequences(db, '2026-09-28')).toBe(1);
     expect(await ensureSequences(db, '2026-09-28')).toBe(0);
     const made = await db.select().from(tasks);
-    expect(made).toHaveLength(12);
+    expect(made).toHaveLength(11);
     expect(new Set(made.map((t) => t.leadId)).size).toBe(1);
   });
 
@@ -129,7 +128,7 @@ describe('the P1 sequence', () => {
     await ensureSequences(db, '2026-09-28');
     const [l] = await db.select().from(leads);
     const today = await loadTodayTasks(db, l.ownerId!, '2026-09-28');
-    expect(today.map((t) => t.task.step)).toEqual(['Day 1', 'Day 1', 'Day 1 morning', 'Follow-up 1', 'Follow-up 1', 'Follow-up 1']);
+    expect(today.map((t) => t.task.step)).toEqual(['Day 1', 'Day 1 morning', 'Follow-up 1', 'Follow-up 1', 'Follow-up 1']);
     await db.insert(tasks).values({ leadId: l.id, ownerId: l.ownerId!, kind: 'call', title: 'Promised callback', step: 'Promised callback', dueDate: '2026-09-28', priority: true });
     expect((await loadTodayTasks(db, l.ownerId!, '2026-09-28'))[0].task.step).toBe('Promised callback');
     // Next day the unfinished ones are overdue.

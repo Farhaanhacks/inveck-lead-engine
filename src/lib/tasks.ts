@@ -3,6 +3,8 @@ import type { Db } from './db';
 import { activities, leads, tasks, type Lead, type Task, type TaskKind } from './db/schema';
 
 export const DAILY_LINKEDIN_LIMIT = 50;
+/** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
+export const MAX_CALL_ATTEMPTS = 5;
 export const DAILY_CONNECTED_CALLS = 50;
 export const DAILY_CA_CONNECTED_CALLS = 10;
 /** Inbound leads nobody has touched after this long are flagged. */
@@ -43,16 +45,15 @@ export function addWorkingDays(day: string, n: number): string {
 export type PlannedTask = { kind: TaskKind; step: string; title: string; dueDate: string; slot: 'morning' | 'day' | 'evening' };
 
 /**
- * The P1 sequence from the sales SOP: on day 1 a LinkedIn request, a WhatsApp introduction and
- * the first call in the morning; then call + WhatsApp + email on the evening of day 1, on day 2
- * and on day 3. Emails are only planned when there is an address.
+ * The P1 sequence from the sales SOP: on day 1 a WhatsApp introduction and the first call in the
+ * morning; then call + WhatsApp + email on the evening of day 1, on day 2 and on day 3. Emails are
+ * only planned when there is an address. LinkedIn is used to find the contact, not as a step.
  */
 export function planSequence(startDay: string, hasEmail: boolean): PlannedTask[] {
   const d1 = firstWorkingDay(startDay);
   const d2 = addWorkingDays(d1, 1);
   const d3 = addWorkingDays(d1, 2);
   const plan: PlannedTask[] = [
-    { kind: 'linkedin', step: 'Day 1', title: 'Send the LinkedIn connection request', dueDate: d1, slot: 'morning' },
     { kind: 'whatsapp', step: 'Day 1', title: 'Send the WhatsApp introduction', dueDate: d1, slot: 'morning' },
     { kind: 'call', step: 'Day 1 morning', title: 'Call 1', dueDate: d1, slot: 'morning' },
   ];
@@ -181,4 +182,9 @@ export async function loadDoneToday(db: Db, ownerId: number, day = istDay()): Pr
     .innerJoin(leads, eq(tasks.leadId, leads.id))
     .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), ne(tasks.outcome, 'closed')))
     .orderBy(sql`${tasks.doneAt} desc`, sql`${tasks.id} desc`);
+}
+
+/** The next working day after an Indian date. */
+export function nextWorkingDay(day = istDay()): string {
+  return addWorkingDays(day, 1);
 }

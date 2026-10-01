@@ -10,7 +10,7 @@ import { canReassign } from '@/lib/assign';
 import { CALL_FEEDBACK, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
-import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay } from '@/lib/tasks';
+import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay, MAX_CALL_ATTEMPTS, nextWorkingDay } from '@/lib/tasks';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -91,6 +91,8 @@ export async function completeTaskAction(form: FormData) {
   const skipped = outcome === 'skipped';
   await logActivity(db, task.leadId, task.kind === 'call' ? 'call' : 'note', skipped ? `${task.title}: skipped` : `${what}${task.step ? ` (${task.step})` : ''}${note ? `. ${note}` : ''}`);
 
+  if (task.kind === 'call' && (outcome === 'no_answer' || outcome === 'busy')) await remindToCallAgain(db, task);
+
   if (task.kind === 'call' && outcome === 'connected') {
     // Spoke to them: the rest of the automatic sequence is no longer needed.
     await db
@@ -115,6 +117,33 @@ export async function completeTaskAction(form: FormData) {
   }
   revalidatePath('/today');
   revalidatePath(`/leads/${task.leadId}`);
+}
+
+const RETRY_NOTE = 'auto-retry:';
+
+/**
+ * No answer: make sure the person is called again on the next working day. Skipped when a call is
+ * already planned by then, and after MAX_CALL_ATTEMPTS unanswered calls (time to try someone else).
+ */
+async function remindToCallAgain(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect) {
+  const next = nextWorkingDay();
+  const calls = await db.select().from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'call')));
+  const unanswered = calls.filter((c) => c.doneAt && (c.outcome === 'no_answer' || c.outcome === 'busy')).length;
+  if (unanswered >= MAX_CALL_ATTEMPTS) {
+    await logActivity(db, task.leadId, 'note', `${unanswered} calls without an answer. Try the next person at this company (P2).`);
+    return;
+  }
+  if (calls.some((c) => !c.doneAt && c.dueDate <= next)) return;
+  await db.insert(tasks).values({
+    leadId: task.leadId,
+    ownerId: task.ownerId,
+    kind: 'call',
+    step: 'Call again',
+    title: 'Call again: no answer last time',
+    dueDate: next,
+    slot: 'day',
+    note: `${RETRY_NOTE}${task.id}`,
+  });
 }
 
 export async function clockInAction() {
@@ -224,6 +253,9 @@ export async function undoTaskAction(form: FormData) {
   if (wasWrong) {
     const phone = task.note.slice(WRONG_PREFIX.length);
     await db.update(leads).set({ contactPhone: phone }).where(and(eq(leads.id, task.leadId), eq(leads.contactPhone, '')));
+  }
+  if (task.kind === 'call' && (task.outcome === 'no_answer' || task.outcome === 'busy')) {
+    await db.delete(tasks).where(and(eq(tasks.note, `${RETRY_NOTE}${task.id}`), isNull(tasks.doneAt)));
   }
   if (task.kind === 'call' && task.outcome === 'connected') {
     await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));
