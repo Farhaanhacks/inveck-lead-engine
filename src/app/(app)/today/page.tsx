@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { leads, type Lead, type Task } from '@/lib/db/schema';
+import { leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { getAttendance } from '@/lib/attendance';
@@ -22,7 +22,8 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, undoTaskAction } from '../../team-actions';
+import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, undoTaskAction, updateContactAction } from '../../team-actions';
+import { makePrimaryAction } from '../../actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
@@ -173,11 +174,57 @@ function Step({ item, more, bda, readOnly }: { item: TodayTask; more: number; bd
   );
 }
 
+const CONTACT_FIELDS: [name: keyof Lead, label: string, type?: string][] = [
+  ['contactName', 'Name'],
+  ['contactTitle', 'Designation'],
+  ['contactPhone', 'Contact number', 'tel'],
+  ['contactEmail', 'Email', 'email'],
+  ['contactLinkedin', 'LinkedIn URL', 'url'],
+];
+
+/** Fix or replace the point of contact without leaving Today: the number from ContactOut, a new email, or someone else at the company. */
+function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
+  return (
+    <details className="group mt-1.5">
+      <summary className="cursor-pointer list-none text-xs font-medium text-accent hover:underline [&::-webkit-details-marker]:hidden">Edit point of contact</summary>
+      <div className="mt-2 w-[min(40rem,calc(100vw-5rem))] space-y-3 rounded-lg border border-line bg-surface-2 p-4">
+        <form action={updateContactAction} className="space-y-3">
+          <input type="hidden" name="id" value={lead.id} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            {CONTACT_FIELDS.map(([name, label, type]) => (
+              <div key={name} className={name === 'contactLinkedin' ? 'sm:col-span-2' : ''}>
+                <label htmlFor={`${name}-${lead.id}`} className="label">{label}</label>
+                <input id={`${name}-${lead.id}`} name={name} type={type ?? 'text'} defaultValue={String(lead[name] ?? '')} className="field" />
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted">Changing the name to someone else clears the previous person&apos;s number, email and LinkedIn unless you type new ones.</p>
+          <button className="btn-primary px-3 py-1.5 text-sm">Save contact</button>
+        </form>
+        {others.length > 0 && (
+          <form action={makePrimaryAction} className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
+            <input type="hidden" name="id" value={lead.id} />
+            <div className="min-w-0 flex-1">
+              <label htmlFor={`switch-${lead.id}`} className="label">Or switch to someone else found at {lead.company}</label>
+              <select id={`switch-${lead.id}`} name="personId" className="field">
+                {others.map((p) => (
+                  <option key={p.id} value={p.id}>{[p.name, p.title, p.phone || p.email].filter(Boolean).join(' · ')}</option>
+                ))}
+              </select>
+            </div>
+            <button className="btn-secondary px-3 py-1.5 text-sm">Make point of contact</button>
+          </form>
+        )}
+      </div>
+    </details>
+  );
+}
+
 /** Everything due today for one company, as a checklist: call first, then WhatsApp, then email. */
 type CompanyGroup = { lead: Lead; items: TodayTask[]; priority: boolean; overdue: boolean; first: string };
 const KIND_ORDER: Task['kind'][] = ['call', 'whatsapp', 'email', 'linkedin'];
 
-function CompanyCard({ group, bda, readOnly }: { group: CompanyGroup; bda: string; readOnly: boolean }) {
+function CompanyCard({ group, bda, readOnly, others }: { group: CompanyGroup; bda: string; readOnly: boolean; others: Person[] }) {
   const { lead } = group;
   // The next step of each kind; when it's logged, the one after it shows.
   const steps = KIND_ORDER.flatMap((k) => {
@@ -195,6 +242,7 @@ function CompanyCard({ group, bda, readOnly }: { group: CompanyGroup; bda: strin
             {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
           </div>
           <Reach lead={lead} />
+          {!readOnly && <EditContact lead={lead} others={others} />}
         </div>
       </div>
       <ul className="mt-2 divide-y divide-line border-t border-line">
@@ -281,6 +329,9 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const showDone = tab === 'done';
   const shownGroups = tabGroups(tab);
   const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
+  // Other people found at these companies, to switch the point of contact to.
+  const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
+  const othersOf = (l: Lead) => peopleRows.filter((p) => p.leadId === l.id && !p.isPrimary && p.name.toLowerCase() !== l.contactName.toLowerCase());
   const startHere = unattended.length + demos.length;
 
   return (
@@ -449,7 +500,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
             <p className="text-xs text-muted">One row per company: call, WhatsApp and email the same person. A connected call ticks off the rest for that company.</p>
           </div>
           <ul className="divide-y divide-line">
-            {visible.map((g) => <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} />)}
+            {visible.map((g) => <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} />)}
           </ul>
           {visible.length < shownGroups.length && (
             <Link href={link({ all: '1' })} className="block rounded-b-lg border-t border-line px-5 py-3 text-sm font-medium text-accent hover:bg-surface-2">

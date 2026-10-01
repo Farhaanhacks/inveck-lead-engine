@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { attendance, leads, tasks, users, type TaskKind } from '@/lib/db/schema';
+import { attendance, leads, people, tasks, users, type TaskKind } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
@@ -280,4 +280,57 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
   return { ok: true };
+}
+
+/** Corrects the point of contact from Today: name, designation, number, email, LinkedIn. */
+export async function updateContactAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!(await mayActOn(id))) return;
+  const v = {
+    contactName: str(form, 'contactName').slice(0, 200),
+    contactTitle: str(form, 'contactTitle').slice(0, 200),
+    contactPhone: str(form, 'contactPhone').slice(0, 40),
+    contactEmail: str(form, 'contactEmail').slice(0, 200).toLowerCase(),
+    contactLinkedin: str(form, 'contactLinkedin').slice(0, 300),
+  };
+  if (v.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.contactEmail)) return;
+  const db = await getDb();
+  const [before] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!before) return;
+  // A different person: the previous person's number, email and LinkedIn don't carry over unless retyped.
+  if (before.contactName && v.contactName.toLowerCase() !== before.contactName.toLowerCase()) {
+    for (const k of ['contactPhone', 'contactEmail', 'contactLinkedin'] as const) if (v[k] === before[k]) v[k] = '';
+  }
+  const emailChanged = v.contactEmail !== before.contactEmail;
+  await db
+    .update(leads)
+    .set({ ...v, ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}), updatedAt: new Date() })
+    .where(eq(leads.id, id));
+  // Keep the people list in step: update the main contact, or add them if they're new.
+  const [primary] = await db.select().from(people).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+  const person = { name: v.contactName, title: v.contactTitle, phone: v.contactPhone, email: v.contactEmail, linkedin: v.contactLinkedin };
+  if (primary && primary.name.toLowerCase() === v.contactName.toLowerCase()) {
+    await db.update(people).set({ ...person, ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}) }).where(eq(people.id, primary.id));
+  } else if (v.contactName) {
+    await db.update(people).set({ isPrimary: false }).where(eq(people.leadId, id));
+    await db.insert(people).values({ ...person, leadId: id, emailStatus: v.contactEmail ? 'entered by the team' : '', source: 'Sales team', isPrimary: true });
+  }
+  const changed = (['contactName', 'contactTitle', 'contactPhone', 'contactEmail', 'contactLinkedin'] as const).filter((k) => v[k] !== before[k]);
+  if (changed.length) {
+    const label = { contactName: 'name', contactTitle: 'designation', contactPhone: 'number', contactEmail: 'email', contactLinkedin: 'LinkedIn' };
+    await logActivity(db, id, 'contact', `Point of contact updated (${changed.map((k) => label[k]).join(', ')}): ${[v.contactName, v.contactTitle, v.contactPhone, v.contactEmail].filter(Boolean).join(' · ')}`);
+  }
+  // A new email address means the email steps can run: plan them if the sequence had none.
+  if (emailChanged && v.contactEmail && !before.contactEmail) {
+    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, id), isNull(tasks.doneAt)));
+    if (open.length && !open.some((t) => t.kind === 'email')) {
+      const calls = open.filter((t) => t.kind === 'call' && !t.priority);
+      for (const c of calls) {
+        await db.insert(tasks).values({ leadId: id, ownerId: c.ownerId, kind: 'email', step: c.step, title: `${c.step}: email`, dueDate: c.dueDate, slot: c.slot });
+      }
+    }
+  }
+  revalidatePath('/today');
+  revalidatePath('/tracker');
+  revalidatePath(`/leads/${id}`);
 }
