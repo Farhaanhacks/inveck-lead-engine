@@ -101,9 +101,10 @@ function CallActions({ task }: { task: Task }) {
   return (
     <div className="flex flex-wrap items-start gap-2">
       <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number']]} />
-      <details className="relative">
-        <summary className="btn-primary list-none px-2.5 py-1 text-xs [&::-webkit-details-marker]:hidden">Connected</summary>
-        <form action={completeTaskAction} className="card absolute right-0 z-10 mt-2 w-80 space-y-2 p-4 shadow-lg">
+      {/* Opens in place, under the buttons, so nothing can cut it off on any screen. */}
+      <details className="group open:basis-full">
+        <summary className="btn-primary list-none px-2.5 py-1 text-xs group-open:ring-2 group-open:ring-accent/30 [&::-webkit-details-marker]:hidden">Connected</summary>
+        <form action={completeTaskAction} className="mt-3 w-[min(28rem,calc(100vw-5rem))] space-y-2 rounded-lg border border-line bg-surface-2 p-4">
           <input type="hidden" name="id" value={task.id} />
           <label htmlFor={`note-${task.id}`} className="label">What was discussed *</label>
           <textarea id={`note-${task.id}`} name="note" rows={3} required className="field" placeholder="Spoke with the Plant Head about their current stock count process." />
@@ -190,7 +191,7 @@ function Section({ title, hint, items, bda, limit, more, readOnly }: { title: st
   if (!items.length) return null;
   const shown = limit ? items.slice(0, limit) : items;
   return (
-    <section className="card mb-6 overflow-hidden">
+    <section className="card mb-6">
       <div className="border-b border-line px-5 py-3">
         <h2 className="text-sm font-semibold">
           {title} <span className="font-normal text-muted tabular-nums">{items.length}</span>
@@ -201,7 +202,7 @@ function Section({ title, hint, items, bda, limit, more, readOnly }: { title: st
         {shown.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} readOnly={readOnly} />)}
       </ul>
       {more && shown.length < items.length && (
-        <Link href={more} className="block border-t border-line px-5 py-3 text-sm font-medium text-accent hover:bg-surface-2">
+        <Link href={more} className="block rounded-b-lg border-t border-line px-5 py-3 text-sm font-medium text-accent hover:bg-surface-2">
           Show all {items.length}
         </Link>
       )}
@@ -348,8 +349,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       </div>
 
       {startHere > 0 && (
-        <section className="card mb-6 overflow-hidden border-warning-ink/40">
-          <div className="border-b border-line bg-warning-soft px-5 py-3">
+        <section className="card mb-6 border-warning-ink/40">
+          <div className="rounded-t-lg border-b border-line bg-warning-soft px-5 py-3">
             <h2 className="text-sm font-semibold text-warning-ink">Start here <span className="font-normal tabular-nums">{startHere}</span></h2>
           </div>
           <ul className="divide-y divide-line">
