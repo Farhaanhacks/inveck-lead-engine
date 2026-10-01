@@ -7,6 +7,8 @@ import { attendance, leads, tasks, users, type TaskKind } from '@/lib/db/schema'
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
+import { CALL_FEEDBACK, validTrackerValue, type TrackerField } from '@/lib/tracker';
+import { mayActOn } from '@/lib/access';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
 import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay } from '@/lib/tasks';
 
@@ -58,6 +60,18 @@ export async function completeTaskAction(form: FormData) {
     .update(tasks)
     .set({ doneAt: now, outcome, note: wrong ? `${WRONG_PREFIX}${lead!.phone}` : note || task.note })
     .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
+  // Keep the tracker's outcome columns in step with what was logged.
+  const feedback = str(form, 'feedback');
+  if (task.kind === 'call' && outcome === 'connected' && (CALL_FEEDBACK as readonly string[]).includes(feedback)) {
+    await db.update(leads).set({ callFeedback: feedback }).where(eq(leads.id, task.leadId));
+  }
+  if (task.kind === 'call' && outcome === 'wrong_number') await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
+  if (task.kind === 'email' && outcome === 'done') {
+    await db.update(leads).set({ mailOutcome: 'Sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.mailOutcome, ['', 'Not sent'])));
+  }
+  if (task.kind === 'linkedin' && outcome === 'sent') {
+    await db.update(leads).set({ linkedinOutcome: 'Request sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.linkedinOutcome, ['', 'Not sent'])));
+  }
   if (wrong) {
     await db.update(leads).set({ contactPhone: '' }).where(eq(leads.id, task.leadId));
     await logActivity(db, task.leadId, 'note', `Number ${lead!.phone} marked wrong and removed. Find the right one with ContactOut.`);
@@ -205,4 +219,20 @@ export async function undoTaskAction(form: FormData) {
   await logActivity(db, task.leadId, 'note', `Undone: ${task.title}${task.step && !task.title.startsWith(task.step) ? ` (${task.step})` : ''}`);
   revalidatePath('/today');
   revalidatePath(`/leads/${task.leadId}`);
+}
+
+/** A cell on the tracker sheet: call outcome, mail outcome, LinkedIn outcome or remark. */
+export async function updateTrackerFieldAction(id: number, field: TrackerField, value: string): Promise<{ ok: boolean }> {
+  if (!['callFeedback', 'mailOutcome', 'linkedinOutcome', 'remark'].includes(field)) return { ok: false };
+  const clean = String(value ?? '').trim();
+  if (!validTrackerValue(field, clean) || !(await mayActOn(id))) return { ok: false };
+  const db = await getDb();
+  await db.update(leads).set({ [field]: clean, updatedAt: new Date() }).where(eq(leads.id, id));
+  if (field !== 'remark' && clean) {
+    const label = field === 'callFeedback' ? 'Call outcome' : field === 'mailOutcome' ? 'Mail outcome' : 'LinkedIn outcome';
+    await logActivity(db, id, 'note', `${label}: ${clean}`);
+  }
+  revalidatePath('/tracker');
+  revalidatePath(`/leads/${id}`);
+  return { ok: true };
 }

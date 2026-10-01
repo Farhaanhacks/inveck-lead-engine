@@ -1,4 +1,5 @@
 import type { Icp } from '../db/schema';
+import { tierOf } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
@@ -262,10 +263,13 @@ export async function pickContact(
     `Company: ${lead.company} (${lead.domain || 'no domain'})${lead.city ? `, focus location: ${lead.city}` : ''}`,
     `Segment: ${lead.segment}`,
     `Roles to approach, best first: ${research.targetRoles.join(', ')}`,
-    `ICP target titles: ${icp.targetTitles}`,
+    `P1, primary decision-makers (approach first): ${icp.targetTitles}`,
+    `P2, process owners (only when no P1 fits): ${icp.p2Titles || 'none listed'}`,
+    `P3, process-level contacts (last resort): ${icp.p3Titles || 'none listed'}`,
+    `Never pick as the main contact: ${icp.avoidTitles || 'none listed'}`,
     '',
     '## Candidates',
-    candidates.length ? JSON.stringify(candidates, null, 2) : '(none found)',
+    candidates.length ? JSON.stringify(candidates.map((c) => ({ ...c, tier: tierOf(c.title, icp) || 'unlisted' })), null, 2) : '(none found)',
   ].join('\n');
 
   const byId = new Map(candidates.map((c) => [c.id, c]));
@@ -288,7 +292,14 @@ export async function pickContact(
     return { contact: manual ? toContact(manual, false, 'Supplied by the sales team') : { ...EMPTY_CONTACT }, notes: [], error: result.error, ranked: candidates };
   }
   const d = result.data;
-  const chosen = byId.get(asText(d.chosen_id));
+  let chosen = byId.get(asText(d.chosen_id));
+  // HR, admin and quality are never the main contact: fall back to the best-ranked P1, P2 or P3 candidate.
+  if (chosen && tierOf(chosen.title, icp) === 'Avoid') {
+    const rank = { P1: 0, P2: 1, P3: 2 } as Record<string, number>;
+    chosen = candidates
+      .filter((c) => tierOf(c.title, icp) in rank)
+      .sort((a, b) => rank[tierOf(a.title, icp)] - rank[tierOf(b.title, icp)])[0];
+  }
   const contact = chosen ? toContact(chosen, asBool(d.role_match), asText(d.reason)) : { ...EMPTY_CONTACT };
 
   const otherCandidates = asTextList(d.other_ids)

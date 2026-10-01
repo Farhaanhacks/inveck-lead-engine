@@ -181,4 +181,12 @@ export const SCHEMA_STATEMENTS = [
     clock_out_at TIMESTAMPTZ,
     UNIQUE (user_id, day)
   )`,
+  // P1/P2/P3 contact targeting, and the tracker sheet's columns.
+  `ALTER TABLE icps ADD COLUMN IF NOT EXISTS p2_titles TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE icps ADD COLUMN IF NOT EXISTS p3_titles TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE icps ADD COLUMN IF NOT EXISTS avoid_titles TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS call_feedback TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS remark TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS mail_outcome TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_outcome TEXT NOT NULL DEFAULT ''`,
 ];

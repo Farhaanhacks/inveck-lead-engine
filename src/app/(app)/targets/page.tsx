@@ -14,7 +14,10 @@ const ICP_FIELDS: { name: keyof Icp; label: string; rows?: number; hint?: string
   { name: 'geography', label: 'Geography' },
   { name: 'mustHaves', label: 'Must-haves', rows: 2, hint: 'Hard requirements; a company missing one is disqualified.' },
   { name: 'dealBreakers', label: 'Deal-breakers', rows: 2, hint: 'Any of these disqualifies a company.' },
-  { name: 'targetTitles', label: 'Target job titles', rows: 2, hint: 'Comma separated, most important first.' },
+  { name: 'targetTitles', label: 'P1: primary decision-makers', rows: 2, hint: 'Comma separated, most important first. Approached first.' },
+  { name: 'p2Titles', label: 'P2: process owners', rows: 2, hint: 'Approached when nobody at P1 can be found or reached.' },
+  { name: 'p3Titles', label: 'P3: process-level contacts', rows: 2, hint: 'The last resort.' },
+  { name: 'avoidTitles', label: 'Do not prioritise', rows: 1, hint: 'Functions never picked as the main contact, e.g. HR, Admin, Quality Assurance.' },
   { name: 'pitchAngle', label: 'Pitch angle', rows: 3, hint: 'The problem INVECK solves for this segment; shapes the drafts.' },
 ];
 

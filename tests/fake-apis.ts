@@ -58,9 +58,9 @@ function aiReply(system: string, user: string): unknown {
   if (system.startsWith('You find new-facility openings')) {
     return {
       openings: [
-        { id: '1', company: 'Tata Motors', headline: 'New EV plant in Sanand', location: 'Sanand, Gujarat', kind: 'new_plant', segment: 'Manufacturing & 3PL', why: 'x' },
+        { id: '1', company: 'Tata Motors', headline: 'New EV plant in Sanand', location: 'Sanand, Gujarat', kind: 'new_plant', segment: 'Manufacturing', why: 'x' },
         { id: '2', company: 'Varroc Engineering Ltd', headline: 'New lighting plant in Chakan', location: 'Chakan, Maharashtra', kind: 'new_plant', segment: 'manufacturing & 3pl', why: 'New plant, new stock to verify' },
-        { id: '3', company: 'Invented Industries', headline: 'Not in the article', location: '', kind: 'new_plant', segment: 'Manufacturing & 3PL', why: 'x' },
+        { id: '3', company: 'Invented Industries', headline: 'Not in the article', location: '', kind: 'new_plant', segment: 'Manufacturing', why: 'x' },
         { id: '9', company: 'Ghost Co', headline: 'No such item', location: '', kind: 'new_plant', segment: 'CA Firms', why: 'x' },
       ],
     };
@@ -85,7 +85,7 @@ function aiReply(system: string, user: string): unknown {
     return {
       companies: [
         { company: 'Bharat Forge Ltd', website: 'https://www.bharatforge.com/', city: 'Pune', segment: 'manufacturing & 3pl', lookalike_of: 'Haldex', why: 'forging plants' },
-        { company: 'Tata Motors Limited', website: 'tatamotors.com', segment: 'Manufacturing & 3PL', lookalike_of: '', why: 'dup' },
+        { company: 'Tata Motors Limited', website: 'tatamotors.com', segment: 'Manufacturing', lookalike_of: '', why: 'dup' },
         { company: 'Haldex India', website: 'haldex.com', segment: 'x', why: 'client' },
         'Just A String Co',
         { company: { name: 'Sona Comstar' }, website: null, city: null, segment: null, lookalike_of: null, why: null },

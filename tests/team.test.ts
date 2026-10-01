@@ -203,3 +203,32 @@ describe('talk tracks', () => {
     expect(whatsappLink('12345', 'x')).toBe('');
   });
 });
+
+describe('contact priority (P1/P2/P3)', async () => {
+  const { tierOf } = await import('@/lib/tiers');
+  const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+  const [man, log] = DEFAULT_ICPS;
+  it('ranks manufacturing titles however they are written', () => {
+    expect(tierOf('Plant Head - Pune', man)).toBe('P1');
+    expect(tierOf('Vice President - Operations', man)).toBe('P1');
+    expect(tierOf('Assistant Vice President, Operations', man)).toBe('P1');
+    expect(tierOf('Head of Supply Chain', man)).toBe('P1');
+    expect(tierOf('Managing Director', man)).toBe('P1');
+    expect(tierOf('Inventory Manager', man)).toBe('P2');
+    expect(tierOf('Deputy General Manager - Purchase', man)).toBe('P2');
+    expect(tierOf('Stores Manager', man)).toBe('P3');
+    expect(tierOf('GM - HR', man)).toBe('Avoid');
+    expect(tierOf('Quality Assurance Head', man)).toBe('Avoid');
+    expect(tierOf('Software Engineer', man)).toBe('');
+  });
+  it('ranks 3PL titles', () => {
+    expect(tierOf('National Head - Warehousing', log)).toBe('P1');
+    expect(tierOf('Chief Operating Officer', log)).toBe('P1');
+    expect(tierOf('Warehouse Manager', log)).toBe('P2');
+    expect(tierOf('Store Head', log)).toBe('P3');
+  });
+  it('covers every industry on the team list', () => {
+    for (const word of ['forging', 'cables', 'aerospace', 'pharmaceuticals', 'packaging', 'ceramics', 'medical devices', 'renewable', 'furniture', 'food processing', 'rubber', 'paints', 'petrochemicals'])
+      expect(man.industries.toLowerCase()).toContain(word);
+  });
+});

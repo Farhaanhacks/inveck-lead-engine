@@ -64,6 +64,11 @@ export const leads = pgTable('leads', {
   followUpBody: text('follow_up_body').notNull().default(''),
   /** The BDA who works this lead. */
   ownerId: integer('owner_id'),
+  /** Tracker sheet: what the last conversation came to, a free remark, and how email and LinkedIn outreach went. */
+  callFeedback: text('call_feedback').notNull().default(''),
+  remark: text('remark').notNull().default(''),
+  mailOutcome: text('mail_outcome').notNull().default(''),
+  linkedinOutcome: text('linkedin_outcome').notNull().default(''),
   /** Came in from ads, the website or a campaign: shared equally between the team and must never sit untouched. */
   inbound: boolean('inbound').notNull().default(false),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
@@ -85,7 +90,14 @@ export const icps = pgTable('icps', {
   geography: text('geography').notNull().default(''),
   mustHaves: text('must_haves').notNull().default(''),
   dealBreakers: text('deal_breakers').notNull().default(''),
+  /** P1: the decision-makers to approach first. */
   targetTitles: text('target_titles').notNull().default(''),
+  /** P2: process owners, approached only when P1 doesn't respond. */
+  p2Titles: text('p2_titles').notNull().default(''),
+  /** P3: process-level contacts, the last resort. */
+  p3Titles: text('p3_titles').notNull().default(''),
+  /** Functions never to target first (HR, admin, quality). */
+  avoidTitles: text('avoid_titles').notNull().default(''),
   pitchAngle: text('pitch_angle').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

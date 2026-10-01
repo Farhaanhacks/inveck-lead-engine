@@ -89,7 +89,7 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
           rows={12}
           required
           className="field font-mono text-xs"
-          placeholder={`Bajaj Auto, bajajauto.com, Pune, Manufacturing & 3PL\nKirtane & Pandit, kirtanepandit.com, Pune, CA Firms\nMahindra Logistics`}
+          placeholder={`Bajaj Auto, bajajauto.com, Pune, Manufacturing\nTCI Supply Chain, tcisupplychain.com, Gurgaon, 3PL & Logistics\nKirtane & Pandit, kirtanepandit.com, Pune, CA Firms\nMahindra Logistics`}
         />
         <label className="flex items-start gap-2 text-sm">
           <input type="checkbox" name="inbound" value="yes" className="mt-1" />

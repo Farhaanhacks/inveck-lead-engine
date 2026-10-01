@@ -406,6 +406,9 @@ function icpFields(form: FormData) {
     mustHaves: str(form, 'mustHaves'),
     dealBreakers: str(form, 'dealBreakers'),
     targetTitles: str(form, 'targetTitles'),
+    p2Titles: str(form, 'p2Titles'),
+    p3Titles: str(form, 'p3Titles'),
+    avoidTitles: str(form, 'avoidTitles'),
     pitchAngle: str(form, 'pitchAngle'),
   };
 }

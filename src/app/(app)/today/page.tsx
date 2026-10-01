@@ -22,6 +22,7 @@ import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLi
 import { formatDate, formatTime, relativeDays } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
+import { CALL_FEEDBACK } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
 import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, undoTaskAction } from '../../team-actions';
 
@@ -106,6 +107,11 @@ function CallActions({ task }: { task: Task }) {
           <input type="hidden" name="id" value={task.id} />
           <label htmlFor={`note-${task.id}`} className="label">What was discussed *</label>
           <textarea id={`note-${task.id}`} name="note" rows={3} required className="field" placeholder="Spoke with the Plant Head about their current stock count process." />
+          <label htmlFor={`fb-${task.id}`} className="label">Call outcome</label>
+          <select id={`fb-${task.id}`} name="feedback" defaultValue="" className="field">
+            <option value="">Choose…</option>
+            {CALL_FEEDBACK.filter((f) => f !== 'Wrong number' && f !== 'Not reachable').map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
           <label htmlFor={`cb-${task.id}`} className="label">Next call on (optional)</label>
           <input id={`cb-${task.id}`} name="callbackDate" type="date" min={istDay()} className="field" />
           <p className="text-xs text-muted">Saves the call and stops the rest of this sequence. A date adds a callback to the top of your list.</p>

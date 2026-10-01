@@ -15,11 +15,11 @@ import { getAnalytics } from '@/lib/analytics';
 import { EMPTY_CONTACT } from '@/lib/pipeline/contacts';
 
 const TEST_LEADS = [
-  { company: 'Tata Motors', website: 'https://www.tatamotors.com/', city: 'Pune', segment: 'Manufacturing & 3PL' },
-  { company: 'Bajaj Finance', website: 'bajajfinserv.in', city: 'Pune', segment: 'Manufacturing & 3PL' },
+  { company: 'Tata Motors', website: 'https://www.tatamotors.com/', city: 'Pune', segment: 'Manufacturing' },
+  { company: 'Bajaj Finance', website: 'bajajfinserv.in', city: 'Pune', segment: 'Manufacturing' },
   { company: 'Kirtane & Pandit', website: 'kirtanepandit.com', city: 'Pune', segment: 'CA Firms' },
   { company: 'Mystery Castings', city: 'Nashik' },
-  { company: 'Garbage Output Ltd', website: 'garbage.in', segment: 'Manufacturing & 3PL' },
+  { company: 'Garbage Output Ltd', website: 'garbage.in', segment: 'Manufacturing' },
   { company: 'Motherson', website: 'motherson.com', segment: 'manufacturing & 3pl', contactName: 'Vijay Agrawal', contactTitle: 'Plant Head', contactEmail: 'vijay@motherson.com' },
   { company: 'No Draft Industries', website: 'nodraft.in' },
   { company: 'Haldex India Pvt Ltd', website: 'haldexindia.in' },
@@ -235,7 +235,7 @@ describe('follow-ups, stages and analytics', () => {
   it('schedules follow-ups on send, drafts them when due, and stops on a reply', async () => {
     const [lead] = await db
       .insert(leads)
-      .values({ company: 'Acme Forge', status: 'Approved', emailSubject: 'Stock checks at Acme', emailBody: 'Hi', contactName: 'Ravi Shah', segment: 'Manufacturing & 3PL', qualified: true, source: 'Lookalike of Haldex: x' })
+      .values({ company: 'Acme Forge', status: 'Approved', emailSubject: 'Stock checks at Acme', emailBody: 'Hi', contactName: 'Ravi Shah', segment: 'Manufacturing', qualified: true, source: 'Lookalike of Haldex: x' })
       .returning();
     await applyStage(db, [lead.id], 'Contacted');
     let [l] = await db.select().from(leads).where(eq(leads.id, lead.id));
@@ -321,13 +321,13 @@ describe('winning a lead', () => {
     const [won, dup] = await db
       .insert(leads)
       .values([
-        { company: 'Acme Forge Pvt Ltd', website: 'acmeforge.in', segment: 'Manufacturing & 3PL', status: 'Meeting Booked' },
+        { company: 'Acme Forge Pvt Ltd', website: 'acmeforge.in', segment: 'Manufacturing', status: 'Meeting Booked' },
         { company: 'Acme Forge', website: 'https://www.acmeforge.in', status: 'New' },
       ])
       .returning();
     await applyStage(db, [won.id], 'Won', 'Stock verification across 4 plants');
     const client = (await db.select().from(clients)).find((c) => c.company === 'Acme Forge Pvt Ltd');
-    expect(client).toMatchObject({ website: 'acmeforge.in', industry: 'Manufacturing & 3PL', whyBought: 'Stock verification across 4 plants' });
+    expect(client).toMatchObject({ website: 'acmeforge.in', industry: 'Manufacturing', whyBought: 'Stock verification across 4 plants' });
     const statuses = Object.fromEntries((await db.select().from(leads)).map((l) => [l.id, l.status]));
     expect(statuses[won.id]).toBe('Won');
     expect(statuses[dup.id]).toBe('Existing Client');
@@ -350,7 +350,7 @@ describe('new facility radar', () => {
       company: 'Varroc Engineering',
       headline: 'New lighting plant in Chakan',
       location: 'Chakan, Maharashtra',
-      segment: 'Manufacturing & 3PL',
+      segment: 'Manufacturing',
       url: 'https://news.example/varroc',
       source: 'Economic Times',
       status: 'new',
@@ -362,7 +362,7 @@ describe('new facility radar', () => {
 
     const leadId = await addOpportunityAsLead(db, o.id);
     const [lead] = await db.select().from(leads).where(eq(leads.id, leadId!));
-    expect(lead).toMatchObject({ company: 'Varroc Engineering', city: 'Chakan', status: 'New', segment: 'Manufacturing & 3PL' });
+    expect(lead).toMatchObject({ company: 'Varroc Engineering', city: 'Chakan', status: 'New', segment: 'Manufacturing' });
     expect(lead.signals[0]).toMatchObject({ headline: 'New lighting plant in Chakan', url: 'https://news.example/varroc', kind: 'new_facility' });
     expect((await db.select().from(opportunities))[0]).toMatchObject({ status: 'added', leadId });
     // Adding twice does nothing.
