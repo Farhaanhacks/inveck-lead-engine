@@ -21,7 +21,7 @@ import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLi
 import { formatDate, formatTime, relativeDays } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction } from '../../team-actions';
+import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction } from '../../team-actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
@@ -104,7 +104,7 @@ function CallActions({ task }: { task: Task }) {
   );
 }
 
-function TaskRow({ item, bda }: { item: TodayTask; bda: string }) {
+function TaskRow({ item, bda, readOnly }: { item: TodayTask; bda: string; readOnly?: boolean }) {
   const { task, lead } = item;
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
   return (
@@ -117,24 +117,25 @@ function TaskRow({ item, bda }: { item: TodayTask; bda: string }) {
           <Reach lead={lead} />
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          {task.kind === 'call' && <CallActions task={task} />}
+          {readOnly ? <span className="text-xs text-muted">Only {bda} can log this</span> : null}
+          {!readOnly && task.kind === 'call' && <CallActions task={task} />}
           {task.kind === 'whatsapp' && (
             <>
               {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
-              <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+              {!readOnly && <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />}
             </>
           )}
           {task.kind === 'linkedin' && (
             <>
               {lead.contactLinkedin ? <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open profile</a> : null}
               <CopyButton text={linkedinNote(lead, bda)} label="Copy note" />
-              <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+              {!readOnly && <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />}
             </>
           )}
           {task.kind === 'email' && (
             <>
               <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
-              <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
+              {!readOnly && <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />}
             </>
           )}
         </div>
@@ -164,8 +165,12 @@ function TaskRow({ item, bda }: { item: TodayTask; bda: string }) {
   );
 }
 
-function Section({ title, hint, items, bda }: { title: string; hint?: string; items: TodayTask[]; bda: string }) {
+/** In the "All" view each list shows its first few items, with a link to the full list. */
+const PREVIEW = 5;
+
+function Section({ title, hint, items, bda, limit, more, readOnly }: { title: string; hint?: string; items: TodayTask[]; bda: string; limit?: number; more?: string; readOnly?: boolean }) {
   if (!items.length) return null;
+  const shown = limit ? items.slice(0, limit) : items;
   return (
     <section className="card mb-6 overflow-hidden">
       <div className="border-b border-line px-5 py-3">
@@ -175,11 +180,25 @@ function Section({ title, hint, items, bda }: { title: string; hint?: string; it
         {hint && <p className="text-xs text-muted">{hint}</p>}
       </div>
       <ul className="divide-y divide-line">
-        {items.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} />)}
+        {shown.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} readOnly={readOnly} />)}
       </ul>
+      {more && shown.length < items.length && (
+        <Link href={more} className="block border-t border-line px-5 py-3 text-sm font-medium text-accent hover:bg-surface-2">
+          Show all {items.length}
+        </Link>
+      )}
     </section>
   );
 }
+
+const TABS = [
+  { key: 'all', label: 'All' },
+  { key: 'call', label: 'Calls' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'email', label: 'Emails' },
+  { key: 'linkedin', label: 'LinkedIn' },
+] as const;
+type TabKey = (typeof TABS)[number]['key'];
 
 export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const me = (await getCurrentUser())!;
@@ -203,9 +222,35 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     unattendedInbound(db, viewId),
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
   ]);
-  const callbacks = items.filter((i) => i.task.priority);
-  const rest = items.filter((i) => !i.task.priority);
+  // Filters: one channel at a time, a search by company or person, only leads with a phone number, only overdue.
+  const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
+  const q = typeof sp.q === 'string' ? sp.q.trim() : '';
+  const withPhone = sp.phone === '1';
+  const overdueOnly = sp.overdue === '1';
+  const needle = q.toLowerCase();
+  const matches = (i: TodayTask) =>
+    (!needle || [i.lead.company, i.lead.contactName, i.lead.city].some((v) => v.toLowerCase().includes(needle))) &&
+    (!withPhone || !!i.lead.contactPhone) &&
+    (!overdueOnly || i.overdue);
+  const filtered = items.filter(matches);
+  const callbacks = filtered.filter((i) => i.task.priority);
+  const rest = filtered.filter((i) => !i.task.priority);
   const byKind = (k: Task['kind']) => rest.filter((i) => i.task.kind === k);
+  const tabCount = (k: TabKey) => (k === 'all' ? rest.length : byKind(k).length);
+  const link = (next: Record<string, string>) => {
+    const p = new URLSearchParams({
+      ...(me.role === 'admin' && viewId ? { user: String(viewId) } : {}),
+      ...(tab !== 'all' && { view: tab }),
+      ...(q && { q }),
+      ...(withPhone && { phone: '1' }),
+      ...(overdueOnly && { overdue: '1' }),
+      ...next,
+    });
+    for (const [k, v] of [...p]) if (!v || (k === 'view' && v === 'all')) p.delete(k);
+    return `/today${p.size ? `?${p}` : ''}`;
+  };
+  const show = (k: Task['kind']) => tab === 'all' || tab === k;
+  const limit = tab === 'all' ? PREVIEW : undefined;
   const startHere = unattended.length + callbacks.length + demos.length;
 
   return (
@@ -223,6 +268,20 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       </PageHeader>
 
       {me.role === 'admin' && !team.length && <p className="mb-6 text-sm text-muted">No team members yet.</p>}
+      {me.role === 'admin' && viewing && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm text-ink-2">
+          <span>You are looking at {viewing.name}&apos;s list. Only {viewing.name} can log calls and messages here, so the numbers are always theirs.</span>
+          <details className="relative">
+            <summary className="btn-secondary list-none px-2.5 py-1 text-xs [&::-webkit-details-marker]:hidden">Clear test activity</summary>
+            <form action={resetTodayLogAction} className="card absolute right-0 z-30 mt-2 w-80 space-y-2 p-4 shadow-lg">
+              <input type="hidden" name="userId" value={viewing.id} />
+              <p className="text-sm font-medium text-ink">Start {viewing.name} from zero?</p>
+              <p className="text-xs text-muted">Removes every logged call, message and email, every callback and the attendance for {viewing.name}. Their outreach plan is made again from day 1. Notes on the lead timelines stay.</p>
+              <button className="btn-danger">Clear and start fresh</button>
+            </form>
+          </details>
+        </div>
+      )}
 
       <section className="card mb-6 flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
         <div>
@@ -249,7 +308,23 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         <Counter label="Connected calls today" done={counts.connectedCalls} goal={DAILY_CONNECTED_CALLS} />
         <Counter label="Connected calls with CAs" done={counts.caConnectedCalls} goal={DAILY_CA_CONNECTED_CALLS} />
         <Counter label="LinkedIn requests sent" done={counts.linkedinSent} goal={DAILY_LINKEDIN_LIMIT} />
-        <Counter label={`Call attempts · WhatsApp · emails`} done={counts.callAttempts + counts.whatsappSent + counts.emailsDone} />
+        <div className="card p-4 text-sm">
+          <div className="text-xs text-muted">Also logged today</div>
+          <dl className="mt-1 space-y-0.5">
+            {(
+              [
+                ['Call attempts', counts.callAttempts],
+                ['WhatsApp sent', counts.whatsappSent],
+                ['Emails sent', counts.emailsDone],
+              ] as const
+            ).map(([label, n]) => (
+              <div key={label} className="flex justify-between gap-3">
+                <dt className="text-ink-2">{label}</dt>
+                <dd className="font-medium tabular-nums">{n}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </div>
 
       {startHere > 0 && (
@@ -276,15 +351,55 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
                 <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
               </li>
             ))}
-            {callbacks.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} />)}
+            {callbacks.map((i) => <TaskRow key={i.task.id} item={i} bda={bda} readOnly={!own} />)}
           </ul>
         </section>
       )}
 
-      <Section title="Calls" hint="Connected means a live conversation with the decision-maker, not an attempt." items={byKind('call')} bda={bda} />
-      <Section title="WhatsApp" items={byKind('whatsapp')} bda={bda} />
-      <Section title="Emails" items={byKind('email')} bda={bda} />
-      <Section title="LinkedIn requests" hint={`At most ${DAILY_LINKEDIN_LIMIT} a day. ${Math.max(0, DAILY_LINKEDIN_LIMIT - counts.linkedinSent)} left today.`} items={byKind('linkedin')} bda={bda} />
+      <div className="sticky top-0 z-20 -mx-4 mb-6 border-b border-line bg-page/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
+        <nav className="flex flex-wrap gap-1.5" aria-label="Show">
+          {TABS.map((t) => (
+            <Link
+              key={t.key}
+              href={link({ view: t.key })}
+              aria-current={tab === t.key ? 'page' : undefined}
+              className={`rounded-full border px-3 py-1 text-sm ${tab === t.key ? 'border-accent bg-accent-soft font-medium text-accent' : 'border-line text-ink-2 hover:bg-surface-2'}`}
+            >
+              {t.label} <span className="tabular-nums">{tabCount(t.key)}</span>
+            </Link>
+          ))}
+        </nav>
+        <form action="/today" className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+          {me.role === 'admin' && viewId ? <input type="hidden" name="user" value={viewId} /> : null}
+          {tab !== 'all' && <input type="hidden" name="view" value={tab} />}
+          <label htmlFor="today-q" className="sr-only">Search company or person</label>
+          <input id="today-q" type="search" name="q" defaultValue={q} placeholder="Search company or person" className="field h-9 max-w-xs py-1.5" />
+          <label className="flex items-center gap-1.5 text-ink-2">
+            <input type="checkbox" name="phone" value="1" defaultChecked={withPhone} /> Has a phone number
+          </label>
+          <label className="flex items-center gap-1.5 text-ink-2">
+            <input type="checkbox" name="overdue" value="1" defaultChecked={overdueOnly} /> Overdue only
+          </label>
+          <button className="btn-secondary h-9 py-1.5">Apply</button>
+          {(q || withPhone || overdueOnly) && (
+            <Link href={link({ q: '', phone: '', overdue: '' })} className="text-xs text-muted hover:text-ink">Clear filters</Link>
+          )}
+        </form>
+      </div>
+
+      {show('call') && <Section title="Calls" hint="Connected means a live conversation with the decision-maker, not an attempt." items={byKind('call')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'call' })} />}
+      {show('whatsapp') && <Section title="WhatsApp" items={byKind('whatsapp')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'whatsapp' })} />}
+      {show('email') && <Section title="Emails" items={byKind('email')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'email' })} />}
+      {show('linkedin') && <Section title="LinkedIn requests" hint={`At most ${DAILY_LINKEDIN_LIMIT} a day. ${Math.max(0, DAILY_LINKEDIN_LIMIT - counts.linkedinSent)} left today.`} items={byKind('linkedin')} bda={bda} readOnly={!own} limit={limit} more={link({ view: 'linkedin' })} />}
+
+      {items.length > 0 && !filtered.length && (
+        <div className="card p-8 text-center text-sm text-muted">
+          Nothing matches these filters. <Link href={link({ q: '', phone: '', overdue: '' })} className="text-accent hover:underline">Clear filters</Link>
+        </div>
+      )}
+      {items.length > 0 && filtered.length > 0 && tab !== 'all' && !tabCount(tab) && (
+        <div className="card p-8 text-center text-sm text-muted">Nothing due here. <Link href={link({ view: 'all' })} className="text-accent hover:underline">See everything due</Link></div>
+      )}
 
       {!items.length && !startHere && (
         <div className="card p-8 text-center text-sm text-muted">

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { leads, tasks, users, type TaskKind } from '@/lib/db/schema';
+import { attendance, leads, tasks, users, type TaskKind } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
@@ -40,7 +40,8 @@ export async function completeTaskAction(form: FormData) {
   const db = await getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!task || task.doneAt) return;
-  if (user.role !== 'admin' && task.ownerId !== user.id) return;
+  // Only the owner logs their own work, so the daily numbers are always theirs.
+  if (task.ownerId !== user.id) return;
   if (!OUTCOMES[task.kind].includes(outcome)) return;
   if (task.kind === 'call' && outcome === 'connected' && !note) return;
   if (task.kind === 'linkedin' && outcome === 'sent') {
@@ -149,4 +150,16 @@ export async function assignOwnerAction(form: FormData) {
 export async function assignOwnerBulk(ids: number[], ownerId: number) {
   const db = await getDb();
   await db.update(leads).set({ ownerId }).where(inArray(leads.id, ids));
+}
+
+/** Admin only: wipes a team member's logged tasks and attendance (testing before go-live). Their sequences are planned again. */
+export async function resetTodayLogAction(form: FormData) {
+  const user = await requireUser();
+  if (user.role !== 'admin') return;
+  const id = Number(str(form, 'userId'));
+  if (!id) return;
+  const db = await getDb();
+  await db.delete(tasks).where(eq(tasks.ownerId, id));
+  await db.delete(attendance).where(eq(attendance.userId, id));
+  revalidatePath('/today');
 }
