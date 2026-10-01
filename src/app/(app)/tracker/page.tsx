@@ -52,7 +52,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
 
   return (
     <>
-      <PageHeader title="Tracker" description="Every lead in one sheet, with the same columns as the team's Google Sheet. Outcomes and remarks save as you change them.">
+      <PageHeader title="Tracker" description="Every lead in one table, with the columns INVECK asked for plus mail and LinkedIn outcomes. Outcomes and remarks save as you change them.">
         <a href="/api/tracker/csv" download className="btn-secondary">Download CSV</a>
       </PageHeader>
       <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-3 text-sm">

@@ -51,7 +51,7 @@ export type TrackerRow = {
   linkedinOutcome: string;
 };
 
-/** One row per lead with everything the team's Google Sheet had, plus email and LinkedIn outcomes. */
+/** One row per lead with the columns INVECK's office listed, plus email and LinkedIn outcomes. */
 export async function loadTracker(db: Db, ownerId: number | null): Promise<TrackerRow[]> {
   const rows = await db
     .select()
