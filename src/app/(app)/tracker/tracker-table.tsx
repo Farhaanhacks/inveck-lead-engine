@@ -95,7 +95,7 @@ export function TrackerTable({
             <th className={th}>Call Status</th>
             <th className={th}>Call Outcome / Feedback</th>
             <th className={th}>Call Remark</th>
-            <th className={th}>Call done</th>
+            <th className={th}>Calls logged</th>
             <th className={th}>Call Date</th>
             <th className={th}>Mail Outcome</th>
             <th className={th}>LinkedIn Outcome</th>

@@ -296,7 +296,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
             <form action={resetTodayLogAction} className="card absolute right-0 z-30 mt-2 w-80 space-y-2 p-4 shadow-lg">
               <input type="hidden" name="userId" value={viewing.id} />
               <p className="text-sm font-medium text-ink">Start {viewing.name} from zero?</p>
-              <p className="text-xs text-muted">Removes every logged call, message and email, every callback and the attendance for {viewing.name}. Their outreach plan is made again from day 1. Notes on the lead timelines stay.</p>
+              <p className="text-xs text-muted">Removes every logged call, message and email, every callback, the attendance and the tracker outcomes for {viewing.name}, and puts back numbers marked wrong. Their outreach plan is made again from day 1. Notes on the lead timelines stay.</p>
               <button className="btn-danger">Clear and start fresh</button>
             </form>
           </details>

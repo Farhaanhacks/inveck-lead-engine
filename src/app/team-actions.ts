@@ -186,9 +186,19 @@ export async function resetTodayLogAction(form: FormData) {
   const id = Number(str(form, 'userId'));
   if (!id) return;
   const db = await getDb();
+  // Put back numbers that test clicks marked wrong, before the log that remembers them goes.
+  const wrong = await db.select({ leadId: tasks.leadId, note: tasks.note }).from(tasks).where(and(eq(tasks.ownerId, id), eq(tasks.outcome, 'wrong_number')));
+  for (const w of wrong) {
+    if (w.note.startsWith(WRONG_PREFIX)) {
+      await db.update(leads).set({ contactPhone: w.note.slice(WRONG_PREFIX.length) }).where(and(eq(leads.id, w.leadId), eq(leads.contactPhone, '')));
+    }
+  }
   await db.delete(tasks).where(eq(tasks.ownerId, id));
   await db.delete(attendance).where(eq(attendance.userId, id));
+  // The tracker's outcome columns start empty again too.
+  await db.update(leads).set({ callFeedback: '', mailOutcome: '', linkedinOutcome: '' }).where(eq(leads.ownerId, id));
   revalidatePath('/today');
+  revalidatePath('/tracker');
 }
 
 /**
