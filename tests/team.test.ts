@@ -231,3 +231,27 @@ describe('contact priority (P1/P2/P3)', async () => {
       expect(man.industries.toLowerCase()).toContain(word);
   });
 });
+
+describe('team report', () => {
+  it('counts each person’s calls, connect rate, meetings and attendance in the period', async () => {
+    const db = await getDb();
+    const { teamReport, periodDays } = await import('@/lib/team-report');
+    const [a] = await db.insert(leads).values(lead('Acme')).returning();
+    await assignUnowned(db);
+    const [l] = await db.select().from(leads).where(eq(leads.id, a.id));
+    const owner = l.ownerId!;
+    const now = new Date();
+    const call = (outcome: string) => ({ leadId: l.id, ownerId: owner, kind: 'call' as const, title: 'c', dueDate: istDay(), doneAt: now, outcome });
+    await db.insert(tasks).values([call('connected'), call('no_answer'), call('no_answer'), call('busy'), call('closed')]);
+    await db.insert(activities).values({ leadId: l.id, kind: 'stage', stage: 'Meeting Booked', text: 'Meeting booked' });
+    await clockIn(db, owner, new Date(Date.now() - 3 * 3_600_000));
+    await clockOut(db, owner, now);
+    const { from, to } = periodDays('today');
+    const r = await teamReport(db, from, to);
+    const me = r.people.find((p) => p.id === owner)!;
+    expect(me).toMatchObject({ callAttempts: 4, connected: 1, connectRate: 25, meetings: 1, meetingRate: 100, daysPresent: 1, leadsOwned: 1 });
+    expect(Math.round(me.minutesClocked)).toBe(180);
+    expect(r.attendance[0]).toMatchObject({ name: me.name });
+    expect(r.attendance[0].clockOutAt?.getTime()).toBe(now.getTime());
+  });
+});
