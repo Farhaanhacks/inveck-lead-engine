@@ -86,3 +86,26 @@ export function nameIsTheCompany(name: string, company: string): boolean {
   const firm = words(company);
   return words(name).slice(1).some((w) => firm.includes(w));
 }
+
+export type SnippetRole = { role: string; company: string; current: boolean };
+
+const DATE = String.raw`(?:[A-Z][a-z]{2,8}\s)?\d{4}`;
+const ROLE_LINE = new RegExp(String.raw`([A-Za-z][^.|·]{1,70}?)\.\s+([^.|·]{2,80}?)\.?,?\s+(${DATE})\s*[-–]\s*(Present|${DATE})`, 'g');
+const HEADLINE = /([A-Za-z][^·|.]{2,60}?)\s*(?:-?@|\bat\b)\s*([^·|.,]{2,60})/;
+
+/**
+ * Jobs a LinkedIn snippet shows, with whether each is current: "Group Plant Head. CIE Automotive
+ * India Ltd. Mar 2025 - Present" is current; "Plant Head. CIE Automotive India Ltd. Nov 2024 - May
+ * 2026" has ended. A headline ("Group Plant Head -@CIE Automotive India Ltd") counts as current.
+ */
+export function snippetRoles(snippet: string): SnippetRole[] {
+  const text = snippet.replace(/\s*·\s*/g, '. ').replace(/\s+/g, ' ');
+  const out: SnippetRole[] = [];
+  for (const m of text.matchAll(ROLE_LINE)) {
+    const role = m[1].replace(/^(experience|present)\s*/i, '').trim();
+    if (role && !/^experience$/i.test(role)) out.push({ role, company: m[2].trim(), current: /present/i.test(m[4]) });
+  }
+  const h = HEADLINE.exec(snippet.split(/\s*[·|]\s*/).find((p) => /-?@|\bat\b/.test(p)) ?? '');
+  if (h) out.push({ role: h[1].replace(/^.*?·\s*/, '').trim(), company: h[2].trim(), current: true });
+  return out;
+}

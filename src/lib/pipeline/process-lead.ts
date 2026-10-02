@@ -5,7 +5,7 @@ import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatU
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, websitePhone, type Research } from './research';
 import { scoreLead } from './scoring';
-import { icpFor, tierOf } from '../tiers';
+import { contactPriority, icpFor } from '../tiers';
 import { currentEmployer } from './employer';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
@@ -216,7 +216,12 @@ export async function processLead(
     if (web) format = { pattern: web.pattern, domain: web.domain, strong: web.strong, detail: patternLabel(web.pattern) };
   }
   // Only people the ICP wants: the chosen contact and anyone whose designation is on the P1/P2/P3 lists.
-  const wanted = picked.ranked.filter((c) => sameName(c.name, contact.name) || ['P1', 'P2', 'P3'].includes(tierOf(c.title, icp)));
+  // MDs, CEOs and CXOs rarely answer: kept only when there's nobody else on the lists.
+  const listed = picked.ranked.filter((c) => contactPriority(c.title, icp) < 99);
+  const anyoneBelowTop = listed.some((c) => contactPriority(c.title, icp) < 50);
+  const wanted = picked.ranked.filter(
+    (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
+  );
   update.people = companyPeople(wanted, contact, update.emailStatus ?? '', [...published, ...webEmails, ...leaders.emails], format, svc.settings.useCompanyFormat);
 
   // Never wipe contact details the sales team typed in.

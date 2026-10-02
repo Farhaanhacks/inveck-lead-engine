@@ -22,7 +22,8 @@ const ALIASES: [RegExp, string][] = [
   // "Director - Supply Chain" heads the function, like "Head of Supply Chain".
   [/\bdirector\s*[-,–:]?\s*(?=(supply|operations|manufacturing|production|logistics|plant|warehous|procurement|inventory|finance)\b)/g, 'head '],
   // A plant manager, factory manager, works manager or site head runs the plant: the Plant Head.
-  [/\b(plant|factory|works|unit|site)\s+(manager|in-?charge|incharge|lead|leader)\b|\bhead\s*-?\s*(plant|factory|works)\b|\b(factory|works|unit|site)\s+head\b/g, 'plant head'],
+  // ("Head Plant Engineering" or "Plant Maintenance Manager" are engineering, not the plant head.)
+  [/\b(plant|factory|works|unit|site)\s+(manager|in-?charge|incharge|lead|leader)\b|\bhead\s*[-–]?\s*(plant|factory|works)\b(?!\s+(engineering|maintenance|quality|projects?|hr|accounts|finance|it|admin|safety|electrical|mechanical))|\b(factory|works|unit|site)\s+head\b/g, 'plant head'],
 ];
 const FILLER = new Set(['of', 'the', 'and', 'for', 'at', 'in', 'a', 'an', 'senior', 'sr', 'jr']);
 
@@ -41,9 +42,13 @@ function matches(title: string[], role: string): boolean {
 const list = (s: string) => s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
 
 /** Where a person sits in the ICP's contact priority: P1 decision-maker, P2 process owner, P3 process level, or a function to avoid. */
+/** The role without the company after it ("Plant Head @ Lumax World" gives "Plant Head"). */
+export const roleOnly = (title: string) => title.split(/\s+(?:at|@)\s+|\s*-?@\s*/i)[0];
+
 export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): Tier {
   if (!title || !icp) return '';
-  const t = tokens(title);
+  // Only the role, not the company after it: "Manager at Allcargo Logistics" is a manager, not a logistics manager.
+  const t = tokens(roleOnly(title));
   // HR, admin and quality people are never a priority, even with a senior title ("GM - HR").
   if (list(icp.avoidTitles).some((r) => matches(t, r))) return 'Avoid';
   const tiers: [Tier, string][] = [
@@ -64,7 +69,7 @@ export const TIER_LABEL: Record<Tier, string> = {
 };
 
 /** Top of the company: they rarely answer a cold call. Reached only when nobody else is found. */
-const TOP_EXEC = /\b(md|ceo|chief executive|chairman|chairperson|founder|co-?founder|owner|proprietor|whole ?time director|executive director|president|promoter)\b/;
+const TOP_EXEC = /\b(md|ceo|coo|cfo|cto|cio|chief executive|chief \w+ officer|chairman|chairperson|founder|co-?founder|owner|proprietor|whole ?time director|executive director|president|promoter)\b/;
 /** Senior but a step away from the floor: VPs, CXOs, functional directors. */
 const SENIOR = /\b(vp|avp|coo|cfo|cto|director|chief)\b/;
 const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logistics|warehous\w*|procurement|purchase|inventory|stores?|finance|works)\b/;
@@ -79,12 +84,17 @@ const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logi
 export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): number {
   const tier = tierOf(title, icp);
   if (tier === 'Avoid' || tier === '') return 99;
-  const t = tokens(title).join(' ');
+  // Functions that have nothing to do with stock or assets, whatever their rank ("GM - Marketing").
+  if (/\b(marketing|sales|business development|legal|secretarial|investor|public relations|human resources|talent|commercial|customer service|engineering|maintenance|projects?|safety|design|r&d|research)\b/i.test(roleOnly(title))) return 99;
+  const t = tokens(roleOnly(title)).join(' ');
   const vpOrCxo = SENIOR.test(t) || /\bdirector\b/i.test(title);
   if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;
   if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
   if (tier === 'P1') {
-    if (/\bplant head\b/.test(t)) return 5;
+    // People who run a site or a region answer: plant heads, and for logistics the national,
+    // regional and warehouse heads. Finance comes after the process owners.
+    if (/\bplant head\b/.test(t) || /\b(regional|national|zonal|cluster|warehouse)\b.*\bhead\b|\bhead\b.*\b(regional|national|zonal|warehouse)\b/.test(t)) return 5;
+    if (/\b(finance|accounts|controller|cfo)\b/.test(t)) return 22;
     return vpOrCxo ? 25 : 10;
   }
   if (tier === 'P2') return 20;

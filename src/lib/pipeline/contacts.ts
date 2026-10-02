@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
-import { brandOf, currentEmployer, nameIsTheCompany, type Employer } from './employer';
+import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -86,10 +86,17 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       const [name, ...rest] = title.split(/\s+[-–—]\s+/);
       const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean);
       const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
-      const employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
+      // The snippet often holds the job and its dates ("Group Plant Head. CIE Automotive India Ltd. Mar
+      // 2025 - Present"): a current job here gives the role; jobs here that have all ended mean they left.
+      const here = company ? snippetRoles(person.snippet).filter((j) => sameFirm(j.company, company)) : [];
+      const now = here.find((j) => j.current);
+      if (now && (!person.title || !/\b(head|manager|director|officer|vp|president|chief|gm|dgm|lead|controller|incharge)\b/i.test(person.title))) person.title = now.role;
+      let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
+      if (employer !== 'elsewhere' && here.length) employer = now ? 'here' : 'elsewhere';
       return { ...person, employer };
     })
-    .filter((p) => p.name);
+    // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) aren't wanted.
+    .filter((p) => p.name && /^https?:\/\/(www\.|in\.)?linkedin\.com\//i.test(p.linkedin));
 }
 
 /**
@@ -466,9 +473,9 @@ export async function pickContact(
   // owners, with the MD last (see contactPriority), and someone at this branch before someone at another.
   // The AI's job is to vet: pick among the people it chose or listed as relevant, and only fall back to
   // the rest when it vetted nobody on the lists. The sales team's own contact always stays.
-  const vetted = [chosen, ...asTextList(d.other_ids).map((id) => byId.get(id.trim()))].filter((c): c is Candidate => !!c);
-  const pool = vetted.some((c) => contactPriority(c.title, icp) < 99) ? vetted : candidates;
-  const best = rankCandidates(pool, icp, lead.city)[0];
+  // Everyone here has passed the works-there-now checks (LinkedIn profiles showing this company,
+  // company records naming it), so rank all of them; the AI's pick only wins a tie.
+  const best = rankCandidates(candidates, icp, lead.city)[0];
   if (chosen?.source !== 'Sales team' && best && contactPriority(best.title, icp) < 99 && (!chosen || candidateRank(best, icp, lead.city) < candidateRank(chosen, icp, lead.city))) {
     chosen = best;
   }

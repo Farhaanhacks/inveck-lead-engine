@@ -802,3 +802,42 @@ describe('BC Shetty & Co: names must belong to the company', () => {
     expect(nameIn('Divya Somani', 'Divya Rao and Kiran Somani')).toBe(false);
   });
 });
+
+describe('real search results (checked live on five companies)', () => {
+  it('reads the role and whether it is current from the snippet', async () => {
+    const { snippetRoles } = await import('@/lib/pipeline/employer');
+    expect(snippetRoles('Experience. Group Plant Head. CIE Automotive India Ltd. Mar 2025 - Present 1 year 7 months.')).toContainEqual({ role: 'Group Plant Head', company: 'CIE Automotive India Ltd', current: true });
+    expect(snippetRoles('Plant Head. CIE Automotive India Ltd. Nov 2024 - May 2026 1 year 7 months. Bengaluru')).toContainEqual({ role: 'Plant Head', company: 'CIE Automotive India Ltd', current: false });
+  });
+
+  it('ranks site and region heads first, drops engineering, sales and CXOs, ignores company words in titles', async () => {
+    const { contactPriority, tierOf } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const [mfg, tpl] = DEFAULT_ICPS;
+    expect(contactPriority('Group Plant Head', mfg)).toBeLessThan(contactPriority('Head of Supply Chain', mfg));
+    expect(contactPriority('Head Plant engineering', mfg)).toBe(99);
+    expect(contactPriority('General Manager Commercial', mfg)).toBe(99);
+    expect(contactPriority('Regional Head - West', tpl)).toBeLessThan(contactPriority('Finance Controller', tpl));
+    expect(contactPriority('Director - Strategy & Group CFO', tpl)).toBeGreaterThanOrEqual(50);
+    expect(tierOf('Manager at Allcargo Logistics Ltd', tpl)).toBe('');
+  });
+
+  it('drops profiles on another country’s LinkedIn and people whose job here has ended', async () => {
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const results: Record<string, { title: string; link: string; snippet: string }> = {
+      'Haris Khan': { title: 'Haris Khan - Head of Supply Chain at Nestle Pakistan Ltd', link: 'https://pk.linkedin.com/in/haris-khan', snippet: 'Nestle' },
+      'sajin sahadevan': { title: 'sajin sahadevan - PLANT HEAD OPERATIONS', link: 'https://in.linkedin.com/in/sajin', snippet: 'Plant Head. CIE Automotive India Ltd. Nov 2024 - May 2026 1 year 7 months. Bengaluru' },
+      'Nivrutti Bachhav': { title: 'Nivrutti Bachhav - CIE Automotive India Ltd', link: 'https://in.linkedin.com/in/nivrutti-bachhav', snippet: 'Experience. Group Plant Head. CIE Automotive India Ltd. Mar 2025 - Present 1 year 7 months.' },
+    };
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      const q = JSON.parse(String(init?.body)).q as string;
+      const hit = Object.entries(results).find(([n]) => q.includes(n));
+      return new Response(JSON.stringify({ organic: hit ? [hit[1]] : [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    expect(await findLinkedinProfile(svc, 'Haris Khan', 'Nestle India')).toBeNull();
+    expect(await findLinkedinProfile(svc, 'sajin sahadevan', 'CIE Automotive India')).toMatchObject({ employer: 'elsewhere' });
+    expect(await findLinkedinProfile(svc, 'Nivrutti Bachhav', 'CIE Automotive India')).toMatchObject({ title: 'Group Plant Head', employer: 'here' });
+  });
+});
