@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, isNotNull, lt, lte } from 'drizzle-orm';
 import type { Db } from './db';
-import { activities, attendance, leads, tasks, users } from './db/schema';
+import { activities, attendance, companyDays, leads, tasks, users } from './db/schema';
 import { istDay, istDayBounds } from './tasks';
 
 export type Period = 'today' | 'yesterday' | 'week' | 'month';
@@ -32,6 +32,9 @@ export type PersonReport = {
   connected: number;
   emails: number;
   whatsapp: number;
+  linkedin: number;
+  /** Companies where every step of the day was ticked off, counted once per day. */
+  companiesDone: number;
   meetings: number;
   won: number;
   /** Connected calls per attempt, 0-100. */
@@ -62,7 +65,7 @@ export async function teamReport(db: Db, from: string, to: string): Promise<{ pe
   const ids = team.map((t) => t.id);
   if (!ids.length) return { people: [], attendance: [] };
 
-  const [done, owned, stages, att] = await Promise.all([
+  const [done, owned, stages, att, finished] = await Promise.all([
     db
       .select({ ownerId: tasks.ownerId, kind: tasks.kind, outcome: tasks.outcome })
       .from(tasks)
@@ -74,6 +77,7 @@ export async function teamReport(db: Db, from: string, to: string): Promise<{ pe
       .innerJoin(leads, eq(activities.leadId, leads.id))
       .where(and(inArray(leads.ownerId, ids), eq(activities.kind, 'stage'), inArray(activities.stage, ['Meeting Booked', 'Won']), gte(activities.at, start), lt(activities.at, end))),
     db.select().from(attendance).where(and(inArray(attendance.userId, ids), gte(attendance.day, from), lte(attendance.day, to))),
+    db.select({ ownerId: companyDays.ownerId }).from(companyDays).where(and(inArray(companyDays.ownerId, ids), gte(companyDays.day, from), lte(companyDays.day, to))),
   ]);
 
   const people = team.map((t): PersonReport => {
@@ -90,6 +94,8 @@ export async function teamReport(db: Db, from: string, to: string): Promise<{ pe
       connected,
       emails: mine.filter((d) => d.kind === 'email').length,
       whatsapp: mine.filter((d) => d.kind === 'whatsapp').length,
+      linkedin: mine.filter((d) => d.kind === 'linkedin').length,
+      companiesDone: finished.filter((f) => f.ownerId === t.id).length,
       meetings,
       won: stages.filter((s) => s.ownerId === t.id && s.stage === 'Won').length,
       connectRate: pct(connected, callAttempts),

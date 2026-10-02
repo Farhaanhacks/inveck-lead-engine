@@ -262,3 +262,13 @@ export const attendance = pgTable('attendance', {
   clockOutAt: timestamp('clock_out_at', { withTimezone: true }),
 });
 export type Attendance = typeof attendance.$inferSelect;
+
+/** A company whose every step for the day was ticked off: what the admin counts as a company completed. */
+export const companyDays = pgTable('company_days', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').notNull(),
+  ownerId: integer('owner_id').notNull(),
+  /** Indian date, YYYY-MM-DD. */
+  day: text('day').notNull(),
+  doneAt: timestamp('done_at', { withTimezone: true }).notNull().defaultNow(),
+});

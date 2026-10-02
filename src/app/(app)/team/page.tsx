@@ -21,8 +21,8 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   await runDailyDraw(db);
   const [{ people, attendance }, draw, pool, { leadsPerMorning }] = await Promise.all([teamReport(db, from, to), getDraw(db), drawPool(db), getSettings(db)]);
   const totals = people.reduce(
-    (t, p) => ({ attempts: t.attempts + p.callAttempts, connected: t.connected + p.connected, meetings: t.meetings + p.meetings, won: t.won + p.won }),
-    { attempts: 0, connected: 0, meetings: 0, won: 0 },
+    (t, p) => ({ companies: t.companies + p.companiesDone, attempts: t.attempts + p.callAttempts, connected: t.connected + p.connected, meetings: t.meetings + p.meetings, won: t.won + p.won }),
+    { companies: 0, attempts: 0, connected: 0, meetings: 0, won: 0 },
   );
   const th = 'px-3 py-2 text-left font-medium whitespace-nowrap';
   const td = 'px-3 py-2.5 whitespace-nowrap tabular-nums';
@@ -44,9 +44,10 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
         ))}
       </nav>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
         {(
           [
+            ['Companies completed', totals.companies],
             ['Calls attempted', totals.attempts],
             ['Connected calls', `${totals.connected}${totals.attempts ? ` (${Math.round((totals.connected / totals.attempts) * 100)}%)` : ''}`],
             ['Meetings booked', totals.meetings],
@@ -99,18 +100,22 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
       <section className="card mb-6 overflow-x-auto">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold">Outreach and conversion</h2>
-          <p className="text-xs text-muted">Connect rate is connected calls out of calls attempted. Meeting rate is meetings booked out of connected calls.</p>
+          <p className="text-xs text-muted">
+            A company is completed when every step for it that day (call, WhatsApp, email, LinkedIn) is ticked. Connect rate is connected calls out of calls attempted. Meeting rate is meetings booked out of connected calls.
+          </p>
         </div>
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[1100px] text-sm">
           <thead className="bg-surface-2 text-xs text-ink-2">
             <tr>
               <th className={th}>BDA</th>
               <th className={th}>Leads owned</th>
+              <th className={th}>Companies completed</th>
               <th className={th}>Calls attempted</th>
               <th className={th}>Connected</th>
               <th className={th}>Connect rate</th>
               <th className={th}>Emails</th>
               <th className={th}>WhatsApp</th>
+              <th className={th}>LinkedIn</th>
               <th className={th}>Meetings booked</th>
               <th className={th}>Meeting rate</th>
               <th className={th}>Won</th>
@@ -121,11 +126,13 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
               <tr key={p.id}>
                 <td className={`${td} font-medium`}><Link href={`/today?user=${p.id}`} className="hover:underline">{p.name}</Link></td>
                 <td className={td}>{p.leadsOwned}</td>
+                <td className={td}>{p.companiesDone}</td>
                 <td className={td}>{p.callAttempts}</td>
                 <td className={td}>{p.connected}</td>
                 <td className={td}>{rate(p.connectRate)}</td>
                 <td className={td}>{p.emails}</td>
                 <td className={td}>{p.whatsapp}</td>
+                <td className={td}>{p.linkedin}</td>
                 <td className={td}>{p.meetings}</td>
                 <td className={td}>{rate(p.meetingRate)}</td>
                 <td className={td}>{p.won}</td>

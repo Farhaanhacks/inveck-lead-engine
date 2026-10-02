@@ -1,22 +1,22 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq, gte, inArray, isNull, lte } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, isNull, lte } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, tasks, users, type TaskKind } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
-import { CALL_FEEDBACK, validTrackerValue, type TrackerField } from '@/lib/tracker';
+import { CALL_FEEDBACK, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
-import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay, MAX_CALL_ATTEMPTS, nextWorkingDay } from '@/lib/tasks';
+import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay } from '@/lib/tasks';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
 const OUTCOMES: Record<TaskKind, string[]> = {
-  call: ['connected', 'no_answer', 'busy', 'wrong_number'],
+  call: ['connected', 'no_answer', 'busy', 'wrong_number', 'skipped'],
   whatsapp: ['sent', 'skipped'],
   linkedin: ['sent', 'skipped'],
   email: ['done', 'skipped'],
@@ -48,7 +48,8 @@ export async function completeTaskAction(form: FormData) {
   // Only the owner logs their own work, so the daily numbers are always theirs.
   if (task.ownerId !== user.id) return;
   if (!OUTCOMES[task.kind].includes(outcome)) return;
-  if (task.kind === 'call' && outcome === 'connected' && !note) return;
+  const feedback = str(form, 'feedback');
+  if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return;
   if (task.kind === 'linkedin' && outcome === 'sent') {
     if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return;
   }
@@ -63,7 +64,6 @@ export async function completeTaskAction(form: FormData) {
     .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
   if (!task.priority) await catchUp(db, task, now);
   // Keep the tracker's outcome columns in step with what was logged.
-  const feedback = str(form, 'feedback');
   if (task.kind === 'call' && outcome === 'connected') {
     await db
       .update(leads)
@@ -91,16 +91,18 @@ export async function completeTaskAction(form: FormData) {
           ? 'LinkedIn connection request sent'
           : 'Email sent';
   const skipped = outcome === 'skipped';
-  await logActivity(db, task.leadId, task.kind === 'call' ? 'call' : 'note', skipped ? `${task.title}: skipped` : `${what}${task.step ? ` (${task.step})` : ''}${note ? `. ${note}` : ''}`);
+  await logActivity(db, task.leadId, task.kind === 'call' && !skipped ? 'call' : 'note', skipped ? `${task.title}: skipped` : `${what}${task.step ? ` (${task.step})` : ''}${note ? `. ${note}` : ''}`);
 
   if (task.kind === 'call' && (outcome === 'no_answer' || outcome === 'busy')) await remindToCallAgain(db, task);
 
   if (task.kind === 'call' && outcome === 'connected') {
-    // Spoke to them: the rest of the automatic sequence is no longer needed.
+    // Not interested: nothing more to send, today or later. Otherwise today's WhatsApp, email and LinkedIn
+    // still go out, and the later follow-up rounds stop: the conversation has started.
+    const dropped = (NOT_INTERESTED as readonly string[]).includes(feedback);
     await db
       .update(tasks)
       .set({ doneAt: now, outcome: 'closed' })
-      .where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false)));
+      .where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false), dropped ? undefined : gt(tasks.dueDate, istDay())));
     const callback = futureDay(str(form, 'callbackDate'));
     if (callback) {
       await db.insert(tasks).values({
@@ -117,7 +119,9 @@ export async function completeTaskAction(form: FormData) {
       await logActivity(db, task.leadId, 'note', `Callback promised for ${callback}`);
     }
   }
+  await markCompanyDay(db, task.leadId, task.ownerId);
   revalidatePath('/today');
+  revalidatePath('/team');
   revalidatePath(`/leads/${task.leadId}`);
 }
 
@@ -281,6 +285,7 @@ export async function undoTaskAction(form: FormData) {
   if (task.kind === 'call' && task.outcome === 'connected') {
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.priority, true), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
   }
+  await markCompanyDay(db, task.leadId, task.ownerId);
   await logActivity(db, task.leadId, 'note', `Undone: ${task.title}${task.step && !task.title.startsWith(task.step) ? ` (${task.step})` : ''}`);
   revalidatePath('/today');
   revalidatePath(`/leads/${task.leadId}`);

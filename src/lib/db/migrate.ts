@@ -199,4 +199,27 @@ export const SCHEMA_STATEMENTS = [
   // LinkedIn is no longer an outreach step: close the LinkedIn tasks still open (once; they don't count as work).
   `UPDATE tasks SET done_at = now(), outcome = 'closed' WHERE kind = 'linkedin' AND done_at IS NULL AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'noLinkedinTasks')`,
   `INSERT INTO settings (key, value) VALUES ('noLinkedinTasks', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  `CREATE TABLE IF NOT EXISTS company_days (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    owner_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    done_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (lead_id, day)
+  )`,
+  // Every company now gets all four steps at once (call, WhatsApp, email, LinkedIn). Once, for sequences already
+  // running: a LinkedIn request today where none was sent, and an email beside each open call where there was none.
+  `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
+   SELECT DISTINCT ON (t.lead_id) t.lead_id, t.owner_id, 'linkedin', 'Day 1', 'Send the LinkedIn connection request', to_char((now() AT TIME ZONE 'Asia/Kolkata')::date, 'YYYY-MM-DD'), 'day'
+   FROM tasks t
+   WHERE t.done_at IS NULL AND t.priority = false
+     AND NOT EXISTS (SELECT 1 FROM tasks x WHERE x.lead_id = t.lead_id AND x.kind = 'linkedin' AND x.outcome = 'sent')
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'allChannelsV1')`,
+  `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
+   SELECT t.lead_id, t.owner_id, 'email', t.step, t.step || ': email', t.due_date, t.slot
+   FROM tasks t
+   WHERE t.kind = 'call' AND t.done_at IS NULL AND t.priority = false
+     AND NOT EXISTS (SELECT 1 FROM tasks x WHERE x.lead_id = t.lead_id AND x.kind = 'email')
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'allChannelsV1')`,
+  `INSERT INTO settings (key, value) VALUES ('allChannelsV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
 ];

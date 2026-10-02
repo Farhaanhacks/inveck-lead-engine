@@ -89,25 +89,26 @@ describe('one owner per lead', () => {
 });
 
 describe('the P1 sequence', () => {
-  it('plans day 1 morning, then call + WhatsApp + email each round, skipping weekends', () => {
+  it('plans every channel at once on day 1, then call + WhatsApp + email each working day', () => {
     // 2026-09-25 is a Friday.
     expect(firstWorkingDay('2026-09-26')).toBe('2026-09-28');
     expect(addWorkingDays('2026-09-25', 1)).toBe('2026-09-28');
-    const plan = planSequence('2026-09-25', true);
-    expect(plan.map((t) => `${t.kind}:${t.step}:${t.dueDate}:${t.slot}`)).toEqual([
-      'whatsapp:Day 1:2026-09-25:morning',
-      'call:Day 1 morning:2026-09-25:morning',
-      'call:Follow-up 1:2026-09-25:evening',
-      'whatsapp:Follow-up 1:2026-09-25:evening',
-      'email:Follow-up 1:2026-09-25:evening',
-      'call:Follow-up 2:2026-09-28:day',
-      'whatsapp:Follow-up 2:2026-09-28:day',
-      'email:Follow-up 2:2026-09-28:day',
-      'call:Follow-up 3:2026-09-29:day',
-      'whatsapp:Follow-up 3:2026-09-29:day',
-      'email:Follow-up 3:2026-09-29:day',
+    const plan = planSequence('2026-09-25');
+    expect(plan.map((t) => `${t.kind}:${t.step}:${t.dueDate}`)).toEqual([
+      'call:Day 1:2026-09-25',
+      'whatsapp:Day 1:2026-09-25',
+      'email:Day 1:2026-09-25',
+      'linkedin:Day 1:2026-09-25',
+      'call:Follow-up 1:2026-09-28',
+      'whatsapp:Follow-up 1:2026-09-28',
+      'email:Follow-up 1:2026-09-28',
+      'call:Follow-up 2:2026-09-29',
+      'whatsapp:Follow-up 2:2026-09-29',
+      'email:Follow-up 2:2026-09-29',
+      'call:Follow-up 3:2026-09-30',
+      'whatsapp:Follow-up 3:2026-09-30',
+      'email:Follow-up 3:2026-09-30',
     ]);
-    expect(planSequence('2026-09-25', false).some((t) => t.kind === 'email')).toBe(false);
   });
 
   it('plans once per lead with a decision-maker, for its owner only', async () => {
@@ -117,7 +118,7 @@ describe('the P1 sequence', () => {
     expect(await ensureSequences(db, '2026-09-28')).toBe(1);
     expect(await ensureSequences(db, '2026-09-28')).toBe(0);
     const made = await db.select().from(tasks);
-    expect(made).toHaveLength(11);
+    expect(made).toHaveLength(13);
     expect(new Set(made.map((t) => t.leadId)).size).toBe(1);
   });
 
@@ -128,7 +129,7 @@ describe('the P1 sequence', () => {
     await ensureSequences(db, '2026-09-28');
     const [l] = await db.select().from(leads);
     const today = await loadTodayTasks(db, l.ownerId!, '2026-09-28');
-    expect(today.map((t) => t.task.step)).toEqual(['Day 1', 'Day 1 morning', 'Follow-up 1', 'Follow-up 1', 'Follow-up 1']);
+    expect(today.map((t) => t.task.step)).toEqual(['Day 1', 'Day 1', 'Day 1', 'Day 1']);
     await db.insert(tasks).values({ leadId: l.id, ownerId: l.ownerId!, kind: 'call', title: 'Promised callback', step: 'Promised callback', dueDate: '2026-09-28', priority: true });
     expect((await loadTodayTasks(db, l.ownerId!, '2026-09-28'))[0].task.step).toBe('Promised callback');
     // Next day the unfinished ones are overdue.
@@ -323,5 +324,31 @@ describe('morning draw', () => {
     expect(shuffle(items).sort((a, b) => a - b)).toEqual(items);
     const hands = deal(items, [1, 2, 3], () => 0.5);
     expect([...hands.values()].map((h) => h.length)).toEqual([3, 4, 3]);
+  });
+});
+
+describe('company done for the day', () => {
+  it('counts a company once every step due for it is ticked, and takes it back when one reopens', async () => {
+    const db = await getDb();
+    const { markCompanyDay, companyProgress } = await import('@/lib/tasks');
+    const { teamReport } = await import('@/lib/team-report');
+    const day = istDay();
+    await db.insert(leads).values([lead('Acme'), lead('Beta')]);
+    await assignUnowned(db, { everything: true });
+    await ensureSequences(db, day);
+    const [a] = await db.select().from(leads).where(eq(leads.company, 'Acme'));
+    const owner = a.ownerId!;
+    const open = (await db.select().from(tasks).where(eq(tasks.leadId, a.id))).filter((t) => t.dueDate <= day);
+    expect(open.map((t) => t.kind).sort()).toEqual(['call', 'email', 'linkedin', 'whatsapp']);
+    for (const t of open.slice(0, 3)) await db.update(tasks).set({ doneAt: new Date(), outcome: 'sent' }).where(eq(tasks.id, t.id));
+    expect(await markCompanyDay(db, a.id, owner, day)).toBe(false);
+    await db.update(tasks).set({ doneAt: new Date(), outcome: 'sent' }).where(eq(tasks.id, open[3].id));
+    expect(await markCompanyDay(db, a.id, owner, day)).toBe(true);
+    expect((await companyProgress(db, owner, day)).done).toBe(1);
+    const report = await teamReport(db, day, day);
+    expect(report.people.find((p) => p.id === owner)!.companiesDone).toBe(1);
+    await db.update(tasks).set({ doneAt: null, outcome: '' }).where(eq(tasks.id, open[3].id));
+    expect(await markCompanyDay(db, a.id, owner, day)).toBe(false);
+    expect((await companyProgress(db, owner, day)).done).toBe(0);
   });
 });

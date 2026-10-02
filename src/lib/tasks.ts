@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { activities, leads, tasks, type Lead, type Task, type TaskKind } from './db/schema';
+import { activities, companyDays, leads, tasks, type Lead, type Task, type TaskKind } from './db/schema';
 
 export const DAILY_LINKEDIN_LIMIT = 50;
 /** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
@@ -46,28 +46,21 @@ export function addWorkingDays(day: string, n: number): string {
 export type PlannedTask = { kind: TaskKind; step: string; title: string; dueDate: string; slot: 'morning' | 'day' | 'evening' };
 
 /**
- * The P1 sequence from the sales SOP: on day 1 a WhatsApp introduction and the first call in the
- * morning; then call + WhatsApp + email on the evening of day 1, on day 2 and on day 3. Emails are
- * only planned when there is an address. LinkedIn is used to find the contact, not as a step.
+ * The P1 sequence: everything at once. Day 1 is a call, a WhatsApp, an email and a LinkedIn
+ * connection request; then call + WhatsApp + email on each of the next three working days. Every
+ * step is planned even without a number or address, so the row shows what is missing.
  */
-export function planSequence(startDay: string, hasEmail: boolean): PlannedTask[] {
+export function planSequence(startDay: string): PlannedTask[] {
   const d1 = firstWorkingDay(startDay);
-  const d2 = addWorkingDays(d1, 1);
-  const d3 = addWorkingDays(d1, 2);
-  const plan: PlannedTask[] = [
-    { kind: 'whatsapp', step: 'Day 1', title: 'Send the WhatsApp introduction', dueDate: d1, slot: 'morning' },
-    { kind: 'call', step: 'Day 1 morning', title: 'Call 1', dueDate: d1, slot: 'morning' },
-  ];
-  const rounds: [string, string, PlannedTask['slot']][] = [
-    ['Follow-up 1', d1, 'evening'],
-    ['Follow-up 2', d2, 'day'],
-    ['Follow-up 3', d3, 'day'],
-  ];
-  for (const [step, dueDate, slot] of rounds) {
-    plan.push({ kind: 'call', step, title: `${step}: call`, dueDate, slot });
-    plan.push({ kind: 'whatsapp', step, title: `${step}: WhatsApp`, dueDate, slot });
-    if (hasEmail) plan.push({ kind: 'email', step, title: `${step}: email`, dueDate, slot });
-  }
+  const plan: PlannedTask[] = [];
+  const rounds = ['Day 1', 'Follow-up 1', 'Follow-up 2', 'Follow-up 3'];
+  rounds.forEach((step, i) => {
+    const dueDate = addWorkingDays(d1, i);
+    plan.push({ kind: 'call', step, title: `${step}: call`, dueDate, slot: 'day' });
+    plan.push({ kind: 'whatsapp', step, title: `${step}: WhatsApp`, dueDate, slot: 'day' });
+    plan.push({ kind: 'email', step, title: `${step}: email`, dueDate, slot: 'day' });
+    if (i === 0) plan.push({ kind: 'linkedin', step, title: 'Send the LinkedIn connection request', dueDate, slot: 'day' });
+  });
   return plan;
 }
 
@@ -79,7 +72,7 @@ const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualif
 /** Plans the P1 sequence for every owned lead with a decision-maker that has none yet. Safe to call repeatedly. */
 export async function ensureSequences(db: Db, today = istDay()): Promise<number> {
   const waiting = await db
-    .select({ id: leads.id, ownerId: leads.ownerId, contactEmail: leads.contactEmail })
+    .select({ id: leads.id, ownerId: leads.ownerId })
     .from(leads)
     .where(
       and(
@@ -90,7 +83,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
       ),
     )
     .limit(500);
-  const rows = waiting.flatMap((l) => planSequence(today, !!l.contactEmail).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
+  const rows = waiting.flatMap((l) => planSequence(today).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
   for (let i = 0; i < rows.length; i += 500) await db.insert(tasks).values(rows.slice(i, i + 500));
   return waiting.length;
 }
@@ -183,6 +176,38 @@ export async function loadDoneToday(db: Db, ownerId: number, day = istDay()): Pr
     .innerJoin(leads, eq(tasks.leadId, leads.id))
     .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), ne(tasks.outcome, 'closed')))
     .orderBy(sql`${tasks.doneAt} desc`, sql`${tasks.id} desc`);
+}
+
+/** Open steps due by `day` that show on Today for a lead (callbacks always; the sequence only while the lead is being worked). */
+async function openStepsFor(db: Db, leadId: number, day: string): Promise<number> {
+  const rows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), or(eq(tasks.priority, true), notInArray(leads.status, [...STOPPED_STATUSES]))));
+  return rows.length;
+}
+
+/**
+ * Records a company as done for the day once every step due for it is ticked off, and takes it back
+ * off when something is undone or a new step for today appears.
+ */
+export async function markCompanyDay(db: Db, leadId: number, ownerId: number, day = istDay()): Promise<boolean> {
+  const finished = (await openStepsFor(db, leadId, day)) === 0;
+  if (finished) await db.insert(companyDays).values({ leadId, ownerId, day }).onConflictDoNothing();
+  else await db.delete(companyDays).where(and(eq(companyDays.leadId, leadId), eq(companyDays.day, day)));
+  return finished;
+}
+
+/** How many companies on a person's list for the day are fully done. */
+export async function companyProgress(db: Db, ownerId: number, day = istDay()): Promise<{ done: number; total: number }> {
+  const [finished, open] = await Promise.all([
+    db.select({ leadId: companyDays.leadId }).from(companyDays).where(and(eq(companyDays.ownerId, ownerId), eq(companyDays.day, day))),
+    loadTodayTasks(db, ownerId, day),
+  ]);
+  const all = new Set([...finished.map((f) => f.leadId), ...open.map((o) => o.lead.id)]);
+  const still = new Set(open.map((o) => o.lead.id));
+  return { done: [...all].filter((id) => !still.has(id)).length, total: all.size };
 }
 
 /** The next working day after an Indian date. */

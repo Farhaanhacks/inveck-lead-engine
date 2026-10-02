@@ -76,12 +76,15 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   in turn (Parimal, Anuradha, Anchal, Puja, and round again). **Leads** opens on "My leads".
 - **Inbound leads**: tick "Inbound lead" when adding companies. One nobody has touched after two hours is
   flagged at the top of the owner's Today list.
-- **Today**: each person's work list. For every lead with a decision-maker the app plans the P1 sequence:
-  LinkedIn request, WhatsApp introduction and first call on day 1, then call + WhatsApp + email on the
-  evening of day 1, day 2 and day 3 (working days). Calls are logged as connected, no answer, busy or
-  wrong number; a connected call needs a note, ends the rest of the sequence and can set a callback, which
-  goes to the top of the list. Counters show calls attempted (target 25 a day), connected calls,
-  emails and WhatsApp messages sent.
+- **Today**: each person's work list, one card per company with every step at once: call, WhatsApp,
+  email and LinkedIn request on day 1, then call + WhatsApp + email on each of the next three working
+  days. Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
+  an outcome: Not interested, No requirement right now or Already using a solution ticks off everything
+  else for that company; any other outcome keeps today's WhatsApp, email and LinkedIn and stops the later
+  rounds. When every step is ticked the company is done for the day. Counters show companies done, calls
+  attempted (target 25 a day), connected calls, WhatsApp, emails and LinkedIn requests.
+- **Team** (administrators): companies completed, calls, connect rate, messages, LinkedIn requests,
+  meetings and attendance per person, for today, yesterday, 7 or 30 days, plus the morning draw.
 - **Attendance**: first and last time seen each day, plus Clock in and Clock out. Administrators can read
   it at `/api/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD` until the admin dashboard exists.
 

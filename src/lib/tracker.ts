@@ -17,6 +17,9 @@ export const CALL_FEEDBACK = [
   'Not reachable',
 ] as const;
 
+/** Call outcomes that end the outreach: no WhatsApp, email or LinkedIn after them. */
+export const NOT_INTERESTED = ['Not interested', 'No requirement right now', 'Already using a solution'] as const;
+
 export const MAIL_OUTCOMES = ['Not sent', 'Sent', 'No reply', 'Replied: interested', 'Replied: not interested', 'Bounced'] as const;
 export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', 'Replied', 'No response', 'Not on LinkedIn'] as const;
 
