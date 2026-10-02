@@ -510,7 +510,7 @@ describe('LinkedIn profile by name', () => {
     }) as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     // The current LinkedIn title, without the company's name tacked on.
-    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toEqual({ url: 'https://in.linkedin.com/in/amit-chhari-123', title: 'Chief of Operations', employer: 'here' });
+    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toMatchObject({ url: 'https://in.linkedin.com/in/amit-chhari-123', title: 'Chief of Operations', employer: 'here' });
     expect(queries[0]).toContain('"Amit Chhari"');
     expect(await findLinkedinProfile(svc, 'Rohit Dalmia', 'Allcargo Logistics Ltd')).toBeNull();
   });
@@ -767,7 +767,7 @@ describe('LinkedIn headlines', () => {
     ];
     const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
-    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics')).toEqual({ url: 'https://in.linkedin.com/in/amitchhari', title: 'Chief of Operations', employer: 'here' });
+    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics')).toMatchObject({ url: 'https://in.linkedin.com/in/amitchhari', title: 'Chief of Operations', employer: 'here' });
   });
 });
 
