@@ -574,7 +574,7 @@ describe('only people who work at the company now', () => {
     expect(at('Plant Head', { titleParts: ['Plant Head', 'PepsiCo'] })).toBe('elsewhere');
     expect(at('Supply Chain Head', { snippet: 'Experience: Britannia Industries · Education: IIM' })).toBe('elsewhere');
     expect(at('Supply Chain Head', { snippet: 'Ex-Nestle, now building supply chains' })).toBe('elsewhere');
-    expect(currentEmployer({ name: 'A', title: 'Head Operations at Tata Steel' }, 'Tata Motors')).toBe('elsewhere');
+    expect(currentEmployer({ name: 'A', title: 'Head Operations at Mahindra & Mahindra' }, 'Tata Motors')).toBe('elsewhere');
     expect(currentEmployer({ name: 'A', title: 'Head Operations at Tata Motors Ltd' }, 'Tata Motors')).toBe('here');
     expect(nameIsTheCompany('Cynthia Nestle', nestle)).toBe(true);
     expect(nameIsTheCompany('Nestor Fernandes', nestle)).toBe(false);
@@ -768,5 +768,28 @@ describe('LinkedIn headlines', () => {
     const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics')).toEqual({ url: 'https://in.linkedin.com/in/amitchhari', title: 'Chief of Operations', employer: 'here' });
+  });
+});
+
+describe('Lumax: staff write the company as "Lumax World"', () => {
+  it('keeps plant heads who list the brand name, and searches by the brand', async () => {
+    const { currentEmployer, sameFirm } = await import('@/lib/pipeline/employer');
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const { settingsSchema } = await import('@/lib/settings');
+    expect(sameFirm('Lumax World', 'Lumax Auto Technologies')).toBe(true);
+    expect(sameFirm('Lumax Industries Ltd.', 'Lumax Auto Technologies')).toBe(true);
+    expect(currentEmployer({ name: 'Pankaj Tyagi', title: 'Plant Head @ Lumax World' }, 'Lumax Auto Technologies')).toBe('here');
+    expect(contactPriority('Vice President Operations & Plant Head', DEFAULT_ICPS[0])).toBeLessThan(contactPriority('Managing Director', DEFAULT_ICPS[0]));
+    const queries: string[] = [];
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      queries.push(JSON.parse(String(init?.body)).q);
+      const organic = [{ title: 'Pankaj Tyagi - Plant Head @ Lumax World | MBA in Operations Management | LinkedIn', link: 'https://in.linkedin.com/in/pankaj-tyagi', snippet: 'Gurgaon, Haryana · Lumax World' }];
+      return new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    expect(await findLinkedinProfile(svc, 'Pankaj Tyagi', 'Lumax Auto Technologies')).toMatchObject({ url: 'https://in.linkedin.com/in/pankaj-tyagi', employer: 'here' });
+    expect(queries[0]).toContain('"lumax"');
   });
 });

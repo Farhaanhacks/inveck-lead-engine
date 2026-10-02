@@ -23,7 +23,6 @@ export default async function PipelinePage() {
     stage: l.status as Card['stage'],
     contact: [l.contactName, l.contactTitle].filter(Boolean).join(' · '),
     score: l.finalScore,
-    signal: l.signals[0]?.headline ?? '',
     email: !!l.contactEmail,
     followUp:
       l.status === 'Contacted' && l.nextFollowUpAt

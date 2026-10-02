@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
-import { currentEmployer, nameIsTheCompany, type Employer } from './employer';
+import { brandOf, currentEmployer, nameIsTheCompany, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -50,7 +50,7 @@ export function linkedinQuery(company: string, city: string, icp: Icp): string {
     .slice(0, 6);
   return [
     'site:linkedin.com/in',
-    `"${company}"`,
+    firmQuery(company),
     roles.length ? '(' + roles.map((r) => `"${r}"`).join(' OR ') + ')' : '',
     city,
   ]
@@ -93,6 +93,16 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
 }
 
 /**
+ * The company as people write it on LinkedIn: the full name or its brand ("Lumax Auto Technologies"
+ * OR "Lumax"), since staff often list "Lumax World" or "Lumax Industries".
+ */
+function firmQuery(company: string): string {
+  const full = searchName(company) || company;
+  const brand = brandOf(company);
+  return brand && brand !== full.toLowerCase() ? `("${full}" OR "${brand}")` : `"${full}"`;
+}
+
+/**
  * Public LinkedIn profiles via Google. Runs the targeted query (company + roles + city) and a
  * broad one (company + any senior role), since small companies rarely match the targeted one.
  */
@@ -100,7 +110,7 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
   const name = searchName(company);
   const queries = [query];
   // The broad search looks for the people who run operations, not the top of the company.
-  if (name) queries.push(`site:linkedin.com/in "${name}" ("plant head" OR "plant manager" OR operations OR "supply chain" OR warehouse OR logistics OR inventory OR head OR manager)`);
+  if (name) queries.push(`site:linkedin.com/in ${firmQuery(company)} ("plant head" OR "plant manager" OR operations OR "supply chain" OR warehouse OR logistics OR inventory OR head OR manager)`);
   const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q)));
   const people: LinkedInPerson[] = [];
   const seen = new Set<string>();
@@ -287,7 +297,7 @@ export async function findLinkedinProfile(
   const role = roleWords(hint.title ?? '');
   const city = (hint.city ?? '').split(',')[0].trim();
   const queries = [
-    `site:linkedin.com/in "${full}" "${firm}"`,
+    `site:linkedin.com/in "${full}" ${firmQuery(company)}`,
     `site:linkedin.com/in "${full}" ${firm}`,
     firstLast && `site:linkedin.com/in "${firstLast}" ${firm}`,
     short && `site:linkedin.com/in "${firstLast || full}" "${short}"`,

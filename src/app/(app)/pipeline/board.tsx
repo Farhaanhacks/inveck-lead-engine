@@ -10,7 +10,6 @@ export type Card = {
   stage: PipelineStage;
   contact: string;
   score: number | null;
-  signal: string;
   email: boolean;
   followUp: { due: boolean; label: string } | null;
 };
@@ -99,11 +98,6 @@ export function Board({ cards }: { cards: Card[] }) {
                       {c.score != null && <span className="text-xs text-ink-2 tabular-nums" title="Lead score">{c.score}</span>}
                     </div>
                     {c.contact && <p className="mt-0.5 truncate text-xs text-ink-2" title={c.contact}>{c.contact}</p>}
-                    {c.signal && (
-                      <p className="mt-1.5 line-clamp-2 text-xs text-warning-ink" title={c.signal}>
-                        {c.signal}
-                      </p>
-                    )}
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <span className={`text-xs ${c.followUp?.due ? 'font-medium text-warning-ink' : 'text-muted'}`}>
                         {c.followUp?.label ?? (c.email ? 'Email found' : 'LinkedIn only')}

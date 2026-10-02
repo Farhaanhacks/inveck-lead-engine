@@ -237,7 +237,6 @@ async function recordOutcome(db: Db, leadId: number, u: LeadUpdate) {
   const fit = u.fitScore != null ? `fit ${u.fitScore}/10` : '';
   await logActivity(db, leadId, 'researched', [u.status === 'Disqualified' ? `Disqualified (${fit})` : `Researched: ${fit}`, u.fitReason].filter(Boolean).join('. '));
   if (u.status === 'Disqualified') return;
-  for (const s of u.signals || []) await logActivity(db, leadId, 'signal', `${s.headline}${s.source ? ` (${s.source}${s.date ? `, ${s.date}` : ''})` : ''}`);
   if (u.contactName) {
     await logActivity(db, leadId, 'contact', `Decision-maker: ${[u.contactName, u.contactTitle].filter(Boolean).join(', ')}${u.emailStatus ? `. Email: ${u.contactEmail || '—'} (${u.emailStatus})` : ''}`);
   }

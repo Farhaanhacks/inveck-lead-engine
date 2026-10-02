@@ -141,7 +141,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     ]);
     // The timeline records what research found.
     const hwTimeline = (await db.select().from(activities).where(eq(activities.leadId, L['Honeywell'].id))).map((a) => a.kind);
-    expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'signal', 'contact', 'draft']));
+    expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'contact', 'draft']));
 
     // Everyone found at the company is kept, best first, with the best free email.
     const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));

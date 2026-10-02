@@ -8,7 +8,6 @@ import { getDb } from '@/lib/db';
 import { activities, icps, leads, people, type Lead, type Person } from '@/lib/db/schema';
 import { Timeline } from '@/components/timeline';
 import { FOLLOW_UP_DAYS } from '@/lib/pipeline/follow-ups';
-import { SIGNAL_LABELS } from '@/lib/pipeline/signals';
 import { formatDate, isPast, relativeDays } from '@/lib/dates';
 import { StatusPill } from '@/components/status-pill';
 import { CopyButton } from '@/components/copy-button';
@@ -23,7 +22,6 @@ import {
   addLeadAsClientAction,
   makePrimaryAction,
   deleteLeadAction,
-  refreshSignalsAction,
   sendFollowUpAction,
   setLeadStatusAction,
   updateLeadAction,
@@ -119,42 +117,6 @@ function FollowUpCard({ lead }: { lead: Lead }) {
   );
 }
 
-function SignalsCard({ lead }: { lead: Lead }) {
-  return (
-    <Section
-      title="In the news (a reason to call now)"
-      aside={
-        <form action={refreshSignalsAction}>
-          <input type="hidden" name="id" value={lead.id} />
-          <SubmitButton className="btn-secondary px-2.5 py-1 text-xs" pendingText="Checking…">
-            {lead.signalsCheckedAt ? 'Check again' : 'Check news'}
-          </SubmitButton>
-        </form>
-      }
-    >
-      {lead.signals.length ? (
-        <ul className="space-y-2.5">
-          {lead.signals.map((s) => (
-            <li key={s.url} className="border-l-2 border-warning-ink/40 pl-3 text-sm">
-              <span>
-                <a href={s.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{s.headline}</a>
-                <span className="block text-xs text-muted">
-                  {[SIGNAL_LABELS[s.kind] ?? 'News', s.source, s.date].filter(Boolean).join(' · ')}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted">
-          {lead.signalsCheckedAt
-            ? `No recent expansion, acquisition, funding or audit news (checked ${relativeDays(lead.signalsCheckedAt)}).`
-            : 'Not checked yet. News is checked when a qualified lead is researched.'}
-        </p>
-      )}
-    </Section>
-  );
-}
 
 
 function PeopleCard({ company, list }: { company: string; list: Person[] }) {
@@ -333,16 +295,9 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
         </div>
       )}
 
-      {(inSequence || lead.signals.length > 0 || lead.qualified) && (
-        <div className="mb-6 grid gap-6 lg:grid-cols-5">
-          {inSequence && (
-            <div className="lg:col-span-3">
-              <FollowUpCard lead={lead} />
-            </div>
-          )}
-          <div className={inSequence ? 'lg:col-span-2' : 'lg:col-span-5'}>
-            <SignalsCard lead={lead} />
-          </div>
+      {inSequence && (
+        <div className="mb-6">
+          <FollowUpCard lead={lead} />
         </div>
       )}
 

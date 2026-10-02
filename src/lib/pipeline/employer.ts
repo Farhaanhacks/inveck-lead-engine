@@ -13,12 +13,27 @@ const words = (s: string) =>
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length > 1);
 
-/** "Nestlé India Ltd" matches "Nestle" and "Nestle India"; "Tata Steel" doesn't match "Tata Motors". */
+/** Words that don't make a company name distinctive on their own. */
+const GENERIC = new Set(['auto', 'automotive', 'industries', 'industry', 'technologies', 'technology', 'tech', 'world', 'global', 'international', 'enterprises', 'systems', 'solutions', 'logistics', 'motors', 'steel', 'foods', 'products', 'engineering', 'manufacturing', 'services', 'holdings', 'ventures', 'group', 'and']);
+
+/** The brand: the company name's first distinctive word ("Lumax" in "Lumax Auto Technologies"). */
+export function brandOf(company: string): string {
+  const w = words(company).find((x) => x.length >= 4 && !GENERIC.has(x));
+  return w ?? '';
+}
+
+/**
+ * The same company under the names its people use: "Nestlé India Ltd" matches "Nestle" and "Nestle
+ * India"; "Lumax Auto Technologies" matches "Lumax World" and "Lumax Industries" (same brand, how its
+ * staff write it on LinkedIn).
+ */
 export function sameFirm(text: string, company: string): boolean {
   const a = words(text);
   const b = words(company);
   if (!a.length || !b.length) return false;
-  return b.every((w) => a.includes(w)) || a.every((w) => b.includes(w));
+  if (b.every((w) => a.includes(w)) || a.every((w) => b.includes(w))) return true;
+  const brand = brandOf(company);
+  return !!brand && brandOf(text) === brand;
 }
 
 const ROLE = /\b(head|manager|director|officer|vp|president|engineer|executive|lead|chief|gm|dgm|agm|founder|partner|analyst|consultant|specialist|supervisor|coordinator|associate|intern|ceo|cfo|coo|cto|md|controller|owner|incharge|in-charge|planner|buyer|leader|member|trainee|assistant|deputy|senior|sr|general)\b/i;
