@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { ensureResearch, requestOrigin } from '@/lib/run-driver';
+import { after } from 'next/server';
+import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
+import { fillMissingDrafts } from '@/lib/pipeline/redraft';
 import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
@@ -28,6 +30,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const db = await getDb();
   await assignUnowned(db);
   await runDailyDraw(db);
+  // Qualified leads missing an email or LinkedIn draft get them written in the background.
+  after(async () => { await fillMissingDrafts(await getDb(), await liveServices(), { limit: 8 }); });
   const me = await getCurrentUser();
   const team = await listBdas(db);
   const names = new Map(team.map((b) => [b.id, b.name]));

@@ -238,20 +238,16 @@ export async function processLead(
     await log(`${lead.company}: contacts found again (${contact.name || 'nobody on the lists yet'}); stage kept at ${lead.status}`);
     return update;
   }
-  if (!score.readyForDraft) {
-    await log(`${lead.company}: ${score.statusWithoutDraft} (score ${score.finalScore})`);
-    return { ...update, status: score.statusWithoutDraft };
-  }
-
   const out = await writeOutreach(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, contact, news.signals.length ? news.signals : lead.signals);
   if (!out.draft) {
-    await log(`${lead.company}: drafting failed: ${out.error}`, 'error');
-    return { ...update, status: 'Error', lastError: out.error || 'Drafting failed' };
+    // The research and contacts stand; the missing draft is written again in the background.
+    await log(`${lead.company}: drafting failed, will retry: ${out.error}`, 'warn');
+    return { ...update, status: score.status, lastError: `Drafting failed (retrying automatically): ${out.error || 'unknown error'}` };
   }
-  await log(`${lead.company}: draft ready for ${contact.name || 'the team'} (score ${score.finalScore})`);
+  await log(`${lead.company}: draft ready for ${contact.name || 'the team (no contact found yet)'} (score ${score.finalScore})`);
   return {
     ...update,
-    status: 'Awaiting Approval',
+    status: score.status,
     emailSubject: out.draft.subject,
     emailBody: out.draft.body,
     linkedinMessage: out.draft.linkedin,

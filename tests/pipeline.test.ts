@@ -95,6 +95,9 @@ describe('full run with DeepSeek-style messy answers', () => {
 
     expect(L['Mystery Castings'].status).toBe('Needs Manual Contact');
     expect(L['Mystery Castings'].otherDecisionMakers).toContain('LinkedIn search error');
+    // No contact found, but the email and LinkedIn message are written anyway.
+    expect(L['Mystery Castings'].emailBody).toBeTruthy();
+    expect(L['Mystery Castings'].linkedinMessage).toBeTruthy();
 
     expect(L['Garbage Output Ltd'].status).toBe('Error');
     expect(L['Garbage Output Ltd'].lastError).toContain('Could not read the AI JSON');
@@ -104,10 +107,12 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Motherson'].contactEmail).toBe('vijay@motherson.com');
     expect(L['Motherson'].emailStatus).toBe('accept_all (sales team)');
 
-    // Company pattern from Hunter → verified guess; draft missing a body → Error.
+    // Company pattern from Hunter → verified guess; draft missing a body → kept, retried later.
     expect(L['No Draft Industries'].contactEmail).toBe('ravi.shah@nodraft.in');
     expect(L['No Draft Industries'].emailStatus).toBe("valid (company's email format: first.last per Hunter)");
-    expect(L['No Draft Industries'].status).toBe('Error');
+    // Drafting failed: the lead keeps its research and contact, and the draft is retried later.
+    expect(L['No Draft Industries'].status).toBe('Awaiting Approval');
+    expect(L['No Draft Industries'].lastError).toMatch(/^Drafting failed \(retrying automatically\)/);
 
     // Email search, cheapest first.
     expect(L['Website Email Co'].contactEmail).toBe('arjun.mehta@websiteemail.in');

@@ -3,7 +3,7 @@ import { getDb } from '@/lib/db';
 import { getDraw, runDailyDraw } from '@/lib/draw';
 import { liveServices } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
-import { redraftForContact } from '@/lib/pipeline/redraft';
+import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 
 export const maxDuration = 300;
 
@@ -22,5 +22,7 @@ export async function GET(request: Request) {
   for (const id of promoted) await redraftForContact(db, svc, id);
   const checked = await verifyContacts(db, svc, { limit: 200 });
   const drawn = await runDailyDraw(db);
-  return Response.json({ promoted: promoted.length, checked, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
+  // Qualified leads missing an email or LinkedIn draft (none written yet, or the AI dropped one).
+  const drafted = await fillMissingDrafts(db, svc, { limit: 15 });
+  return Response.json({ promoted: promoted.length, checked, drafted, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
 }

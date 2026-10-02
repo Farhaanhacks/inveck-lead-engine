@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { jsonrepair } from 'jsonrepair';
 import type { Services } from './services';
 import { getJson } from './services';
 import { errorMessage } from './text';
@@ -6,14 +7,24 @@ import { errorMessage } from './text';
 export type JsonSchema = Record<string, unknown>;
 export type AiResult = { data: Record<string, unknown>; error?: undefined } | { data?: undefined; error: string };
 
-/** Parses the model's JSON reply, tolerating ```json fences. */
+/**
+ * Parses the model's JSON reply, tolerating ```json fences, text around the object, and the small
+ * slips models make (a missing colon or comma, an unescaped quote, a trailing comma).
+ */
 export function parseJsonObject(text: string | undefined | null): AiResult {
   if (!text) return { error: 'The AI returned no text' };
+  const raw = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
   let data: unknown;
   try {
-    data = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
+    data = JSON.parse(raw);
   } catch (e) {
-    return { error: 'Could not read the AI JSON: ' + errorMessage(e) };
+    try {
+      const start = raw.indexOf('{');
+      if (start < 0) throw e;
+      data = JSON.parse(jsonrepair(raw.slice(start)));
+    } catch {
+      return { error: 'Could not read the AI JSON: ' + errorMessage(e) };
+    }
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { error: 'The AI did not return a JSON object' };
   return { data: data as Record<string, unknown> };
@@ -59,8 +70,8 @@ type DeepSeekResponse = { choices?: { finish_reason?: string; message?: { conten
 async function askDeepSeek(svc: Services, system: string, userText: string, schema: JsonSchema): Promise<AiResult> {
   if (!svc.keys.deepseek) return { error: 'DEEPSEEK_API_KEY is not set' };
   let lastError = '';
-  // DeepSeek's JSON mode doesn't enforce the schema, so describe it and retry once on a bad reply.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // DeepSeek's JSON mode doesn't enforce the schema, so describe it and retry on a bad reply.
+  for (let attempt = 0; attempt < 3; attempt++) {
     const res = await getJson<DeepSeekResponse>(
       svc,
       'https://api.deepseek.com/chat/completions',

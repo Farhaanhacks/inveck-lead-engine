@@ -16,7 +16,7 @@ import { getCurrentUser, listBdas } from '@/lib/users';
 import { canReassign } from '@/lib/assign';
 import { assignOwnerAction } from '../../../team-actions';
 import { tidyContacts } from '@/lib/verify-contacts';
-import { redraftForContact } from '@/lib/pipeline/redraft';
+import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import {
   addLeadAsClientAction,
@@ -192,6 +192,8 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   // and the best-ranked person on file is the main contact while outreach hasn't started.
   if ((await tidyContacts(db, { leadId: id })).length) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  // A qualified lead missing its email or LinkedIn draft gets them written in the background.
+  if (lead && lead.qualified && (!lead.emailBody || !lead.linkedinMessage)) after(async () => { await fillMissingDrafts(await getDb(), await liveServices(), { leadId: id }); });
   const bdas = await listBdas(db);
   const me = await getCurrentUser();
   if (me?.role === 'bda' && lead.ownerId !== me.id) notFound();

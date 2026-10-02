@@ -5,16 +5,17 @@ import type { EmailStatus } from './emails';
 export type Score = {
   finalScore: number;
   breakdown: string;
-  readyForDraft: boolean;
-  /** Status when no draft is written. */
-  statusWithoutDraft: LeadStatus;
+  /** The contact can be reached (a usable email or a LinkedIn profile). */
+  reachable: boolean;
+  /** Status after drafting: reachable leads await approval; the rest need the team to find someone. */
+  status: LeadStatus;
 };
 
 /**
  * 0-100, used to rank leads: the ICP fit (0-10) times ten, so a 9/10 fit is 90. How reachable the
  * contact is (email, phone, LinkedIn) doesn't change the score; those are filled in automatically.
- * Every qualified lead that can be reached (email or LinkedIn) gets a draft; a person reviews it
- * before anything is sent, so the score never blocks one.
+ * Every qualified lead gets a draft, even with no contact found yet (the team finds one and uses it);
+ * a person reviews it before anything is sent, so the score never blocks one.
  */
 export function scoreLead(fitScore: number, contact: Contact, emailStatus: EmailStatus): Score {
   const emailOk = !!contact.email && (emailStatus === 'valid' || emailStatus === 'accept_all' || emailStatus === 'likely');
@@ -23,7 +24,7 @@ export function scoreLead(fitScore: number, contact: Contact, emailStatus: Email
   return {
     finalScore,
     breakdown: '',
-    readyForDraft: reachable,
-    statusWithoutDraft: 'Needs Manual Contact',
+    reachable,
+    status: reachable ? 'Awaiting Approval' : 'Needs Manual Contact',
   };
 }

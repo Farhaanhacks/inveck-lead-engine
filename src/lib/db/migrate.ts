@@ -319,6 +319,12 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'currentJobRecheckV1')`,
   `UPDATE people SET checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'currentJobRecheckV1')`,
   `INSERT INTO settings (key, value) VALUES ('currentJobRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // Leads that stopped on an AI reply that couldn't be read (now repaired, with more retries) are
+  // researched again, once.
+  `UPDATE leads SET status = 'New', last_error = '' WHERE status = 'Error' AND sent_at IS NULL
+     AND (last_error LIKE 'Could not read the AI JSON%' OR last_error LIKE 'The AI draft is missing%' OR last_error LIKE 'AI response was cut off%' OR last_error LIKE 'The AI did not return%' OR last_error LIKE 'The AI returned no text%')
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'aiJsonRetryV1')`,
+  `INSERT INTO settings (key, value) VALUES ('aiJsonRetryV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'
