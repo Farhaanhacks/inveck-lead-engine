@@ -247,6 +247,8 @@ export const tasks = pgTable('tasks', {
   doneAt: timestamp('done_at', { withTimezone: true }),
   /** connected, no_answer, busy, wrong_number, sent, done or skipped. */
   outcome: text('outcome').notNull().default(''),
+  /** The lead's stage before logging this moved it on, so Undo can put it back. */
+  stageFrom: text('stage_from').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Task = typeof tasks.$inferSelect;

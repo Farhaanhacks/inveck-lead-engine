@@ -1,9 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq, gt, gte, inArray, isNull, lte } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { attendance, leads, people, tasks, users, type TaskKind } from '@/lib/db/schema';
+import { attendance, leads, people, tasks, users, type LeadStatus, type TaskKind } from '@/lib/db/schema';
+import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
@@ -119,9 +120,18 @@ export async function completeTaskAction(form: FormData) {
       await logActivity(db, task.leadId, 'note', `Callback promised for ${callback}`);
     }
   }
+  // The pipeline follows what was logged: Contacted, a conversation, a meeting, or lost.
+  const [current] = await db.select({ status: leads.status }).from(leads).where(eq(leads.id, task.leadId));
+  const target = current && stageAfterOutreach(current.status, task.kind, outcome, feedback);
+  if (target) {
+    const from = await moveAfterOutreach(db, task.leadId, target, now);
+    if (from) await db.update(tasks).set({ stageFrom: `${from}>${target}` }).where(eq(tasks.id, task.id));
+  }
   await markCompanyDay(db, task.leadId, task.ownerId);
   revalidatePath('/today');
   revalidatePath('/team');
+  revalidatePath('/pipeline');
+  revalidatePath('/leads');
   revalidatePath(`/leads/${task.leadId}`);
 }
 
@@ -248,6 +258,12 @@ export async function resetTodayLogAction(form: FormData) {
       await db.update(leads).set({ contactPhone: w.note.slice(WRONG_PREFIX.length) }).where(and(eq(leads.id, w.leadId), eq(leads.contactPhone, '')));
     }
   }
+  // Stages that test clicks moved go back, latest first.
+  const moved = await db.select().from(tasks).where(and(eq(tasks.ownerId, id), ne(tasks.stageFrom, '')));
+  for (const t of moved.sort((x, y) => (y.doneAt?.getTime() ?? 0) - (x.doneAt?.getTime() ?? 0))) {
+    const [from, to] = t.stageFrom.split('>') as [LeadStatus, LeadStatus];
+    if (t.doneAt) await undoOutreachStage(db, t.leadId, from, to, t.doneAt);
+  }
   await db.delete(tasks).where(eq(tasks.ownerId, id));
   await db.delete(attendance).where(eq(attendance.userId, id));
   // The tracker's outcome columns start empty again too.
@@ -285,7 +301,13 @@ export async function undoTaskAction(form: FormData) {
   if (task.kind === 'call' && task.outcome === 'connected') {
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.priority, true), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
   }
+  if (task.stageFrom) {
+    const [from, to] = task.stageFrom.split('>') as [LeadStatus, LeadStatus];
+    await undoOutreachStage(db, task.leadId, from, to, task.doneAt);
+    await db.update(tasks).set({ stageFrom: '' }).where(eq(tasks.id, id));
+  }
   await markCompanyDay(db, task.leadId, task.ownerId);
+  revalidatePath('/pipeline');
   await logActivity(db, task.leadId, 'note', `Undone: ${task.title}${task.step && !task.title.startsWith(task.step) ? ` (${task.step})` : ''}`);
   revalidatePath('/today');
   revalidatePath(`/leads/${task.leadId}`);

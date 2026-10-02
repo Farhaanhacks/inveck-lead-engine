@@ -68,6 +68,11 @@ export function planSequence(startDay: string): PlannedTask[] {
 export const WORKING_STATUSES = ['Awaiting Approval', 'Approved', 'Contacted'] as const;
 /** Once a lead is here, open sequence tasks stop showing (promised callbacks still do). */
 const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact'] as const;
+/**
+ * Here the day's steps no longer show. A conversation or a meeting still finishes today's steps
+ * (moving there already ended the later rounds).
+ */
+const HIDDEN_STATUSES = STOPPED_STATUSES.filter((s) => s !== 'Replied' && s !== 'Meeting Booked');
 
 /** Plans the P1 sequence for every owned lead with a decision-maker that has none yet. Safe to call repeatedly. */
 export async function ensureSequences(db: Db, today = istDay()): Promise<number> {
@@ -103,7 +108,7 @@ export async function loadTodayTasks(db: Db, ownerId: number, today = istDay()):
         eq(tasks.ownerId, ownerId),
         isNull(tasks.doneAt),
         lte(tasks.dueDate, today),
-        or(eq(tasks.priority, true), notInArray(leads.status, [...STOPPED_STATUSES])),
+        or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES)),
       ),
     );
   return rows
@@ -184,7 +189,7 @@ async function openStepsFor(db: Db, leadId: number, day: string): Promise<number
     .select({ id: tasks.id })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
-    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), or(eq(tasks.priority, true), notInArray(leads.status, [...STOPPED_STATUSES]))));
+    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES))));
   return rows.length;
 }
 

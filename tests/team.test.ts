@@ -134,7 +134,11 @@ describe('the P1 sequence', () => {
     expect((await loadTodayTasks(db, l.ownerId!, '2026-09-28'))[0].task.step).toBe('Promised callback');
     // Next day the unfinished ones are overdue.
     expect((await loadTodayTasks(db, l.ownerId!, '2026-09-29')).some((t) => t.overdue)).toBe(true);
+    // A conversation started: today's steps still get finished.
     await db.update(leads).set({ status: 'Replied' }).where(eq(leads.id, l.id));
+    expect((await loadTodayTasks(db, l.ownerId!, '2026-09-28')).length).toBe(5);
+    // Lost: only the promised callback is left.
+    await db.update(leads).set({ status: 'Lost' }).where(eq(leads.id, l.id));
     expect((await loadTodayTasks(db, l.ownerId!, '2026-09-28')).map((t) => t.task.step)).toEqual(['Promised callback']);
   });
 
@@ -350,5 +354,41 @@ describe('company done for the day', () => {
     await db.update(tasks).set({ doneAt: null, outcome: '' }).where(eq(tasks.id, open[3].id));
     expect(await markCompanyDay(db, a.id, owner, day)).toBe(false);
     expect((await companyProgress(db, owner, day)).done).toBe(0);
+  });
+});
+
+describe('pipeline follows the calls', () => {
+  it('moves a lead forward from what was logged, never back', async () => {
+    const { stageAfterOutreach } = await import('@/lib/stages');
+    expect(stageAfterOutreach('Awaiting Approval', 'call', 'no_answer')).toBe('Contacted');
+    expect(stageAfterOutreach('Approved', 'whatsapp', 'sent')).toBe('Contacted');
+    expect(stageAfterOutreach('Contacted', 'call', 'busy')).toBeNull();
+    expect(stageAfterOutreach('Contacted', 'call', 'connected', 'Interested')).toBe('Replied');
+    expect(stageAfterOutreach('Awaiting Approval', 'call', 'connected', 'Demo scheduled')).toBe('Meeting Booked');
+    expect(stageAfterOutreach('Meeting Booked', 'call', 'connected', 'Interested')).toBeNull();
+    expect(stageAfterOutreach('Replied', 'call', 'connected', 'Not interested')).toBe('Lost');
+    expect(stageAfterOutreach('Lost', 'call', 'no_answer')).toBeNull();
+    expect(stageAfterOutreach('Lost', 'call', 'connected', 'Demo scheduled')).toBe('Meeting Booked');
+    expect(stageAfterOutreach('Won', 'call', 'connected', 'Not interested')).toBeNull();
+    expect(stageAfterOutreach('Approved', 'email', 'skipped')).toBeNull();
+  });
+
+  it('records the move on the timeline and undoes it exactly', async () => {
+    const db = await getDb();
+    const { moveAfterOutreach, undoOutreachStage } = await import('@/lib/stages');
+    const [l] = await db.insert(leads).values(lead('Acme')).returning();
+    const at = new Date();
+    expect(await moveAfterOutreach(db, l.id, 'Contacted', at)).toBe('Awaiting Approval');
+    let [now] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(now.status).toBe('Contacted');
+    expect(now.nextFollowUpAt).toBeNull();
+    await undoOutreachStage(db, l.id, 'Awaiting Approval', 'Contacted', at);
+    [now] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(now.status).toBe('Awaiting Approval');
+    expect(now.sentAt).toBeNull();
+    const at2 = new Date();
+    await moveAfterOutreach(db, l.id, 'Meeting Booked', at2);
+    const stages = await db.select().from(activities).where(eq(activities.leadId, l.id));
+    expect(stages.some((a) => a.stage === 'Meeting Booked')).toBe(true);
   });
 });
