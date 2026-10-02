@@ -1,8 +1,10 @@
-import { and, asc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { leads, people, type Lead } from './db/schema';
+import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { findLinkedinProfile } from './pipeline/contacts';
+import { atBranch, candidateRank, findLinkedinProfile, rankCandidates } from './pipeline/contacts';
+import { contactPriority } from './tiers';
+import { makePrimary } from './people';
 import { currentEmployer, nameIsTheCompany } from './pipeline/employer';
 import { escalate } from './escalate';
 import { redraftForContact } from './pipeline/redraft';
@@ -14,6 +16,39 @@ const RECHECK_AFTER_DAYS = 30;
 const LIVE = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Needs Manual Contact', 'Low Score'] as const;
 
 export type CheckResult = 'corrected' | 'confirmed' | 'not_found' | 'left' | 'skipped';
+
+const staleBefore = (now = new Date()) => new Date(now.getTime() - RECHECK_AFTER_DAYS * 86_400_000);
+
+/** Others checked per company per pass: the best-ranked ones, the people the team would switch to. */
+const OTHERS_PER_LEAD = 4;
+
+/**
+ * The other people stored at the company get the same check as the main contact: whoever's LinkedIn
+ * shows another employer is removed; for the rest the profile is saved and the designation updated.
+ */
+async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promise<void> {
+  const [icpRows, found] = await Promise.all([
+    db.select().from(icps),
+    db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, false), isNull(people.checkedAt), isNull(people.passedAt))),
+  ]);
+  const icp = icpRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+  const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
+  const gone: string[] = [];
+  for (const p of next) {
+    const profile = await findLinkedinProfile(svc, p.name, lead.company).catch(() => null);
+    if (profile?.employer === 'elsewhere') {
+      await db.delete(people).where(eq(people.id, p.id));
+      gone.push(`${p.name}${profile.title ? ` (now ${profile.title})` : ''}`);
+      continue;
+    }
+    const retitle = !!profile?.title && profile.title.toLowerCase() !== p.title.toLowerCase();
+    await db
+      .update(people)
+      .set({ checkedAt: now, ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
+      .where(eq(people.id, p.id));
+  }
+  if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}: ${gone.join('; ')}`);
+}
 
 /** Removes, from a lead's people, anyone whose profile shows they work somewhere else now. */
 async function dropFormerEmployees(db: Db, lead: Lead): Promise<number> {
@@ -42,6 +77,9 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     return 'left';
   }
   if (!lead.contactName || !svc.keys.serper) return 'skipped';
+  await checkOthers(db, svc, lead, now);
+  // The main contact was checked recently (during research, say): only the others needed it.
+  if (lead.contactCheckedAt && lead.contactCheckedAt > staleBefore(now)) return 'confirmed';
   const profile = await findLinkedinProfile(svc, lead.contactName, lead.company);
   if (profile?.employer === 'elsewhere') {
     await escalate(db, lead.id, 'left', now, profile.title);
@@ -73,7 +111,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
  */
 export async function verifyContacts(db: Db, svc: Services, opts: { ownerId?: number; limit?: number } = {}): Promise<Record<CheckResult, number>> {
   const tally: Record<CheckResult, number> = { corrected: 0, confirmed: 0, not_found: 0, left: 0, skipped: 0 };
-  const stale = new Date(Date.now() - RECHECK_AFTER_DAYS * 86_400_000);
+  const stale = staleBefore();
   const due = await db
     .select()
     .from(leads)
@@ -81,7 +119,17 @@ export async function verifyContacts(db: Db, svc: Services, opts: { ownerId?: nu
       and(
         ne(leads.contactName, ''),
         inArray(leads.status, [...LIVE]),
-        or(isNull(leads.contactCheckedAt), lt(leads.contactCheckedAt, stale)),
+        or(
+          isNull(leads.contactCheckedAt),
+          lt(leads.contactCheckedAt, stale),
+          // or someone else at the company hasn't been checked yet
+          exists(
+            db
+              .select({ one: sql`1` })
+              .from(people)
+              .where(and(eq(people.leadId, leads.id), eq(people.isPrimary, false), isNull(people.checkedAt), isNull(people.passedAt))),
+          ),
+        ),
         opts.ownerId ? eq(leads.ownerId, opts.ownerId) : undefined,
       ),
     )
@@ -119,4 +167,57 @@ export async function purgeFormerEmployees(db: Db, leadId?: number): Promise<num
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, l.id));
   }
   return gone.length;
+}
+
+/**
+ * Leads researched before INVECK's contact priority was enforced may have an MD (or someone off the
+ * lists) as the main contact while a plant head or process owner is on file. Before any outreach has
+ * happened, the best-ranked person takes over. Returns the leads that changed (their email is redrafted).
+ */
+export async function promoteBetterContacts(db: Db, leadId?: number): Promise<number[]> {
+  const [icpRows, rows] = await Promise.all([
+    db.select().from(icps),
+    db
+      .select({ person: people, lead: leads })
+      .from(people)
+      .innerJoin(leads, eq(people.leadId, leads.id))
+      .where(and(leadId ? eq(people.leadId, leadId) : undefined, inArray(leads.status, [...LIVE]), isNull(leads.sentAt))),
+  ]);
+  const byLead = new Map<number, { lead: Lead; list: Person[] }>();
+  for (const r of rows) {
+    const g = byLead.get(r.lead.id) ?? { lead: r.lead, list: [] };
+    g.list.push(r.person);
+    byLead.set(r.lead.id, g);
+  }
+  const changed: number[] = [];
+  for (const { lead, list } of byLead.values()) {
+    const icp = icpRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+    if (!icp) continue;
+    const current = { title: lead.contactTitle, snippet: '', phone: lead.contactPhone, email: lead.contactEmail };
+    const others = list.filter((p) => !p.isPrimary && !p.passedAt && p.name.toLowerCase() !== lead.contactName.toLowerCase() && contactPriority(p.title, icp) < 99);
+    const best = rankCandidates(others, icp, lead.city)[0];
+    if (!best) continue;
+    // Only a real step up: a better class of contact, not a tie decided by who has a phone number.
+    const gain = Math.floor(contactPriority(lead.contactTitle, icp) - (atBranch(current, lead.city) ? 6 : 0)) - Math.floor(candidateRank(best, icp, lead.city));
+    if (lead.contactName && gain < 5) continue;
+    // Not once the team has started on this person, and never over someone the team chose themselves.
+    const worked = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, lead.id), isNotNull(tasks.doneAt), ne(tasks.outcome, 'closed'))).limit(1);
+    if (worked.length) continue;
+    const chosen = await db
+      .select({ id: activities.id })
+      .from(activities)
+      .where(and(eq(activities.leadId, lead.id), eq(activities.kind, 'contact'), or(like(activities.text, 'Main contact changed%'), like(activities.text, 'Point of contact updated%'))))
+      .limit(1);
+    if (chosen.length) continue;
+    await makePrimary(db, best.id);
+    await db.update(leads).set({ contactTier: '', contactSince: new Date() }).where(eq(leads.id, lead.id));
+    await logActivity(
+      db,
+      lead.id,
+      'contact',
+      `Main contact changed to ${best.name}${best.title ? `, ${best.title}` : ''}: INVECK approaches ${best.title || 'them'} before ${lead.contactName ? `${lead.contactName} (${lead.contactTitle || 'no title'})` : 'anyone else'}.`,
+    );
+    changed.push(lead.id);
+  }
+  return changed;
 }

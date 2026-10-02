@@ -211,6 +211,10 @@ export const people = pgTable('people', {
   /** Where they were found: LinkedIn, Company website / records, Hunter, Sales team. */
   source: text('source').notNull().default(''),
   isPrimary: boolean('is_primary').notNull().default(false),
+  /** When the P2 flow moved on from this person (no answer, not the right person): not tried again automatically. */
+  passedAt: timestamp('passed_at', { withTimezone: true }),
+  /** When this person was last checked on LinkedIn (still there, current title); null = not yet. */
+  checkedAt: timestamp('checked_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Person = typeof people.$inferSelect;

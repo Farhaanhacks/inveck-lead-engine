@@ -19,11 +19,12 @@ import { recordPresence } from '@/lib/attendance';
 import { getCurrentUser, verifyLogin } from '@/lib/users';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
+import { KnownBranches } from '@/lib/branches';
 import { newContactNamed } from '@/lib/escalate';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
-import { domainOf, normCompany } from '@/lib/pipeline/text';
+import { domainOf } from '@/lib/pipeline/text';
 import { CLIENT_FIELDS, describeImport, importClients, markClientLeads, rowsToClients, type ClientField } from '@/lib/clients';
 import { parseCsv } from '@/lib/csv';
 
@@ -107,16 +108,13 @@ export async function stopRunAction(form: FormData) {
 // ─── Leads ────────────────────────────────────────────────────────────────
 
 /** Existing leads and clients, for skipping duplicates when adding companies. */
+/** Leads and clients already in the system; the same company at another city is a separate branch. */
 async function knownCompanies() {
   const db = await getDb();
-  const rows = [
-    ...(await db.select({ company: leads.company, website: leads.website }).from(leads)),
-    ...(await db.select({ company: clients.company, website: clients.website }).from(clients)),
-  ];
-  return {
-    names: new Set(rows.map((r) => normCompany(r.company)).filter(Boolean)),
-    domains: new Set(rows.map((r) => domainOf(r.website)).filter(Boolean)),
-  };
+  return new KnownBranches(
+    await db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads),
+    await db.select({ company: clients.company, website: clients.website }).from(clients),
+  );
 }
 
 async function matchSegment(segment: string) {
@@ -130,8 +128,11 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
   if (!company) return { ok: false, message: 'Company name is required.' };
   const known = await knownCompanies();
   const website = domainOf(str(form, 'website'));
-  if (known.names.has(normCompany(company)) || (website && known.domains.has(website))) {
-    return { ok: false, message: `${company} is already a lead or a client.` };
+  const city = str(form, 'city');
+  const dup = known.has(company, website, city);
+  if (dup === 'client') return { ok: false, message: `${company} is already a client.` };
+  if (dup === 'lead') {
+    return { ok: false, message: city ? `${company} in ${city} is already a lead.` : `${company} is already a lead. To add another branch, give its city.` };
   }
   const db = await getDb();
   const inbound = str(form, 'inbound') === 'yes';
@@ -142,7 +143,7 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     inbound,
     company,
     website,
-    city: str(form, 'city'),
+    city,
     segment: await matchSegment(str(form, 'segment')),
     source: inbound ? 'Inbound lead' : 'Added by hand',
     contactName: str(form, 'contactName'),
@@ -178,12 +179,11 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
     const [company = '', website = '', city = '', segment = ''] = line.split(/\t|,/).map((c) => c.trim().replace(/^"|"$/g, ''));
     if (!company || /^company$/i.test(company)) continue;
     const domain = domainOf(website);
-    if (known.names.has(normCompany(company)) || (domain && known.domains.has(domain))) {
+    if (known.has(company, domain, city)) {
       skipped++;
       continue;
     }
-    known.names.add(normCompany(company));
-    if (domain) known.domains.add(domain);
+    known.add(company, domain, city);
     toAdd.push({ company, website: domain, city, segment: await matchSegment(segment), source: inbound ? 'Inbound lead' : 'Added by hand', inbound, ownerId });
   }
   if (toAdd.length) {

@@ -3,12 +3,12 @@ import type { Db } from './db';
 import { icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
 import { makePrimary } from './people';
-import { tierOf, type Tier } from './tiers';
+import { contactPriority, tierOf, type Tier } from './tiers';
+import { rankCandidates } from './pipeline/contacts';
 import { istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
 
 /** Call outcomes where nobody useful picked up. */
 const UNANSWERED = ['no_answer', 'busy', 'wrong_number'];
-const RANK: Record<Tier, number> = { P1: 1, P2: 2, P3: 3, '': 4, Avoid: 9 };
 export const FIND_NEXT_STEP = 'Find the next person';
 
 /** Unanswered calls to the current point of contact (since they took over). */
@@ -21,18 +21,14 @@ export async function unansweredCalls(db: Db, lead: Pick<Lead, 'id' | 'contactSi
 }
 
 /**
- * The next person to try after the current one: a P2 process owner after a P1, then P3. Only people
- * whose designation is on the ICP's P1/P2/P3 lists; anyone else (and HR, admin, quality) never.
- * Among equals, one with a number first, then one with an email.
+ * The next person to try: the best-ranked by INVECK's contact priority (plant head, hands-on heads,
+ * process owners, VPs, P3, the MD last), someone at the lead's branch first, among people on the ICP's
+ * lists who haven't been tried and moved past already. HR, admin, quality and unlisted titles never.
  */
-export function nextContact(candidates: Person[], currentTier: Tier, icp: Parameters<typeof tierOf>[1], anyTier = false): { person: Person; tier: Tier } | null {
-  // When the contact has left, anyone on the lists will do, another P1 first.
-  const from = anyTier ? 0 : RANK[currentTier || 'P1'];
-  const ranked = candidates
-    .map((person) => ({ person, tier: tierOf(person.title, icp) }))
-    .filter((c) => (c.tier === 'P1' || c.tier === 'P2' || c.tier === 'P3') && RANK[c.tier] > (anyTier ? 0 : Math.min(from, 2)))
-    .sort((a, b) => RANK[a.tier] - RANK[b.tier] || Number(!!b.person.phone) - Number(!!a.person.phone) || Number(!!b.person.email) - Number(!!a.person.email));
-  return ranked[0] ?? null;
+export function nextContact(candidates: Person[], icp: Parameters<typeof tierOf>[1], city = ''): { person: Person; tier: Tier } | null {
+  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99);
+  const person = rankCandidates(listed, icp, city)[0];
+  return person ? { person, tier: tierOf(person.title, icp) } : null;
 }
 
 /** Closes what is left of the current plan and starts the full sequence again for the new person, from today. */
@@ -54,9 +50,8 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   if (!lead) return { switched: false };
   const [icpRows, found] = await Promise.all([db.select().from(icps), db.select().from(people).where(eq(people.leadId, leadId))]);
   const icp = icpRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
-  const currentTier = (lead.contactTier as Tier) || tierOf(lead.contactTitle, icp);
   const others = found.filter((p) => !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== lead.contactName.toLowerCase());
-  const next = nextContact(others, currentTier, icp, why === 'left');
+  const next = nextContact(others, icp, lead.city);
   const reason =
     why === 'left'
       ? `${lead.contactName || 'The contact'} no longer works at ${lead.company}${detail ? ` (LinkedIn: ${detail})` : ''}`
@@ -91,6 +86,8 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
     return { switched: false };
   }
 
+  // The person moved past isn't tried again automatically.
+  await db.update(people).set({ passedAt: now }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
   await makePrimary(db, next.person.id);
   const tier = next.tier === '' || next.tier === 'Avoid' ? '' : next.tier;
   await db.update(leads).set({ contactTier: tier, contactSince: now }).where(eq(leads.id, leadId));

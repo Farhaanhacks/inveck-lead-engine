@@ -447,14 +447,17 @@ describe('callback days get the full set', () => {
 describe('P2 flow', () => {
   const icp = { targetTitles: 'Plant Head, Head of Supply Chain', p2Titles: 'Inventory Manager, Warehouse Head', p3Titles: 'Store Manager', avoidTitles: 'HR, Admin, Quality' };
   const person = (id: number, name: string, title: string, extra: Partial<import('@/lib/db/schema').Person> = {}) =>
-    ({ id, leadId: 1, name, title, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, createdAt: new Date(), ...extra });
+    ({ id, leadId: 1, name, title, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, checkedAt: null as Date | null, createdAt: new Date(), ...extra });
 
-  it('picks a P2 after a P1, then P3, never HR, preferring someone with a number', async () => {
+  it('picks the next person by INVECK priority, never HR or someone already tried, preferring a number', async () => {
     const { nextContact } = await import('@/lib/escalate');
     const list = [person(1, 'Hr Head', 'Head HR'), person(2, 'Store', 'Store Manager'), person(3, 'Inv A', 'Inventory Manager'), person(4, 'Inv B', 'Inventory Manager', { phone: '98' })];
-    expect(nextContact(list, 'P1', icp)?.person.name).toBe('Inv B');
-    expect(nextContact(list, 'P2', icp)?.person.name).toBe('Store');
-    expect(nextContact([person(1, 'Hr', 'HR Manager')], 'P1', icp)).toBeNull();
+    expect(nextContact(list, icp)?.person.name).toBe('Inv B');
+    expect(nextContact(list.map((p) => (p.title === 'Inventory Manager' ? { ...p, passedAt: new Date() } : p)), icp)?.person.name).toBe('Store');
+    expect(nextContact([person(1, 'Hr', 'HR Manager')], icp)).toBeNull();
+    // Someone at the lead's branch comes first among equals.
+    const branches = [person(5, 'Pune Plant', 'Plant Head', { linkedin: 'x' }), person(6, 'Moga Plant', 'Plant Head, Moga')];
+    expect(nextContact(branches, icp, 'Moga')?.person.name).toBe('Moga Plant');
   });
 
   it('switches to the P2 after five unanswered calls with a fresh plan, or asks for one', async () => {
@@ -592,5 +595,102 @@ describe('only people who work at the company now', () => {
     expect(left.map((p) => p.name)).toEqual(['Siddhartha Saha']);
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
     expect(after.contactName).toBe('Siddhartha Saha');
+  });
+});
+
+describe('who to contact first', () => {
+  it('ranks plant heads first, then hands-on heads, process owners, VPs, P3, and the MD last', async () => {
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const mfg = DEFAULT_ICPS[0];
+    const order = ['Plant Manager', 'Operations Head', 'Inventory Manager', 'VP Supply Chain', 'Store Manager', 'Managing Director'];
+    const scores = order.map((t) => contactPriority(t, mfg));
+    expect([...scores].sort((a, b) => a - b)).toEqual(scores);
+    expect(contactPriority('Factory Manager', mfg)).toBe(contactPriority('Plant Head', mfg));
+    expect(contactPriority('Director - Supply Chain', mfg)).toBeLessThan(99);
+    expect(contactPriority('Marketing Manager', mfg)).toBe(99);
+    expect(contactPriority('GM - HR', mfg)).toBe(99);
+  });
+
+  it('prefers someone at the lead’s own branch', async () => {
+    const { rankCandidates } = await import('@/lib/pipeline/contacts');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const people = [
+      { name: 'A', title: 'Plant Head', snippet: 'Chennai, Tamil Nadu' },
+      { name: 'B', title: 'Plant Head', snippet: 'Moga, Punjab · Nestle' },
+    ];
+    expect(rankCandidates(people, DEFAULT_ICPS[0], 'Moga')[0].name).toBe('B');
+  });
+
+  it('switches an MD main contact to the plant head on file, until outreach has started', async () => {
+    const db = await getDb();
+    const { promoteBetterContacts } = await import('@/lib/verify-contacts');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [a, b] = await db
+      .insert(leads)
+      .values([
+        lead('Acme Foods', { segment: 'Manufacturing', contactName: 'Rajesh Mehta', contactTitle: 'Managing Director' }),
+        lead('Beta Foods', { segment: 'Manufacturing', contactName: 'Sunil Rao', contactTitle: 'Managing Director' }),
+      ])
+      .returning();
+    for (const l of [a, b]) {
+      await db.insert(peopleTable).values([
+        { leadId: l.id, name: l.contactName, title: 'Managing Director', isPrimary: true },
+        { leadId: l.id, name: `Plant ${l.id}`, title: 'Plant Manager', phone: '98' },
+      ]);
+    }
+    // Beta's MD has already been called: leave it.
+    await db.insert(tasks).values({ leadId: b.id, ownerId: 1, kind: 'call', title: 'c', dueDate: istDay(), doneAt: new Date(), outcome: 'no_answer' });
+    expect(await promoteBetterContacts(db)).toEqual([a.id]);
+    const rows = await db.select().from(leads).orderBy(leads.id);
+    expect(rows.map((l) => l.contactName)).toEqual([`Plant ${a.id}`, 'Sunil Rao']);
+    // Someone the team picked themselves is never overridden.
+    const [c] = await db.insert(leads).values(lead('Gamma Foods', { segment: 'Manufacturing', contactName: 'Uma Iyer', contactTitle: 'Managing Director' })).returning();
+    await db.insert(peopleTable).values([
+      { leadId: c.id, name: 'Uma Iyer', title: 'Managing Director', isPrimary: true },
+      { leadId: c.id, name: 'Plant Gamma', title: 'Plant Head' },
+    ]);
+    await db.insert(activities).values({ leadId: c.id, kind: 'contact', text: 'Point of contact updated (name): Uma Iyer' });
+    expect(await promoteBetterContacts(db, c.id)).toEqual([]);
+  });
+});
+
+describe('branches of one company', () => {
+  it('treats the same company in another city as a new branch, not a duplicate', async () => {
+    const { KnownBranches, sameCity } = await import('@/lib/branches');
+    const known = new KnownBranches([{ company: 'Nestle India Ltd', website: 'nestle.in', city: 'Moga' }], [{ company: 'Haldex India', website: 'haldex.com' }]);
+    expect(known.has('Nestle India', '', 'Moga, Punjab')).toBe('lead');
+    expect(known.has('Nestle India', 'nestle.in', 'Samalkha')).toBe('');
+    expect(known.has('Nestle India', '', '')).toBe('lead');
+    expect(known.has('Haldex India Pvt Ltd', '', 'Pune')).toBe('client');
+    expect(sameCity('Pune', 'Pune, Maharashtra')).toBe(true);
+    expect(sameCity('Pune', 'Chakan')).toBe(false);
+  });
+});
+
+describe('everyone at the company checked on LinkedIn', () => {
+  it('removes other people whose LinkedIn shows another employer', async () => {
+    const db = await getDb();
+    const { verifyContacts } = await import('@/lib/verify-contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const profiles: Record<string, { title: string; link: string; snippet: string }> = {
+      'Siddhartha Saha': { title: 'Siddhartha Saha - Regional Logistics Manager - Nestle India | LinkedIn', link: 'https://in.linkedin.com/in/ss', snippet: 'Nestle India' },
+      'Arzoo Sharma': { title: 'Arzoo Sharma - Logistics Manager - Britannia Industries | LinkedIn', link: 'https://in.linkedin.com/in/as', snippet: 'Experience: Britannia Industries' },
+    };
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      const q = JSON.parse(String(init?.body)).q as string;
+      const hit = Object.entries(profiles).find(([n]) => q.includes(n));
+      return new Response(JSON.stringify({ organic: hit ? [hit[1]] : [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const [l] = await db.insert(leads).values(lead('Nestle India', { segment: 'Manufacturing', contactName: 'Siddhartha Saha', contactTitle: 'Regional Logistics Manager', contactCheckedAt: new Date() })).returning();
+    await db.insert(peopleTable).values([
+      { leadId: l.id, name: 'Siddhartha Saha', title: 'Regional Logistics Manager', isPrimary: true },
+      { leadId: l.id, name: 'Arzoo Sharma', title: 'Logistics Manager', source: 'LinkedIn' },
+    ]);
+    await verifyContacts(db, svc);
+    const left = await db.select().from(peopleTable).where(eq(peopleTable.leadId, l.id));
+    expect(left.map((p) => p.name)).toEqual(['Siddhartha Saha']);
   });
 });

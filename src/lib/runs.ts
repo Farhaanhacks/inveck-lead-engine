@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { clients, icps, leads, runEvents, runs, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
@@ -79,9 +79,11 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       .set({ status: 'New' })
       .where(and(eq(leads.status, 'Processing'), lt(leads.processingStartedAt, new Date(Date.now() - STALE_MS))));
 
-    const [activeIcps, clientList] = await Promise.all([
+    const [activeIcps, clientList, taken] = await Promise.all([
       db.select().from(icps).where(eq(icps.active, true)).orderBy(asc(icps.id)),
       db.select().from(clients),
+      // Every lead's main contact, so two branches of one company don't get the same person.
+      db.select({ leadId: leads.id, company: leads.company, website: leads.website, contactName: leads.contactName }).from(leads).where(ne(leads.contactName, '')),
     ]);
     if (!activeIcps.length) throw new Error('No active ICP. Turn on at least one ICP.');
 
@@ -154,7 +156,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       await mapLimit(batch, CONCURRENCY, async (lead) => {
         let result: LeadResult;
         try {
-          result = await processLead(svc, lead, { icps: activeIcps, clients: clientList }, (m, l) => log(m, l, lead.id));
+          result = await processLead(svc, lead, { icps: activeIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id));
         } catch (e) {
           result = { status: 'Error' as const, lastError: errorMessage(e) };
           await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);

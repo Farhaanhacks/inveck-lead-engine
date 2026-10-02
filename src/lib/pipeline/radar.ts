@@ -6,7 +6,8 @@ import { askJson } from './ai';
 import { RADAR_PROMPT } from './prompts';
 import type { NewsResult, Services } from './services';
 import { mapLimit, newsSearch } from './services';
-import { asList, asText, normCompany } from './text';
+import { asList, asText } from './text';
+import { KnownBranches } from '../branches';
 
 const KINDS = ['new_plant', 'new_warehouse', 'expansion'];
 const SCAN_EVERY_MS = 12 * 60 * 60 * 1000;
@@ -95,13 +96,14 @@ export async function scanRadar(
   const result = await askJson(svc, RADAR_PROMPT, `ICP segments: ${segments.join(', ')}\n\n## News\n${list}`, schema);
   if (result.error !== undefined) return { added: 0, error: result.error };
 
-  // Skip companies we already know: leads, clients and earlier opportunities.
+  // Skip what we already know: clients, the same branch already a lead, and earlier openings at the same
+  // place. A new plant or warehouse of a company that's already a lead elsewhere is a new branch lead.
   const [leadRows, clientRows, earlier] = await Promise.all([
-    db.select({ company: leads.company }).from(leads),
-    db.select({ company: clients.company }).from(clients),
-    db.select({ company: opportunities.company, url: opportunities.url }).from(opportunities).orderBy(desc(opportunities.id)).limit(2000),
+    db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads),
+    db.select({ company: clients.company, website: clients.website }).from(clients),
+    db.select({ company: opportunities.company, location: opportunities.location, url: opportunities.url }).from(opportunities).orderBy(desc(opportunities.id)).limit(2000),
   ]);
-  const known = new Set([...leadRows, ...clientRows, ...earlier].map((r) => normCompany(r.company)).filter(Boolean));
+  const known = new KnownBranches([...leadRows, ...earlier.map((e) => ({ company: e.company, website: '', city: e.location }))], clientRows);
   const knownUrls = new Set(earlier.map((e) => e.url));
 
   const rows: (typeof opportunities.$inferInsert)[] = [];
@@ -109,15 +111,16 @@ export async function scanRadar(
     const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
     const item = items[Number(asText(o.id).replace(/\D/g, '')) - 1];
     const company = asText(o.company).replace(/\b(pvt|private|ltd|limited)\b\.?/gi, '').replace(/\s+/g, ' ').trim();
-    if (!item || !company || known.has(normCompany(company)) || knownUrls.has(item.link!)) continue;
+    const location = asText(o.location).slice(0, 80);
+    if (!item || !company || known.has(company, '', location) || knownUrls.has(item.link!)) continue;
     // The company must actually appear in the article's title or snippet.
     if (!`${item.title} ${item.snippet}`.toLowerCase().includes(company.toLowerCase().split(' ')[0])) continue;
-    known.add(normCompany(company));
+    known.add(company, '', location);
     const segment = asText(o.segment);
     rows.push({
       company,
       headline: (asText(o.headline) || item.title!).slice(0, 160),
-      location: asText(o.location).slice(0, 80),
+      location,
       kind: KINDS.includes(asText(o.kind)) ? asText(o.kind) : 'new_plant',
       segment: segments.find((s) => s.toLowerCase() === segment.toLowerCase()) || segments[0],
       why: asText(o.why).slice(0, 300),

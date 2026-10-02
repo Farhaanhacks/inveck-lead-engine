@@ -1,4 +1,7 @@
 import Link from 'next/link';
+import { after } from 'next/server';
+import { tierOf } from '@/lib/tiers';
+import { candidateRank } from '@/lib/pipeline/contacts';
 import { notFound } from 'next/navigation';
 import { asc, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
@@ -13,7 +16,9 @@ import { SubmitButton } from '@/components/submit-button';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { canReassign } from '@/lib/assign';
 import { assignOwnerAction } from '../../../team-actions';
-import { purgeFormerEmployees } from '@/lib/verify-contacts';
+import { promoteBetterContacts, purgeFormerEmployees } from '@/lib/verify-contacts';
+import { redraftForContact } from '@/lib/pipeline/redraft';
+import { liveServices } from '@/lib/run-driver';
 import {
   addLeadAsClientAction,
   makePrimaryAction,
@@ -151,12 +156,21 @@ function SignalsCard({ lead }: { lead: Lead }) {
   );
 }
 
-function PeopleCard({ company, list }: { company: string; list: Person[] }) {
+const TIER_STYLE: Record<string, string> = {
+  P1: 'bg-good-soft text-good-ink',
+  P2: 'bg-accent-soft text-accent',
+  P3: 'bg-neutral-soft text-ink-2',
+};
+
+function PeopleCard({ company, list, tierOfPerson }: { company: string; list: Person[]; tierOfPerson: (p: Person) => string }) {
   return (
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
-        <h2 className="text-sm font-semibold">People at {company}</h2>
-        <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.email).length} with email</span>
+        <div>
+          <h2 className="text-sm font-semibold">People to contact at {company}</h2>
+          <p className="text-xs text-muted">Best first, by INVECK&apos;s contact priority: plant heads, then other operations heads, then process owners. Only people who work there now.</p>
+        </div>
+        <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.phone).length} with a number · {list.filter((p) => p.email).length} with email</span>
       </div>
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
@@ -176,7 +190,9 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
                     {p.name}
+                    {tierOfPerson(p) && <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${TIER_STYLE[tierOfPerson(p)]}`}>{tierOfPerson(p)}</span>}
                     {p.isPrimary && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
+                    {p.passedAt && <span className="ml-2 text-xs font-normal text-muted">tried, no luck</span>}
                   </div>
                   <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>
                 </td>
@@ -203,7 +219,7 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
         </table>
       </div>
       <p className="border-t border-line px-5 py-2.5 text-xs text-muted">
-        Changing the main contact keeps the draft as it is: edit the greeting, or click “Research again” to redraft for them.
+        Making someone the main contact rewrites the email for them; the calls and messages on Today go to them from then on.
       </p>
     </section>
   );
@@ -217,18 +233,29 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   if (!Number.isInteger(id)) notFound();
   const db = await getDb();
   // Nobody who has left the company is shown: cleared before the page is drawn.
-  if (Number.isInteger(id)) await purgeFormerEmployees(db, id);
+  // and the best-ranked person on file is the main contact while outreach hasn't started.
+  await purgeFormerEmployees(db, id);
+  if ((await promoteBetterContacts(db, id)).length) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
   const bdas = await listBdas(db);
   const me = await getCurrentUser();
   if (me?.role === 'bda' && lead.ownerId !== me.id) notFound();
   if (!lead) notFound();
-  const [segmentRows, timeline, team] = await Promise.all([
-    db.select({ segment: icps.segment }).from(icps),
+  const [segmentRows, timeline, found] = await Promise.all([
+    db.select().from(icps),
     db.select().from(activities).where(eq(activities.leadId, id)).orderBy(desc(activities.at), desc(activities.id)),
     db.select().from(people).where(eq(people.leadId, id)).orderBy(desc(people.isPrimary), asc(people.id)),
   ]);
   const segments = segmentRows.map((s) => s.segment);
+  const icp = segmentRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+  const tierOfPerson = (p: Person) => {
+    const t = tierOf(p.title, icp);
+    return t === 'P1' || t === 'P2' || t === 'P3' ? t : '';
+  };
+  // Main contact first, then everyone else best first; people already tried go last.
+  const team = [...found].sort(
+    (a, b) => Number(b.isPrimary) - Number(a.isPrimary) || Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
+  );
   const inSequence = lead.status === 'Contacted';
 
   const mailto = lead.contactEmail
@@ -307,6 +334,12 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       {lead.lastError && (
         <div className="mb-6 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink" role="alert">
           <span className="font-medium">Last error:</span> {lead.lastError}
+        </div>
+      )}
+
+      {team.length > 0 && (
+        <div className="mb-6">
+          <PeopleCard company={lead.company} list={team} tierOfPerson={tierOfPerson} />
         </div>
       )}
 
@@ -467,11 +500,6 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
         </div>
       </form>
 
-      {team.length > 0 && (
-        <div className="mt-6">
-          <PeopleCard company={lead.company} list={team} />
-        </div>
-      )}
 
       <div className="mt-6">
         <Timeline leadId={id} items={timeline} />

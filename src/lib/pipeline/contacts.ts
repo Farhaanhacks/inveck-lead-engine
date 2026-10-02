@@ -1,5 +1,5 @@
 import type { Icp } from '../db/schema';
-import { tierOf } from '../tiers';
+import { contactPriority, tierOf } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
@@ -7,7 +7,7 @@ import type { Services } from './services';
 import { googleSearch, hunter } from './services';
 import { currentEmployer, nameIsTheCompany, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
-import { asBool, asList, asText, asTextList, errorMessage, searchName } from './text';
+import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
 
 export type Candidate = {
@@ -37,12 +37,17 @@ export type Contact = {
 
 export const EMPTY_CONTACT: Contact = { name: '', title: '', email: '', phone: '', linkedin: '', emailSource: '', roleMatch: false, reason: '' };
 
-/** Google query for public LinkedIn profiles of the target roles at this company. */
-export function linkedinQuery(company: string, city: string, research: Research, icp: Icp): string {
-  const roles = (research.targetRoles.length ? research.targetRoles : icp.targetTitles.split(','))
-    .map((r) => String(r).trim())
-    .filter(Boolean)
-    .slice(0, 4);
+/**
+ * Google query for public LinkedIn profiles at this company, for the roles INVECK approaches first:
+ * the plant head / plant manager and the other hands-on heads from the ICP's lists, never the MD.
+ */
+export function linkedinQuery(company: string, city: string, icp: Icp): string {
+  const listed = [...icp.targetTitles.split(','), ...icp.p2Titles.split(',')].map((r) => r.trim()).filter(Boolean);
+  const floor = /manufactur|plant|factory|production|works/i.test(`${icp.segment} ${icp.industries}`) ? ['Plant Head', 'Plant Manager'] : [];
+  const roles = [...new Set([...floor, ...listed])]
+    .filter((r) => contactPriority(r, icp) < 25)
+    .sort((a, b) => contactPriority(a, icp) - contactPriority(b, icp))
+    .slice(0, 6);
   return [
     'site:linkedin.com/in',
     `"${company}"`,
@@ -91,7 +96,8 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
 export async function searchLinkedIn(svc: Services, query: string, company = ''): Promise<{ people: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const queries = [query];
-  if (name) queries.push(`site:linkedin.com/in "${name}" (founder OR director OR CEO OR owner OR partner OR head OR manager OR president)`);
+  // The broad search looks for the people who run operations, not the top of the company.
+  if (name) queries.push(`site:linkedin.com/in "${name}" ("plant head" OR "plant manager" OR operations OR "supply chain" OR warehouse OR logistics OR inventory OR head OR manager)`);
   const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q)));
   const people: LinkedInPerson[] = [];
   const seen = new Set<string>();
@@ -241,6 +247,23 @@ export async function findLinkedinProfile(svc: Services, person: string, company
   return null;
 }
 
+/** True when the person's title or profile names the lead's city: they work at this branch. */
+export function atBranch(c: { title: string; snippet?: string }, city: string): boolean {
+  const place = city.trim().toLowerCase();
+  return place.length > 2 && `${c.title} ${c.snippet ?? ''}`.toLowerCase().includes(place);
+}
+
+/** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */
+type RankIcp = Parameters<typeof contactPriority>[1];
+
+export function candidateRank(c: { title: string; snippet?: string; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
+  return contactPriority(c.title, icp) - (atBranch(c, city) ? 6 : 0) - (c.phone ? 0.2 : 0) - (c.email ? 0.1 : 0);
+}
+
+export function rankCandidates<T extends { title: string; snippet?: string; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
+  return [...list].sort((a, b) => candidateRank(a, icp, city) - candidateRank(b, icp, city));
+}
+
 /** One candidate list from the sales team's contact, LinkedIn and Hunter; the same person on two lists is merged. */
 export function buildCandidates(
   manual: ManualContact,
@@ -337,22 +360,28 @@ export async function pickContact(
   }
   const d = result.data;
   let chosen = byId.get(asText(d.chosen_id));
-  // HR, admin and quality are never the main contact: fall back to the best-ranked P1, P2 or P3 candidate.
-  if (chosen && tierOf(chosen.title, icp) === 'Avoid') {
-    const rank = { P1: 0, P2: 1, P3: 2 } as Record<string, number>;
-    chosen = candidates
-      .filter((c) => tierOf(c.title, icp) in rank)
-      .sort((a, b) => rank[tierOf(a.title, icp)] - rank[tierOf(b.title, icp)])[0];
+  // INVECK's order decides who comes first, not the AI: plant heads, then hands-on heads, then process
+  // owners, with the MD last (see contactPriority), and someone at this branch before someone at another.
+  // The AI's job is to vet: pick among the people it chose or listed as relevant, and only fall back to
+  // the rest when it vetted nobody on the lists. The sales team's own contact always stays.
+  const vetted = [chosen, ...asTextList(d.other_ids).map((id) => byId.get(id.trim()))].filter((c): c is Candidate => !!c);
+  const pool = vetted.some((c) => contactPriority(c.title, icp) < 99) ? vetted : candidates;
+  const best = rankCandidates(pool, icp, lead.city)[0];
+  if (chosen?.source !== 'Sales team' && best && contactPriority(best.title, icp) < 99 && (!chosen || candidateRank(best, icp, lead.city) < candidateRank(chosen, icp, lead.city))) {
+    chosen = best;
   }
-  const contact = chosen ? toContact(chosen, asBool(d.role_match), asText(d.reason)) : { ...EMPTY_CONTACT };
+  if (chosen && tierOf(chosen.title, icp) === 'Avoid') chosen = undefined;
+  const contact = chosen
+    ? toContact(chosen, tierOf(chosen.title, icp) === 'P1', chosen.id === asText(d.chosen_id) ? asText(d.reason) : `Ranked first by INVECK's contact priority: ${chosen.title}`)
+    : { ...EMPTY_CONTACT };
 
   const otherCandidates = asTextList(d.other_ids)
     .map((id) => byId.get(id.trim()))
     // Only people the ICP wants: designations on its P1/P2/P3 lists.
     .filter((c): c is Candidate => !!c && c !== chosen && ['P1', 'P2', 'P3'].includes(tierOf(c.title, icp)));
   const others = otherCandidates.slice(0, 4).map((c) => [c.name, c.title, c.email || c.linkedin].filter(Boolean).join(' | '));
-  // Everyone found, best first: the chosen contact, the AI's other picks, then the rest.
-  const ranked = [...(chosen ? [chosen] : []), ...otherCandidates, ...candidates.filter((c) => c !== chosen && !otherCandidates.includes(c))];
+  // Everyone found, best first by INVECK's contact priority, the chosen contact on top.
+  const ranked = [...(chosen ? [chosen] : []), ...rankCandidates(candidates.filter((c) => c !== chosen), icp, lead.city)];
   const rolesToFind = asTextList(d.roles_to_find_on_linkedin);
 
   const notes: string[] = [];

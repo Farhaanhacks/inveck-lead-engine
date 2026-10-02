@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { purgeFormerEmployees } from '@/lib/verify-contacts';
+import { promoteBetterContacts, purgeFormerEmployees } from '@/lib/verify-contacts';
+import { redraftForContact } from '@/lib/pipeline/redraft';
+import { liveServices } from '@/lib/run-driver';
+import { after } from 'next/server';
 import { leads, people } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
@@ -18,6 +21,8 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   const db = await getDb();
   // Nobody who has left their company is listed.
   await purgeFormerEmployees(db);
+  const promoted = await promoteBetterContacts(db);
+  if (promoted.length) after(async () => { const d = await getDb(); const svc = await liveServices(); for (const id of promoted) await redraftForContact(d, svc, id); });
 
   const filters: SQL[] = [];
   const owner = ownerScope((await getCurrentUser())!);

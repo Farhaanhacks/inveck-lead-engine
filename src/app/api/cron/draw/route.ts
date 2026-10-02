@@ -2,7 +2,8 @@ import { runSecret } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { getDraw, runDailyDraw } from '@/lib/draw';
 import { liveServices } from '@/lib/run-driver';
-import { purgeFormerEmployees, verifyContacts } from '@/lib/verify-contacts';
+import { promoteBetterContacts, purgeFormerEmployees, verifyContacts } from '@/lib/verify-contacts';
+import { redraftForContact } from '@/lib/pipeline/redraft';
 
 export const maxDuration = 300;
 
@@ -16,8 +17,11 @@ export async function GET(request: Request) {
   }
   const db = await getDb();
   // Every contact the team will see today checked on LinkedIn first: profile and current designation.
+  const svc = await liveServices();
   const purged = await purgeFormerEmployees(db);
-  const checked = await verifyContacts(db, await liveServices(), { limit: 200 });
+  const promoted = await promoteBetterContacts(db);
+  for (const id of promoted) await redraftForContact(db, svc, id);
+  const checked = await verifyContacts(db, svc, { limit: 200 });
   const drawn = await runDailyDraw(db);
-  return Response.json({ purged, checked, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
+  return Response.json({ purged, promoted: promoted.length, checked, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
 }

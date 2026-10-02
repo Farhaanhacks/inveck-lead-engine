@@ -233,6 +233,8 @@ export const SCHEMA_STATEMENTS = [
   // Every contact is checked again once for who they work for now (former employees were kept before).
   `UPDATE leads SET contact_checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'employerCheckV1')`,
   `INSERT INTO settings (key, value) VALUES ('employerCheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS passed_at TIMESTAMPTZ`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

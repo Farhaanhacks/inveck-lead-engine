@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { atBranch, buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
@@ -36,7 +36,10 @@ export function icpFor(segment: string, icps: Icp[]): Icp | undefined {
  * email search → score → outreach draft. Never throws for a single lead's problems;
  * they end up in `status: 'Error'` and `lastError`.
  */
-export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[]; clients: Client[] }, log: Log): Promise<LeadResult> {
+/** Another lead's main contact: used so two branches of one company don't get the same person. */
+export type TakenContact = { leadId: number; company: string; website: string; contactName: string };
+
+export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[] }, log: Log): Promise<LeadResult> {
   const client = matchClient(lead, ctx.clients);
   if (client) {
     await log(`${lead.company}: already a client (${client.company}), skipped`);
@@ -111,7 +114,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   };
   const notes: string[] = [];
   const [linkedin, people, webEmails, leaders, news] = await Promise.all([
-    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, research, icp), lead.company),
+    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company),
     manual.email ? Promise.resolve({ emails: [], pattern: '', error: '' }) : hunterDomainSearch(svc, domain),
     manual.email ? Promise.resolve([]) : searchWebEmails(svc, domain),
     searchLeaders(svc, lead.company, domain, site.text, pages),
@@ -123,8 +126,17 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
 
   // Nobody who works somewhere else now ("Plant Head at PepsiCo"), whatever source listed them.
+  // Another branch of this company already has its own main contact: they stay with that branch
+  // unless their profile places them at this one.
+  const firmName = normCompany(lead.company);
+  const firmSite = rootDomain(lead.website);
+  const otherBranches = (ctx.taken ?? []).filter(
+    (t) => t.leadId !== lead.id && t.contactName && ((firmName && normCompany(t.company) === firmName) || (firmSite && rootDomain(t.website) === firmSite)),
+  );
   const candidates = buildCandidates(manual, linkedin.people, people.emails, leaders.people).filter(
-    (c) => c.source === 'Sales team' || currentEmployer(c, lead.company) !== 'elsewhere',
+    (c) =>
+      c.source === 'Sales team' ||
+      (currentEmployer(c, lead.company) !== 'elsewhere' && !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
   );
   const published = websiteEmails(siteText, domain);
   const picked = await pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, candidates);

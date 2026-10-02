@@ -19,6 +19,10 @@ const ALIASES: [RegExp, string][] = [
   [/\bquality assurance\b|\bq\.?a\b/g, 'quality'],
   [/\badministration\b/g, 'admin'],
   [/\bstores\b/g, 'store'],
+  // "Director - Supply Chain" heads the function, like "Head of Supply Chain".
+  [/\bdirector\s*[-,–:]?\s*(?=(supply|operations|manufacturing|production|logistics|plant|warehous|procurement|inventory|finance)\b)/g, 'head '],
+  // A plant manager, factory manager, works manager or site head runs the plant: the Plant Head.
+  [/\b(plant|factory|works|unit|site)\s+(manager|in-?charge|incharge|lead|leader)\b|\bhead\s*-?\s*(plant|factory|works)\b|\b(factory|works|unit|site)\s+head\b/g, 'plant head'],
 ];
 const FILLER = new Set(['of', 'the', 'and', 'for', 'at', 'in', 'a', 'an', 'senior', 'sr', 'jr']);
 
@@ -58,3 +62,31 @@ export const TIER_LABEL: Record<Tier, string> = {
   Avoid: 'Not a priority',
   '': '',
 };
+
+/** Top of the company: they rarely answer a cold call. Reached only when nobody else is found. */
+const TOP_EXEC = /\b(md|ceo|chief executive|chairman|chairperson|founder|co-?founder|owner|proprietor|whole ?time director|executive director|president|promoter)\b/;
+/** Senior but a step away from the floor: VPs, CXOs, functional directors. */
+const SENIOR = /\b(vp|avp|coo|cfo|cto|director|chief)\b/;
+const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logistics|warehous\w*|procurement|purchase|inventory|stores?|finance|works)\b/;
+
+/**
+ * Who to approach first; lower is better. INVECK's rule: people who run the floor answer, the top
+ * of the company doesn't. So within the ICP's lists: plant heads first, then other hands-on heads
+ * (operations, manufacturing, supply chain, warehouse, logistics, national / regional heads), then
+ * P2 process owners, then VPs and CXOs, then P3, and the MD / CEO / founder last. HR, admin, quality
+ * and titles on no list aren't wanted (99).
+ */
+export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): number {
+  const tier = tierOf(title, icp);
+  if (tier === 'Avoid' || tier === '') return 99;
+  const t = tokens(title).join(' ');
+  const vpOrCxo = SENIOR.test(t) || /\bdirector\b/i.test(title);
+  if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;
+  if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
+  if (tier === 'P1') {
+    if (/\bplant head\b/.test(t)) return 5;
+    return vpOrCxo ? 25 : 10;
+  }
+  if (tier === 'P2') return 20;
+  return 30;
+}
