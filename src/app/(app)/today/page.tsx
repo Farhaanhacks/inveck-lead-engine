@@ -25,7 +25,7 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, undoTaskAction, updateContactAction } from '../../team-actions';
+import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
@@ -64,7 +64,7 @@ function Reach({ lead }: { lead: Lead }) {
       {lead.contactPhone ? (
         <a href={`tel:${lead.contactPhone.replace(/[^\d+]/g, '')}`} className="font-medium text-accent hover:underline">{lead.contactPhone}</a>
       ) : (
-        <span className="text-warning-ink">No number yet. Find it with ContactOut from the LinkedIn profile.</span>
+        <span className="text-muted">No number saved yet</span>
       )}
       {lead.contactEmail ? <span className="text-ink-2">{lead.contactEmail}</span> : <span className="text-muted">No email yet</span>}
       {lead.contactLinkedin && <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn profile</a>}
@@ -83,15 +83,7 @@ function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
   );
 }
 
-function CallActions({ task, lead }: { task: Task; lead: Lead }) {
-  if (!lead.contactPhone) {
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-warning-ink">No number yet. Add it under Edit point of contact, or skip the call for today.</span>
-        <Outcome id={task.id} buttons={[['skipped', 'Skip']]} />
-      </div>
-    );
-  }
+function CallActions({ task }: { task: Task }) {
   return (
     <div className="flex flex-wrap items-start gap-2">
       <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number']]} />
@@ -119,13 +111,16 @@ function CallActions({ task, lead }: { task: Task; lead: Lead }) {
   );
 }
 
-/** A step that can't be done yet because the number, email or profile is missing. */
-function Missing({ id, text }: { id: number; text: string }) {
+/** A small inline field to save a number, email or profile the person found themselves (ContactOut, a call, the website). */
+function FoundDetail({ leadId, field, label, placeholder, type }: { leadId: number; field: string; label: string; placeholder: string; type: string }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-warning-ink">{text}</span>
-      <Outcome id={id} buttons={[['skipped', 'Skip']]} />
-    </div>
+    <form action={saveFoundDetailAction} className="mt-2 flex flex-wrap items-center gap-2">
+      <input type="hidden" name="id" value={leadId} />
+      <input type="hidden" name="field" value={field} />
+      <label htmlFor={`${field}-found-${leadId}`} className="text-xs text-muted">{label}</label>
+      <input id={`${field}-found-${leadId}`} name="value" type={type} required placeholder={placeholder} className="field h-8 w-56 py-1 text-xs" />
+      <button className={SMALL}>Save</button>
+    </form>
   );
 }
 
@@ -143,7 +138,7 @@ function roundLabel(task: Task): string {
 }
 
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
-function Step({ item, bda, readOnly, linkedinFull }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean }) {
+function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean }) {
   const { task, lead } = item;
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
   return (
@@ -160,37 +155,38 @@ function Step({ item, bda, readOnly, linkedinFull }: { item: TodayTask; bda: str
           <span className="text-xs text-muted">Only {bda} can log this</span>
         ) : (
           <div className="flex flex-wrap items-start gap-2">
-            {task.kind === 'call' && <CallActions task={task} lead={lead} />}
-            {task.kind === 'whatsapp' &&
-              (lead.contactPhone ? (
-                <>
-                  {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
-                  <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
-                </>
-              ) : (
-                <Missing id={task.id} text="No number for WhatsApp yet. Add it under Edit point of contact, or skip for today." />
-              ))}
-            {task.kind === 'email' &&
-              (lead.contactEmail ? (
-                <>
-                  <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
-                  <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
-                </>
-              ) : (
-                <Missing id={task.id} text="No email yet. Add it under Edit point of contact, or skip for today." />
-              ))}
+            {task.kind === 'call' && <CallActions task={task} />}
+            {task.kind === 'whatsapp' && (
+              <>
+                {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
+                <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+              </>
+            )}
+            {task.kind === 'email' && (
+              <>
+                <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
+                <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
+              </>
+            )}
             {task.kind === 'linkedin' &&
               (linkedinFull ? (
                 <span className="text-xs text-muted">Daily limit of {DAILY_LINKEDIN_LIMIT} requests reached. This one stays for tomorrow.</span>
-              ) : lead.contactLinkedin ? (
+              ) : (
                 <>
-                  <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open LinkedIn profile</a>
+                  {lead.contactLinkedin ? <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open LinkedIn profile</a> : null}
                   <Outcome id={task.id} buttons={[['sent', 'Request sent'], ['skipped', 'Skip']]} />
                 </>
-              ) : (
-                <Missing id={task.id} text="No LinkedIn profile yet. Search for the person on LinkedIn, or skip." />
               ))}
           </div>
+        )}
+        {!readOnly && askPhone && !lead.contactPhone && (
+          <FoundDetail leadId={lead.id} field="contactPhone" label="Found the number? Save it" placeholder="+91 98xxx xxxxx" type="tel" />
+        )}
+        {!readOnly && task.kind === 'email' && !lead.contactEmail && (
+          <FoundDetail leadId={lead.id} field="contactEmail" label="Found the email? Save it" placeholder="name@company.com" type="email" />
+        )}
+        {!readOnly && task.kind === 'linkedin' && !lead.contactLinkedin && (
+          <FoundDetail leadId={lead.id} field="contactLinkedin" label="Found the profile? Save it" placeholder="linkedin.com/in/…" type="text" />
         )}
         {task.priority && task.note && !task.note.startsWith('auto-retry:') && <div className="mt-1 text-xs text-ink-2">Note: {task.note}</div>}
         <details className="mt-1.5">
@@ -312,6 +308,8 @@ function CompanyCard({ group, bda, readOnly, others, doneToday, linkedinFull }: 
     const done = doneToday.find((t) => t.kind === k);
     return done ? [{ kind: k, open: undefined, done }] : [];
   });
+  // Ask for a missing number once per company: on the call row, or on WhatsApp once the call is logged.
+  const phoneRow = rows.find((r) => r.open && (r.kind === 'call' || r.kind === 'whatsapp'))?.kind;
   const total = rows.length;
   const ticked = rows.filter((r) => r.done).length;
   return (
@@ -332,7 +330,7 @@ function CompanyCard({ group, bda, readOnly, others, doneToday, linkedinFull }: 
       <ul className="mt-2 divide-y divide-line border-t border-line">
         {rows.map((r) =>
           r.open ? (
-            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} />
+            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} />
           ) : (
             <DoneStep key={r.done!.id} task={r.done!} readOnly={readOnly} />
           ),
