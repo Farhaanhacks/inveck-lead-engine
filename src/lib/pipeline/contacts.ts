@@ -343,7 +343,8 @@ export async function pickContact(
 
   const otherCandidates = asTextList(d.other_ids)
     .map((id) => byId.get(id.trim()))
-    .filter((c): c is Candidate => !!c && c !== chosen);
+    // Only people the ICP wants: designations on its P1/P2/P3 lists.
+    .filter((c): c is Candidate => !!c && c !== chosen && ['P1', 'P2', 'P3'].includes(tierOf(c.title, icp)));
   const others = otherCandidates.slice(0, 4).map((c) => [c.name, c.title, c.email || c.linkedin].filter(Boolean).join(' | '));
   // Everyone found, best first: the chosen contact, the AI's other picks, then the rest.
   const ranked = [...(chosen ? [chosen] : []), ...otherCandidates, ...candidates.filter((c) => c !== chosen && !otherCandidates.includes(c))];

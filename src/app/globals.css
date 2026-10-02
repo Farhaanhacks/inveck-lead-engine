@@ -97,3 +97,10 @@ body {
 @utility card {
   @apply rounded-lg border border-line bg-surface;
 }
+
+/* Dropdown lists are drawn by the browser; give the options the page's colours so they are
+   readable in dark mode (otherwise white text can land on a white list). */
+select option {
+  background-color: var(--surface);
+  color: var(--ink);
+}

@@ -21,15 +21,15 @@ export async function unansweredCalls(db: Db, lead: Pick<Lead, 'id' | 'contactSi
 }
 
 /**
- * The next person to try after the current one: a P2 process owner after a P1, then P3. Someone
- * found at the company whose title matches no tier comes last; HR, admin and quality never.
+ * The next person to try after the current one: a P2 process owner after a P1, then P3. Only people
+ * whose designation is on the ICP's P1/P2/P3 lists; anyone else (and HR, admin, quality) never.
  * Among equals, one with a number first, then one with an email.
  */
 export function nextContact(candidates: Person[], currentTier: Tier, icp: Parameters<typeof tierOf>[1]): { person: Person; tier: Tier } | null {
   const from = RANK[currentTier || 'P1'];
   const ranked = candidates
     .map((person) => ({ person, tier: tierOf(person.title, icp) }))
-    .filter((c) => c.tier !== 'Avoid' && RANK[c.tier] > Math.min(from, 3))
+    .filter((c) => (c.tier === 'P1' || c.tier === 'P2' || c.tier === 'P3') && RANK[c.tier] > Math.min(from, 2))
     .sort((a, b) => RANK[a.tier] - RANK[b.tier] || Number(!!b.person.phone) - Number(!!a.person.phone) || Number(!!b.person.email) - Number(!!a.person.email));
   return ranked[0] ?? null;
 }

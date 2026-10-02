@@ -544,3 +544,15 @@ describe('contacts checked on LinkedIn automatically', () => {
     expect(calls).toBe(before);
   });
 });
+
+describe('ICP designations', () => {
+  it('reads Chief of Operations as an Operations Head (P1)', async () => {
+    const { tierOf } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const mfg = DEFAULT_ICPS[0];
+    expect(tierOf('Chief of Operations', mfg)).toBe('P1');
+    expect(tierOf('Inventory Manager', mfg)).toBe('P2');
+    expect(tierOf('Marketing Manager', mfg)).toBe('');
+    expect(tierOf('GM - HR', mfg)).toBe('Avoid');
+  });
+});

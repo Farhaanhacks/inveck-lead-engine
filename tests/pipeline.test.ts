@@ -125,7 +125,8 @@ describe('full run with DeepSeek-style messy answers', () => {
     // No LinkedIn hits: leadership from company records is used; invented names are dropped.
     expect(L['Ash Logistics and Traders Pvt Ltd'].contactName).toBe('Jitendra Govind Joshi');
     expect(L['Ash Logistics and Traders Pvt Ltd'].contactTitle).toBe('Founder, Chairman and Managing Director');
-    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).toContain('Vidya Girish Pathak | CFO');
+    // A CFO isn't on the Manufacturing P1/P2/P3 lists, so the client doesn't want their details.
+    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Vidya Girish Pathak');
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Invented Person');
     expect(L['Ash Logistics and Traders Pvt Ltd'].contactEmail).toBe('jg.joshi@ash-logistics.com');
 
@@ -149,7 +150,6 @@ describe('full run with DeepSeek-style messy answers', () => {
     const ashPeople = await db.select().from(people).where(eq(people.leadId, L['Ash Logistics and Traders Pvt Ltd'].id));
     expect(ashPeople.map((p) => [p.name, p.source, p.isPrimary])).toEqual([
       ['Jitendra Govind Joshi', 'Company website / records', true],
-      ['Vidya Girish Pathak', 'Company website / records', false],
     ]);
 
     // Switching the main contact updates the lead.

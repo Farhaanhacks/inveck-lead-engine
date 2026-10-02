@@ -5,6 +5,7 @@ import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatU
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, websitePhone } from './research';
 import { scoreLead } from './scoring';
+import { tierOf } from '../tiers';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
 import { domainOf, normalizeWebsite, normCompany, rootDomain, splitName } from './text';
@@ -166,7 +167,9 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     const web = await lookupEmailFormat(svc, lead.company, domain);
     if (web) format = { pattern: web.pattern, domain: web.domain, strong: web.strong, detail: patternLabel(web.pattern) };
   }
-  update.people = companyPeople(picked.ranked, contact, update.emailStatus ?? '', [...published, ...webEmails, ...leaders.emails], format, svc.settings.useCompanyFormat);
+  // Only people the ICP wants: the chosen contact and anyone whose designation is on the P1/P2/P3 lists.
+  const wanted = picked.ranked.filter((c) => sameName(c.name, contact.name) || ['P1', 'P2', 'P3'].includes(tierOf(c.title, icp)));
+  update.people = companyPeople(wanted, contact, update.emailStatus ?? '', [...published, ...webEmails, ...leaders.emails], format, svc.settings.useCompanyFormat);
 
   // Never wipe contact details the sales team typed in.
   if (contact.name) update.contactName = contact.name;

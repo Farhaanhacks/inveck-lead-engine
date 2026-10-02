@@ -226,6 +226,10 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_tier TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_since TIMESTAMPTZ`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_checked_at TIMESTAMPTZ`,
+  // The score is now the ICP fit times ten (9/10 = 90); rescore every lead once.
+  `UPDATE leads SET final_score = LEAST(100, GREATEST(0, fit_score * 10)), score_breakdown = ''
+   WHERE fit_score IS NOT NULL AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'scoreIsFitV1')`,
+  `INSERT INTO settings (key, value) VALUES ('scoreIsFitV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'
