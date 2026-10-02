@@ -7,7 +7,7 @@ import { assignUnowned } from '@/lib/assign';
 import { runDailyDraw } from '@/lib/draw';
 import { getAttendance } from '@/lib/attendance';
 import {
-  DAILY_CONNECTED_CALLS,
+  DAILY_CALL_TARGET,
   dayCounts,
   ensureSequences,
   istDay,
@@ -387,7 +387,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       </section>
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Counter label="Calls attempted today" done={counts.callAttempts} goal={DAILY_CONNECTED_CALLS} />
+        <Counter label="Calls attempted today" done={counts.callAttempts} goal={DAILY_CALL_TARGET} />
         <Counter label="Connected calls" done={counts.connectedCalls} />
         <Counter label="Emails sent" done={counts.emailsDone} />
         <Counter label="WhatsApp sent" done={counts.whatsappSent} />

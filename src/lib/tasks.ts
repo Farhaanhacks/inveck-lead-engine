@@ -5,7 +5,8 @@ import { activities, leads, tasks, type Lead, type Task, type TaskKind } from '.
 export const DAILY_LINKEDIN_LIMIT = 50;
 /** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
 export const MAX_CALL_ATTEMPTS = 5;
-export const DAILY_CONNECTED_CALLS = 50;
+/** Calls each person should attempt in a day. */
+export const DAILY_CALL_TARGET = 25;
 export const DAILY_CA_CONNECTED_CALLS = 10;
 /** Inbound leads nobody has touched after this long are flagged. */
 export const UNATTENDED_AFTER_HOURS = 2;

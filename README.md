@@ -80,8 +80,8 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   LinkedIn request, WhatsApp introduction and first call on day 1, then call + WhatsApp + email on the
   evening of day 1, day 2 and day 3 (working days). Calls are logged as connected, no answer, busy or
   wrong number; a connected call needs a note, ends the rest of the sequence and can set a callback, which
-  goes to the top of the list. Counters show connected calls (50 a day, 10 with CAs) and LinkedIn
-  requests (50 a day).
+  goes to the top of the list. Counters show calls attempted (target 25 a day), connected calls,
+  emails and WhatsApp messages sent.
 - **Attendance**: first and last time seen each day, plus Clock in and Clock out. Administrators can read
   it at `/api/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD` until the admin dashboard exists.
 
