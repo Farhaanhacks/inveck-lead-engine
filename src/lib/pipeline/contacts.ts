@@ -225,24 +225,87 @@ export function sameName(a: string, b: string): boolean {
   return wa.length > 1 && wb.length > 1 && wa[0] === wb[0] && wa[wa.length - 1] === wb[wb.length - 1];
 }
 
+/** Name words without honorifics or punctuation: "Dr. S. K. Saha" gives s, k, saha. */
+const nameWords = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(HONORIFIC, '')
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+
 /**
- * The chosen person's own LinkedIn profile, by name and company, for when they were found
- * somewhere else (email records, the company website) and the role search didn't list them.
- * Only a profile whose name matches is kept.
+ * The same person written another way: same surname, and a first name that matches, starts the
+ * other ("Siddharth" / "Siddhartha") or is its initial ("S. Saha"). Only trusted together with the
+ * company showing on the profile.
  */
-export async function findLinkedinProfile(svc: Services, person: string, company: string): Promise<{ url: string; title: string; employer: Employer } | null> {
-  if (!person.trim()) return null;
+export function looseName(a: string, b: string): boolean {
+  const [wa, wb] = [nameWords(a), nameWords(b)];
+  if (wa.length < 2 || wb.length < 2 || wa[wa.length - 1] !== wb[wb.length - 1]) return false;
+  const [fa, fb] = [wa[0], wb[0]];
+  if (fa === fb) return true;
+  if (fa.length === 1 || fb.length === 1) return fa[0] === fb[0];
+  return fa.length >= 4 && fb.length >= 4 && (fa.startsWith(fb) || fb.startsWith(fa));
+}
+
+/** Two or three words from a designation that say what the job is: "Regional Logistics Manager" gives "logistics manager". */
+function roleWords(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\bat\b.*$/, '')
+    .split(/[^a-z]+/)
+    .filter((w) => w.length > 2 && !['senior', 'regional', 'assistant', 'deputy', 'and', 'the'].includes(w))
+    .slice(0, 2)
+    .join(' ');
+}
+
+/**
+ * The person's own LinkedIn profile, found through Google (LinkedIn itself can't be searched by
+ * outside software). Tries the exact name and company first, then a shorter name, the company's
+ * short name, the surname with their role, and their city, stopping at the first match. An exact
+ * name match is taken as before; a looser one ("Siddharth" for "Siddhartha", "S. Saha") only when
+ * the result also shows them working at this company. A match showing another employer means they left.
+ */
+export async function findLinkedinProfile(
+  svc: Services,
+  person: string,
+  company: string,
+  hint: { title?: string; city?: string } = {},
+): Promise<{ url: string; title: string; employer: Employer } | null> {
+  // As written (Google ignores case), without honorifics or initials' dots.
+  const words = person.replace(HONORIFIC, '').replace(/[.,]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const full = words.join(' ');
+  const firstLast = words.length > 2 ? `${words[0]} ${words[words.length - 1]}` : '';
   const firm = searchName(company) || company;
-  const queries = [`site:linkedin.com/in "${person}" "${firm}"`, `site:linkedin.com/in "${person}" ${firm}`];
-  for (const q of queries) {
+  const firmWordsList = firm.split(/\s+/).filter(Boolean);
+  const short = firmWordsList.length > 1 && firmWordsList[0].length >= 4 ? firmWordsList[0] : '';
+  const role = roleWords(hint.title ?? '');
+  const city = (hint.city ?? '').split(',')[0].trim();
+  const queries = [
+    `site:linkedin.com/in "${full}" "${firm}"`,
+    `site:linkedin.com/in "${full}" ${firm}`,
+    firstLast && `site:linkedin.com/in "${firstLast}" ${firm}`,
+    short && `site:linkedin.com/in "${firstLast || full}" "${short}"`,
+    role && words.length > 1 && `site:linkedin.com/in "${words[words.length - 1]}" ${short || firm} ${role}`,
+    city && `site:linkedin.com/in "${firstLast || full}" ${short || firm} ${city}`,
+  ].filter((q, i, all): q is string => !!q && all.indexOf(q) === i);
+
+  for (const [i, q] of queries.entries()) {
+    let results;
     try {
-      const found = toLinkedInPeople(await googleSearch(svc, q), company).filter((p) => sameName(p.name, person));
-      // Prefer the profile that shows them working there now; one showing another employer means they left.
-      const pick = found.find((p) => p.employer === 'here') ?? found.find((p) => p.employer === 'elsewhere') ?? (q === queries[0] ? found[0] : undefined);
-      if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer };
+      results = toLinkedInPeople(await googleSearch(svc, q), company);
     } catch {
-      return null;
+      continue;
     }
+    const exact = results.filter((p) => sameName(p.name, person));
+    const pick =
+      exact.find((p) => p.employer === 'here') ??
+      results.find((p) => p.employer === 'here' && looseName(p.name, person)) ??
+      exact.find((p) => p.employer === 'elsewhere') ??
+      (i === 0 ? exact[0] : undefined);
+    if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer };
   }
   return null;
 }

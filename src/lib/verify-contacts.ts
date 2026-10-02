@@ -35,7 +35,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
   for (const p of next) {
-    const profile = await findLinkedinProfile(svc, p.name, lead.company).catch(() => null);
+    const profile = await findLinkedinProfile(svc, p.name, lead.company, { title: p.title, city: lead.city }).catch(() => null);
     if (profile?.employer === 'elsewhere') {
       await db.delete(people).where(eq(people.id, p.id));
       gone.push(`${p.name}${profile.title ? ` (now ${profile.title})` : ''}`);
@@ -80,7 +80,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   await checkOthers(db, svc, lead, now);
   // The main contact was checked recently (during research, say): only the others needed it.
   if (lead.contactCheckedAt && lead.contactCheckedAt > staleBefore(now)) return 'confirmed';
-  const profile = await findLinkedinProfile(svc, lead.contactName, lead.company);
+  const profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
   if (profile?.employer === 'elsewhere') {
     await escalate(db, lead.id, 'left', now, profile.title);
     // The next person gets checked on the next pass.

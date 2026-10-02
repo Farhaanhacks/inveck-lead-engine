@@ -694,3 +694,36 @@ describe('everyone at the company checked on LinkedIn', () => {
     expect(left.map((p) => p.name)).toEqual(['Siddhartha Saha']);
   });
 });
+
+describe('broader LinkedIn search', () => {
+  it('matches a name written another way only when the profile shows the company', async () => {
+    const { looseName } = await import('@/lib/pipeline/contacts');
+    expect(looseName('Siddhartha Saha', 'Siddharth Saha')).toBe(true);
+    expect(looseName('S. Saha', 'Siddhartha Saha')).toBe(true);
+    expect(looseName('Dr. Siddhartha Kumar Saha', 'Siddhartha Saha')).toBe(true);
+    expect(looseName('Sid Saha', 'Siddhartha Saha')).toBe(false);
+    expect(looseName('Siddhartha Sen', 'Siddhartha Saha')).toBe(false);
+  });
+
+  it('falls back to a shorter name, the company short name, role and city', async () => {
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const queries: string[] = [];
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      const q = JSON.parse(String(init?.body)).q as string;
+      queries.push(q);
+      // Only the surname-and-role search finds them, written "Siddharth".
+      const organic = q.toLowerCase().includes('"saha" nestle logistics manager')
+        ? [{ title: 'Siddharth Saha - Logistics Manager - Nestle India | LinkedIn', link: 'https://in.linkedin.com/in/sid-saha', snippet: 'Nestle India · Moga' }]
+        : [];
+      return new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const found = await findLinkedinProfile(svc, 'Siddhartha Kumar Saha', 'Nestle India Ltd', { title: 'Regional Logistics Manager', city: 'Moga' });
+    expect(found).toMatchObject({ url: 'https://in.linkedin.com/in/sid-saha', employer: 'here' });
+    expect(queries.length).toBeGreaterThan(2);
+    // The same loose name at another company is not taken.
+    queries.length = 0;
+    expect(await findLinkedinProfile(svc, 'Siddhartha Saha', 'Britannia Industries', { title: 'Logistics Manager' })).toBeNull();
+  });
+});

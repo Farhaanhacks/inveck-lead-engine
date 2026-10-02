@@ -147,7 +147,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   // itself, look them up on LinkedIn, and let their current LinkedIn title win.
   const fromLinkedin = linkedin.people.some((p) => sameName(p.name, contact.name) && p.title);
   if (contact.name && !fromLinkedin) {
-    const profile = await findLinkedinProfile(svc, contact.name, lead.company);
+    const profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city });
     if (profile) {
       if (!contact.linkedin) contact.linkedin = profile.url;
       notes.push(`LinkedIn profile found by name: ${profile.url}`);
