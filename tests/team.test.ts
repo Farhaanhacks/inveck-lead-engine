@@ -518,3 +518,29 @@ describe('LinkedIn profile by name', () => {
     expect(roleFromLinkedinTitle(['Plant Head'], '')).toBe('Plant Head');
   });
 });
+
+describe('contacts checked on LinkedIn automatically', () => {
+  it('corrects a stale designation, saves the profile, and does not check twice', async () => {
+    const db = await getDb();
+    const { verifyContacts } = await import('@/lib/verify-contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const organic = [{ title: 'Amit Chhari - Chief of Operations - Allcargo Logistics | LinkedIn', link: 'https://in.linkedin.com/in/amit-chhari-123', snippet: 'Allcargo Logistics' }];
+    let calls = 0;
+    const fetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    await db.insert(leads).values([
+      lead('Allcargo Logistics', { contactName: 'Amit Chhari', contactTitle: 'Chief of Operations - Express' }),
+      lead('Nobody Ltd', { contactName: 'Rohit Dalmia', contactTitle: 'Finance Head' }),
+    ]);
+    expect(await verifyContacts(db, svc)).toMatchObject({ corrected: 1, not_found: 1 });
+    const [amit] = await db.select().from(leads).where(eq(leads.company, 'Allcargo Logistics'));
+    expect(amit).toMatchObject({ contactTitle: 'Chief of Operations', contactLinkedin: 'https://in.linkedin.com/in/amit-chhari-123' });
+    expect(amit.contactCheckedAt).not.toBeNull();
+    const before = calls;
+    expect(await verifyContacts(db, svc)).toMatchObject({ corrected: 0, confirmed: 0, not_found: 0 });
+    expect(calls).toBe(before);
+  });
+});

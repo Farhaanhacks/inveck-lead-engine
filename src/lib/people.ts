@@ -24,6 +24,8 @@ export async function makePrimary(db: Db, personId: number): Promise<number | nu
       contactPhone: p.phone,
       contactLinkedin: p.linkedin,
       emailStatus: p.emailStatus,
+      // Someone new: checked on LinkedIn again.
+      contactCheckedAt: null,
       updatedAt: new Date(),
     })
     .where(eq(leads.id, p.leadId));

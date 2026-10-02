@@ -1,6 +1,10 @@
 import { runSecret } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { getDraw, runDailyDraw } from '@/lib/draw';
+import { liveServices } from '@/lib/run-driver';
+import { verifyContacts } from '@/lib/verify-contacts';
+
+export const maxDuration = 300;
 
 /**
  * The morning draw (see vercel.json): hands out the day's leads before the team starts at 10.
@@ -11,6 +15,8 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
   const db = await getDb();
+  // Every contact the team will see today checked on LinkedIn first: profile and current designation.
+  const checked = await verifyContacts(db, await liveServices(), { limit: 200 });
   const drawn = await runDailyDraw(db);
-  return Response.json({ drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
+  return Response.json({ checked, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
 }

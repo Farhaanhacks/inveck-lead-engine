@@ -4,7 +4,6 @@ import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, newContactNamed, unansweredCalls, type Escalation } from '@/lib/escalate';
 import { redraftForContact } from '@/lib/pipeline/redraft';
-import { findLinkedinProfile } from '@/lib/pipeline/contacts';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
@@ -377,7 +376,7 @@ export async function updateContactAction(form: FormData) {
   const newPerson = v.contactName.toLowerCase() !== before.contactName.toLowerCase();
   await db
     .update(leads)
-    .set({ ...v, ...(newPerson ? { contactTier: '' } : {}), ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}), updatedAt: new Date() })
+    .set({ ...v, ...(newPerson ? { contactTier: '', contactCheckedAt: null } : {}), ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}), updatedAt: new Date() })
     .where(eq(leads.id, id));
   // Keep the people list in step: update the main contact, or add them if they're new.
   const [primary] = await db.select().from(people).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
@@ -443,37 +442,6 @@ export async function saveFoundDetailAction(form: FormData) {
   const personField = { contactPhone: 'phone', contactEmail: 'email', contactLinkedin: 'linkedin' } as const;
   await db.update(people).set({ [personField[field]]: value, ...extra }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
   await logActivity(db, id, 'contact', `Point of contact's ${QUICK_FIELDS[field]} added by the team: ${value}`);
-  revalidatePath('/today');
-  revalidatePath('/tracker');
-  revalidatePath(`/leads/${id}`);
-}
-
-/**
- * Looks up the point of contact on LinkedIn by name and company. Saves the profile when one matches,
- * and corrects the designation to their current LinkedIn title (then rewrites the email for it).
- */
-export async function findLinkedinAction(form: FormData) {
-  const id = Number(str(form, 'id'));
-  if (!(await mayActOn(id))) return;
-  const db = await getDb();
-  const [lead] = await db.select().from(leads).where(eq(leads.id, id));
-  if (!lead?.contactName) return;
-  const profile = await findLinkedinProfile(await liveServices(), lead.contactName, lead.company);
-  if (profile) {
-    const url = lead.contactLinkedin || profile.url;
-    const retitle = !!profile.title && profile.title.toLowerCase() !== lead.contactTitle.toLowerCase();
-    await db.update(leads).set({ contactLinkedin: url, ...(retitle ? { contactTitle: profile.title, contactTier: '' } : {}), updatedAt: new Date() }).where(eq(leads.id, id));
-    await db.update(people).set({ linkedin: url, ...(retitle ? { title: profile.title } : {}) }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
-    if (!lead.contactLinkedin) await logActivity(db, id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
-    if (retitle) {
-      await logActivity(db, id, 'contact', `Designation corrected from LinkedIn: "${profile.title}" (was "${lead.contactTitle || 'blank'}")`);
-      after(async () => redraftForContact(await getDb(), await liveServices(), id));
-    } else if (lead.contactLinkedin) {
-      await logActivity(db, id, 'note', `Checked on LinkedIn: ${lead.contactName}'s designation matches.`);
-    }
-  } else {
-    await logActivity(db, id, 'note', `No LinkedIn profile found for ${lead.contactName} at ${lead.company}. Search on LinkedIn and paste the link.`);
-  }
   revalidatePath('/today');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);

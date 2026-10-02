@@ -174,6 +174,8 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   if (contact.email) update.contactEmail = contact.email;
   if (contact.phone) update.contactPhone = contact.phone;
   if (contact.linkedin) update.contactLinkedin = contact.linkedin;
+  // Checked against LinkedIn during research (found there, or looked up by name).
+  if (contact.name) update.contactCheckedAt = new Date();
 
   if (!score.readyForDraft) {
     await log(`${lead.company}: ${score.statusWithoutDraft} (score ${score.finalScore})`);

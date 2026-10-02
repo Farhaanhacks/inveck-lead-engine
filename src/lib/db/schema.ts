@@ -79,6 +79,8 @@ export const leads = pgTable('leads', {
   contactTier: text('contact_tier').notNull().default(''),
   /** When the current point of contact took over: unanswered calls are counted from here (P2 flow). */
   contactSince: timestamp('contact_since', { withTimezone: true }),
+  /** When the point of contact was last checked on LinkedIn (profile and current designation); null = not yet. */
+  contactCheckedAt: timestamp('contact_checked_at', { withTimezone: true }),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),

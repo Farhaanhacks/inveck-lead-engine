@@ -1,4 +1,7 @@
 import Link from 'next/link';
+import { after } from 'next/server';
+import { liveServices } from '@/lib/run-driver';
+import { verifyContacts } from '@/lib/verify-contacts';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
@@ -26,7 +29,7 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction, findLinkedinAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
+import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
@@ -189,15 +192,13 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
           <FoundDetail leadId={lead.id} field="contactEmail" label="Found the email? Save it" placeholder="name@company.com" type="email" />
         )}
         {!readOnly && task.kind === 'linkedin' && !lead.contactLinkedin && (
-          <div className="flex flex-wrap items-end gap-x-3">
-            {lead.contactName && (
-              <form action={findLinkedinAction} className="mt-2">
-                <input type="hidden" name="id" value={lead.id} />
-                <button className={SMALL}>Find {lead.contactName.split(' ')[0]} on LinkedIn</button>
-              </form>
-            )}
-            <FoundDetail leadId={lead.id} field="contactLinkedin" label="or paste the profile" placeholder="linkedin.com/in/…" type="text" />
-          </div>
+          <FoundDetail
+            leadId={lead.id}
+            field="contactLinkedin"
+            label={lead.contactCheckedAt ? 'Not found on LinkedIn automatically. Found it? Paste it' : 'Looking it up on LinkedIn. Found it already? Paste it'}
+            placeholder="linkedin.com/in/…"
+            type="text"
+          />
         )}
         {task.step === FIND_NEXT_STEP && (
           <p className="mt-2 text-xs text-warning-ink">
@@ -377,6 +378,10 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const sp = await searchParams;
   const asked = Number(typeof sp.user === 'string' ? sp.user : 0);
   const viewId = me.role === 'admin' ? (team.find((b) => b.id === asked)?.id ?? team[0]?.id ?? 0) : me.id;
+  // Anything on this list not yet checked on LinkedIn is checked right after the page is sent.
+  after(async () => {
+    await verifyContacts(await getDb(), await liveServices(), { ownerId: viewId, limit: 30 });
+  });
   const viewing = team.find((b) => b.id === viewId);
   const bda = viewing?.name ?? me.name;
   const own = me.id === viewId;
