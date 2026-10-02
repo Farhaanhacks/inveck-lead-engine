@@ -298,6 +298,16 @@ export const SCHEMA_STATEMENTS = [
   // The contacts-reset note on the Team page no longer applies (its own key must stay, so it never runs again).
   `UPDATE settings SET value = jsonb_build_object('at', '2000-01-01T00:00:00Z') WHERE key = 'contactsResetV1' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
   `INSERT INTO settings (key, value) VALUES ('clearAllV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // Names from company records were accepted when they appeared in a search result about another firm
+  // (BC Shetty & Co got a "Divya Somani" who doesn't work there). Companies whose main contact came from
+  // there have their contacts found again under the stricter rules, once.
+  `UPDATE leads SET refetch_pending = true, refetch_claimed_at = NULL
+   WHERE id IN (SELECT lead_id FROM people WHERE is_primary AND source = 'Company website / records') AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'webLeadersRecheckV1')`,
+  `DELETE FROM people WHERE lead_id IN (SELECT id FROM leads WHERE refetch_pending) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'webLeadersRecheckV1')`,
+  `UPDATE leads SET contact_name = '', contact_title = '', contact_email = '', contact_phone = '', contact_linkedin = '',
+     email_status = '', other_decision_makers = '', contact_tier = '', contact_since = NULL, contact_checked_at = NULL
+   WHERE refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'webLeadersRecheckV1')`,
+  `INSERT INTO settings (key, value) VALUES ('webLeadersRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

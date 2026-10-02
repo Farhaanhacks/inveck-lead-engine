@@ -793,3 +793,12 @@ describe('Lumax: staff write the company as "Lumax World"', () => {
     expect(queries[0]).toContain('"lumax"');
   });
 });
+
+describe('BC Shetty & Co: names must belong to the company', () => {
+  it('matches a name only when written together, and a result only when it names the firm', async () => {
+    const { nameIn } = await import('@/lib/pipeline/contacts');
+    expect(nameIn('Divya Somani', 'Our team: Divya Somani, CISA')).toBe(true);
+    expect(nameIn('Divya K. Somani', 'Somani Divya')).toBe(true);
+    expect(nameIn('Divya Somani', 'Divya Rao and Kiran Somani')).toBe(false);
+  });
+});

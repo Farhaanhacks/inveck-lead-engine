@@ -200,14 +200,14 @@ export async function searchLeaders(
 
     const result = await askJson(svc, LEADERS_PROMPT, `Company: ${company}${domain ? ` (${domain})` : ''}\n\n${source}`, leaderSchema);
     if (result.error !== undefined) return { people: [], emails, error: result.error };
-    const haystack = source.toLowerCase();
+    // A name is kept only where it really belongs to this company: on its own pages, or in a search
+    // result that also names the company. A name found in a result about another firm is dropped.
+    const own = [page.text, home].join(' ');
+    const lines = results.map((r) => `${r.title || ''} ${r.snippet || ''}`);
     const people = asList(result.data.people)
       .map((p) => (p && typeof p === 'object' ? (p as Record<string, unknown>) : {}))
       .map((p) => ({ name: asText(p.name).replace(HONORIFIC, '').trim(), title: asText(p.title) }))
-      .filter((p) => {
-        const parts = p.name.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
-        return parts.length >= 2 && parts.every((w) => haystack.includes(w));
-      })
+      .filter((p) => nameIn(p.name, own) || lines.some((l) => nameIn(p.name, l) && mentionsFirm(l, company, domain)))
       .slice(0, 12)
       .map((p) => ({ ...p, linkedin: '', snippet: 'Named on the company website or in public company records' }));
     return { people, emails, error: '' };
@@ -305,7 +305,7 @@ export async function findLinkedinProfile(
     city && `site:linkedin.com/in "${firstLast || full}" ${short || firm} ${city}`,
   ].filter((q, i, all): q is string => !!q && all.indexOf(q) === i);
 
-  for (const [i, q] of queries.entries()) {
+  for (const q of queries) {
     let results;
     try {
       results = toLinkedInPeople(await googleSearch(svc, q), company);
@@ -316,8 +316,7 @@ export async function findLinkedinProfile(
     const pick =
       exact.find((p) => p.employer === 'here') ??
       results.find((p) => p.employer === 'here' && looseName(p.name, person)) ??
-      exact.find((p) => p.employer === 'elsewhere') ??
-      (i === 0 ? exact[0] : undefined);
+      exact.find((p) => p.employer === 'elsewhere');
     if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer };
   }
   return null;
@@ -338,6 +337,33 @@ export function candidateRank(c: { title: string; snippet?: string; phone?: stri
 
 export function rankCandidates<T extends { title: string; snippet?: string; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
   return [...list].sort((a, b) => candidateRank(a, icp, city) - candidateRank(b, icp, city));
+}
+
+/** The person's name written in the text: first and last name close together ("Divya Somani", "Somani Divya", "Divya K. Somani"). */
+export function nameIn(name: string, text: string): boolean {
+  const w = name.toLowerCase().replace(HONORIFIC, '').split(/[^a-z]+/).filter((x) => x.length > 1);
+  if (w.length < 2) return false;
+  const [first, last] = [w[0], w[w.length - 1]];
+  const t = text.toLowerCase();
+  const near = (a: string, b: string) => new RegExp(`\\b${a}\\b(?:\\W+\\w+){0,2}?\\W+${b}\\b`).test(t);
+  return near(first, last) || near(last, first);
+}
+
+/**
+ * The text is about this company: it names the company (its opening words) or its website. Never just
+ * one word: for "B C Shetty & Co" that would be "Shetty", which matches pages about anyone of that name.
+ */
+function mentionsFirm(text: string, company: string, domain: string): boolean {
+  const clean = (x: string) => x.toLowerCase().replace(/[.,&'’-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const t = ` ${clean(text)} `;
+  // The opening words of the name, at least two and six letters: "ash logistics", "b c shetty", "lumax auto".
+  const words = clean(searchName(company) || company).split(' ');
+  let head = '';
+  for (const [i, w] of words.entries()) {
+    head = head ? `${head} ${w}` : w;
+    if (i >= 1 && head.replace(/ /g, '').length >= 6) break;
+  }
+  return (!!domain && text.toLowerCase().includes(domain.toLowerCase())) || (words.length > 0 && t.includes(` ${head} `));
 }
 
 /** One candidate list from the sales team's contact, LinkedIn and Hunter; the same person on two lists is merged. */
