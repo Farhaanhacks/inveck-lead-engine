@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { after } from 'next/server';
-import { tierOf } from '@/lib/tiers';
+import { contactPriority, tierOf } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { notFound } from 'next/navigation';
 import { asc, desc, eq } from 'drizzle-orm';
@@ -16,7 +16,7 @@ import { SubmitButton } from '@/components/submit-button';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { canReassign } from '@/lib/assign';
 import { assignOwnerAction } from '../../../team-actions';
-import { promoteBetterContacts, purgeFormerEmployees } from '@/lib/verify-contacts';
+import { tidyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import {
@@ -234,8 +234,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const db = await getDb();
   // Nobody who has left the company is shown: cleared before the page is drawn.
   // and the best-ranked person on file is the main contact while outreach hasn't started.
-  await purgeFormerEmployees(db, id);
-  if ((await promoteBetterContacts(db, id)).length) after(async () => redraftForContact(await getDb(), await liveServices(), id));
+  if ((await tidyContacts(db, { leadId: id })).length) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
   const bdas = await listBdas(db);
   const me = await getCurrentUser();
@@ -253,7 +252,8 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
     return t === 'P1' || t === 'P2' || t === 'P3' ? t : '';
   };
   // Main contact first, then everyone else best first; people already tried go last.
-  const team = [...found].sort(
+  // Only people on the ICP's P1/P2/P3 lists (and the main contact): INVECK doesn't want anyone else.
+  const team = found.filter((p) => p.isPrimary || contactPriority(p.title, icp ?? undefined) < 99).sort(
     (a, b) => Number(b.isPrimary) - Number(a.isPrimary) || Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
   );
   const inSequence = lead.status === 'Contacted';

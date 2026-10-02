@@ -590,7 +590,7 @@ describe('only people who work at the company now', () => {
       { leadId: l.id, name: 'Cynthia Nestle', title: 'Managing Director, Chief Operating Officer', source: 'LinkedIn' },
       { leadId: l.id, name: 'Siddhartha Saha', title: 'Regional Logistics Manager at Nestle India', source: 'LinkedIn' },
     ]);
-    expect(await purgeFormerEmployees(db, l.id)).toBe(3);
+    expect(await purgeFormerEmployees(db, { leadId: l.id })).toBe(3);
     const left = await db.select().from(peopleTable).where(eq(peopleTable.leadId, l.id));
     expect(left.map((p) => p.name)).toEqual(['Siddhartha Saha']);
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
@@ -651,7 +651,7 @@ describe('who to contact first', () => {
       { leadId: c.id, name: 'Plant Gamma', title: 'Plant Head' },
     ]);
     await db.insert(activities).values({ leadId: c.id, kind: 'contact', text: 'Point of contact updated (name): Uma Iyer' });
-    expect(await promoteBetterContacts(db, c.id)).toEqual([]);
+    expect(await promoteBetterContacts(db, { leadId: c.id })).toEqual([]);
   });
 });
 
@@ -725,5 +725,47 @@ describe('broader LinkedIn search', () => {
     // The same loose name at another company is not taken.
     queries.length = 0;
     expect(await findLinkedinProfile(svc, 'Siddhartha Saha', 'Britannia Industries', { title: 'Logistics Manager' })).toBeNull();
+  });
+});
+
+describe('CIE Automotive: a plant head over a contact whose title is the company name', () => {
+  it('clears the company-name title and makes a plant head the main contact', async () => {
+    const db = await getDb();
+    const { tidyContacts } = await import('@/lib/verify-contacts');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [l] = await db
+      .insert(leads)
+      .values(lead('CIE Automotive India', { segment: 'Manufacturing', contactName: 'Nivrutti Bachhav', contactTitle: 'CIE Automotive India Ltd', ownerId: 1 }))
+      .returning();
+    await db.insert(peopleTable).values([
+      { leadId: l.id, name: 'Nivrutti Bachhav', title: 'CIE Automotive India Ltd', isPrimary: true, email: 'nbachhav@cieautomotive.com' },
+      { leadId: l.id, name: 'sajin sahadevan', title: 'PLANT HEAD OPERATIONS' },
+      { leadId: l.id, name: 'Ganesan R.S', title: 'Plant Head' },
+      { leadId: l.id, name: 'Saurabh Agarwal', title: 'COO' },
+    ]);
+    // A call that didn't connect doesn't tie the team to someone off the lists.
+    await db.insert(tasks).values({ leadId: l.id, ownerId: 1, kind: 'call', title: 'c', dueDate: istDay(), doneAt: new Date(), outcome: 'no_answer' });
+    expect(await tidyContacts(db, { ownerId: 1 })).toEqual([l.id]);
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(['sajin sahadevan', 'Ganesan R.S']).toContain(after.contactName);
+    const nivrutti = (await db.select().from(peopleTable).where(eq(peopleTable.leadId, l.id))).find((p) => p.name === 'Nivrutti Bachhav');
+    expect(nivrutti?.title).toBe('');
+  });
+});
+
+describe('LinkedIn headlines', () => {
+  it('reads the job from a headline-style result and never mistakes the headline for an employer', async () => {
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const organic = [
+      {
+        title: 'Amit Chhari - Chief of Operations | Logistics & Supply Chain Leader | Driving Operational Excellence | LinkedIn',
+        link: 'https://in.linkedin.com/in/amitchhari',
+        snippet: 'Chief of Operations at Allcargo Logistics. Experience: Allcargo Logistics · Education: IIM Ahmedabad',
+      },
+    ];
+    const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics')).toEqual({ url: 'https://in.linkedin.com/in/amitchhari', title: 'Chief of Operations', employer: 'here' });
   });
 });

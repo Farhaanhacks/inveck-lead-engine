@@ -1,11 +1,12 @@
 import Link from 'next/link';
 import { after } from 'next/server';
 import { liveServices } from '@/lib/run-driver';
-import { verifyContacts } from '@/lib/verify-contacts';
+import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
+import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { icps, leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
-import { tierOf } from '@/lib/tiers';
+import { contactPriority, tierOf } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
@@ -429,9 +430,23 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const sp = await searchParams;
   const asked = Number(typeof sp.user === 'string' ? sp.user : 0);
   const viewId = me.role === 'admin' ? (team.find((b) => b.id === asked)?.id ?? team[0]?.id ?? 0) : me.id;
-  // Anything on this list not yet checked on LinkedIn is checked right after the page is sent.
+  // The right person on every card before it's drawn (a plant head over someone off the lists, nobody
+  // who has left); anything not yet checked on LinkedIn is checked right after the page is sent.
+  const switched = viewId ? await tidyContacts(db, { ownerId: viewId }) : [];
+  // Main contacts due today that were never checked on LinkedIn are checked before the cards are drawn
+  // (a few seconds at most; whatever's left carries on after the page is sent).
+  if (viewId) {
+    const svc = await liveServices();
+    await Promise.race([
+      verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10 }),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
+  }
   after(async () => {
-    await verifyContacts(await getDb(), await liveServices(), { ownerId: viewId, limit: 30 });
+    const d = await getDb();
+    const svc = await liveServices();
+    for (const id of switched) await redraftForContact(d, svc, id);
+    await verifyContacts(d, svc, { ownerId: viewId, limit: 30 });
   });
   const viewing = team.find((b) => b.id === viewId);
   const bda = viewing?.name ?? me.name;
@@ -494,7 +509,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // Best first by INVECK's contact priority; people already tried go last.
   const othersOf = (l: Lead) =>
     peopleRows
-      .filter((p) => p.leadId === l.id && !p.isPrimary && p.name.toLowerCase() !== l.contactName.toLowerCase())
+      // Only people on the ICP's P1/P2/P3 lists: INVECK doesn't want anyone else.
+      .filter((p) => p.leadId === l.id && !p.isPrimary && p.name.toLowerCase() !== l.contactName.toLowerCase() && contactPriority(p.title, icpOf(l)) < 99)
       .sort((a, b) => Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icpOf(l), l.city) - candidateRank(b, icpOf(l), l.city));
   const tierLabel = (p: Person, l: Lead) => {
     const t = tierOf(p.title, icpOf(l));

@@ -44,10 +44,11 @@ export function currentEmployer(person: { name: string; title: string; snippet?:
     if (list.length) say.push(sameFirm(list[0], company) ? 'here' : 'elsewhere');
   };
   firstEmployer(employersAfterAt(person.title));
-  // Google's title: the last part that isn't a role is the company.
+  // Google's title "Name - Role - Company": with two or more parts after the name, the last is the
+  // company. A single part is the role or a headline, never read as an employer.
   const parts = (person.titleParts ?? []).map((p) => p.trim()).filter(Boolean);
   const last = parts[parts.length - 1];
-  if (last && !ROLE.test(last)) say.push(sameFirm(last, company) ? 'here' : 'elsewhere');
+  if (last && (parts.length >= 2 || sameFirm(last, company)) && !ROLE.test(last)) say.push(sameFirm(last, company) ? 'here' : 'elsewhere');
   for (const p of parts) firstEmployer(employersAfterAt(p));
 
   const snippet = person.snippet ?? '';

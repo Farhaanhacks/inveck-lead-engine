@@ -80,10 +80,13 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
   return results
     .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
     .map((r) => {
+      // Google shows "Name - Role - Company | LinkedIn". The role part may be a whole headline
+      // ("Chief of Operations | Logistics & Supply Chain Leader | ..."): its first piece is the job.
       const title = String(r.title || '').replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '');
-      const [name, ...rest] = title.split(/\s+[-–|]\s+/);
-      const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(rest, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
-      const employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: rest }, company);
+      const [name, ...rest] = title.split(/\s+[-–—]\s+/);
+      const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean);
+      const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
+      const employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
       return { ...person, employer };
     })
     .filter((p) => p.name);

@@ -1,12 +1,13 @@
-import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
 import { atBranch, candidateRank, findLinkedinProfile, rankCandidates } from './pipeline/contacts';
 import { contactPriority } from './tiers';
 import { makePrimary } from './people';
-import { currentEmployer, nameIsTheCompany } from './pipeline/employer';
+import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
 import { escalate } from './escalate';
+import { istDay } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
 
@@ -18,6 +19,41 @@ const LIVE = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting 
 export type CheckResult = 'corrected' | 'confirmed' | 'not_found' | 'left' | 'skipped';
 
 const staleBefore = (now = new Date()) => new Date(now.getTime() - RECHECK_AFTER_DAYS * 86_400_000);
+
+/** Which leads a tidy-up covers: one lead, one person's leads, or (empty) all. */
+export type Scope = { leadId?: number; ownerId?: number };
+const inScope = (scope: Scope) =>
+  and(scope.leadId ? eq(leads.id, scope.leadId) : undefined, scope.ownerId ? eq(leads.ownerId, scope.ownerId) : undefined);
+
+/**
+ * A "designation" that is only the company's name ("CIE Automotive India Ltd") says nothing about the
+ * role: clear it, so the person ranks as unknown and a real plant head on file can take over.
+ */
+export async function clearCompanyTitles(db: Db, scope: Scope = {}): Promise<number> {
+  const rows = await db.select({ person: people, lead: leads }).from(people).innerJoin(leads, eq(people.leadId, leads.id)).where(inScope(scope));
+  let n = 0;
+  for (const { person: p, lead: l } of rows) {
+    if (!p.title || !sameFirm(p.title, l.company)) continue;
+    await db.update(people).set({ title: '' }).where(eq(people.id, p.id));
+    if (p.isPrimary && sameFirm(l.contactTitle, l.company)) await db.update(leads).set({ contactTitle: '' }).where(eq(leads.id, l.id));
+    n++;
+  }
+  const leadOnly = await db.select({ id: leads.id, company: leads.company, title: leads.contactTitle }).from(leads).where(and(inScope(scope), ne(leads.contactTitle, '')));
+  for (const l of leadOnly) if (sameFirm(l.title, l.company)) await db.update(leads).set({ contactTitle: '' }).where(eq(leads.id, l.id));
+  return n;
+}
+
+/**
+ * Keeps the people on file right, with no searching: clears titles that are just the company's name,
+ * removes people who work elsewhere now, and makes the best-ranked person the main contact when
+ * outreach hasn't started. Runs when Today, a lead or Contacts opens, and before the morning draw.
+ * Returns the leads whose main contact changed (their email gets rewritten).
+ */
+export async function tidyContacts(db: Db, scope: Scope = {}): Promise<number[]> {
+  await clearCompanyTitles(db, scope);
+  await purgeFormerEmployees(db, scope);
+  return promoteBetterContacts(db, scope);
+}
 
 /** Others checked per company per pass: the best-ranked ones, the people the team would switch to. */
 const OTHERS_PER_LEAD = 4;
@@ -67,7 +103,7 @@ async function dropFormerEmployees(db: Db, lead: Lead): Promise<number> {
  * current LinkedIn title differs from the one on file, corrects the designation, logs it and
  * rewrites the email for them. Runs on its own; nobody has to press anything.
  */
-export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new Date()): Promise<CheckResult> {
+export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new Date(), opts: { mainOnly?: boolean } = {}): Promise<CheckResult> {
   // Without any search: drop people whose stored title already shows another employer, and move off a
   // main contact who has left.
   await dropFormerEmployees(db, lead);
@@ -77,7 +113,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     return 'left';
   }
   if (!lead.contactName || !svc.keys.serper) return 'skipped';
-  await checkOthers(db, svc, lead, now);
+  if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
   // The main contact was checked recently (during research, say): only the others needed it.
   if (lead.contactCheckedAt && lead.contactCheckedAt > staleBefore(now)) return 'confirmed';
   const profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
@@ -109,9 +145,20 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
  * Checks the contacts not checked yet (or not for a month), the given person's first when `ownerId`
  * is set, a few at a time. Called before the morning draw, when someone opens Today, and after research.
  */
-export async function verifyContacts(db: Db, svc: Services, opts: { ownerId?: number; limit?: number } = {}): Promise<Record<CheckResult, number>> {
+export async function verifyContacts(
+  db: Db,
+  svc: Services,
+  opts: { ownerId?: number; limit?: number; dueToday?: boolean; mainOnly?: boolean } = {},
+): Promise<Record<CheckResult, number>> {
   const tally: Record<CheckResult, number> = { corrected: 0, confirmed: 0, not_found: 0, left: 0, skipped: 0 };
   const stale = staleBefore();
+  // Companies with a step due today or earlier: what the team is about to call.
+  const onToday = exists(
+    db
+      .select({ one: sql`1` })
+      .from(tasks)
+      .where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt), lte(tasks.dueDate, istDay()))),
+  );
   const due = await db
     .select()
     .from(leads)
@@ -119,6 +166,7 @@ export async function verifyContacts(db: Db, svc: Services, opts: { ownerId?: nu
       and(
         ne(leads.contactName, ''),
         inArray(leads.status, [...LIVE]),
+        opts.dueToday ? onToday : undefined,
         or(
           isNull(leads.contactCheckedAt),
           lt(leads.contactCheckedAt, stale),
@@ -133,10 +181,11 @@ export async function verifyContacts(db: Db, svc: Services, opts: { ownerId?: nu
         opts.ownerId ? eq(leads.ownerId, opts.ownerId) : undefined,
       ),
     )
-    .orderBy(sql`${leads.contactCheckedAt} nulls first`, asc(leads.id))
+    // Today's companies first, then whoever has waited longest.
+    .orderBy(sql`${onToday} desc`, sql`${leads.contactCheckedAt} nulls first`, asc(leads.id))
     .limit(opts.limit ?? 50);
   for (let i = 0; i < due.length; i += 5) {
-    const results = await Promise.allSettled(due.slice(i, i + 5).map((l) => verifyContact(db, svc, l)));
+    const results = await Promise.allSettled(due.slice(i, i + 5).map((l) => verifyContact(db, svc, l, new Date(), { mainOnly: opts.mainOnly })));
     for (const r of results) tally[r.status === 'fulfilled' ? r.value : 'skipped']++;
   }
   return tally;
@@ -146,12 +195,12 @@ export async function verifyContacts(db: Db, svc: Services, opts: { ownerId?: nu
  * The same check over every company's stored people, with no search: anyone whose title shows another
  * employer goes, and a main contact who has left is replaced (P2 flow). For one lead when `leadId` is set.
  */
-export async function purgeFormerEmployees(db: Db, leadId?: number): Promise<number> {
+export async function purgeFormerEmployees(db: Db, scope: Scope = {}): Promise<number> {
   const rows = await db
     .select({ person: people, lead: leads })
     .from(people)
     .innerJoin(leads, eq(people.leadId, leads.id))
-    .where(leadId ? eq(people.leadId, leadId) : undefined);
+    .where(inScope(scope));
   const gone = rows.filter(
     ({ person: p, lead: l }) =>
       currentEmployer({ name: p.name, title: p.title }, l.company) === 'elsewhere' || (p.source === 'LinkedIn' && nameIsTheCompany(p.name, l.company)),
@@ -174,14 +223,14 @@ export async function purgeFormerEmployees(db: Db, leadId?: number): Promise<num
  * lists) as the main contact while a plant head or process owner is on file. Before any outreach has
  * happened, the best-ranked person takes over. Returns the leads that changed (their email is redrafted).
  */
-export async function promoteBetterContacts(db: Db, leadId?: number): Promise<number[]> {
+export async function promoteBetterContacts(db: Db, scope: Scope = {}): Promise<number[]> {
   const [icpRows, rows] = await Promise.all([
     db.select().from(icps),
     db
       .select({ person: people, lead: leads })
       .from(people)
       .innerJoin(leads, eq(people.leadId, leads.id))
-      .where(and(leadId ? eq(people.leadId, leadId) : undefined, inArray(leads.status, [...LIVE]), isNull(leads.sentAt))),
+      .where(and(inScope(scope), inArray(leads.status, [...LIVE]))),
   ]);
   const byLead = new Map<number, { lead: Lead; list: Person[] }>();
   for (const r of rows) {
@@ -200,9 +249,15 @@ export async function promoteBetterContacts(db: Db, leadId?: number): Promise<nu
     // Only a real step up: a better class of contact, not a tie decided by who has a phone number.
     const gain = Math.floor(contactPriority(lead.contactTitle, icp) - (atBranch(current, lead.city) ? 6 : 0)) - Math.floor(candidateRank(best, icp, lead.city));
     if (lead.contactName && gain < 5) continue;
-    // Not once the team has started on this person, and never over someone the team chose themselves.
-    const worked = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, lead.id), isNotNull(tasks.doneAt), ne(tasks.outcome, 'closed'))).limit(1);
-    if (worked.length) continue;
+    // Not once the team has started on this person (for someone off the lists: once they've actually
+    // spoken to them), and never over someone the team chose themselves.
+    const offList = contactPriority(lead.contactTitle, icp) >= 99;
+    const worked = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.leadId, lead.id), isNotNull(tasks.doneAt), offList ? eq(tasks.outcome, 'connected') : ne(tasks.outcome, 'closed')))
+      .limit(1);
+    if (worked.length || (!offList && lead.sentAt)) continue;
     const chosen = await db
       .select({ id: activities.id })
       .from(activities)

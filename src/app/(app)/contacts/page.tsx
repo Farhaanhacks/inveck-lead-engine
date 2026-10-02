@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { promoteBetterContacts, purgeFormerEmployees } from '@/lib/verify-contacts';
+import { tidyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { after } from 'next/server';
@@ -20,8 +20,7 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   const page = Math.max(1, Number(sp.page) || 1);
   const db = await getDb();
   // Nobody who has left their company is listed.
-  await purgeFormerEmployees(db);
-  const promoted = await promoteBetterContacts(db);
+  const promoted = await tidyContacts(db);
   if (promoted.length) after(async () => { const d = await getDb(); const svc = await liveServices(); for (const id of promoted) await redraftForContact(d, svc, id); });
 
   const filters: SQL[] = [];
