@@ -16,12 +16,12 @@ export function RunButtons({ running, runId, team = [] }: { running: boolean; ru
     <form action={startRunAction} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="findProspects" value="yes" />
       <label htmlFor="prospectsTo" className="text-xs text-muted">Found companies go to</label>
-      <select id="prospectsTo" name="prospectsTo" defaultValue="" className="field h-9 w-auto py-1.5 text-sm">
-        <option value="">The morning draw</option>
-        {team.length > 0 && <option value="team">The team now (split evenly)</option>}
+      <select id="prospectsTo" name="prospectsTo" defaultValue={team.length ? 'team' : ''} className="field h-9 w-auto py-1.5 text-sm">
+        {team.length > 0 && <option value="team">The whole team (split evenly)</option>}
         {team.map((u) => (
           <option key={u.id} value={u.id}>{u.name}</option>
         ))}
+        <option value="">Nobody yet (I&apos;ll assign them)</option>
       </select>
       <SubmitButton pendingText="Starting…">Find new prospects</SubmitButton>
     </form>

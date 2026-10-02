@@ -55,7 +55,7 @@ export default async function SettingsPage() {
           </section>
           <section className="card p-5 text-sm text-ink-2">
             <h2 className="mb-2 text-sm font-semibold text-ink">Schedule & database</h2>
-            <p>Runs start automatically every weekday at 6:00 am IST (Vercel Cron), and search for new prospects on the day set here. At 8:00 am the day’s leads are drawn at random from the researched list and split evenly across the team.</p>
+            <p>Runs start automatically every weekday at 6:00 am IST (Vercel Cron), and search for new prospects on the day set here.</p>
             <p className="mt-2 text-xs text-muted">
               Database: {url && !url.startsWith('memory://') && !url.startsWith('pglite://') ? 'Postgres' : 'local embedded database (development only)'}
             </p>

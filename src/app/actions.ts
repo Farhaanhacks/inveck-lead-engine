@@ -89,7 +89,7 @@ async function researchNow() {
 export async function startRunAction(form: FormData) {
   await requireAdmin();
   const db = await getDb();
-  // Who gets what the search finds: the morning draw (''), the whole team now ('team') or one person (their id).
+  // Who gets what the search finds: the whole team ('team'), one person (their id), or nobody yet ('').
   const to = str(form, 'prospectsTo');
   const prospectsTo = to === 'team' || /^\d+$/.test(to) ? to : '';
   const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual', prospectsTo });
@@ -164,7 +164,7 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
   return {
     ok: true,
     message: later
-      ? `Added ${company} to the list. Researching it now; it goes to someone in a morning draw.`
+      ? `Added ${company}. Researching it now; give it an owner on its page or in Leads.`
       : `Added ${company}. Researching it now; its calls, WhatsApp and email show on Today when it's ready.`,
   };
 }
@@ -518,7 +518,6 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   // Switching provider without touching the model: use that provider's default model.
   if (provider !== current.aiProvider && model === current.aiModel) model = DEFAULT_MODELS[provider] ?? model;
   const parsed = settingsSchema.safeParse({
-    leadsPerMorning: str(form, 'leadsPerMorning'),
     maxEmailGuesses: str(form, 'maxEmailGuesses'),
     useCompanyFormat: form.get('useCompanyFormat') === 'on',
     radarEnabled: form.get('radarEnabled') === 'on',

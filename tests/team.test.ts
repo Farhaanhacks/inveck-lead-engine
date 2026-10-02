@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests } from '@/lib/db';
 import { leads, tasks, users, attendance, activities } from '@/lib/db/schema';
@@ -9,6 +9,14 @@ import { assignUnowned, canReassign } from '@/lib/assign';
 import { addWorkingDays, dayCounts, ensureSequences, firstWorkingDay, istDay, loadTodayTasks, planSequence, unattendedInbound } from '@/lib/tasks';
 import { clockIn, clockOut, getAttendance, recordPresence } from '@/lib/attendance';
 import { callOpener, linkedinNote, whatsappLink } from '@/lib/talk';
+
+// "Today" is a working day mid-morning in India (Thursday 11:30 IST), whenever the tests run: steps
+// due today don't exist at a weekend. Only the date is faked; timers run normally.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-01T06:00:00Z'));
+});
+afterAll(() => vi.useRealTimers());
 
 beforeEach(() => {
   resetDbForTests();
@@ -261,73 +269,13 @@ describe('team report', () => {
   });
 });
 
-describe('morning draw', () => {
-  const nine = new Date('2026-09-28T03:30:00Z'); // Monday 09:00 India time
-
-  it('keeps the list for the draw and hands out only inbound leads straight away', async () => {
+describe('handing out leads', () => {
+  it('hands out inbound leads straight away and leaves the rest for the admin', async () => {
     const db = await getDb();
     await db.insert(leads).values([lead('Pool'), lead('Inbound', { inbound: true })]);
     expect(await assignUnowned(db)).toBe(1);
     const rows = await db.select().from(leads).orderBy(leads.id);
     expect(rows.map((l) => l.ownerId === null)).toEqual([true, false]);
-  });
-
-  it('draws the day’s leads at random, splits them evenly, and never draws a lead twice', async () => {
-    const db = await getDb();
-    const { runDailyDraw, drawPool } = await import('@/lib/draw');
-    await db.insert(leads).values(Array.from({ length: 130 }, (_, i) => lead(`Co ${i}`)));
-    await db.insert(leads).values([lead('Not researched', { status: 'New' }), lead('Ruled out', { status: 'Disqualified' })]);
-    expect(await runDailyDraw(db, { now: new Date('2026-09-28T02:00:00Z') })).toBeNull(); // 07:30, too early
-    const first = await runDailyDraw(db, { now: nine });
-    expect(first).toMatchObject({ day: '2026-09-28', wanted: 100, drawn: 100, short: false });
-    expect(Object.values(first!.perOwner)).toEqual([25, 25, 25, 25]);
-    expect(await runDailyDraw(db, { now: nine })).toBeNull(); // once a day
-    expect((await drawPool(db)).total).toBe(30);
-
-    const owned = await db.select().from(leads).where(eq(leads.drawnOn, '2026-09-28'));
-    expect(owned).toHaveLength(100);
-    // Shuffled: the first four companies by id don't simply go to the team in order.
-    const ids = owned.map((l) => l.id).sort((a, b) => a - b);
-    expect(ids).not.toEqual(Array.from({ length: 100 }, (_, i) => ids[0] + i));
-
-    const next = await runDailyDraw(db, { now: new Date('2026-09-29T03:30:00Z') });
-    expect(next).toMatchObject({ drawn: 30, short: true });
-    const all = await db.select().from(leads);
-    expect(all.filter((l) => l.drawnOn).length).toBe(130);
-    expect(all.find((l) => l.company === 'Not researched')!.ownerId).toBeNull();
-    expect(all.find((l) => l.company === 'Ruled out')!.ownerId).toBeNull();
-  });
-
-  it('leaves the day open when the list is empty, and tops up a short draw later', async () => {
-    const db = await getDb();
-    const { runDailyDraw, topUpDraw, getDraw } = await import('@/lib/draw');
-    expect(await runDailyDraw(db, { now: nine })).toMatchObject({ drawn: 0 });
-    expect(await getDraw(db, '2026-09-28')).toBeNull();
-    await db.insert(leads).values(Array.from({ length: 10 }, (_, i) => lead(`Co ${i}`)));
-    expect(await runDailyDraw(db, { now: nine })).toMatchObject({ drawn: 10, short: true });
-    await db.insert(leads).values(Array.from({ length: 200 }, (_, i) => lead(`More ${i}`)));
-    const topped = await topUpDraw(db, { now: nine });
-    expect(topped).toMatchObject({ drawn: 100, short: false });
-    expect(Object.values(topped!.perOwner).reduce((a, b) => a + b, 0)).toBe(100);
-    expect(await topUpDraw(db, { now: nine })).toBeNull();
-  });
-
-  it('skips weekends, and two draws at once hand out each lead only once', async () => {
-    const db = await getDb();
-    const { runDailyDraw } = await import('@/lib/draw');
-    await db.insert(leads).values(Array.from({ length: 20 }, (_, i) => lead(`Co ${i}`)));
-    expect(await runDailyDraw(db, { now: new Date('2026-09-26T05:00:00Z') })).toBeNull(); // Saturday
-    const [a, b] = await Promise.all([runDailyDraw(db, { now: nine }), runDailyDraw(db, { now: nine })]);
-    expect([a, b].filter(Boolean)).toHaveLength(1);
-    expect((await db.select().from(leads)).every((l) => l.ownerId !== null)).toBe(true);
-  });
-
-  it('shuffles without losing anyone and deals the remainder from a random start', async () => {
-    const { shuffle, deal } = await import('@/lib/draw');
-    const items = Array.from({ length: 10 }, (_, i) => i);
-    expect(shuffle(items).sort((a, b) => a - b)).toEqual(items);
-    const hands = deal(items, [1, 2, 3], () => 0.5);
-    expect([...hands.values()].map((h) => h.length)).toEqual([3, 4, 3]);
   });
 });
 
