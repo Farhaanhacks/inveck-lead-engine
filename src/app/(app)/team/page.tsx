@@ -101,7 +101,7 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold">Outreach and conversion</h2>
           <p className="text-xs text-muted">
-            A company is completed when every step for it that day (call, WhatsApp, email, LinkedIn) is ticked. Connect rate is connected calls out of calls attempted. Meeting rate is meetings booked out of connected calls.
+            A company is completed when every step for it that day (call, WhatsApp, email, LinkedIn) is ticked. Connect rate is connected calls out of calls attempted. Meetings booked counts every call logged as Demo scheduled, plus leads moved to Meeting Booked on the pipeline board. Meeting rate is meetings booked out of connected calls.
           </p>
         </div>
         <table className="w-full min-w-[1100px] text-sm">

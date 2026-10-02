@@ -392,3 +392,21 @@ describe('pipeline follows the calls', () => {
     expect(stages.some((a) => a.stage === 'Meeting Booked')).toBe(true);
   });
 });
+
+describe('meetings on the Team page', () => {
+  it('counts a demo scheduled on a call as a meeting booked, and Undo takes it back', async () => {
+    const db = await getDb();
+    const { moveAfterOutreach, undoOutreachStage } = await import('@/lib/stages');
+    const { teamReport } = await import('@/lib/team-report');
+    await db.insert(leads).values(lead('Acme'));
+    await assignUnowned(db, { everything: true });
+    const [l] = await db.select().from(leads);
+    const at = new Date();
+    await moveAfterOutreach(db, l.id, 'Meeting Booked', at);
+    const day = istDay();
+    const meetings = async () => (await teamReport(db, day, day)).people.find((p) => p.id === l.ownerId)!.meetings;
+    expect(await meetings()).toBe(1);
+    await undoOutreachStage(db, l.id, 'Awaiting Approval', 'Meeting Booked', at);
+    expect(await meetings()).toBe(0);
+  });
+});
