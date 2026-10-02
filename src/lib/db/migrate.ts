@@ -225,6 +225,8 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stage_from TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_tier TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_channel TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS refetch_pending BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS refetch_claimed_at TIMESTAMPTZ`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_since TIMESTAMPTZ`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_checked_at TIMESTAMPTZ`,
   // The score is now the ICP fit times ten (9/10 = 90); rescore every lead once.
@@ -240,6 +242,19 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_linkedin = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'broaderLinkedinV1')`,
   `UPDATE people SET checked_at = NULL WHERE linkedin = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'broaderLinkedinV1')`,
   `INSERT INTO settings (key, value) VALUES ('broaderLinkedinV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // Contacts reset (asked for once): every contact the engine or the team saved is wiped and found again
+  // with the current rules. Research, stages, owners, call logs and tracker outcomes stay. Leads in an
+  // active conversation (a connected call, Replied, Meeting Booked, Won) keep the person they talk to.
+  `UPDATE leads SET refetch_pending = true, refetch_claimed_at = NULL
+   WHERE status NOT IN ('New', 'Processing', 'Disqualified', 'Existing Client', 'Won', 'Replied', 'Meeting Booked')
+     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.lead_id = leads.id AND t.kind = 'call' AND t.outcome = 'connected')
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'contactsResetV1')`,
+  `DELETE FROM people WHERE lead_id IN (SELECT id FROM leads WHERE refetch_pending)
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'contactsResetV1')`,
+  `UPDATE leads SET contact_name = '', contact_title = '', contact_email = '', contact_phone = '', contact_linkedin = '',
+     email_status = '', other_decision_makers = '', contact_tier = '', contact_channel = '', contact_since = NULL, contact_checked_at = NULL
+   WHERE refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'contactsResetV1')`,
+  `INSERT INTO settings (key, value) VALUES ('contactsResetV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

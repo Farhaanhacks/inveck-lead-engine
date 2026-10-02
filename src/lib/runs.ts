@@ -58,6 +58,21 @@ async function claimLeads(db: Db, limit: number): Promise<Lead[]> {
   return db.select().from(leads).where(inArray(leads.id, ids)).orderBy(asc(leads.id));
 }
 
+/** Claims leads waiting for their contacts to be found again; a claim older than 15 minutes is retried. */
+async function claimRefetch(db: Db, limit: number): Promise<Lead[]> {
+  const rows = await db.execute(sql`
+    UPDATE leads SET refetch_claimed_at = now()
+    WHERE id IN (
+      SELECT id FROM leads
+      WHERE refetch_pending AND (refetch_claimed_at IS NULL OR refetch_claimed_at < now() - interval '15 minutes')
+      ORDER BY id LIMIT ${limit} FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id`);
+  const ids = (Array.isArray(rows) ? rows : (rows as { rows: { id: number }[] }).rows).map((r) => Number((r as { id: number }).id));
+  if (!ids.length) return [];
+  return db.select().from(leads).where(inArray(leads.id, ids)).orderBy(asc(leads.id));
+}
+
 /**
  * Works on a run until it's finished or `budgetMs` runs out.
  * Returns 'continue' when there's more to do (the caller then schedules another invocation).
@@ -173,6 +188,37 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       });
       await save();
     }
+
+    // Contacts reset: companies whose contacts are found again from scratch, research kept.
+    let refetched = 0;
+    for (;;) {
+      if (Date.now() - started > budgetMs * 0.6) {
+        await save();
+        return 'continue';
+      }
+      const batch = await claimRefetch(db, CONCURRENCY);
+      if (!batch.length) break;
+      await mapLimit(batch, CONCURRENCY, async (lead) => {
+        try {
+          const result = await processLead(svc, lead, { icps: activeIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { contactsOnly: true });
+          const { people: found, ...update } = result;
+          await db.update(leads).set({ ...update, refetchPending: false, refetchClaimedAt: null, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
+          if (found) await savePeople(db, lead.id, found);
+          await logActivity(
+            db,
+            lead.id,
+            'contact',
+            update.contactName ? `Contacts found again after the reset: ${[update.contactName, update.contactTitle].filter(Boolean).join(', ')}` : 'Contacts found again after the reset: nobody on the ICP lists yet',
+          );
+          refetched++;
+        } catch (e) {
+          // Left pending: tried again by a later run.
+          await log(`${lead.company}: finding contacts again failed: ${errorMessage(e)}`, 'error', lead.id);
+        }
+      });
+      await save();
+    }
+    if (refetched) await log(`Contacts found again for ${refetched} compan${refetched === 1 ? 'y' : 'ies'}`);
 
     await log(`Done: ${stats.processed} researched, ${stats.drafted} drafts ready`);
     await save({ status: 'done', finishedAt: new Date() });

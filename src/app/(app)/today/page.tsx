@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { after } from 'next/server';
-import { liveServices } from '@/lib/run-driver';
+import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, eq, inArray } from 'drizzle-orm';
@@ -417,6 +417,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const db = await getDb();
   await assignUnowned(db);
   await runDailyDraw(db);
+  await startRefetchIfWaiting();
   await ensureSequences(db);
 
   const team = await listBdas(db);

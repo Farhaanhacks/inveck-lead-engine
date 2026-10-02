@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/page-header';
 import { drawPool, getDraw, runDailyDraw } from '@/lib/draw';
 import { getSettings } from '@/lib/settings';
 import { drawNowAction } from '@/app/team-actions';
+import { refetchProgress, startRefetchIfWaiting } from '@/lib/run-driver';
 
 const hours = (m: number) => (m ? `${Math.floor(m / 60)}h ${String(Math.round(m % 60)).padStart(2, '0')}m` : '—');
 const rate = (r: number | null) => (r === null ? '—' : `${r}%`);
@@ -19,6 +20,9 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   const { from, to } = periodDays(period);
   const db = await getDb();
   await runDailyDraw(db);
+  await startRefetchIfWaiting();
+  const refetch = await refetchProgress();
+  const resetRecent = refetch.recent;
   const [{ people, attendance }, draw, pool, { leadsPerMorning }] = await Promise.all([teamReport(db, from, to), getDraw(db), drawPool(db), getSettings(db)]);
   const totals = people.reduce(
     (t, p) => ({ companies: t.companies + p.companiesDone, attempts: t.attempts + p.callAttempts, connected: t.connected + p.connected, meetings: t.meetings + p.meetings, won: t.won + p.won }),
@@ -60,6 +64,18 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
           </div>
         ))}
       </div>
+
+      {(refetch.waiting > 0 || resetRecent) && (
+        <section className={`card mb-6 p-4 ${refetch.waiting ? 'border-warning-ink/40' : ''}`}>
+          <h2 className="text-sm font-semibold">Contacts reset</h2>
+          <p className="mt-1 text-sm">
+            {refetch.waiting
+              ? `All saved contacts were cleared. Finding them again with the current rules: ${refetch.waiting} ${refetch.waiting === 1 ? 'company' : 'companies'} still to go. This page updates when you reload it.`
+              : 'Done: every company has had its contacts found again from scratch with the current rules.'}
+          </p>
+          <p className="mt-1 text-xs text-muted">Leads in a live conversation (a connected call, Replied, Meeting Booked, Won) kept the person they are talking to.</p>
+        </section>
+      )}
 
       <section className="card mb-6 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">

@@ -3,7 +3,7 @@ import { atBranch, buildCandidates, findLinkedinProfile, sameName, hunterDomainS
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
-import { researchLead, websiteEmails, websitePhone } from './research';
+import { researchLead, websiteEmails, websitePhone, type Research } from './research';
 import { scoreLead } from './scoring';
 import { icpFor, tierOf } from '../tiers';
 import { currentEmployer } from './employer';
@@ -33,10 +33,43 @@ export { icpFor };
  * email search → score → outreach draft. Never throws for a single lead's problems;
  * they end up in `status: 'Error'` and `lastError`.
  */
+/** The company research saved on a lead, for finding its contacts again without researching it again. */
+function storedResearch(lead: Lead): Research {
+  return {
+    summary: lead.researchSummary,
+    industry: '',
+    companySize: '',
+    locations: lead.city,
+    inventoryComplexity: '',
+    warehousing3pl: '',
+    erpWms: '',
+    verificationNeed: '',
+    fitReason: lead.fitReason,
+    pitchHook: '',
+    targetRoles: [],
+    fitScore: lead.fitScore ?? 0,
+    qualified: lead.qualified ?? true,
+    text: lead.researchSummary,
+  };
+}
+
 /** Another lead's main contact: used so two branches of one company don't get the same person. */
 export type TakenContact = { leadId: number; company: string; website: string; contactName: string };
 
-export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[] }, log: Log): Promise<LeadResult> {
+/** Stages before anything was sent: re-finding contacts here may set the stage and rewrite the draft. */
+const BEFORE_OUTREACH = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score', 'Rejected', 'Error'];
+
+/**
+ * Researches a lead and finds its contacts. With `contactsOnly` (contacts reset), the company research
+ * already on the lead is kept and only the people are found again; a lead past outreach keeps its stage.
+ */
+export async function processLead(
+  svc: Services,
+  lead: Lead,
+  ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[] },
+  log: Log,
+  opts: { contactsOnly?: boolean } = {},
+): Promise<LeadResult> {
   const client = matchClient(lead, ctx.clients);
   if (client) {
     await log(`${lead.company}: already a client (${client.company}), skipped`);
@@ -80,7 +113,8 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   const siteText = [site.text, ...pages.map((p) => `## ${p.url}\n${p.text}`)].join('\n\n');
   const contactPage = pages.find((p) => /contact|reach|enquir/i.test(new URL(p.url).pathname));
 
-  const { research, error } = await researchLead(svc, input, icp, siteText);
+  const reused = opts.contactsOnly && lead.researchSummary ? storedResearch(lead) : null;
+  const { research, error } = reused ? { research: reused, error: '' } : await researchLead(svc, input, icp, siteText);
   if (!research) {
     await log(`${lead.company}: research failed: ${error}`, 'error');
     return { ...corrected, status: 'Error', lastError: error || 'Research failed' };
@@ -101,6 +135,7 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
     return { ...base, status: 'Disqualified' };
   }
 
+  if (opts.contactsOnly) await log(`${lead.company}: finding contacts again from scratch`);
   // Decision-makers: public LinkedIn profiles via Google, plus Hunter's people at the domain.
   const manual = {
     name: lead.contactName,
@@ -193,6 +228,11 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   // Checked against LinkedIn during research (found there, or looked up by name).
   if (contact.name) update.contactCheckedAt = new Date();
 
+  // Contacts reset on a lead already in outreach: new people, same stage, no new first email.
+  if (opts.contactsOnly && !BEFORE_OUTREACH.includes(lead.status)) {
+    await log(`${lead.company}: contacts found again (${contact.name || 'nobody on the lists yet'}); stage kept at ${lead.status}`);
+    return update;
+  }
   if (!score.readyForDraft) {
     await log(`${lead.company}: ${score.statusWithoutDraft} (score ${score.finalScore})`);
     return { ...update, status: score.statusWithoutDraft };

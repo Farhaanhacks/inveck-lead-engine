@@ -75,3 +75,24 @@ export async function requestOrigin(): Promise<string> {
   const h = await headers();
   return `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;
 }
+
+/** Companies whose contacts are waiting to be found again after the contacts reset. */
+export async function refetchProgress(): Promise<{ waiting: number; resetAt: string | null; recent: boolean }> {
+  const db = await getDb();
+  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(eq(leads.refetchPending, true));
+  const reset = await db.execute(sql`SELECT value FROM settings WHERE key = 'contactsResetV1'`);
+  const value = (Array.isArray(reset) ? reset[0] : (reset as { rows: { value: unknown }[] }).rows[0])?.value as { at?: string } | undefined;
+  const resetAt = value?.at ?? null;
+  // The "done" note shows for three days after the reset.
+  return { waiting: Number(row?.n ?? 0), resetAt, recent: !!resetAt && Date.now() - new Date(resetAt).getTime() < 3 * 86_400_000 };
+}
+
+/** Starts a run when contacts are waiting to be found again and nothing is running, so it doesn't wait for 6 am. */
+export async function startRefetchIfWaiting(origin?: string) {
+  const { waiting } = await refetchProgress();
+  if (!waiting) return;
+  const db = await getDb();
+  if (await activeRun(db)) return;
+  const { run, created } = await startRun(db, { findProspects: false, trigger: 'auto' });
+  if (created) after(() => driveRun(run.id, baseUrl(origin)));
+}

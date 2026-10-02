@@ -389,3 +389,41 @@ describe('dashboard and board agree', () => {
     expect(stats.awaitingReply).toBe(1);
   });
 });
+
+describe('contacts reset', () => {
+  it('wipes saved contacts except live conversations, then finds them again keeping research and stage', async () => {
+    const { sql } = await import('drizzle-orm');
+    const { tasks, settings } = await import('@/lib/db/schema');
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const base = { website: 'tatamotors.com', city: 'Pune', segment: 'Manufacturing', qualified: true, fitScore: 9, fitReason: 'Plants', researchSummary: 'Tata Motors makes vehicles at several plants.' };
+    const [a, b, c] = await db
+      .insert(leads)
+      .values([
+        { ...base, company: 'Tata Motors', status: 'Contacted', contactName: 'Old Person', contactTitle: 'Chief of Operations - Express', contactEmail: 'old@tatamotors.com' },
+        { ...base, company: 'Talking Co', website: 'talking.in', status: 'Contacted', contactName: 'Live Contact' },
+        { ...base, company: 'Demo Co', website: 'demo.in', status: 'Meeting Booked', contactName: 'Demo Person' },
+      ])
+      .returning();
+    await db.insert(people).values({ leadId: a.id, name: 'Old Person', title: 'Chief of Operations - Express', isPrimary: true });
+    await db.insert(tasks).values({ leadId: b.id, ownerId: 1, kind: 'call', title: 'c', dueDate: '2026-10-01', doneAt: new Date(), outcome: 'connected' });
+
+    await db.delete(settings).where(eq(settings.key, 'contactsResetV1'));
+    for (const s of SCHEMA_STATEMENTS.filter((x) => x.includes('contactsResetV1'))) await db.execute(sql.raw(s));
+
+    let [ta] = await db.select().from(leads).where(eq(leads.id, a.id));
+    expect(ta).toMatchObject({ contactName: '', contactTitle: '', contactEmail: '', refetchPending: true, status: 'Contacted', fitScore: 9 });
+    expect(await db.select().from(people).where(eq(people.leadId, a.id))).toHaveLength(0);
+    const kept = await db.select().from(leads).where(eq(leads.refetchPending, false));
+    expect(kept.map((l) => l.contactName).sort()).toEqual(['Demo Person', 'Live Contact']);
+    expect(c.id).toBeGreaterThan(0);
+
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    expect(await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY)).toBe('done');
+    [ta] = await db.select().from(leads).where(eq(leads.id, a.id));
+    expect(ta.refetchPending).toBe(false);
+    expect(ta.contactName).not.toBe('');
+    expect(ta.contactName).not.toBe('Old Person');
+    // Research and the stage are kept.
+    expect(ta).toMatchObject({ status: 'Contacted', fitScore: 9, researchSummary: base.researchSummary });
+  });
+});

@@ -79,6 +79,9 @@ export const leads = pgTable('leads', {
   contactTier: text('contact_tier').notNull().default(''),
   /** Tracker "Point of Contact": the channel they were reached on (Phone, WhatsApp, Email, LinkedIn...), set by hand; empty = from what was logged. */
   contactChannel: text('contact_channel').notNull().default(''),
+  /** Contacts to be found again from scratch (after a reset), keeping the research and the lead's stage. */
+  refetchPending: boolean('refetch_pending').notNull().default(false),
+  refetchClaimedAt: timestamp('refetch_claimed_at', { withTimezone: true }),
   /** When the current point of contact took over: unanswered calls are counted from here (P2 flow). */
   contactSince: timestamp('contact_since', { withTimezone: true }),
   /** When the point of contact was last checked on LinkedIn (profile and current designation); null = not yet. */
