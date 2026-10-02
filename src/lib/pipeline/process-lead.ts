@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { buildCandidates, findLinkedinProfile, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
@@ -126,9 +126,19 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   notes.unshift(...picked.notes);
   if (picked.error) notes.push('Contact step error: ' + picked.error);
   const contact = picked.contact;
-  if (contact.name && !contact.linkedin) {
-    contact.linkedin = await findLinkedinProfile(svc, contact.name, lead.company);
-    if (contact.linkedin) notes.push(`LinkedIn profile found by name: ${contact.linkedin}`);
+  // Titles from email records and old pages go stale: unless the contact came from the LinkedIn search
+  // itself, look them up on LinkedIn, and let their current LinkedIn title win.
+  const fromLinkedin = linkedin.people.some((p) => sameName(p.name, contact.name) && p.title);
+  if (contact.name && !fromLinkedin) {
+    const profile = await findLinkedinProfile(svc, contact.name, lead.company);
+    if (profile) {
+      if (!contact.linkedin) contact.linkedin = profile.url;
+      notes.push(`LinkedIn profile found by name: ${profile.url}`);
+      if (profile.title && profile.title.toLowerCase() !== contact.title.toLowerCase()) {
+        notes.push(`Title taken from LinkedIn: "${profile.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
+        contact.title = profile.title;
+      }
+    }
   }
 
   const email = contact.name || contact.email

@@ -505,8 +505,16 @@ describe('LinkedIn profile by name', () => {
       return new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
-    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toBe('https://in.linkedin.com/in/amit-chhari-123');
+    // The current LinkedIn title, without the company's name tacked on.
+    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toEqual({ url: 'https://in.linkedin.com/in/amit-chhari-123', title: 'Chief of Operations' });
     expect(queries[0]).toContain('"Amit Chhari"');
-    expect(await findLinkedinProfile(svc, 'Rohit Dalmia', 'Allcargo Logistics Ltd')).toBe('');
+    expect(await findLinkedinProfile(svc, 'Rohit Dalmia', 'Allcargo Logistics Ltd')).toBeNull();
+  });
+
+  it('keeps the role and drops only the company from a LinkedIn result title', async () => {
+    const { roleFromLinkedinTitle } = await import('@/lib/pipeline/contacts');
+    expect(roleFromLinkedinTitle(['Chief of Operations', 'Allcargo Logistics'], 'Allcargo Logistics Ltd')).toBe('Chief of Operations');
+    expect(roleFromLinkedinTitle(['VP Operations', 'Supply Chain'], 'Allcargo Logistics Ltd')).toBe('VP Operations - Supply Chain');
+    expect(roleFromLinkedinTitle(['Plant Head'], '')).toBe('Plant Head');
   });
 });

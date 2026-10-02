@@ -448,18 +448,29 @@ export async function saveFoundDetailAction(form: FormData) {
   revalidatePath(`/leads/${id}`);
 }
 
-/** Looks up the point of contact's LinkedIn profile by name and company, and saves it when one matches. */
+/**
+ * Looks up the point of contact on LinkedIn by name and company. Saves the profile when one matches,
+ * and corrects the designation to their current LinkedIn title (then rewrites the email for it).
+ */
 export async function findLinkedinAction(form: FormData) {
   const id = Number(str(form, 'id'));
   if (!(await mayActOn(id))) return;
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
-  if (!lead?.contactName || lead.contactLinkedin) return;
-  const url = await findLinkedinProfile(await liveServices(), lead.contactName, lead.company);
-  if (url) {
-    await db.update(leads).set({ contactLinkedin: url, updatedAt: new Date() }).where(eq(leads.id, id));
-    await db.update(people).set({ linkedin: url }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
-    await logActivity(db, id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
+  if (!lead?.contactName) return;
+  const profile = await findLinkedinProfile(await liveServices(), lead.contactName, lead.company);
+  if (profile) {
+    const url = lead.contactLinkedin || profile.url;
+    const retitle = !!profile.title && profile.title.toLowerCase() !== lead.contactTitle.toLowerCase();
+    await db.update(leads).set({ contactLinkedin: url, ...(retitle ? { contactTitle: profile.title, contactTier: '' } : {}), updatedAt: new Date() }).where(eq(leads.id, id));
+    await db.update(people).set({ linkedin: url, ...(retitle ? { title: profile.title } : {}) }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+    if (!lead.contactLinkedin) await logActivity(db, id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
+    if (retitle) {
+      await logActivity(db, id, 'contact', `Designation corrected from LinkedIn: "${profile.title}" (was "${lead.contactTitle || 'blank'}")`);
+      after(async () => redraftForContact(await getDb(), await liveServices(), id));
+    } else if (lead.contactLinkedin) {
+      await logActivity(db, id, 'note', `Checked on LinkedIn: ${lead.contactName}'s designation matches.`);
+    }
   } else {
     await logActivity(db, id, 'note', `No LinkedIn profile found for ${lead.contactName} at ${lead.company}. Search on LinkedIn and paste the link.`);
   }

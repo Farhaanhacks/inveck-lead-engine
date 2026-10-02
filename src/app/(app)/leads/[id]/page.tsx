@@ -12,7 +12,7 @@ import { CopyButton } from '@/components/copy-button';
 import { SubmitButton } from '@/components/submit-button';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { canReassign } from '@/lib/assign';
-import { assignOwnerAction } from '../../../team-actions';
+import { assignOwnerAction, findLinkedinAction } from '../../../team-actions';
 import {
   addLeadAsClientAction,
   makePrimaryAction,
@@ -415,7 +415,13 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
                 {lead.contactLinkedin && (
                   <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open LinkedIn profile</a>
                 )}
+                {lead.contactName && (
+                  <button formAction={findLinkedinAction} formNoValidate className="btn-secondary px-2.5 py-1 text-xs">
+                    Check {lead.contactName.split(' ')[0]} on LinkedIn
+                  </button>
+                )}
               </div>
+              <p className="text-xs text-muted">Checks the current designation on LinkedIn and corrects it here if it has changed. Save your edits first.</p>
             </div>
           </Section>
 

@@ -82,7 +82,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Tata Motors'].emailStatus).toBe('valid (common email format)');
     expect(L['Tata Motors'].emailBody).toBe('Hi,, body text');
     expect(L['Tata Motors'].linkedinMessage).toBe('Hello');
-    expect(L['Tata Motors'].otherDecisionMakers).toContain('Anita Rao | Head Supply Chain - Tata Motors | anita.rao@tatamotors.com');
+    expect(L['Tata Motors'].otherDecisionMakers).toContain('Anita Rao | Head Supply Chain | anita.rao@tatamotors.com');
     // "Z9" isn't a real candidate, so it's ignored rather than invented.
     expect(L['Tata Motors'].otherDecisionMakers).not.toContain('Z9');
 
