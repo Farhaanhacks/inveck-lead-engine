@@ -490,3 +490,23 @@ describe('P2 flow', () => {
     expect(waiting.filter((t) => t.dueDate === istDay())).toHaveLength(4);
   });
 });
+
+describe('LinkedIn profile by name', () => {
+  it('finds the chosen person by name and company, and ignores namesakes', async () => {
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const organic = [
+      { title: 'Amit Kumar - Allcargo Logistics | LinkedIn', link: 'https://in.linkedin.com/in/amit-kumar', snippet: 'Allcargo Logistics' },
+      { title: 'Amit Chhari - Chief of Operations - Allcargo Logistics | LinkedIn', link: 'https://in.linkedin.com/in/amit-chhari-123?trk=x', snippet: 'Allcargo Logistics · IIM Ahmedabad' },
+    ];
+    const queries: string[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      queries.push(JSON.parse(String(init?.body)).q);
+      return new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toBe('https://in.linkedin.com/in/amit-chhari-123');
+    expect(queries[0]).toContain('"Amit Chhari"');
+    expect(await findLinkedinProfile(svc, 'Rohit Dalmia', 'Allcargo Logistics Ltd')).toBe('');
+  });
+});

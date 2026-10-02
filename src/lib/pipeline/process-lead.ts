@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { buildCandidates, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { buildCandidates, findLinkedinProfile, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
@@ -126,6 +126,10 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   notes.unshift(...picked.notes);
   if (picked.error) notes.push('Contact step error: ' + picked.error);
   const contact = picked.contact;
+  if (contact.name && !contact.linkedin) {
+    contact.linkedin = await findLinkedinProfile(svc, contact.name, lead.company);
+    if (contact.linkedin) notes.push(`LinkedIn profile found by name: ${contact.linkedin}`);
+  }
 
   const email = contact.name || contact.email
     ? await findEmail(svc, contact, { company: lead.company, domain, pattern: people.pattern, websiteEmails: published, webEmails: [...webEmails, ...leaders.emails] })

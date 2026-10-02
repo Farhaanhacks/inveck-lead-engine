@@ -197,6 +197,29 @@ function sameName(a: string, b: string): boolean {
   return wa.length > 1 && wb.length > 1 && wa[0] === wb[0] && wa[wa.length - 1] === wb[wb.length - 1];
 }
 
+/**
+ * The chosen person's own LinkedIn profile, by name and company, for when they were found
+ * somewhere else (email records, the company website) and the role search didn't list them.
+ * Only a profile whose name matches is kept.
+ */
+export async function findLinkedinProfile(svc: Services, person: string, company: string): Promise<string> {
+  if (!person.trim()) return '';
+  const firm = searchName(company) || company;
+  const queries = [`site:linkedin.com/in "${person}" "${firm}"`, `site:linkedin.com/in "${person}" ${firm}`];
+  for (const q of queries) {
+    try {
+      const found = toLinkedInPeople(await googleSearch(svc, q)).filter((p) => sameName(p.name, person));
+      // Prefer the profile that mentions the company; on the exact-company query any match will do.
+      const atFirm = found.find((p) => `${p.title} ${p.snippet}`.toLowerCase().includes(firm.toLowerCase().split(' ')[0]));
+      const pick = atFirm ?? (q === queries[0] ? found[0] : undefined);
+      if (pick) return pick.linkedin;
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
 /** One candidate list from the sales team's contact, LinkedIn and Hunter; the same person on two lists is merged. */
 export function buildCandidates(
   manual: ManualContact,

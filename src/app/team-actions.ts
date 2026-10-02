@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, newContactNamed, unansweredCalls, type Escalation } from '@/lib/escalate';
 import { redraftForContact } from '@/lib/pipeline/redraft';
+import { findLinkedinProfile } from '@/lib/pipeline/contacts';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
@@ -442,6 +443,26 @@ export async function saveFoundDetailAction(form: FormData) {
   const personField = { contactPhone: 'phone', contactEmail: 'email', contactLinkedin: 'linkedin' } as const;
   await db.update(people).set({ [personField[field]]: value, ...extra }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
   await logActivity(db, id, 'contact', `Point of contact's ${QUICK_FIELDS[field]} added by the team: ${value}`);
+  revalidatePath('/today');
+  revalidatePath('/tracker');
+  revalidatePath(`/leads/${id}`);
+}
+
+/** Looks up the point of contact's LinkedIn profile by name and company, and saves it when one matches. */
+export async function findLinkedinAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!(await mayActOn(id))) return;
+  const db = await getDb();
+  const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!lead?.contactName || lead.contactLinkedin) return;
+  const url = await findLinkedinProfile(await liveServices(), lead.contactName, lead.company);
+  if (url) {
+    await db.update(leads).set({ contactLinkedin: url, updatedAt: new Date() }).where(eq(leads.id, id));
+    await db.update(people).set({ linkedin: url }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+    await logActivity(db, id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
+  } else {
+    await logActivity(db, id, 'note', `No LinkedIn profile found for ${lead.contactName} at ${lead.company}. Search on LinkedIn and paste the link.`);
+  }
   revalidatePath('/today');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);

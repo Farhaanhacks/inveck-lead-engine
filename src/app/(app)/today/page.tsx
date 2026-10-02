@@ -26,7 +26,7 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
+import { clockInAction, clockOutAction, completeTaskAction, findLinkedinAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
@@ -189,7 +189,15 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
           <FoundDetail leadId={lead.id} field="contactEmail" label="Found the email? Save it" placeholder="name@company.com" type="email" />
         )}
         {!readOnly && task.kind === 'linkedin' && !lead.contactLinkedin && (
-          <FoundDetail leadId={lead.id} field="contactLinkedin" label="Found the profile? Save it" placeholder="linkedin.com/in/…" type="text" />
+          <div className="flex flex-wrap items-end gap-x-3">
+            {lead.contactName && (
+              <form action={findLinkedinAction} className="mt-2">
+                <input type="hidden" name="id" value={lead.id} />
+                <button className={SMALL}>Find {lead.contactName.split(' ')[0]} on LinkedIn</button>
+              </form>
+            )}
+            <FoundDetail leadId={lead.id} field="contactLinkedin" label="or paste the profile" placeholder="linkedin.com/in/…" type="text" />
+          </div>
         )}
         {task.step === FIND_NEXT_STEP && (
           <p className="mt-2 text-xs text-warning-ink">
