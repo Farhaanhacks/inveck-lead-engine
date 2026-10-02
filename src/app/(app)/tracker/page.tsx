@@ -3,7 +3,7 @@ import { getCurrentUser } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { runDailyDraw } from '@/lib/draw';
 import { ownerScope } from '@/lib/access';
-import { CALL_FEEDBACK, CONTACT_TIERS, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCells } from '@/lib/tracker';
+import { CALL_FEEDBACK, CONTACT_CHANNELS, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCells } from '@/lib/tracker';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TrackerTable, type TrackerViewRow } from './tracker-table';
@@ -46,8 +46,8 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
         owner: c[20],
       },
       callFeedback: r.lead.callFeedback,
-      contactTier: r.lead.contactTier,
-      autoTier: r.autoTier,
+      contactChannel: r.lead.contactChannel,
+      autoChannel: r.autoChannel,
       mailOutcome: r.mailOutcome,
       linkedinOutcome: r.linkedinOutcome,
       remark: r.lead.remark,
@@ -70,7 +70,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
         </select>
         <span className="ml-auto text-xs text-muted tabular-nums">{rows.length} of {all.length} leads</span>
       </AutoFilterForm>
-      <TrackerTable rows={view} options={{ contactTier: CONTACT_TIERS, callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} segments={segments} />
+      <TrackerTable rows={view} options={{ contactChannel: CONTACT_CHANNELS, callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} segments={segments} />
     </>
   );
 }

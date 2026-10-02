@@ -8,8 +8,8 @@ export type TrackerViewRow = {
   id: number;
   cells: Record<string, string>;
   callFeedback: string;
-  contactTier: string;
-  autoTier: string;
+  contactChannel: string;
+  autoChannel: string;
   mailOutcome: string;
   linkedinOutcome: string;
   remark: string;
@@ -17,7 +17,7 @@ export type TrackerViewRow = {
   website: string;
 };
 
-type Field = 'callFeedback' | 'contactTier' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
+type Field = 'callFeedback' | 'contactChannel' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
 
 const CELL = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink hover:border-line focus:border-accent focus:outline-none';
 
@@ -80,7 +80,7 @@ export function TrackerTable({
 }: {
   segments: string[];
   rows: TrackerViewRow[];
-  options: { contactTier: readonly string[]; callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
+  options: { contactChannel: readonly string[]; callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
   showOwner: boolean;
 }) {
   const th = 'border-b border-r border-line px-2 py-2 text-left font-medium whitespace-nowrap';
@@ -130,12 +130,12 @@ export function TrackerTable({
               <td className={`${td} p-1`}>
                 <Choice
                   id={r.id}
-                  field="contactTier"
-                  value={r.contactTier}
-                  options={options.contactTier}
-                  empty={r.autoTier ? `Auto: ${r.autoTier}` : 'Auto: not matched'}
+                  field="contactChannel"
+                  value={r.contactChannel}
+                  options={options.contactChannel}
+                  empty={r.autoChannel ? `Auto: ${r.autoChannel}` : '—'}
                   narrow
-                  label={`${r.cells.company}: point of contact tier`}
+                  label={`${r.cells.company}: point of contact`}
                 />
               </td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.phone}</td>

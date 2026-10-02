@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { after } from 'next/server';
-import { contactPriority, tierOf } from '@/lib/tiers';
+import { contactPriority, icpFor } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { notFound } from 'next/navigation';
 import { asc, desc, eq } from 'drizzle-orm';
@@ -156,19 +156,14 @@ function SignalsCard({ lead }: { lead: Lead }) {
   );
 }
 
-const TIER_STYLE: Record<string, string> = {
-  P1: 'bg-good-soft text-good-ink',
-  P2: 'bg-accent-soft text-accent',
-  P3: 'bg-neutral-soft text-ink-2',
-};
 
-function PeopleCard({ company, list, tierOfPerson }: { company: string; list: Person[]; tierOfPerson: (p: Person) => string }) {
+function PeopleCard({ company, list }: { company: string; list: Person[] }) {
   return (
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
         <div>
           <h2 className="text-sm font-semibold">People to contact at {company}</h2>
-          <p className="text-xs text-muted">Best first, by INVECK&apos;s contact priority: plant heads, then other operations heads, then process owners. Only people who work there now.</p>
+          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people who work there now.</p>
         </div>
         <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.phone).length} with a number · {list.filter((p) => p.email).length} with email</span>
       </div>
@@ -190,7 +185,6 @@ function PeopleCard({ company, list, tierOfPerson }: { company: string; list: Pe
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
                     {p.name}
-                    {tierOfPerson(p) && <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${TIER_STYLE[tierOfPerson(p)]}`}>{tierOfPerson(p)}</span>}
                     {p.isPrimary && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
                     {p.passedAt && <span className="ml-2 text-xs font-normal text-muted">tried, no luck</span>}
                   </div>
@@ -246,11 +240,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
     db.select().from(people).where(eq(people.leadId, id)).orderBy(desc(people.isPrimary), asc(people.id)),
   ]);
   const segments = segmentRows.map((s) => s.segment);
-  const icp = segmentRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
-  const tierOfPerson = (p: Person) => {
-    const t = tierOf(p.title, icp);
-    return t === 'P1' || t === 'P2' || t === 'P3' ? t : '';
-  };
+  const icp = icpFor(lead.segment, segmentRows);
   // Main contact first, then everyone else best first; people already tried go last.
   // Only people on the ICP's P1/P2/P3 lists (and the main contact): INVECK doesn't want anyone else.
   const team = found.filter((p) => p.isPrimary || contactPriority(p.title, icp ?? undefined) < 99).sort(
@@ -339,7 +329,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
 
       {team.length > 0 && (
         <div className="mb-6">
-          <PeopleCard company={lead.company} list={team} tierOfPerson={tierOfPerson} />
+          <PeopleCard company={lead.company} list={team} />
         </div>
       )}
 

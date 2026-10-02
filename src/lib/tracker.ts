@@ -1,7 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
 import type { Db } from './db';
-import { icps, leads, tasks, users, type Lead } from './db/schema';
-import { tierOf } from './tiers';
+import { leads, tasks, users, type Lead } from './db/schema';
 
 /** What a connected (or attempted) call came to: the "Call Outcome / Feedback" dropdown. */
 export const CALL_FEEDBACK = [
@@ -24,10 +23,13 @@ export const MAIL_OUTCOMES = ['Not sent', 'Sent', 'No reply', 'Replied: interest
 export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', 'Replied', 'No response', 'Not on LinkedIn'] as const;
 
 export const CONTACT_TIERS = ['P1', 'P2', 'P3'] as const;
+/** Tracker "Point of Contact": where the conversation happened. */
+export const CONTACT_CHANNELS = ['Phone', 'WhatsApp', 'Email', 'LinkedIn', 'Referral', 'Other'] as const;
 
 export const TRACKER_FIELDS = {
   callFeedback: CALL_FEEDBACK,
   contactTier: CONTACT_TIERS,
+  contactChannel: CONTACT_CHANNELS,
   mailOutcome: MAIL_OUTCOMES,
   linkedinOutcome: LINKEDIN_OUTCOMES,
 } as const;
@@ -52,13 +54,21 @@ export type TrackerRow = {
   callRemark: string;
   callsDone: number;
   lastCallAt: Date | null;
-  /** P1, P2 or P3: set by hand, else worked out from the designation. */
+  /** The channel they were reached on: set by hand, else from what was logged. */
   pointOfContact: string;
-  /** What the designation alone says, shown as the automatic choice. */
-  autoTier: string;
+  /** What the log says, shown as the automatic choice. */
+  autoChannel: string;
   mailOutcome: string;
   linkedinOutcome: string;
 };
+
+/** Where the conversation happened, from what was logged: a connected call, an email or LinkedIn reply. */
+function channelFromLog(lead: Lead, calls: { outcome: string }[]): string {
+  if (calls.some((c) => c.outcome === 'connected')) return 'Phone';
+  if (lead.mailOutcome.startsWith('Replied')) return 'Email';
+  if (lead.linkedinOutcome === 'Accepted' || lead.linkedinOutcome === 'Replied') return 'LinkedIn';
+  return '';
+}
 
 /** One row per lead with the columns INVECK's office listed, plus email and LinkedIn outcomes. */
 export async function loadTracker(db: Db, ownerId: number | null): Promise<TrackerRow[]> {
@@ -70,7 +80,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
     .limit(2000);
   if (!rows.length) return [];
   const ids = rows.map((l) => l.id);
-  const [calls, sent, icpList, team] = await Promise.all([
+  const [calls, sent, team] = await Promise.all([
     db
       .select({ leadId: tasks.leadId, outcome: tasks.outcome, note: tasks.note, doneAt: tasks.doneAt })
       .from(tasks)
@@ -80,17 +90,14 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       .select({ leadId: tasks.leadId, kind: tasks.kind })
       .from(tasks)
       .where(and(inArray(tasks.leadId, ids), inArray(tasks.kind, ['email', 'linkedin']), inArray(tasks.outcome, ['sent', 'done']))),
-    db.select().from(icps),
     db.select({ id: users.id, name: users.name }).from(users),
   ]);
   const names = new Map(team.map((u) => [u.id, u.name]));
-  const icpBySegment = new Map(icpList.map((i) => [i.segment.toLowerCase(), i]));
   const emailed = new Set(sent.filter((s) => s.kind === 'email').map((s) => s.leadId));
   const linked = new Set(sent.filter((s) => s.kind === 'linkedin').map((s) => s.leadId));
   return rows.map((lead) => {
     const mine = calls.filter((c) => c.leadId === lead.id);
     const last = mine[0];
-    const tier = tierOf(lead.contactTitle, icpBySegment.get(lead.segment.toLowerCase()));
     return {
       lead,
       owner: lead.ownerId ? names.get(lead.ownerId) ?? '' : '',
@@ -98,8 +105,8 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       callRemark: lead.callRemark,
       callsDone: mine.length,
       lastCallAt: last?.doneAt ?? null,
-      pointOfContact: lead.contactTier || (tier === 'Avoid' ? '' : tier),
-      autoTier: tier === 'Avoid' ? 'Not a priority' : tier,
+      pointOfContact: lead.contactChannel || channelFromLog(lead, mine),
+      autoChannel: channelFromLog(lead, mine),
       // Logged sends fill these in until someone picks an outcome by hand.
       mailOutcome: lead.mailOutcome || (emailed.has(lead.id) || lead.sentAt ? 'Sent' : lead.contactEmail ? 'Not sent' : ''),
       linkedinOutcome: lead.linkedinOutcome || (linked.has(lead.id) ? 'Request sent' : lead.contactLinkedin ? 'Not sent' : 'Not on LinkedIn'),

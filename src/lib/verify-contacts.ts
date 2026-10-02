@@ -3,7 +3,7 @@ import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
 import { atBranch, candidateRank, findLinkedinProfile, rankCandidates } from './pipeline/contacts';
-import { contactPriority } from './tiers';
+import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
 import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
 import { escalate } from './escalate';
@@ -67,7 +67,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     db.select().from(icps),
     db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, false), isNull(people.checkedAt), isNull(people.passedAt))),
   ]);
-  const icp = icpRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+  const icp = icpFor(lead.segment, icpRows);
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
   for (const p of next) {
@@ -240,7 +240,7 @@ export async function promoteBetterContacts(db: Db, scope: Scope = {}): Promise<
   }
   const changed: number[] = [];
   for (const { lead, list } of byLead.values()) {
-    const icp = icpRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+    const icp = icpFor(lead.segment, icpRows);
     if (!icp) continue;
     const current = { title: lead.contactTitle, snippet: '', phone: lead.contactPhone, email: lead.contactEmail };
     const others = list.filter((p) => !p.isPrimary && !p.passedAt && p.name.toLowerCase() !== lead.contactName.toLowerCase() && contactPriority(p.title, icp) < 99);

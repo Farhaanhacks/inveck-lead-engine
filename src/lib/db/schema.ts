@@ -77,6 +77,8 @@ export const leads = pgTable('leads', {
   drawnOn: text('drawn_on').notNull().default(''),
   /** Point of contact tier (P1, P2, P3) set by hand on the tracker; empty means worked out from the designation. */
   contactTier: text('contact_tier').notNull().default(''),
+  /** Tracker "Point of Contact": the channel they were reached on (Phone, WhatsApp, Email, LinkedIn...), set by hand; empty = from what was logged. */
+  contactChannel: text('contact_channel').notNull().default(''),
   /** When the current point of contact took over: unanswered calls are counted from here (P2 flow). */
   contactSince: timestamp('contact_since', { withTimezone: true }),
   /** When the point of contact was last checked on LinkedIn (profile and current designation); null = not yet. */

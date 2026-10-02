@@ -6,7 +6,7 @@ import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { icps, leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
-import { contactPriority, tierOf } from '@/lib/tiers';
+import { contactPriority, icpFor } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
@@ -37,11 +37,6 @@ import { makePrimaryAction } from '../../actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
-const TIER_STYLE: Record<string, string> = {
-  P1: 'bg-good-soft text-good-ink',
-  P2: 'bg-accent-soft text-accent',
-  P3: 'bg-neutral-soft text-ink-2',
-};
 
 const OUTCOME_LABEL: Record<string, string> = {
   connected: 'Connected',
@@ -329,7 +324,6 @@ function CompanyCard({
   others,
   doneToday,
   linkedinFull,
-  tierOfOther,
 }: {
   group: CompanyGroup;
   bda: string;
@@ -337,7 +331,6 @@ function CompanyCard({
   others: Person[];
   doneToday: Task[];
   linkedinFull: boolean;
-  tierOfOther: (p: Person) => string;
 }) {
   const { lead } = group;
   // One row per channel, in the same order every time: open ones to log, the ones logged today ticked.
@@ -353,7 +346,6 @@ function CompanyCard({
   // Ask for a missing number once per company: on the call row, or on WhatsApp once the call is logged.
   const phoneRow = rows.find((r) => r.open && (r.kind === 'call' || r.kind === 'whatsapp'))?.kind;
   const total = rows.length;
-  const mainTier = lead.contactTier || tierOfOther({ title: lead.contactTitle } as Person);
   const ticked = rows.filter((r) => r.done).length;
   return (
     <li className="px-5 py-4" data-company={lead.id}>
@@ -366,7 +358,6 @@ function CompanyCard({
           <div className="text-sm text-ink-2">
             {lead.contactName}
             {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
-            {mainTier ? <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${TIER_STYLE[mainTier]}`}>{mainTier}</span> : null}
           </div>
           <Reach lead={lead} />
           {!readOnly && <EditContact lead={lead} others={others} />}
@@ -379,10 +370,12 @@ function CompanyCard({
                   .slice(0, 3)
                   .map((p) => (
                     <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                      {tierOfOther(p) && <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${TIER_STYLE[tierOfOther(p)]}`}>{tierOfOther(p)}</span>}
                       <span className="font-medium text-ink">{p.name}</span>
                       {p.title && <span className="text-muted">{p.title}</span>}
                       {p.phone && <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{p.phone}</a>}
+                      {p.email && <a href={`mailto:${p.email}`} className="text-ink-2 hover:underline">{p.email}</a>}
+                      {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
+                      {!p.phone && !p.email && !p.linkedin && <span className="text-muted">no details yet</span>}
                       {!readOnly && (
                         <form action={makePrimaryAction}>
                           <input type="hidden" name="id" value={lead.id} />
@@ -505,17 +498,13 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
   const icpRows = await db.select().from(icps);
-  const icpOf = (l: Lead) => icpRows.find((i) => i.segment.toLowerCase() === l.segment.toLowerCase());
+  const icpOf = (l: Lead) => icpFor(l.segment, icpRows);
   // Best first by INVECK's contact priority; people already tried go last.
   const othersOf = (l: Lead) =>
     peopleRows
       // Only people on the ICP's P1/P2/P3 lists: INVECK doesn't want anyone else.
       .filter((p) => p.leadId === l.id && !p.isPrimary && p.name.toLowerCase() !== l.contactName.toLowerCase() && contactPriority(p.title, icpOf(l)) < 99)
       .sort((a, b) => Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icpOf(l), l.city) - candidateRank(b, icpOf(l), l.city));
-  const tierLabel = (p: Person, l: Lead) => {
-    const t = tierOf(p.title, icpOf(l));
-    return t === 'P1' || t === 'P2' || t === 'P3' ? t : '';
-  };
   const startHere = unattended.length + demos.length;
 
   return (
@@ -685,7 +674,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tierOfOther={(p) => tierLabel(p, g.lead)} />
+              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

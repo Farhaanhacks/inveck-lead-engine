@@ -3,7 +3,7 @@ import type { Db } from './db';
 import { icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
 import { makePrimary } from './people';
-import { contactPriority, tierOf, type Tier } from './tiers';
+import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
 import { rankCandidates } from './pipeline/contacts';
 import { istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
 
@@ -49,7 +49,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead) return { switched: false };
   const [icpRows, found] = await Promise.all([db.select().from(icps), db.select().from(people).where(eq(people.leadId, leadId))]);
-  const icp = icpRows.find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+  const icp = icpFor(lead.segment, icpRows);
   const others = found.filter((p) => !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== lead.contactName.toLowerCase());
   const next = nextContact(others, icp, lead.city);
   const reason =

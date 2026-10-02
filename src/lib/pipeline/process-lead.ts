@@ -5,7 +5,7 @@ import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatU
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, websitePhone } from './research';
 import { scoreLead } from './scoring';
-import { tierOf } from '../tiers';
+import { icpFor, tierOf } from '../tiers';
 import { currentEmployer } from './employer';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
@@ -25,10 +25,7 @@ export function matchClient(lead: { company: string; website: string }, clients:
   return clients.find((c) => (name && normCompany(c.company) === name) || (domain && rootDomain(c.website) === domain));
 }
 
-export function icpFor(segment: string, icps: Icp[]): Icp | undefined {
-  const s = segment.trim().toLowerCase();
-  return icps.find((i) => i.segment.trim().toLowerCase() === s) || icps[0];
-}
+export { icpFor };
 
 /**
  * Takes one lead through the whole pipeline and returns the fields to save:

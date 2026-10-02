@@ -6,12 +6,13 @@ import type { Services } from './services';
 import type { Research } from './research';
 import type { Contact } from './contacts';
 import { writeOutreach } from './draft';
+import { icpFor } from '../tiers';
 
 /** Rewrites the email and LinkedIn note for the lead's current point of contact (after a switch to P2, or a new person named by hand). */
 export async function redraftForContact(db: Db, svc: Services, leadId: number): Promise<boolean> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead?.contactName) return false;
-  const icp = (await db.select().from(icps)).find((i) => i.segment.toLowerCase() === lead.segment.toLowerCase());
+  const icp = icpFor(lead.segment, await db.select().from(icps));
   if (!icp) return false;
   // The stored research summary stands in for the full research; the draft only needs its text.
   const research = { text: [lead.researchSummary, lead.fitReason && `Why they fit: ${lead.fitReason}`].filter(Boolean).join('\n') } as Research;

@@ -337,13 +337,13 @@ export async function undoTaskAction(form: FormData) {
 
 /** A cell on the tracker sheet: call outcome, mail outcome, LinkedIn outcome or remark. */
 export async function updateTrackerFieldAction(id: number, field: TrackerField, value: string): Promise<{ ok: boolean }> {
-  if (!['callFeedback', 'contactTier', 'mailOutcome', 'linkedinOutcome', 'remark', 'callRemark'].includes(field)) return { ok: false };
+  if (!['callFeedback', 'contactChannel', 'mailOutcome', 'linkedinOutcome', 'remark', 'callRemark'].includes(field)) return { ok: false };
   const clean = String(value ?? '').trim();
   if (!validTrackerValue(field, clean) || !(await mayActOn(id))) return { ok: false };
   const db = await getDb();
   await db.update(leads).set({ [field]: clean, updatedAt: new Date() }).where(eq(leads.id, id));
-  if (field === 'contactTier') {
-    await logActivity(db, id, 'note', clean ? `Point of contact tier set to ${clean}` : 'Point of contact tier back to automatic (from the designation)');
+  if (field === 'contactChannel') {
+    await logActivity(db, id, 'note', clean ? `Point of contact: ${clean}` : 'Point of contact back to automatic (from what was logged)');
   } else if (field !== 'remark' && field !== 'callRemark' && clean) {
     const label = field === 'callFeedback' ? 'Call outcome' : field === 'mailOutcome' ? 'Mail outcome' : 'LinkedIn outcome';
     await logActivity(db, id, 'note', `${label}: ${clean}`);

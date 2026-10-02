@@ -411,20 +411,21 @@ describe('meetings on the Team page', () => {
   });
 });
 
-describe('point of contact tier on the tracker', () => {
-  it('works the tier out from the designation until someone sets it by hand', async () => {
+describe('point of contact on the tracker', () => {
+  it('shows the channel the conversation happened on until someone sets it by hand', async () => {
     const db = await getDb();
     const { loadTracker, validTrackerValue } = await import('@/lib/tracker');
-    await db.insert(leads).values(lead('Acme', { segment: 'Manufacturing', contactTitle: 'Plant Head' }));
+    const [l] = await db.insert(leads).values(lead('Acme', { segment: 'Manufacturing', contactTitle: 'Plant Head' })).returning();
     let [row] = await loadTracker(db, null);
-    expect(row.pointOfContact).toBe('P1');
-    expect(row.autoTier).toBe('P1');
-    await db.update(leads).set({ contactTier: 'P2' });
+    expect(row.pointOfContact).toBe('');
+    await db.insert(tasks).values({ leadId: l.id, ownerId: 1, kind: 'call', title: 'c', dueDate: istDay(), doneAt: new Date(), outcome: 'connected' });
     [row] = await loadTracker(db, null);
-    expect(row.pointOfContact).toBe('P2');
-    expect(validTrackerValue('contactTier', 'P3')).toBe(true);
-    expect(validTrackerValue('contactTier', 'P9')).toBe(false);
-    expect(validTrackerValue('contactTier', '')).toBe(true);
+    expect(row).toMatchObject({ pointOfContact: 'Phone', autoChannel: 'Phone' });
+    await db.update(leads).set({ contactChannel: 'WhatsApp' });
+    [row] = await loadTracker(db, null);
+    expect(row.pointOfContact).toBe('WhatsApp');
+    expect(validTrackerValue('contactChannel', 'LinkedIn')).toBe(true);
+    expect(validTrackerValue('contactChannel', 'P1')).toBe(false);
   });
 });
 

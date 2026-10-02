@@ -90,3 +90,13 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   if (tier === 'P2') return 20;
   return 30;
 }
+
+/**
+ * The ICP whose rules apply to a lead: its segment's, or (as research does) the first active ICP
+ * when the segment matches none, so contacts are always ranked by some list.
+ */
+export function icpFor<T extends Pick<Icp, 'segment'> & Partial<Pick<Icp, 'id' | 'active'>>>(segment: string, icps: T[]): T | undefined {
+  const s = segment.trim().toLowerCase();
+  const sorted = [...icps].sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  return sorted.find((i) => i.segment.trim().toLowerCase() === s) ?? sorted.find((i) => i.active !== false) ?? sorted[0];
+}
