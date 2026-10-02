@@ -536,7 +536,7 @@ describe('contacts checked on LinkedIn automatically', () => {
     }) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     await db.insert(leads).values([
-      lead('Allcargo Logistics', { contactName: 'Amit Chhari', contactTitle: 'Chief of Operations - Express' }),
+      lead('Allcargo Logistics', { contactName: 'Amit Chhari', contactTitle: 'VP Operations, Xpressbees' }),
       lead('Nobody Ltd', { contactName: 'Rohit Dalmia', contactTitle: 'Finance Head' }),
     ]);
     expect(await verifyContacts(db, svc)).toMatchObject({ corrected: 1, not_found: 1 });

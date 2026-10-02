@@ -308,6 +308,11 @@ export const SCHEMA_STATEMENTS = [
      email_status = '', other_decision_makers = '', contact_tier = '', contact_since = NULL, contact_checked_at = NULL
    WHERE refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'webLeadersRecheckV1')`,
   `INSERT INTO settings (key, value) VALUES ('webLeadersRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // People whose LinkedIn was found but whose role wasn't read (it was only in Google's snippet) are
+  // checked again once, so the role is filled in.
+  `UPDATE leads SET contact_checked_at = NULL WHERE contact_title = '' AND contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'blankTitleRecheckV1')`,
+  `UPDATE people SET checked_at = NULL WHERE title = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'blankTitleRecheckV1')`,
+  `INSERT INTO settings (key, value) VALUES ('blankTitleRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

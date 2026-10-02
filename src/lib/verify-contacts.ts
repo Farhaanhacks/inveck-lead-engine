@@ -16,6 +16,12 @@ const RECHECK_AFTER_DAYS = 30;
 /** Leads whose contact is worth keeping right: being worked, or waiting to be handed out. */
 const LIVE = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Needs Manual Contact', 'Low Score'] as const;
 
+/** A real change of role, not the same role written shorter ("Plant Head at Lumax World" vs "Plant Head"). */
+const newRole = (saved: string, found: string) => {
+  const [a, b] = [saved.toLowerCase().trim(), found.toLowerCase().trim()];
+  return !a || !(a === b || a.startsWith(b) || b.startsWith(a));
+};
+
 export type CheckResult = 'corrected' | 'confirmed' | 'not_found' | 'left' | 'skipped';
 
 const staleBefore = (now = new Date()) => new Date(now.getTime() - RECHECK_AFTER_DAYS * 86_400_000);
@@ -77,7 +83,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
       gone.push(`${p.name}${profile.title ? ` (now ${profile.title})` : ''}`);
       continue;
     }
-    const retitle = !!profile?.title && profile.title.toLowerCase() !== p.title.toLowerCase();
+    const retitle = !!profile?.title && newRole(p.title, profile.title);
     await db
       .update(people)
       .set({ checkedAt: now, ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
@@ -128,7 +134,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     return 'not_found';
   }
   const url = lead.contactLinkedin || profile.url;
-  const retitle = !!profile.title && profile.title.toLowerCase() !== lead.contactTitle.toLowerCase();
+  const retitle = !!profile.title && newRole(lead.contactTitle, profile.title);
   await db
     .update(leads)
     .set({ contactLinkedin: url, contactCheckedAt: now, ...(retitle ? { contactTitle: profile.title, contactTier: '', updatedAt: now } : {}) })

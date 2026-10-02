@@ -1,5 +1,5 @@
 import type { Icp } from '../db/schema';
-import { contactPriority, tierOf } from '../tiers';
+import { contactPriority, roleOnly, tierOf } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
@@ -91,6 +91,8 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       const here = company ? snippetRoles(person.snippet).filter((j) => sameFirm(j.company, company)) : [];
       const now = here.find((j) => j.current);
       if (now && (!person.title || !/\b(head|manager|director|officer|vp|president|chief|gm|dgm|lead|controller|incharge)\b/i.test(person.title))) person.title = now.role;
+      // Keep just the role: "Plant Head at TRACK COMPONENTS ..." is saved as "Plant Head".
+      person.title = roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, '').trim();
       let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
       if (employer !== 'elsewhere' && here.length) employer = now ? 'here' : 'elsewhere';
       return { ...person, employer };
