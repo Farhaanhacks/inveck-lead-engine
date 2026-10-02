@@ -8,7 +8,7 @@ const MARK: Record<string, { label: string; tone: string }> = {
   added: { label: 'Added', tone: 'text-muted' },
   researched: { label: 'Research', tone: 'text-accent' },
   contact: { label: 'Contact found', tone: 'text-accent' },
-  signal: { label: 'Buying signal', tone: 'text-warning-ink' },
+  signal: { label: 'In the news', tone: 'text-warning-ink' },
   draft: { label: 'Draft', tone: 'text-accent' },
   approved: { label: 'Approved', tone: 'text-good-ink' },
   sent: { label: 'Sent', tone: 'text-good-ink' },

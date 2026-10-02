@@ -144,8 +144,9 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                   <td className="px-2 py-3">
                     <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
                     {l.signals.length > 0 && (
-                      <span className="ml-1.5 cursor-help rounded bg-warning-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-warning-ink" title={`Buying signal: ${l.signals[0].headline}`}>Signal</span>
+                      <span className="ml-1.5 cursor-help rounded bg-warning-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-warning-ink" title={`In the news: ${l.signals[0].headline}`}>In the news</span>
                     )}
+                    {l.signals.length > 0 && <div className="max-w-[22rem] truncate text-xs text-warning-ink" title={l.signals[0].headline}>{l.signals[0].headline}</div>}
                     <div className="text-xs text-muted">{[l.segment, l.city, l.website].filter(Boolean).join(' · ')}</div>
                   </td>
                   <td className="px-2 py-3">

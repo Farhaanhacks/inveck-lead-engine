@@ -122,7 +122,7 @@ function FollowUpCard({ lead }: { lead: Lead }) {
 function SignalsCard({ lead }: { lead: Lead }) {
   return (
     <Section
-      title="Buying signals"
+      title="In the news (a reason to call now)"
       aside={
         <form action={refreshSignalsAction}>
           <input type="hidden" name="id" value={lead.id} />
