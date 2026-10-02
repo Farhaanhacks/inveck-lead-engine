@@ -427,3 +427,19 @@ describe('point of contact tier on the tracker', () => {
     expect(validTrackerValue('contactTier', '')).toBe(true);
   });
 });
+
+describe('callback days get the full set', () => {
+  it('adds a WhatsApp and an email beside callbacks planned without them, once', async () => {
+    const db = await getDb();
+    const { sql } = await import('drizzle-orm');
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const { settings } = await import('@/lib/db/schema');
+    const [l] = await db.insert(leads).values(lead('MAS LLP')).returning();
+    await db.insert(tasks).values({ leadId: l.id, ownerId: 1, kind: 'call', step: 'Promised callback', title: 'Promised callback', dueDate: '2026-10-05', priority: true });
+    await db.delete(settings).where(eq(settings.key, 'callbackFullSetV1'));
+    const repair = SCHEMA_STATEMENTS.filter((s) => s.includes('callbackFullSetV1'));
+    for (const s of [...repair, ...repair]) await db.execute(sql.raw(s));
+    const made = await db.select().from(tasks).where(eq(tasks.leadId, l.id));
+    expect(made.map((t) => `${t.kind}:${t.dueDate}`).sort()).toEqual(['call:2026-10-05', 'email:2026-10-05', 'whatsapp:2026-10-05']);
+  });
+});

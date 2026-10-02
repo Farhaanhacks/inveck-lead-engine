@@ -224,4 +224,12 @@ export const SCHEMA_STATEMENTS = [
   `INSERT INTO settings (key, value) VALUES ('allChannelsV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stage_from TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_tier TEXT NOT NULL DEFAULT ''`,
+  // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
+  `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
+   SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'
+   FROM tasks c CROSS JOIN (VALUES ('whatsapp', 'WhatsApp'), ('email', 'email')) AS k(kind, label)
+   WHERE c.kind = 'call' AND c.done_at IS NULL AND (c.priority = true OR c.note LIKE 'auto-retry:%')
+     AND NOT EXISTS (SELECT 1 FROM tasks x WHERE x.lead_id = c.lead_id AND x.kind = k.kind AND x.due_date = c.due_date AND x.done_at IS NULL)
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'callbackFullSetV1')`,
+  `INSERT INTO settings (key, value) VALUES ('callbackFullSetV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
 ];

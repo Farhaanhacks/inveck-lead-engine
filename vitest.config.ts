@@ -9,5 +9,6 @@ export default defineConfig({
       'server-only': path.resolve(__dirname, 'tests/empty.ts'),
     },
   },
-  test: { environment: 'node', testTimeout: 60_000 },
+  // Each test starts a fresh database and runs every migration, which can take a while on a busy machine.
+  test: { environment: 'node', testTimeout: 60_000, hookTimeout: 60_000 },
 });

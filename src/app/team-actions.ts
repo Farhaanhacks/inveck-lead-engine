@@ -117,6 +117,7 @@ export async function completeTaskAction(form: FormData) {
         priority: true,
         note,
       });
+      await planAlongside(db, task.leadId, task.ownerId, callback, 'Promised callback');
       await logActivity(db, task.leadId, 'note', `Callback promised for ${callback}`);
     }
   }
@@ -155,6 +156,18 @@ async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks
 const RETRY_NOTE = 'auto-retry:';
 
 /**
+ * Every day a company is on the list it gets the full set: a callback or a call-again day also
+ * gets a WhatsApp and an email, unless that day already has them.
+ */
+async function planAlongside(db: Awaited<ReturnType<typeof getDb>>, leadId: number, ownerId: number, day: string, step: string) {
+  const planned = await db.select({ kind: tasks.kind }).from(tasks).where(and(eq(tasks.leadId, leadId), eq(tasks.dueDate, day), isNull(tasks.doneAt)));
+  for (const kind of ['whatsapp', 'email'] as const) {
+    if (planned.some((p) => p.kind === kind)) continue;
+    await db.insert(tasks).values({ leadId, ownerId, kind, step, title: `${step}: ${kind === 'email' ? 'email' : 'WhatsApp'}`, dueDate: day, slot: 'day' });
+  }
+}
+
+/**
  * No answer: make sure the person is called again on the next working day. Skipped when a call is
  * already planned by then, and after MAX_CALL_ATTEMPTS unanswered calls (time to try someone else).
  */
@@ -177,6 +190,7 @@ async function remindToCallAgain(db: Awaited<ReturnType<typeof getDb>>, task: ty
     slot: 'day',
     note: `${RETRY_NOTE}${task.id}`,
   });
+  await planAlongside(db, task.leadId, task.ownerId, next, 'Call again');
 }
 
 export async function clockInAction() {
@@ -295,11 +309,14 @@ export async function undoTaskAction(form: FormData) {
   }
   if (task.kind === 'call' && (task.outcome === 'no_answer' || task.outcome === 'busy')) {
     await db.delete(tasks).where(and(eq(tasks.note, `${RETRY_NOTE}${task.id}`), isNull(tasks.doneAt)));
+    // and the WhatsApp and email planned alongside it
+    await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, 'Call again'), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
   }
   // Whatever was ticked off along with it (the rest of the sequence after a connected call, or earlier rounds caught up) comes back too.
   await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));
   if (task.kind === 'call' && task.outcome === 'connected') {
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.priority, true), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
+    await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, 'Promised callback'), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
   }
   if (task.stageFrom) {
     const [from, to] = task.stageFrom.split('>') as [LeadStatus, LeadStatus];
