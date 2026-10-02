@@ -313,6 +313,12 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_title = '' AND contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'blankTitleRecheckV1')`,
   `UPDATE people SET checked_at = NULL WHERE title = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'blankTitleRecheckV1')`,
   `INSERT INTO settings (key, value) VALUES ('blankTitleRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // Google's line under each LinkedIn result now decides where someone works today: every saved
+  // contact is checked again once, so people who have left (their About text still names the
+  // company) are replaced.
+  `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'currentJobRecheckV1')`,
+  `UPDATE people SET checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'currentJobRecheckV1')`,
+  `INSERT INTO settings (key, value) VALUES ('currentJobRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

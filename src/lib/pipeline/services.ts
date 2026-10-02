@@ -44,7 +44,7 @@ export async function getJson<T = unknown>(svc: Services, url: string, init: Req
   return JSON.parse(await request(svc, url, init, timeoutMs)) as T;
 }
 
-export type SerperResult = { title?: string; link?: string; snippet?: string };
+export type SerperResult = { title?: string; link?: string; snippet?: string; subtitle?: string };
 
 /** Google search through Serper. */
 export async function googleSearch(svc: Services, q: string): Promise<SerperResult[]> {

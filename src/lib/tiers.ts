@@ -76,7 +76,8 @@ const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logi
 
 /**
  * Who to approach first; lower is better. INVECK's rule: people who run the floor answer, the top
- * of the company doesn't. So within the ICP's lists: plant heads first, then other hands-on heads
+ * of the company doesn't. So within the ICP's lists: plant heads and supply chain managers first,
+ * then regional / national / warehouse heads, then other hands-on heads
  * (operations, manufacturing, supply chain, warehouse, logistics, national / regional heads), then
  * P2 process owners, then VPs and CXOs, then P3, and the MD / CEO / founder last. HR, admin, quality
  * and titles on no list aren't wanted (99).
@@ -90,10 +91,12 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   const vpOrCxo = SENIOR.test(t) || /\bdirector\b/i.test(title);
   if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;
   if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
+  // Plant heads and supply chain managers / heads answer and own the stock: they come first.
+  if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
   if (tier === 'P1') {
-    // People who run a site or a region answer: plant heads, and for logistics the national,
-    // regional and warehouse heads. Finance comes after the process owners.
-    if (/\bplant head\b/.test(t) || /\b(regional|national|zonal|cluster|warehouse)\b.*\bhead\b|\bhead\b.*\b(regional|national|zonal|warehouse)\b/.test(t)) return 5;
+    // Then the people who run a region or a warehouse (logistics: national, regional and warehouse
+    // heads). Finance comes after the process owners.
+    if (/\b(regional|national|zonal|cluster|warehouse)\b.*\bhead\b|\bhead\b.*\b(regional|national|zonal|warehouse)\b/.test(t)) return 7;
     if (/\b(finance|accounts|controller|cfo)\b/.test(t)) return 22;
     return vpOrCxo ? 25 : 10;
   }

@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
-import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, type Employer } from './employer';
+import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -76,9 +76,18 @@ export function roleFromLinkedinTitle(parts: string[], company = ''): string {
   return parts.map((p) => p.trim()).filter((p) => p && !(firm.size && isFirm(p))).join(' - ');
 }
 
-function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string }[], company = ''): (LinkedInPerson & { employer: Employer })[] {
+/** Google's location line names a country other than India ("Whitehouse Station, New Jersey, United States"). */
+function livesAbroad(subtitle: string | undefined): boolean {
+  const place = String(subtitle ?? '').split(/\s+·\s+/)[0] ?? '';
+  if (!place.includes(',')) return false;
+  return !/\bindia\s*$/i.test(place.trim());
+}
+
+const JOB_WORD = /\b(head|manager|director|officer|vp|president|chief|gm|dgm|agm|lead|controller|incharge|in-charge|engineer|executive|supervisor|coordinator|planner|analyst|partner|founder|ceo|cfo|coo|md)\b/i;
+
+function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): (LinkedInPerson & { employer: Employer })[] {
   return results
-    .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
+    .filter((r) => /linkedin\.com\/in\//i.test(r.link || '') && !livesAbroad(r.subtitle))
     .map((r) => {
       // Google shows "Name - Role - Company | LinkedIn". The role part may be a whole headline
       // ("Chief of Operations | Logistics & Supply Chain Leader | ..."): its first piece is the job.
@@ -86,18 +95,30 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       const [name, ...rest] = title.split(/\s+[-–—]\s+/);
       const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean);
       const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
+      // A title that is the company's name or a slogan ("Cold Chain .Warehousing .Fulfilment") isn't a job.
+      if (person.title && (!JOB_WORD.test(person.title) || (company && sameFirm(person.title, company) && !JOB_WORD.test(roleOnly(person.title))))) person.title = '';
+      // Google's line under the result ("Mumbai · Head of Unit · Balmer Lawrie & Co. Ltd.") is the
+      // profile's current job: it decides where they work now, whatever the About text says.
+      const job = company ? subtitleJob(r.subtitle) : null;
+      if (job) {
+        if (!sameFirm(job.company, company)) return { ...person, title: roleOnly(job.role), employer: 'elsewhere' as Employer };
+        if (!person.title) person.title = job.role;
+      }
       // The snippet often holds the job and its dates ("Group Plant Head. CIE Automotive India Ltd. Mar
       // 2025 - Present"): a current job here gives the role; jobs here that have all ended mean they left.
       const here = company ? snippetRoles(person.snippet).filter((j) => sameFirm(j.company, company)) : [];
       const now = here.find((j) => j.current);
-      if (now && (!person.title || !/\b(head|manager|director|officer|vp|president|chief|gm|dgm|lead|controller|incharge)\b/i.test(person.title))) person.title = now.role;
+      if (now && (!person.title || !JOB_WORD.test(person.title) || sameFirm(person.title, company))) person.title = now.role;
       // Keep just the role: "Plant Head at TRACK COMPONENTS ..." is saved as "Plant Head".
       person.title = roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, '').trim();
       let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
-      if (employer !== 'elsewhere' && here.length) employer = now ? 'here' : 'elsewhere';
+      if (job) employer = 'here';
+      else if (now) employer = 'here';
+      else if (here.length) employer = 'elsewhere';
       return { ...person, employer };
     })
-    // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) aren't wanted.
+    // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) or based in
+    // another country ("New Jersey, United States") aren't wanted.
     .filter((p) => p.name && /^https?:\/\/(www\.|in\.)?linkedin\.com\//i.test(p.linkedin));
 }
 
@@ -486,13 +507,13 @@ export async function pickContact(
     ? toContact(chosen, tierOf(chosen.title, icp) === 'P1', chosen.id === asText(d.chosen_id) ? asText(d.reason) : `Ranked first by INVECK's contact priority: ${chosen.title}`)
     : { ...EMPTY_CONTACT };
 
-  const otherCandidates = asTextList(d.other_ids)
-    .map((id) => byId.get(id.trim()))
-    // Only people the ICP wants: designations on its P1/P2/P3 lists.
-    .filter((c): c is Candidate => !!c && c !== chosen && ['P1', 'P2', 'P3'].includes(tierOf(c.title, icp)));
-  const others = otherCandidates.slice(0, 4).map((c) => [c.name, c.title, c.email || c.linkedin].filter(Boolean).join(' | '));
   // Everyone found, best first by INVECK's contact priority, the chosen contact on top.
   const ranked = [...(chosen ? [chosen] : []), ...rankCandidates(candidates.filter((c) => c !== chosen), icp, lead.city)];
+  // The others worth contacting: the next best on the ICP's lists, in the same order as the People card.
+  const others = ranked
+    .filter((c) => c !== chosen && contactPriority(c.title, icp) < 99)
+    .slice(0, 4)
+    .map((c) => [c.name, c.title, c.email || c.linkedin].filter(Boolean).join(' | '));
   const rolesToFind = asTextList(d.roles_to_find_on_linkedin);
 
   const notes: string[] = [];

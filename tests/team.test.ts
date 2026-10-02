@@ -814,7 +814,7 @@ describe('real search results (checked live on five companies)', () => {
     const { contactPriority, tierOf } = await import('@/lib/tiers');
     const { DEFAULT_ICPS } = await import('@/lib/db/seed');
     const [mfg, tpl] = DEFAULT_ICPS;
-    expect(contactPriority('Group Plant Head', mfg)).toBeLessThan(contactPriority('Head of Supply Chain', mfg));
+    expect(contactPriority('Group Plant Head', mfg)).toBe(contactPriority('Head of Supply Chain', mfg));
     expect(contactPriority('Head Plant engineering', mfg)).toBe(99);
     expect(contactPriority('General Manager Commercial', mfg)).toBe(99);
     expect(contactPriority('Regional Head - West', tpl)).toBeLessThan(contactPriority('Finance Controller', tpl));
@@ -839,5 +839,40 @@ describe('real search results (checked live on five companies)', () => {
     expect(await findLinkedinProfile(svc, 'Haris Khan', 'Nestle India')).toBeNull();
     expect(await findLinkedinProfile(svc, 'sajin sahadevan', 'CIE Automotive India')).toMatchObject({ employer: 'elsewhere' });
     expect(await findLinkedinProfile(svc, 'Nivrutti Bachhav', 'CIE Automotive India')).toMatchObject({ title: 'Group Plant Head', employer: 'here' });
+  });
+});
+
+describe('Godamwale: Google\'s current-job line decides, supply chain managers first', () => {
+  it('drops a former Regional Head whose About text still names the company, keeps the supply chain managers', async () => {
+    const { searchLinkedIn } = await import('@/lib/pipeline/contacts');
+    const { snippetRoles } = await import('@/lib/pipeline/employer');
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const { settingsSchema } = await import('@/lib/settings');
+    // Exactly what Google returned for Godamwale.
+    const organic = [
+      { title: 'Anil Sargar - Cold Chain .Warehousing .Fulfilment. One ...', subtitle: 'Mumbai, Maharashtra, India · Head of Unit · Balmer Lawrie & Co. Ltd.', link: 'https://in.linkedin.com/in/anil-sargar-a2387a23', snippet: 'My career spans dynamic roles, including Regional Head at Godamwale.com and Business Development Manager at Kennan Pharma, where I cultivated expertise in ...' },
+      { title: 'Mukund Pathak - Supply Chain Manager @ Godamwale ...', subtitle: 'Mumbai, Maharashtra, India · Supply Chain Manager · Godamwale.com', link: 'https://in.linkedin.com/in/mukund-pathak-06626014a', snippet: 'Mukund Pathak · Supply Chain Manager @ Godamwale Trading & Logistics Pvt. Ltd. | Inventory Management, Shipment Procedures' },
+      { title: 'Ahmed Momin - Supply Chain Manager', subtitle: 'Mumbai, Maharashtra, India · Supply Chain Management · Godamwale', link: 'https://in.linkedin.com/in/ahmedm0min', snippet: '1.Extensive experience in logistics management, including transportation, warehousing, inventory management' },
+      { title: 'Rahul Thakur - Warehouse Manager', link: 'https://in.linkedin.com/in/rahul-thakur-158933115', snippet: 'Warehouse Operations Manager. Godamwale.com. Mar 2025 - Present 1 year 7 months. Ghaziabad. Warehouse Manager. Godamwale Trading & Logistic Private Limited. Feb ...' },
+      { title: 'Ankit Gupta - AllcargoGati | Ex-Godamwale | Ex-Amazon', subtitle: 'Mumbai, Maharashtra, India · Warehouse Supervisor · Allcargo', link: 'https://in.linkedin.com/in/ankit-gupta-775841286', snippet: 'Ankit Gupta. AllcargoGati | Ex-Godamwale | Ex-Amazon' },
+      { title: 'Shawn Fanning - Vice President of Supply Chain', subtitle: 'Whitehouse Station, New Jersey, United States · Vice President of Supply Chain - Godamwale · Godamwale', link: 'https://www.linkedin.com/in/shawn-fanning', snippet: '' },
+      { title: 'Vijendra Jadhav - Godamwale Trading & Logistics Pvt Ltd.', link: 'https://in.linkedin.com/in/vijendra-jadhav-598630241', snippet: 'Experience · Logistics Coordinator. Godamwale.com. Jan 2023 - Present 3 years 9 months. Chembur · Warehouse Executive. StowNest ...' },
+    ];
+    const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Godamwale"', 'Godamwale');
+    const byName = Object.fromEntries(people.map((p) => [p.name, p.title]));
+    expect(byName['Anil Sargar']).toBeUndefined();
+    expect(byName['Ankit Gupta']).toBeUndefined();
+    expect(byName['Shawn Fanning']).toBeUndefined();
+    expect(byName['Mukund Pathak']).toBe('Supply Chain Manager');
+    expect(byName['Ahmed Momin']).toBe('Supply Chain Manager');
+    expect(byName['Rahul Thakur']).toBe('Warehouse Manager');
+    expect(byName['Vijendra Jadhav']).toBe('Logistics Coordinator');
+    // About-section prose is never read as a current job.
+    expect(snippetRoles(organic[0].snippet)).toEqual([]);
+    const tpl = DEFAULT_ICPS[1];
+    expect(contactPriority('Supply Chain Manager', tpl)).toBeLessThan(contactPriority('Regional Head', tpl));
   });
 });

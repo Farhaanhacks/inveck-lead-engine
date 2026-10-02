@@ -90,7 +90,10 @@ export function nameIsTheCompany(name: string, company: string): boolean {
 export type SnippetRole = { role: string; company: string; current: boolean };
 
 const DATE = String.raw`(?:[A-Z][a-z]{2,8}\s)?\d{4}`;
-const ROLE_LINE = new RegExp(String.raw`([A-Za-z][^.|·]{1,70}?)\.\s+([^.|·]{2,80}?)\.?,?\s+(${DATE})\s*[-–]\s*(Present|${DATE})`, 'g');
+// The company may hold a dot inside it ("Godamwale.com"), never one followed by a space.
+const ROLE_LINE = new RegExp(String.raw`([A-Za-z][^.|·]{1,70}?)\.\s+((?:[^.|·]|\.(?=\S)){2,80}?)\.?,?\s+(${DATE})\s*[-–]\s*(Present|${DATE})`, 'g');
+/** About-section prose ("My career spans roles including Regional Head at X") isn't a current job. */
+const PROSE = /\b(my|i|career|including|included|roles|spans|years|worked|previously|formerly|former|was|were|have|has|had|experience|journey|from|served|as)\b/i;
 const HEADLINE = /([A-Za-z][^·|.]{2,60}?)\s*(?:-?@|\bat\b)\s*([^·|.,]{2,60})/;
 
 /**
@@ -106,6 +109,18 @@ export function snippetRoles(snippet: string): SnippetRole[] {
     if (role && !/^experience$/i.test(role)) out.push({ role, company: m[2].trim(), current: /present/i.test(m[4]) });
   }
   const h = HEADLINE.exec(snippet.split(/\s*[·|]\s*/).find((p) => /-?@|\bat\b/.test(p)) ?? '');
-  if (h) out.push({ role: h[1].replace(/^.*?·\s*/, '').trim(), company: h[2].trim(), current: true });
+  const role = h ? h[1].replace(/^.*?·\s*/, '').trim() : '';
+  if (h && !PROSE.test(role) && role.split(/\s+/).length <= 6) out.push({ role, company: h[2].trim(), current: true });
   return out;
+}
+
+/**
+ * Google's line under a LinkedIn result, "Mumbai, Maharashtra, India · Head of Unit · Balmer Lawrie
+ * & Co. Ltd.": the place, then the current role and current employer from the profile itself. It is
+ * the most reliable sign of where someone works now; null when the line doesn't have all three.
+ */
+export function subtitleJob(subtitle: string | undefined): { role: string; company: string } | null {
+  const parts = String(subtitle ?? '').split(/\s+·\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 3) return null;
+  return { role: parts[parts.length - 2], company: parts[parts.length - 1] };
 }
