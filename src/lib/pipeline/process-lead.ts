@@ -6,6 +6,7 @@ import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, websitePhone } from './research';
 import { scoreLead } from './scoring';
 import { tierOf } from '../tiers';
+import { currentEmployer } from './employer';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
 import { domainOf, normalizeWebsite, normCompany, rootDomain, splitName } from './text';
@@ -121,7 +122,10 @@ export async function processLead(svc: Services, lead: Lead, ctx: { icps: Icp[];
   if (people.error) notes.push('Email search error: ' + people.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
 
-  const candidates = buildCandidates(manual, linkedin.people, people.emails, leaders.people);
+  // Nobody who works somewhere else now ("Plant Head at PepsiCo"), whatever source listed them.
+  const candidates = buildCandidates(manual, linkedin.people, people.emails, leaders.people).filter(
+    (c) => c.source === 'Sales team' || currentEmployer(c, lead.company) !== 'elsewhere',
+  );
   const published = websiteEmails(siteText, domain);
   const picked = await pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, candidates);
   notes.unshift(...picked.notes);

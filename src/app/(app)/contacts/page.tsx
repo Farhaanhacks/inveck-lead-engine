@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
+import { purgeFormerEmployees } from '@/lib/verify-contacts';
 import { leads, people } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
@@ -15,6 +16,8 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   const withEmail = sp.email === '1';
   const page = Math.max(1, Number(sp.page) || 1);
   const db = await getDb();
+  // Nobody who has left their company is listed.
+  await purgeFormerEmployees(db);
 
   const filters: SQL[] = [];
   const owner = ownerScope((await getCurrentUser())!);

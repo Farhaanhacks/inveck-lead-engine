@@ -506,7 +506,7 @@ describe('LinkedIn profile by name', () => {
     }) as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     // The current LinkedIn title, without the company's name tacked on.
-    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toEqual({ url: 'https://in.linkedin.com/in/amit-chhari-123', title: 'Chief of Operations' });
+    expect(await findLinkedinProfile(svc, 'Amit Chhari', 'Allcargo Logistics Ltd')).toEqual({ url: 'https://in.linkedin.com/in/amit-chhari-123', title: 'Chief of Operations', employer: 'here' });
     expect(queries[0]).toContain('"Amit Chhari"');
     expect(await findLinkedinProfile(svc, 'Rohit Dalmia', 'Allcargo Logistics Ltd')).toBeNull();
   });
@@ -554,5 +554,43 @@ describe('ICP designations', () => {
     expect(tierOf('Inventory Manager', mfg)).toBe('P2');
     expect(tierOf('Marketing Manager', mfg)).toBe('');
     expect(tierOf('GM - HR', mfg)).toBe('Avoid');
+  });
+});
+
+describe('only people who work at the company now', () => {
+  it('reads the current employer from LinkedIn headlines and results', async () => {
+    const { currentEmployer, nameIsTheCompany } = await import('@/lib/pipeline/employer');
+    const nestle = 'Nestlé India Ltd';
+    const at = (title: string, extra: { snippet?: string; titleParts?: string[] } = {}) => currentEmployer({ name: 'A B', title, ...extra }, nestle);
+    expect(at('Regional Logistics Manager at Nestle India')).toBe('here');
+    expect(at('Associate Director-Plant Head at PepsiCo')).toBe('elsewhere');
+    expect(at('Plant Head at Bisleri || Unilever || Dabur')).toBe('elsewhere');
+    expect(at('Logistics Manager')).toBe('unknown');
+    expect(at('Plant Head', { titleParts: ['Plant Head', 'Nestle'] })).toBe('here');
+    expect(at('Plant Head', { titleParts: ['Plant Head', 'PepsiCo'] })).toBe('elsewhere');
+    expect(at('Supply Chain Head', { snippet: 'Experience: Britannia Industries · Education: IIM' })).toBe('elsewhere');
+    expect(at('Supply Chain Head', { snippet: 'Ex-Nestle, now building supply chains' })).toBe('elsewhere');
+    expect(currentEmployer({ name: 'A', title: 'Head Operations at Tata Steel' }, 'Tata Motors')).toBe('elsewhere');
+    expect(currentEmployer({ name: 'A', title: 'Head Operations at Tata Motors Ltd' }, 'Tata Motors')).toBe('here');
+    expect(nameIsTheCompany('Cynthia Nestle', nestle)).toBe(true);
+    expect(nameIsTheCompany('Nestor Fernandes', nestle)).toBe(false);
+  });
+
+  it('removes people who have left and replaces a main contact who has left', async () => {
+    const db = await getDb();
+    const { purgeFormerEmployees } = await import('@/lib/verify-contacts');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [l] = await db.insert(leads).values(lead('Nestle India', { segment: 'Manufacturing', contactName: 'Alok Srivastava', contactTitle: 'Associate Director-Plant Head at PepsiCo' })).returning();
+    await db.insert(peopleTable).values([
+      { leadId: l.id, name: 'Alok Srivastava', title: 'Associate Director-Plant Head at PepsiCo', source: 'LinkedIn', isPrimary: true },
+      { leadId: l.id, name: 'Raj Kumar', title: 'Plant Head at Bisleri || Unilever || Dabur', source: 'LinkedIn' },
+      { leadId: l.id, name: 'Cynthia Nestle', title: 'Managing Director, Chief Operating Officer', source: 'LinkedIn' },
+      { leadId: l.id, name: 'Siddhartha Saha', title: 'Regional Logistics Manager at Nestle India', source: 'LinkedIn' },
+    ]);
+    expect(await purgeFormerEmployees(db, l.id)).toBe(3);
+    const left = await db.select().from(peopleTable).where(eq(peopleTable.leadId, l.id));
+    expect(left.map((p) => p.name)).toEqual(['Siddhartha Saha']);
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.contactName).toBe('Siddhartha Saha');
   });
 });

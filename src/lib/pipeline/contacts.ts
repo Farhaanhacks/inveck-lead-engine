@@ -5,6 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
+import { currentEmployer, nameIsTheCompany, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asBool, asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -70,13 +71,15 @@ export function roleFromLinkedinTitle(parts: string[], company = ''): string {
   return parts.map((p) => p.trim()).filter((p) => p && !(firm.size && isFirm(p))).join(' - ');
 }
 
-function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string }[], company = ''): LinkedInPerson[] {
+function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string }[], company = ''): (LinkedInPerson & { employer: Employer })[] {
   return results
     .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
     .map((r) => {
       const title = String(r.title || '').replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '');
       const [name, ...rest] = title.split(/\s+[-–|]\s+/);
-      return { name: (name || '').trim(), title: roleFromLinkedinTitle(rest, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
+      const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(rest, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
+      const employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: rest }, company);
+      return { ...person, employer };
     })
     .filter((p) => p.name);
 }
@@ -95,6 +98,9 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
   for (const s of settled) {
     if (s.status !== 'fulfilled') continue;
     for (const p of toLinkedInPeople(s.value, company)) {
+      // Found by searching the company's name, so former employees turn up too: keep only people
+      // whose profile shows they work there now.
+      if (company && p.employer !== 'here') continue;
       const key = p.linkedin.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '');
       if (seen.has(key)) continue;
       seen.add(key);
@@ -218,17 +224,16 @@ export function sameName(a: string, b: string): boolean {
  * somewhere else (email records, the company website) and the role search didn't list them.
  * Only a profile whose name matches is kept.
  */
-export async function findLinkedinProfile(svc: Services, person: string, company: string): Promise<{ url: string; title: string } | null> {
+export async function findLinkedinProfile(svc: Services, person: string, company: string): Promise<{ url: string; title: string; employer: Employer } | null> {
   if (!person.trim()) return null;
   const firm = searchName(company) || company;
   const queries = [`site:linkedin.com/in "${person}" "${firm}"`, `site:linkedin.com/in "${person}" ${firm}`];
   for (const q of queries) {
     try {
       const found = toLinkedInPeople(await googleSearch(svc, q), company).filter((p) => sameName(p.name, person));
-      // Prefer the profile that mentions the company; on the exact-company query any match will do.
-      const atFirm = found.find((p) => `${p.title} ${p.snippet}`.toLowerCase().includes(firm.toLowerCase().split(' ')[0]));
-      const pick = atFirm ?? (q === queries[0] ? found[0] : undefined);
-      if (pick) return { url: pick.linkedin, title: pick.title };
+      // Prefer the profile that shows them working there now; one showing another employer means they left.
+      const pick = found.find((p) => p.employer === 'here') ?? found.find((p) => p.employer === 'elsewhere') ?? (q === queries[0] ? found[0] : undefined);
+      if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer };
     } catch {
       return null;
     }

@@ -13,6 +13,7 @@ import { SubmitButton } from '@/components/submit-button';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { canReassign } from '@/lib/assign';
 import { assignOwnerAction } from '../../../team-actions';
+import { purgeFormerEmployees } from '@/lib/verify-contacts';
 import {
   addLeadAsClientAction,
   makePrimaryAction,
@@ -215,6 +216,8 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const db = await getDb();
+  // Nobody who has left the company is shown: cleared before the page is drawn.
+  if (Number.isInteger(id)) await purgeFormerEmployees(db, id);
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
   const bdas = await listBdas(db);
   const me = await getCurrentUser();
