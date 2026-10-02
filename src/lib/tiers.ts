@@ -92,7 +92,7 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;
   if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
   // Plant heads and supply chain managers / heads answer and own the stock: they come first.
-  if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
+  if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
   if (tier === 'P1') {
     // Then the people who run a region or a warehouse (logistics: national, regional and warehouse
     // heads). Finance comes after the process owners.

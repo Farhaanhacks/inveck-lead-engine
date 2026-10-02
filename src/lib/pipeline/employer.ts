@@ -124,3 +124,56 @@ export function subtitleJob(subtitle: string | undefined): { role: string; compa
   if (parts.length < 3) return null;
   return { role: parts[parts.length - 2], company: parts[parts.length - 1] };
 }
+
+const INDIA_PLACES = new RegExp(
+  String.raw`\b(india|bharat|` +
+    // States and union territories.
+    String.raw`maharashtra|gujarat|karnataka|tamil nadu|telangana|andhra pradesh|kerala|goa|rajasthan|madhya pradesh|uttar pradesh|uttarakhand|haryana|punjab|himachal pradesh|jammu|kashmir|ladakh|delhi|bihar|jharkhand|odisha|orissa|west bengal|assam|meghalaya|tripura|manipur|mizoram|nagaland|sikkim|arunachal|chhattisgarh|chandigarh|puducherry|pondicherry|dadra|daman|` +
+    // Cities and areas LinkedIn names without the country ("Greater Bengaluru Area").
+    String.raw`mumbai|bombay|thane|navi mumbai|bhiwandi|pune|pimpri|chinchwad|chakan|hinjewadi|nashik|nagpur|aurangabad|kolhapur|ahmedabad|vadodara|baroda|surat|rajkot|vapi|bengaluru|bangalore|mysuru|mysore|hosur|chennai|madras|coimbatore|hyderabad|secunderabad|vizag|visakhapatnam|kochi|cochin|trivandrum|thiruvananthapuram|gurugram|gurgaon|noida|ghaziabad|faridabad|ncr|kolkata|calcutta|jaipur|indore|bhopal|lucknow|kanpur|ludhiana|jamshedpur|ranchi|patna|bhubaneswar|guwahati|dehradun|haridwar|sonipat|manesar|neemrana|sri city|sanand|halol)\b`,
+  'i',
+);
+
+/** Countries and regions abroad, for results with no location line ("Jackson, Michigan, United States"). */
+const ABROAD = /\b(united states|usa|united kingdom|england|germany|deutschland|france|italy|spain|netherlands|belgium|sweden|poland|czech|austria|switzerland|canada|mexico|brazil|australia|new zealand|singapore|malaysia|indonesia|thailand|vietnam|philippines|china|japan|korea|united arab emirates|uae|dubai|abu dhabi|saudi|qatar|oman|kuwait|bahrain|pakistan|bangladesh|sri lanka|nepal|south africa|nigeria|kenya|metropolitan area|bay area)\b/i;
+
+/**
+ * Where the person is based: the first part of Google's line under a LinkedIn result ("Pimpri
+ * Chinchwad, Maharashtra, India · Head of Operations · Rheinmetall"), else a "Location: X" in the snippet.
+ */
+export function profileLocation(subtitle: string | undefined, snippet = ''): string {
+  const parts = String(subtitle ?? '').split(/\s+·\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) return parts[0];
+  return /location:\s*([^·|.]+)/i.exec(snippet)?.[1].trim() ?? '';
+}
+
+/**
+ * Based outside India. INVECK sells to Indian sites, so a "Supply Chain Manager at Rheinmetall" in the
+ * Detroit Metropolitan Area is no contact for Rheinmetall Pune. A location must name an Indian place;
+ * with no location, an obviously foreign place in the snippet counts.
+ */
+export function basedAbroad(location: string, snippet = ''): boolean {
+  if (location) return !INDIA_PLACES.test(location);
+  return ABROAD.test(snippet) && !INDIA_PLACES.test(snippet);
+}
+
+/** Areas that belong to one city: Pimpri Chinchwad and Chakan are Pune, Gurugram and Noida are Delhi NCR. */
+const METRO: Record<string, RegExp> = {
+  pune: /\b(pune|pimpri|chinchwad|chakan|hinjewadi|talegaon|ranjangaon|bhosari|hadapsar)\b/i,
+  mumbai: /\b(mumbai|bombay|thane|navi mumbai|bhiwandi|panvel|vasai|kalyan|andheri|powai)\b/i,
+  delhi: /\b(delhi|ncr|gurugram|gurgaon|noida|ghaziabad|faridabad|manesar)\b/i,
+  bengaluru: /\b(bengaluru|bangalore|hosur|whitefield|electronic city)\b/i,
+  bangalore: /\b(bengaluru|bangalore|hosur|whitefield|electronic city)\b/i,
+  chennai: /\b(chennai|madras|sriperumbudur|oragadam|ambattur)\b/i,
+  hyderabad: /\b(hyderabad|secunderabad)\b/i,
+  kolkata: /\b(kolkata|calcutta|howrah)\b/i,
+  ahmedabad: /\b(ahmedabad|sanand|gandhinagar)\b/i,
+};
+
+/** The text places the person in this city or its metro area. */
+export function inCity(text: string, city: string): boolean {
+  const place = city.split(',')[0].trim().toLowerCase();
+  if (place.length < 3) return false;
+  const metro = METRO[place] ?? (place === 'new delhi' || place === 'gurgaon' || place === 'gurugram' || place === 'noida' ? METRO.delhi : undefined);
+  return metro ? metro.test(text) : text.toLowerCase().includes(place);
+}

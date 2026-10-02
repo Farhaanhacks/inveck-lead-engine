@@ -876,3 +876,37 @@ describe('Godamwale: Google\'s current-job line decides, supply chain managers f
     expect(contactPriority('Supply Chain Manager', tpl)).toBeLessThan(contactPriority('Regional Head', tpl));
   });
 });
+
+describe('Rheinmetall Pune: people based abroad are not contacts', () => {
+  it('drops Detroit and Arkansas profiles, keeps the Pune plant operations head on top', async () => {
+    const { searchLinkedIn, rankCandidates } = await import('@/lib/pipeline/contacts');
+    const { basedAbroad, inCity } = await import('@/lib/pipeline/employer');
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const { settingsSchema } = await import('@/lib/settings');
+    // Exactly what Google returned for Rheinmetall.
+    const organic = [
+      { title: 'Fred Julio - Supply Chain Manager at Rheinmetall', subtitle: 'Detroit Metropolitan Area · Supply Chain Manager · Rheinmetall', link: 'https://www.linkedin.com/in/fred-julio-7730639', snippet: 'Supply Chain Manager at Rheinmetall. Rheinmetall Walsh College. Detroit ...' },
+      { title: 'Cody Gage - Supply Chain Manager at American ...', subtitle: 'Warren, Arkansas, United States · Supply Chain Manager · Rheinmetall Defence', link: 'https://www.linkedin.com/in/cody-gage-431722142', snippet: 'Supply Chain Manager at American Rheinmetall Munition, Inc.' },
+      { title: 'Matthew Giacona - American Rheinmetall', subtitle: 'Detroit Metropolitan Area · Director Supply Chain Management · American Rheinmetall', link: 'https://www.linkedin.com/in/matthew-giacona-56b433176', snippet: 'Director Supply Chain Management. American Rheinmetall. Dec 2024 - Present 1 year 10 months. Troy, Michigan, United States' },
+      { title: 'Greg Darling - American Rheinmetall Plant Manager', link: 'https://www.linkedin.com/in/greg-darling-37a471109', snippet: 'Greg Darling. American Rheinmetall Plant Manager. Visteon Corporation Purdue University. Jackson, Michigan, United States.' },
+      { title: 'Abhay Musale - Plant Operations Head at Rheinmetall', subtitle: 'Pimpri Chinchwad, Maharashtra, India · Head of Operations · Rheinmetall', link: 'https://in.linkedin.com/in/abhay-musale-b51987202', snippet: 'Abhay Musale. Plant Operations Head at Rheinmetall | 30+ years experience in Manufacturing and Plant operations' },
+    ];
+    const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Rheinmetall"', 'Rheinmetall');
+    expect(people.map((p) => p.name)).toEqual(['Abhay Musale']);
+    expect(contactPriority('Plant Operations Head', DEFAULT_ICPS[0])).toBe(5);
+    expect(inCity('Pimpri Chinchwad, Maharashtra, India', 'Pune')).toBe(true);
+    expect(inCity('Gurugram, Haryana, India', 'Delhi')).toBe(true);
+    expect(basedAbroad('Mumbai Metropolitan Region')).toBe(false);
+    expect(basedAbroad('Greater Bengaluru Area')).toBe(false);
+    expect(basedAbroad('Detroit Metropolitan Area')).toBe(true);
+    // In the lead's city first, among people of the same rank.
+    const ranked = rankCandidates([
+      { title: 'Plant Head', snippet: '', location: 'Chennai, Tamil Nadu, India' },
+      { title: 'Plant Head', snippet: '', location: 'Chakan, Maharashtra, India' },
+    ], DEFAULT_ICPS[0], 'Pune');
+    expect(ranked[0].location).toContain('Chakan');
+  });
+});

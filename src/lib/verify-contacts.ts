@@ -78,9 +78,9 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
   const gone: string[] = [];
   for (const p of next) {
     const profile = await findLinkedinProfile(svc, p.name, lead.company, { title: p.title, city: lead.city }).catch(() => null);
-    if (profile?.employer === 'elsewhere') {
+    if (profile?.employer === 'elsewhere' || profile?.abroad) {
       await db.delete(people).where(eq(people.id, p.id));
-      gone.push(`${p.name}${profile.title ? ` (now ${profile.title})` : ''}`);
+      gone.push(`${p.name}${profile.abroad ? ` (based in ${profile.location || 'another country'})` : profile.title ? ` (now ${profile.title})` : ''}`);
       continue;
     }
     const retitle = !!profile?.title && newRole(p.title, profile.title);
@@ -89,7 +89,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
       .set({ checkedAt: now, ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
       .where(eq(people.id, p.id));
   }
-  if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}: ${gone.join('; ')}`);
+  if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company} or ${gone.length === 1 ? 'is' : 'are'} based abroad: ${gone.join('; ')}`);
 }
 
 /** Removes, from a lead's people, anyone whose profile shows they work somewhere else now. */
@@ -123,6 +123,11 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   // The main contact was checked recently (during research, say): only the others needed it.
   if (lead.contactCheckedAt && lead.contactCheckedAt > staleBefore(now)) return 'confirmed';
   const profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
+  if (profile?.abroad) {
+    await escalate(db, lead.id, 'abroad', now, profile.location);
+    await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
+    return 'left';
+  }
   if (profile?.employer === 'elsewhere') {
     await escalate(db, lead.id, 'left', now, profile.title);
     // The next person gets checked on the next pass.

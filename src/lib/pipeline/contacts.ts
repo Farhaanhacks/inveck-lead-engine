@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
-import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, type Employer } from './employer';
+import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -19,6 +19,8 @@ export type Candidate = {
   phone: string;
   linkedin: string;
   snippet: string;
+  /** Where they are based, from their LinkedIn profile ("Pimpri Chinchwad, Maharashtra, India"). */
+  location?: string;
 };
 
 export type ManualContact = { name: string; title: string; email: string; phone: string; linkedin: string };
@@ -76,32 +78,29 @@ export function roleFromLinkedinTitle(parts: string[], company = ''): string {
   return parts.map((p) => p.trim()).filter((p) => p && !(firm.size && isFirm(p))).join(' - ');
 }
 
-/** Google's location line names a country other than India ("Whitehouse Station, New Jersey, United States"). */
-function livesAbroad(subtitle: string | undefined): boolean {
-  const place = String(subtitle ?? '').split(/\s+·\s+/)[0] ?? '';
-  if (!place.includes(',')) return false;
-  return !/\bindia\s*$/i.test(place.trim());
-}
-
 const JOB_WORD = /\b(head|manager|director|officer|vp|president|chief|gm|dgm|agm|lead|controller|incharge|in-charge|engineer|executive|supervisor|coordinator|planner|analyst|partner|founder|ceo|cfo|coo|md)\b/i;
 
-function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): (LinkedInPerson & { employer: Employer })[] {
+type FoundPerson = LinkedInPerson & { employer: Employer; abroad: boolean };
+
+function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): FoundPerson[] {
   return results
-    .filter((r) => /linkedin\.com\/in\//i.test(r.link || '') && !livesAbroad(r.subtitle))
+    .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
     .map((r) => {
       // Google shows "Name - Role - Company | LinkedIn". The role part may be a whole headline
       // ("Chief of Operations | Logistics & Supply Chain Leader | ..."): its first piece is the job.
       const title = String(r.title || '').replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '');
       const [name, ...rest] = title.split(/\s+[-–—]\s+/);
       const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean);
-      const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '' };
+      const location = profileLocation(r.subtitle, r.snippet);
+      const abroad = basedAbroad(location, r.snippet);
+      const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '', location, abroad };
       // A title that is the company's name or a slogan ("Cold Chain .Warehousing .Fulfilment") isn't a job.
       if (person.title && (!JOB_WORD.test(person.title) || (company && sameFirm(person.title, company) && !JOB_WORD.test(roleOnly(person.title))))) person.title = '';
       // Google's line under the result ("Mumbai · Head of Unit · Balmer Lawrie & Co. Ltd.") is the
       // profile's current job: it decides where they work now, whatever the About text says.
       const job = company ? subtitleJob(r.subtitle) : null;
       if (job) {
-        if (!sameFirm(job.company, company)) return { ...person, title: roleOnly(job.role), employer: 'elsewhere' as Employer };
+        if (!sameFirm(job.company, company)) return { ...person, title: roleOnly(job.role), employer: 'elsewhere' as const };
         if (!person.title) person.title = job.role;
       }
       // The snippet often holds the job and its dates ("Group Plant Head. CIE Automotive India Ltd. Mar
@@ -117,8 +116,8 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       else if (here.length) employer = 'elsewhere';
       return { ...person, employer };
     })
-    // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) or based in
-    // another country ("New Jersey, United States") aren't wanted.
+    // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) aren't wanted;
+    // people based abroad on www. profiles are flagged `abroad`.
     .filter((p) => p.name && /^https?:\/\/(www\.|in\.)?linkedin\.com\//i.test(p.linkedin));
 }
 
@@ -150,6 +149,8 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
       // Found by searching the company's name, so former employees turn up too: keep only people
       // whose profile shows they work there now.
       if (company && p.employer !== 'here') continue;
+      // Based outside India ("Detroit Metropolitan Area"): not a contact for an Indian site.
+      if (p.abroad) continue;
       const key = p.linkedin.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '');
       if (seen.has(key)) continue;
       seen.add(key);
@@ -315,7 +316,7 @@ export async function findLinkedinProfile(
   person: string,
   company: string,
   hint: { title?: string; city?: string } = {},
-): Promise<{ url: string; title: string; employer: Employer } | null> {
+): Promise<{ url: string; title: string; employer: Employer; abroad: boolean; location: string } | null> {
   // As written (Google ignores case), without honorifics or initials' dots.
   const words = person.replace(HONORIFIC, '').replace(/[.,]/g, ' ').split(/\s+/).filter(Boolean);
   if (!words.length) return null;
@@ -347,25 +348,24 @@ export async function findLinkedinProfile(
       exact.find((p) => p.employer === 'here') ??
       results.find((p) => p.employer === 'here' && looseName(p.name, person)) ??
       exact.find((p) => p.employer === 'elsewhere');
-    if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer };
+    if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '' };
   }
   return null;
 }
 
 /** True when the person's title or profile names the lead's city: they work at this branch. */
-export function atBranch(c: { title: string; snippet?: string }, city: string): boolean {
-  const place = city.trim().toLowerCase();
-  return place.length > 2 && `${c.title} ${c.snippet ?? ''}`.toLowerCase().includes(place);
+export function atBranch(c: { title: string; snippet?: string; location?: string }, city: string): boolean {
+  return inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
 }
 
 /** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */
 type RankIcp = Parameters<typeof contactPriority>[1];
 
-export function candidateRank(c: { title: string; snippet?: string; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
+export function candidateRank(c: { title: string; snippet?: string; location?: string; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
   return contactPriority(c.title, icp) - (atBranch(c, city) ? 6 : 0) - (c.phone ? 0.2 : 0) - (c.email ? 0.1 : 0);
 }
 
-export function rankCandidates<T extends { title: string; snippet?: string; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
+export function rankCandidates<T extends { title: string; snippet?: string; location?: string; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
   return [...list].sort((a, b) => candidateRank(a, icp, city) - candidateRank(b, icp, city));
 }
 

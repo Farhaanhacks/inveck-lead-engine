@@ -45,7 +45,7 @@ export type Escalation = { switched: true; name: string; tier: Tier } | { switch
  * best P2 (else P3) already found, with a fresh plan from today. When nobody else is on file, a
  * "Find the next person" step goes on Today; naming someone with Edit point of contact restarts the plan.
  */
-export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong_person' | 'left', now = new Date(), detail = ''): Promise<Escalation> {
+export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong_person' | 'left' | 'abroad', now = new Date(), detail = ''): Promise<Escalation> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead) return { switched: false };
   const [icpRows, found] = await Promise.all([db.select().from(icps), db.select().from(people).where(eq(people.leadId, leadId))]);
@@ -55,17 +55,19 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   const reason =
     why === 'left'
       ? `${lead.contactName || 'The contact'} no longer works at ${lead.company}${detail ? ` (LinkedIn: ${detail})` : ''}`
+      : why === 'abroad'
+        ? `${lead.contactName || 'The contact'} is based outside India${detail ? ` (${detail})` : ''}, not at this site`
       : why === 'wrong_person'
         ? `${lead.contactName || 'The contact'} said they are not the right person`
         : `No answer from ${lead.contactName || 'the contact'} after ${MAX_CALL_ATTEMPTS} calls`;
 
-  if (why === 'left') {
-    // Someone who has left is never shown or contacted again.
+  if (why === 'left' || why === 'abroad') {
+    // Someone who has left (or works abroad) is never shown or contacted again.
     await db.delete(people).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
   }
 
   if (!next) {
-    if (why === 'left') {
+    if (why === 'left' || why === 'abroad') {
       await db.update(leads).set({ contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, updatedAt: now }).where(eq(leads.id, leadId));
     }
     if (!lead.ownerId) {
