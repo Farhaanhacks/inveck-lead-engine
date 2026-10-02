@@ -131,7 +131,10 @@ function Missing({ id, text }: { id: number; text: string }) {
 
 const STEP_LABEL: Record<Task['kind'], string> = { call: 'Call', whatsapp: 'WhatsApp', email: 'Email', linkedin: 'LinkedIn' };
 
-/** One line of a company's checklist: the step, what to say, and the buttons to log it. */
+const roundNo = (t: Task) => Number(/Follow-up (\d+)/.exec(t.step)?.[1] ?? 0);
+/** The later of two rounds: by due date, then Follow-up 3 after Follow-up 2 on the same day. */
+const laterRound = (a: Task, b: Task) => a.dueDate > b.dueDate || (a.dueDate === b.dueDate && roundNo(a) >= roundNo(b));
+
 /** Which round this is, in plain words. */
 function roundLabel(task: Task): string {
   if (task.priority) return 'Promised callback';
@@ -139,19 +142,9 @@ function roundLabel(task: Task): string {
   return task.step;
 }
 
-/** When it's due: overdue in red, otherwise today or this evening. */
-function dueLabel(item: TodayTask): { text: string; late: boolean } {
-  const { task } = item;
-  if (item.overdue) {
-    const days = Math.round((Date.parse(istDay()) - Date.parse(task.dueDate)) / 86_400_000);
-    return { text: `${days} day${days === 1 ? '' : 's'} overdue`, late: true };
-  }
-  return { text: task.slot === 'evening' ? 'Due this evening' : task.slot === 'morning' ? 'Due this morning' : 'Due today', late: false };
-}
-
+/** One line of a company's checklist: the step, what to say, and the buttons to log it. */
 function Step({ item, bda, readOnly, linkedinFull }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean }) {
   const { task, lead } = item;
-  const due = dueLabel(item);
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
   return (
     <li className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
@@ -159,8 +152,7 @@ function Step({ item, bda, readOnly, linkedinFull }: { item: TodayTask; bda: str
         <span className="mt-0.5 h-4 w-4 shrink-0 rounded border border-line bg-surface" aria-hidden />
         <div>
           <div className="text-sm font-medium">{STEP_LABEL[task.kind]}</div>
-          <div className="text-xs text-muted">{roundLabel(task)}</div>
-          <div className={`text-xs ${due.late ? 'font-medium text-critical-ink' : 'text-muted'}`}>{due.text}</div>
+          {task.priority && <div className="text-xs text-muted">Promised callback</div>}
         </div>
       </div>
       <div className="min-w-0 flex-1">
@@ -279,7 +271,7 @@ function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
 }
 
 /** Everything due today for one company, as a checklist: call first, then WhatsApp, then email. */
-type CompanyGroup = { lead: Lead; items: TodayTask[]; priority: boolean; overdue: boolean; first: string };
+type CompanyGroup = { lead: Lead; items: TodayTask[]; priority: boolean; first: string; round: Task };
 const KIND_ORDER: Task['kind'][] = ['call', 'whatsapp', 'email', 'linkedin'];
 
 /** A step already logged today: ticked, with what happened and an Undo. */
@@ -313,7 +305,9 @@ function CompanyCard({ group, bda, readOnly, others, doneToday, linkedinFull }: 
   // One row per channel, in the same order every time: open ones to log, the ones logged today ticked.
   // Logging a row also ticks off any earlier rounds of that channel still open (see catchUp).
   const rows = KIND_ORDER.flatMap((k): { kind: Task['kind']; open?: TodayTask; done?: Task }[] => {
-    const open = group.items.find((i) => i.task.kind === k);
+    // A promised callback first, else the latest round of this channel; logging a round also ticks off any older one still open.
+    const ofKind = group.items.filter((i) => i.task.kind === k);
+    const open = ofKind.find((i) => i.task.priority) ?? ofKind.at(-1);
     if (open) return [{ kind: k, open, done: undefined }];
     const done = doneToday.find((t) => t.kind === k);
     return done ? [{ kind: k, open: undefined, done }] : [];
@@ -326,7 +320,7 @@ function CompanyCard({ group, bda, readOnly, others, doneToday, linkedinFull }: 
         <div className="min-w-0">
           <Link href={`/leads/${lead.id}`} className="font-medium hover:underline">{lead.company}</Link>
           {group.priority && <span className="ml-2 rounded bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium text-warning-ink">Callback</span>}
-          <span className="ml-2 text-xs text-muted tabular-nums">{ticked} of {total} done</span>
+          <span className="ml-2 text-xs text-muted">{roundLabel(group.round)} · <span className="tabular-nums">{ticked} of {total} done</span></span>
           <div className="text-sm text-ink-2">
             {lead.contactName}
             {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
@@ -381,24 +375,22 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     unattendedInbound(db, viewId),
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
   ]);
-  // Filters: one channel at a time, a search by company or person, only leads with a phone number, only overdue.
+  // Filters: a search by company or person, and only leads with a phone number.
   const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
   const q = typeof sp.q === 'string' ? sp.q.trim() : '';
   const withPhone = sp.phone === '1';
-  const overdueOnly = sp.overdue === '1';
   const needle = q.toLowerCase();
   const matches = (i: TodayTask) =>
     (!needle || [i.lead.company, i.lead.contactName, i.lead.city].some((v) => v.toLowerCase().includes(needle))) &&
-    (!withPhone || !!i.lead.contactPhone) &&
-    (!overdueOnly || i.overdue);
+    (!withPhone || !!i.lead.contactPhone);
   const filtered = items.filter(matches);
   // One entry per company, with everything due for it.
   const groupsById = new Map<number, CompanyGroup>();
   for (const i of filtered) {
-    const g = groupsById.get(i.lead.id) ?? { lead: i.lead, items: [], priority: false, overdue: false, first: i.task.dueDate };
+    const g = groupsById.get(i.lead.id) ?? { lead: i.lead, items: [], priority: false, first: i.task.dueDate, round: i.task };
     g.items.push(i);
     g.priority ||= i.task.priority;
-    g.overdue ||= i.overdue;
+    if (!i.task.priority && (g.round.priority || laterRound(i.task, g.round))) g.round = i.task;
     if (i.task.dueDate < g.first) g.first = i.task.dueDate;
     groupsById.set(i.lead.id, g);
   }
@@ -416,7 +408,6 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       ...(tab !== 'all' && { view: tab }),
       ...(q && { q }),
       ...(withPhone && { phone: '1' }),
-      ...(overdueOnly && { overdue: '1' }),
       ...next,
     });
     for (const [k, v] of [...p]) if (!v || (k === 'view' && v === 'all')) p.delete(k);
@@ -538,11 +529,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           <label className="flex items-center gap-1.5 text-ink-2">
             <input type="checkbox" name="phone" value="1" defaultChecked={withPhone} /> Has a phone number
           </label>
-          <label className="flex items-center gap-1.5 text-ink-2">
-            <input type="checkbox" name="overdue" value="1" defaultChecked={overdueOnly} /> Overdue only
-          </label>
-          {(q || withPhone || overdueOnly) && (
-            <Link href={link({ q: '', phone: '', overdue: '' })} className="text-xs text-muted hover:text-ink">Clear filters</Link>
+          {(q || withPhone) && (
+            <Link href={link({ q: '', phone: '' })} className="text-xs text-muted hover:text-ink">Clear filters</Link>
           )}
         </AutoFilterForm>
       </div>
@@ -613,7 +601,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
       {items.length > 0 && !filtered.length && (
         <div className="card p-8 text-center text-sm text-muted">
-          Nothing matches these filters. <Link href={link({ q: '', phone: '', overdue: '' })} className="text-accent hover:underline">Clear filters</Link>
+          Nothing matches these filters. <Link href={link({ q: '', phone: '' })} className="text-accent hover:underline">Clear filters</Link>
         </div>
       )}
       {items.length > 0 && filtered.length > 0 && tab !== 'all' && tab !== 'done' && !shownGroups.length && (
