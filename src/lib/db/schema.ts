@@ -145,6 +145,8 @@ export type RunStats = {
 export const runs = pgTable('runs', {
   id: serial('id').primaryKey(),
   findProspects: boolean('find_prospects').notNull().default(false),
+  /** Who gets the prospects this run finds: '' (the morning draw), 'team' (split across the team now) or a user id. */
+  prospectsTo: text('prospects_to').notNull().default(''),
   status: text('status').$type<'running' | 'done' | 'failed' | 'cancelled'>().notNull().default('running'),
   trigger: text('trigger').notNull().default('manual'),
   stats: jsonb('stats').$type<RunStats>().notNull(),

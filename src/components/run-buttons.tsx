@@ -3,7 +3,7 @@ import { startRunAction } from '@/app/actions';
 import { SubmitButton } from './submit-button';
 
 /** Starts a prospect search. While research is running, links to its progress instead. */
-export function RunButtons({ running, runId }: { running: boolean; runId?: number }) {
+export function RunButtons({ running, runId, team = [] }: { running: boolean; runId?: number; team?: { id: number; name: string }[] }) {
   if (running) {
     return (
       <Link href={`/?run=${runId}#activity`} className="btn-secondary">
@@ -13,8 +13,16 @@ export function RunButtons({ running, runId }: { running: boolean; runId?: numbe
   }
   // Companies added to the lead list are researched automatically; this finds new ones.
   return (
-    <form action={startRunAction}>
+    <form action={startRunAction} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="findProspects" value="yes" />
+      <label htmlFor="prospectsTo" className="text-xs text-muted">Found companies go to</label>
+      <select id="prospectsTo" name="prospectsTo" defaultValue="" className="field h-9 w-auto py-1.5 text-sm">
+        <option value="">The morning draw</option>
+        {team.length > 0 && <option value="team">The team now (split evenly)</option>}
+        {team.map((u) => (
+          <option key={u.id} value={u.id}>{u.name}</option>
+        ))}
+      </select>
       <SubmitButton pendingText="Starting…">Find new prospects</SubmitButton>
     </form>
   );

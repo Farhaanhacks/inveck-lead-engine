@@ -475,3 +475,48 @@ describe('fresh start', () => {
     expect(await db.select().from(tasks)).toHaveLength(1);
   });
 });
+
+describe('clear everything', () => {
+  it('deletes every lead and all that hangs off it, keeping logins, ICPs, clients and settings', async () => {
+    const { sql } = await import('drizzle-orm');
+    const { tasks, settings, attendance, users, icps } = await import('@/lib/db/schema');
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const [l] = await db.insert(leads).values({ company: 'Acme', status: 'Contacted', ownerId: 1 }).returning();
+    await db.insert(people).values({ leadId: l.id, name: 'X', isPrimary: true });
+    await db.insert(tasks).values({ leadId: l.id, ownerId: 1, kind: 'call', title: 'c', dueDate: '2026-10-01' });
+    await db.insert(attendance).values({ userId: 1, day: '2026-10-01' });
+    await db.insert(activities).values({ leadId: l.id, kind: 'note', text: 'x' });
+    await db.insert(clients).values({ company: 'Haldex India' });
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    await db.insert(runEvents).values({ runId: run.id, message: 'x' });
+    await db.insert(opportunities).values({ company: 'New Plant Co', headline: 'h', url: 'u' });
+    const before = { users: (await db.select().from(users)).length, icps: (await db.select().from(icps)).length };
+
+    await db.delete(settings).where(eq(settings.key, 'clearAllV1'));
+    for (const s of SCHEMA_STATEMENTS.filter((x) => x.includes('clearAllV1'))) await db.execute(sql.raw(s));
+
+    for (const t of [leads, people, tasks, attendance, activities, runs, runEvents, opportunities]) expect(await db.select().from(t)).toHaveLength(0);
+    expect((await db.select().from(clients)).map((c) => c.company)).toContain('Haldex India');
+    expect((await db.select().from(users)).length).toBe(before.users);
+    expect((await db.select().from(icps)).length).toBe(before.icps);
+  });
+});
+
+describe('new prospects delegated by the admin', () => {
+  it('splits them across the team, gives them to one person, or leaves them for the draw', async () => {
+    const { delegateProspects } = await import('@/lib/runs');
+    const { users } = await import('@/lib/db/schema');
+    const team = await db.select().from(users).orderBy(users.id);
+    const add = async (n: number) => (await db.insert(leads).values(Array.from({ length: n }, (_, i) => ({ company: `P${Math.random()}${i}` }))).returning()).map((r) => r.id);
+    const a = await add(8);
+    expect(await delegateProspects(db, a, 'team')).toContain(`${team[0].name} 2`);
+    const owners = (await db.select().from(leads)).map((l) => l.ownerId);
+    expect(new Set(owners).size).toBe(4);
+    const b = await add(3);
+    await delegateProspects(db, b, String(team[2].id));
+    expect((await db.select().from(leads)).filter((l) => b.includes(l.id)).every((l) => l.ownerId === team[2].id)).toBe(true);
+    const c = await add(2);
+    expect(await delegateProspects(db, c, '')).toBe('');
+    expect((await db.select().from(leads)).filter((l) => c.includes(l.id)).every((l) => l.ownerId === null)).toBe(true);
+  });
+});

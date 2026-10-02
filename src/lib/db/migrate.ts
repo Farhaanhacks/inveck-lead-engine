@@ -282,6 +282,22 @@ export const SCHEMA_STATEMENTS = [
    ON CONFLICT (key) DO NOTHING`,
   `INSERT INTO settings (key, value) VALUES ('contactsResetV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('at', now()) WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   `INSERT INTO settings (key, value) VALUES ('freshStartV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  `ALTER TABLE runs ADD COLUMN IF NOT EXISTS prospects_to TEXT NOT NULL DEFAULT ''`,
+  // Clear everything (asked for once, before the team starts): every lead and all that hangs off it,
+  // research runs and radar finds. Logins, ICPs, settings and the current-clients list stay.
+  `DELETE FROM people WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM tasks WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM company_days WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM attendance WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM activities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM run_events WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM runs WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM opportunities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM leads WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `DELETE FROM settings WHERE key = 'rrNext' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  // The contacts-reset note on the Team page no longer applies (its own key must stay, so it never runs again).
+  `UPDATE settings SET value = jsonb_build_object('at', '2000-01-01T00:00:00Z') WHERE key = 'contactsResetV1' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,
+  `INSERT INTO settings (key, value) VALUES ('clearAllV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

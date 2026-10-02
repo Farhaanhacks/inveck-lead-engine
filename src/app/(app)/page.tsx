@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/page-header';
 import { RunButtons } from '@/components/run-buttons';
 import { HunterNotice } from '@/components/hunter-notice';
 import { adminPage } from '@/lib/access';
+import { listBdas } from '@/lib/users';
 
 // Runs started from this page keep working after the response (see actions.ts).
 export const maxDuration = 300;
@@ -53,6 +54,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   const wanted = Number((await searchParams).run) || 0;
   await ensureResearch(await requestOrigin());
   const db = await getDb();
+  const team = await listBdas(db);
   const [byStatus, analytics, [totals], topLeads, runList, running, fresh, added, [{ waiting }]] = await Promise.all([
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).groupBy(leads.status),
     getAnalytics(db),
@@ -80,7 +82,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   return (
     <>
       <PageHeader title="Dashboard" description="Prospects found, researched and ready for outreach.">
-        <RunButtons running={!!running} runId={running?.id} />
+        <RunButtons running={!!running} runId={running?.id} team={team.map((u) => ({ id: u.id, name: u.name }))} />
       </PageHeader>
 
       <div className="mb-6 empty:hidden">

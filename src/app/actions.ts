@@ -89,7 +89,10 @@ async function researchNow() {
 export async function startRunAction(form: FormData) {
   await requireAdmin();
   const db = await getDb();
-  const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual' });
+  // Who gets what the search finds: the morning draw (''), the whole team now ('team') or one person (their id).
+  const to = str(form, 'prospectsTo');
+  const prospectsTo = to === 'team' || /^\d+$/.test(to) ? to : '';
+  const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual', prospectsTo });
   if (created) {
     const h = await headers();
     const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;

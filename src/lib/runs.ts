@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { clients, icps, leads, runEvents, runs, type Lead, type Run, type RunStats } from './db/schema';
+import { clients, icps, leads, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
 import { findProspects } from './pipeline/prospects';
 import type { Services } from './pipeline/services';
@@ -30,12 +30,12 @@ export async function activeRun(db: Db): Promise<Run | undefined> {
 }
 
 /** Starts a run, or returns the one already running (only one at a time). */
-export async function startRun(db: Db, opts: { findProspects: boolean; trigger: string }): Promise<{ run: Run; created: boolean }> {
+export async function startRun(db: Db, opts: { findProspects: boolean; trigger: string; prospectsTo?: string }): Promise<{ run: Run; created: boolean }> {
   const existing = await activeRun(db);
   if (existing) return { run: existing, created: false };
   const [run] = await db
     .insert(runs)
-    .values({ findProspects: opts.findProspects, trigger: opts.trigger, stats: EMPTY_STATS })
+    .values({ findProspects: opts.findProspects, trigger: opts.trigger, prospectsTo: opts.prospectsTo ?? '', stats: EMPTY_STATS })
     .returning();
   return { run, created: true };
 }
@@ -56,6 +56,25 @@ async function claimLeads(db: Db, limit: number): Promise<Lead[]> {
   const ids = (Array.isArray(rows) ? rows : (rows as { rows: { id: number }[] }).rows).map((r) => Number((r as { id: number }).id));
   if (!ids.length) return [];
   return db.select().from(leads).where(inArray(leads.id, ids)).orderBy(asc(leads.id));
+}
+
+/**
+ * Hands newly found prospects out as the admin chose when starting the search: 'team' splits them
+ * evenly across the active team now, a user id gives them all to that person, '' leaves them for the
+ * morning draw. Returns a line for the run log.
+ */
+export async function delegateProspects(db: Db, ids: number[], to: string): Promise<string> {
+  if (!ids.length || !to) return '';
+  const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(asc(users.id));
+  const chosen = to === 'team' ? team : team.filter((u) => String(u.id) === to);
+  if (!chosen.length) return '';
+  const per = new Map<number, number>();
+  for (const [i, id] of ids.entries()) {
+    const owner = chosen[i % chosen.length];
+    await db.update(leads).set({ ownerId: owner.id }).where(eq(leads.id, id));
+    per.set(owner.id, (per.get(owner.id) ?? 0) + 1);
+  }
+  return `New prospects handed out: ${chosen.map((u) => `${u.name} ${per.get(u.id) ?? 0}`).join(', ')}`;
 }
 
 /** Claims leads waiting for their contacts to be found again; a claim older than 15 minutes is retried. */
@@ -110,6 +129,9 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
           for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);
+          // The admin chose who gets them: the team now, one person, or (default) the morning draw.
+          const given = await delegateProspects(db, rows.map((r) => r.id), run.prospectsTo);
+          if (given) await log(given);
           await assignUnowned(db);
         }
         stats.prospectsAdded += found.length;
