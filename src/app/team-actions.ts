@@ -1,6 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
+import { escalate, newContactNamed, unansweredCalls, type Escalation } from '@/lib/escalate';
+import { redraftForContact } from '@/lib/pipeline/redraft';
+import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, tasks, users, type LeadStatus, type TaskKind } from '@/lib/db/schema';
@@ -94,7 +98,13 @@ export async function completeTaskAction(form: FormData) {
   const skipped = outcome === 'skipped';
   await logActivity(db, task.leadId, task.kind === 'call' && !skipped ? 'call' : 'note', skipped ? `${task.title}: skipped` : `${what}${task.step ? ` (${task.step})` : ''}${note ? `. ${note}` : ''}`);
 
-  if (task.kind === 'call' && (outcome === 'no_answer' || outcome === 'busy')) await remindToCallAgain(db, task);
+  // The P2 flow: enough unanswered calls, or the wrong person, and the next person at the company takes over.
+  let escalated: Escalation | null = null;
+  if (task.kind === 'call' && ['no_answer', 'busy', 'wrong_number'].includes(outcome)) {
+    const [l] = await db.select({ id: leads.id, contactSince: leads.contactSince }).from(leads).where(eq(leads.id, task.leadId));
+    if (l && (await unansweredCalls(db, l)) >= MAX_CALL_ATTEMPTS) escalated = await escalate(db, task.leadId, 'no_answer', now);
+    else if (outcome !== 'wrong_number') await remindToCallAgain(db, task);
+  }
 
   if (task.kind === 'call' && outcome === 'connected') {
     // Not interested: nothing more to send, today or later. Otherwise today's WhatsApp, email and LinkedIn
@@ -121,6 +131,9 @@ export async function completeTaskAction(form: FormData) {
       await logActivity(db, task.leadId, 'note', `Callback promised for ${callback}`);
     }
   }
+  if (task.kind === 'call' && outcome === 'connected' && feedback === 'Not the right person') escalated = await escalate(db, task.leadId, 'wrong_person', now);
+  if (escalated?.switched) after(async () => redraftForContact(await getDb(), await liveServices(), task.leadId));
+
   // The pipeline follows what was logged: Contacted, a conversation, a meeting, or lost.
   const [current] = await db.select({ status: leads.status }).from(leads).where(eq(leads.id, task.leadId));
   const target = current && stageAfterOutreach(current.status, task.kind, outcome, feedback);
@@ -167,18 +180,10 @@ async function planAlongside(db: Awaited<ReturnType<typeof getDb>>, leadId: numb
   }
 }
 
-/**
- * No answer: make sure the person is called again on the next working day. Skipped when a call is
- * already planned by then, and after MAX_CALL_ATTEMPTS unanswered calls (time to try someone else).
- */
+/** No answer: make sure the person is called again on the next working day, unless a call is already planned by then. */
 async function remindToCallAgain(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect) {
   const next = nextWorkingDay();
   const calls = await db.select().from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'call')));
-  const unanswered = calls.filter((c) => c.doneAt && (c.outcome === 'no_answer' || c.outcome === 'busy')).length;
-  if (unanswered >= MAX_CALL_ATTEMPTS) {
-    await logActivity(db, task.leadId, 'note', `${unanswered} calls without an answer. Try the next person at this company (P2).`);
-    return;
-  }
   if (calls.some((c) => !c.doneAt && c.dueDate <= next)) return;
   await db.insert(tasks).values({
     leadId: task.leadId,
@@ -381,6 +386,11 @@ export async function updateContactAction(form: FormData) {
   } else if (v.contactName) {
     await db.update(people).set({ isPrimary: false }).where(eq(people.leadId, id));
     await db.insert(people).values({ ...person, leadId: id, emailStatus: v.contactEmail ? 'entered by the team' : '', source: 'Sales team', isPrimary: true });
+  }
+  // Someone new: their own count of unanswered calls, a fresh plan if the lead was waiting for them, and an email written to them.
+  if (newPerson && v.contactName) {
+    await newContactNamed(db, id);
+    after(async () => redraftForContact(await getDb(), await liveServices(), id));
   }
   const changed = (['contactName', 'contactTitle', 'contactPhone', 'contactEmail', 'contactLinkedin'] as const).filter((k) => v[k] !== before[k]);
   if (changed.length) {

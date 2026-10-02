@@ -77,6 +77,8 @@ export const leads = pgTable('leads', {
   drawnOn: text('drawn_on').notNull().default(''),
   /** Point of contact tier (P1, P2, P3) set by hand on the tracker; empty means worked out from the designation. */
   contactTier: text('contact_tier').notNull().default(''),
+  /** When the current point of contact took over: unanswered calls are counted from here (P2 flow). */
+  contactSince: timestamp('contact_since', { withTimezone: true }),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),

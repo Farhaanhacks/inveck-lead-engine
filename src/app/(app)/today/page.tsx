@@ -21,6 +21,7 @@ import {
 } from '@/lib/tasks';
 import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLink } from '@/lib/talk';
 import { formatDate, formatTime } from '@/lib/dates';
+import { FIND_NEXT_STEP } from '@/lib/escalate';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, NOT_INTERESTED } from '@/lib/tracker';
@@ -140,13 +141,15 @@ function roundLabel(task: Task): string {
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
 function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean }) {
   const { task, lead } = item;
+  // The P2 flow ran out of people: this row asks for the next person rather than a call.
+  const finding = task.step === FIND_NEXT_STEP;
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
   return (
     <li className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
       <div className="flex w-40 shrink-0 items-start gap-2">
         <span className="mt-0.5 h-4 w-4 shrink-0 rounded border border-line bg-surface" aria-hidden />
         <div>
-          <div className="text-sm font-medium">{STEP_LABEL[task.kind]}</div>
+          <div className="text-sm font-medium">{finding ? 'Next contact' : STEP_LABEL[task.kind]}</div>
           {task.priority && <div className="text-xs text-muted">Promised callback</div>}
         </div>
       </div>
@@ -155,7 +158,7 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
           <span className="text-xs text-muted">Only {bda} can log this</span>
         ) : (
           <div className="flex flex-wrap items-start gap-2">
-            {task.kind === 'call' && <CallActions task={task} />}
+            {task.kind === 'call' && (finding ? <Outcome id={task.id} buttons={[['skipped', 'Skip for today']]} /> : <CallActions task={task} />)}
             {task.kind === 'whatsapp' && (
               <>
                 {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
@@ -179,7 +182,7 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
               ))}
           </div>
         )}
-        {!readOnly && askPhone && !lead.contactPhone && (
+        {!readOnly && askPhone && !finding && !lead.contactPhone && (
           <FoundDetail leadId={lead.id} field="contactPhone" label="Found the number? Save it" placeholder="+91 98xxx xxxxx" type="tel" />
         )}
         {!readOnly && task.kind === 'email' && !lead.contactEmail && (
@@ -188,8 +191,13 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
         {!readOnly && task.kind === 'linkedin' && !lead.contactLinkedin && (
           <FoundDetail leadId={lead.id} field="contactLinkedin" label="Found the profile? Save it" placeholder="linkedin.com/in/…" type="text" />
         )}
+        {task.step === FIND_NEXT_STEP && (
+          <p className="mt-2 text-xs text-warning-ink">
+            The last contact didn&apos;t work out and nobody else is on file. Find a P2 (process owner: inventory, warehouse, procurement or supply chain manager) and add them under Edit point of contact; their plan starts straight away.
+          </p>
+        )}
         {task.priority && task.note && !task.note.startsWith('auto-retry:') && <div className="mt-1 text-xs text-ink-2">Note: {task.note}</div>}
-        <details className="mt-1.5">
+        <details className={`mt-1.5 ${finding ? 'hidden' : ''}`}>
           <summary className="cursor-pointer text-xs text-muted hover:text-ink">{task.kind === 'call' ? 'Talk track' : task.kind === 'linkedin' ? 'Connection note' : 'Message'}</summary>
           <div className="mt-2 space-y-2 rounded-md bg-surface-2 p-3 text-sm">
             {task.kind === 'call' && (
@@ -322,6 +330,7 @@ function CompanyCard({ group, bda, readOnly, others, doneToday, linkedinFull }: 
           <div className="text-sm text-ink-2">
             {lead.contactName}
             {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
+            {lead.contactTier ? <span className="ml-2 rounded border border-line px-1.5 py-0.5 text-[11px] font-medium text-ink-2">{lead.contactTier}</span> : null}
           </div>
           <Reach lead={lead} />
           {!readOnly && <EditContact lead={lead} others={others} />}

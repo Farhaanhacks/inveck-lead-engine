@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests } from '@/lib/db';
 import { leads, tasks, users, attendance, activities } from '@/lib/db/schema';
 import { checkPassword, hashPassword, normaliseUsername } from '@/lib/passwords';
@@ -441,5 +441,52 @@ describe('callback days get the full set', () => {
     for (const s of [...repair, ...repair]) await db.execute(sql.raw(s));
     const made = await db.select().from(tasks).where(eq(tasks.leadId, l.id));
     expect(made.map((t) => `${t.kind}:${t.dueDate}`).sort()).toEqual(['call:2026-10-05', 'email:2026-10-05', 'whatsapp:2026-10-05']);
+  });
+});
+
+describe('P2 flow', () => {
+  const icp = { targetTitles: 'Plant Head, Head of Supply Chain', p2Titles: 'Inventory Manager, Warehouse Head', p3Titles: 'Store Manager', avoidTitles: 'HR, Admin, Quality' };
+  const person = (id: number, name: string, title: string, extra: Partial<import('@/lib/db/schema').Person> = {}) =>
+    ({ id, leadId: 1, name, title, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, createdAt: new Date(), ...extra });
+
+  it('picks a P2 after a P1, then P3, never HR, preferring someone with a number', async () => {
+    const { nextContact } = await import('@/lib/escalate');
+    const list = [person(1, 'Hr Head', 'Head HR'), person(2, 'Store', 'Store Manager'), person(3, 'Inv A', 'Inventory Manager'), person(4, 'Inv B', 'Inventory Manager', { phone: '98' })];
+    expect(nextContact(list, 'P1', icp)?.person.name).toBe('Inv B');
+    expect(nextContact(list, 'P2', icp)?.person.name).toBe('Store');
+    expect(nextContact([person(1, 'Hr', 'HR Manager')], 'P1', icp)).toBeNull();
+  });
+
+  it('switches to the P2 after five unanswered calls with a fresh plan, or asks for one', async () => {
+    const db = await getDb();
+    const { escalate, unansweredCalls, newContactNamed, FIND_NEXT_STEP } = await import('@/lib/escalate');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [l] = await db.insert(leads).values(lead('Acme', { segment: 'Manufacturing' })).returning();
+    await assignUnowned(db, { everything: true });
+    await ensureSequences(db);
+    await db.insert(peopleTable).values([
+      { leadId: l.id, name: 'Ravi Shah', title: 'Plant Head', isPrimary: true },
+      { leadId: l.id, name: 'Asha Rao', title: 'Inventory Manager', phone: '+91 98200 00001' },
+    ]);
+    const [owned] = await db.select().from(leads).where(eq(leads.id, l.id));
+    const done = new Date(Date.now() - 1000);
+    await db.insert(tasks).values(Array.from({ length: 5 }, () => ({ leadId: l.id, ownerId: owned.ownerId!, kind: 'call' as const, title: 'c', dueDate: istDay(), doneAt: done, outcome: 'no_answer' })));
+    expect(await unansweredCalls(db, owned)).toBe(5);
+
+    expect(await escalate(db, l.id, 'no_answer')).toMatchObject({ switched: true, name: 'Asha Rao', tier: 'P2' });
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ contactName: 'Asha Rao', contactPhone: '+91 98200 00001', contactTier: 'P2' });
+    expect(await unansweredCalls(db, after)).toBe(0);
+    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(open.filter((t) => t.dueDate === istDay()).map((t) => t.kind).sort()).toEqual(['call', 'email', 'linkedin', 'whatsapp']);
+
+    // Nobody left: a step to find someone, and naming them starts their plan.
+    expect(await escalate(db, l.id, 'wrong_person')).toEqual({ switched: false });
+    let waiting = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(waiting.map((t) => t.step)).toEqual([FIND_NEXT_STEP]);
+    await newContactNamed(db, l.id);
+    waiting = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(waiting.some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
+    expect(waiting.filter((t) => t.dueDate === istDay())).toHaveLength(4);
   });
 });

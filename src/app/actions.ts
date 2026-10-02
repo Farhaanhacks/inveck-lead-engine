@@ -19,6 +19,8 @@ import { recordPresence } from '@/lib/attendance';
 import { getCurrentUser, verifyLogin } from '@/lib/users';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
+import { newContactNamed } from '@/lib/escalate';
+import { redraftForContact } from '@/lib/pipeline/redraft';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
 import { domainOf, normCompany } from '@/lib/pipeline/text';
@@ -309,8 +311,16 @@ export async function dismissOpportunityAction(form: FormData) {
 /** Makes someone else at the company the lead's main contact. */
 export async function makePrimaryAction(form: FormData) {
   if (!(await mayActOn(Number(str(form, 'id'))))) return;
-  const leadId = await makePrimary(await getDb(), Number(str(form, 'personId')));
-  if (leadId) refreshLeadPages(leadId);
+  const db = await getDb();
+  const leadId = await makePrimary(db, Number(str(form, 'personId')));
+  if (leadId) {
+    // A new point of contact: the tier is worked out again, calls count afresh, and the email is rewritten for them.
+    await db.update(leads).set({ contactTier: '' }).where(eq(leads.id, leadId));
+    await newContactNamed(db, leadId);
+    after(async () => redraftForContact(await getDb(), await liveServices(), leadId));
+    refreshLeadPages(leadId);
+    revalidatePath('/today');
+  }
   revalidatePath('/contacts');
 }
 
