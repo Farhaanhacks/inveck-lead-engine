@@ -223,4 +223,5 @@ export const SCHEMA_STATEMENTS = [
      AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'allChannelsV1')`,
   `INSERT INTO settings (key, value) VALUES ('allChannelsV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stage_from TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_tier TEXT NOT NULL DEFAULT ''`,
 ];

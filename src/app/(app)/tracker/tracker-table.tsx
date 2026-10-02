@@ -8,6 +8,8 @@ export type TrackerViewRow = {
   id: number;
   cells: Record<string, string>;
   callFeedback: string;
+  contactTier: string;
+  autoTier: string;
   mailOutcome: string;
   linkedinOutcome: string;
   remark: string;
@@ -15,11 +17,11 @@ export type TrackerViewRow = {
   website: string;
 };
 
-type Field = 'callFeedback' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
+type Field = 'callFeedback' | 'contactTier' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
 
 const CELL = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink hover:border-line focus:border-accent focus:outline-none';
 
-function Choice({ id, field, value, options, label }: { id: number; field: Field; value: string; options: readonly string[]; label: string }) {
+function Choice({ id, field, value, options, label, empty = '—', narrow = false }: { id: number; field: Field; value: string; options: readonly string[]; label: string; empty?: string; narrow?: boolean }) {
   const [v, setV] = useState(value);
   const [state, setState] = useState<'' | 'saving' | 'error'>('');
   const [, start] = useTransition();
@@ -37,9 +39,9 @@ function Choice({ id, field, value, options, label }: { id: number; field: Field
           if (!r.ok) setV(value);
         });
       }}
-      className={`${CELL} min-w-[9rem] border-line bg-surface ${state === 'error' ? 'border-critical-ink' : ''} ${state === 'saving' ? 'opacity-60' : ''}`}
+      className={`${CELL} ${narrow ? 'min-w-[7.5rem]' : 'min-w-[9rem]'} border-line bg-surface ${state === 'error' ? 'border-critical-ink' : ''} ${state === 'saving' ? 'opacity-60' : ''}`}
     >
-      <option value="">—</option>
+      <option value="">{empty}</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   );
@@ -78,7 +80,7 @@ export function TrackerTable({
 }: {
   segments: string[];
   rows: TrackerViewRow[];
-  options: { callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
+  options: { contactTier: readonly string[]; callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
   showOwner: boolean;
 }) {
   const th = 'border-b border-r border-line px-2 py-2 text-left font-medium whitespace-nowrap';
@@ -125,7 +127,17 @@ export function TrackerTable({
                 )}
               </td>
               <td className={`${td} max-w-[14rem]`}>{r.cells.title}</td>
-              <td className={`${td} whitespace-nowrap`}>{r.cells.poc}</td>
+              <td className={`${td} p-1`}>
+                <Choice
+                  id={r.id}
+                  field="contactTier"
+                  value={r.contactTier}
+                  options={options.contactTier}
+                  empty={r.autoTier ? `Auto: ${r.autoTier}` : 'Auto: not matched'}
+                  narrow
+                  label={`${r.cells.company}: point of contact tier`}
+                />
+              </td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.phone}</td>
               <td className={td}>{r.cells.email}</td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callStatus}</td>

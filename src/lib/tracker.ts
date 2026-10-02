@@ -23,8 +23,11 @@ export const NOT_INTERESTED = ['Not interested', 'No requirement right now', 'Al
 export const MAIL_OUTCOMES = ['Not sent', 'Sent', 'No reply', 'Replied: interested', 'Replied: not interested', 'Bounced'] as const;
 export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', 'Replied', 'No response', 'Not on LinkedIn'] as const;
 
+export const CONTACT_TIERS = ['P1', 'P2', 'P3'] as const;
+
 export const TRACKER_FIELDS = {
   callFeedback: CALL_FEEDBACK,
+  contactTier: CONTACT_TIERS,
   mailOutcome: MAIL_OUTCOMES,
   linkedinOutcome: LINKEDIN_OUTCOMES,
 } as const;
@@ -49,7 +52,10 @@ export type TrackerRow = {
   callRemark: string;
   callsDone: number;
   lastCallAt: Date | null;
+  /** P1, P2 or P3: set by hand, else worked out from the designation. */
   pointOfContact: string;
+  /** What the designation alone says, shown as the automatic choice. */
+  autoTier: string;
   mailOutcome: string;
   linkedinOutcome: string;
 };
@@ -92,7 +98,8 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       callRemark: lead.callRemark,
       callsDone: mine.length,
       lastCallAt: last?.doneAt ?? null,
-      pointOfContact: tier === 'Avoid' ? '' : tier,
+      pointOfContact: lead.contactTier || (tier === 'Avoid' ? '' : tier),
+      autoTier: tier === 'Avoid' ? 'Not a priority' : tier,
       // Logged sends fill these in until someone picks an outcome by hand.
       mailOutcome: lead.mailOutcome || (emailed.has(lead.id) || lead.sentAt ? 'Sent' : lead.contactEmail ? 'Not sent' : ''),
       linkedinOutcome: lead.linkedinOutcome || (linked.has(lead.id) ? 'Request sent' : lead.contactLinkedin ? 'Not sent' : 'Not on LinkedIn'),

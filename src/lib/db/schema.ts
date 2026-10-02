@@ -75,6 +75,8 @@ export const leads = pgTable('leads', {
   inbound: boolean('inbound').notNull().default(false),
   /** The India day (YYYY-MM-DD) this lead was handed out in the morning draw; empty when it came another way. */
   drawnOn: text('drawn_on').notNull().default(''),
+  /** Point of contact tier (P1, P2, P3) set by hand on the tracker; empty means worked out from the designation. */
+  contactTier: text('contact_tier').notNull().default(''),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),

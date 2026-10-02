@@ -410,3 +410,20 @@ describe('meetings on the Team page', () => {
     expect(await meetings()).toBe(0);
   });
 });
+
+describe('point of contact tier on the tracker', () => {
+  it('works the tier out from the designation until someone sets it by hand', async () => {
+    const db = await getDb();
+    const { loadTracker, validTrackerValue } = await import('@/lib/tracker');
+    await db.insert(leads).values(lead('Acme', { segment: 'Manufacturing', contactTitle: 'Plant Head' }));
+    let [row] = await loadTracker(db, null);
+    expect(row.pointOfContact).toBe('P1');
+    expect(row.autoTier).toBe('P1');
+    await db.update(leads).set({ contactTier: 'P2' });
+    [row] = await loadTracker(db, null);
+    expect(row.pointOfContact).toBe('P2');
+    expect(validTrackerValue('contactTier', 'P3')).toBe(true);
+    expect(validTrackerValue('contactTier', 'P9')).toBe(false);
+    expect(validTrackerValue('contactTier', '')).toBe(true);
+  });
+});
