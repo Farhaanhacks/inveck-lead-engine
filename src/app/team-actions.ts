@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lte } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, tasks, users, type TaskKind } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
@@ -61,6 +61,7 @@ export async function completeTaskAction(form: FormData) {
     .update(tasks)
     .set({ doneAt: now, outcome, note: wrong ? `${WRONG_PREFIX}${lead!.phone}` : note || task.note })
     .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
+  if (!task.priority) await catchUp(db, task, now);
   // Keep the tracker's outcome columns in step with what was logged.
   const feedback = str(form, 'feedback');
   if (task.kind === 'call' && outcome === 'connected') {
@@ -118,6 +119,23 @@ export async function completeTaskAction(form: FormData) {
   }
   revalidatePath('/today');
   revalidatePath(`/leads/${task.leadId}`);
+}
+
+/**
+ * One message per channel catches the person up: logging a WhatsApp, email or call also ticks off the
+ * other ones of that kind still open for the company from earlier rounds, so a missed day never leaves
+ * a backlog to send twice. This evening's round still comes in the evening.
+ */
+async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, now: Date) {
+  const today = istDay();
+  const open = await db
+    .select({ id: tasks.id, dueDate: tasks.dueDate, slot: tasks.slot })
+    .from(tasks)
+    .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, task.kind), isNull(tasks.doneAt), eq(tasks.priority, false), lte(tasks.dueDate, today)));
+  const laterToday = (t: { dueDate: string; slot: string }) => t.dueDate === today && t.slot === 'evening' && !(task.dueDate === today && task.slot === 'evening');
+  const ids = open.filter((t) => t.id !== task.id && !laterToday(t)).map((t) => t.id);
+  // Same time as the logged task, so Undo can bring them back together.
+  if (ids.length) await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(inArray(tasks.id, ids), isNull(tasks.doneAt)));
 }
 
 const RETRY_NOTE = 'auto-retry:';
@@ -258,8 +276,9 @@ export async function undoTaskAction(form: FormData) {
   if (task.kind === 'call' && (task.outcome === 'no_answer' || task.outcome === 'busy')) {
     await db.delete(tasks).where(and(eq(tasks.note, `${RETRY_NOTE}${task.id}`), isNull(tasks.doneAt)));
   }
+  // Whatever was ticked off along with it (the rest of the sequence after a connected call, or earlier rounds caught up) comes back too.
+  await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));
   if (task.kind === 'call' && task.outcome === 'connected') {
-    await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.priority, true), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
   }
   await logActivity(db, task.leadId, 'note', `Undone: ${task.title}${task.step && !task.title.startsWith(task.step) ? ` (${task.step})` : ''}`);

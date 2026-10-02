@@ -18,7 +18,7 @@ import {
   type TodayTask,
 } from '@/lib/tasks';
 import { callOpener, discoveryQuestions, whatsappIntro, whatsappLink } from '@/lib/talk';
-import { formatDate, formatTime, relativeDays } from '@/lib/dates';
+import { formatDate, formatTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK } from '@/lib/tracker';
@@ -110,8 +110,26 @@ function CallActions({ task }: { task: Task }) {
 const STEP_LABEL: Record<Task['kind'], string> = { call: 'Call', whatsapp: 'WhatsApp', email: 'Email', linkedin: 'LinkedIn' };
 
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
-function Step({ item, more, bda, readOnly }: { item: TodayTask; more: number; bda: string; readOnly: boolean }) {
+/** Which round this is, in plain words. */
+function roundLabel(task: Task): string {
+  if (task.priority) return 'Promised callback';
+  if (task.step.startsWith('Day 1')) return 'First contact';
+  return task.step;
+}
+
+/** When it's due: overdue in red, otherwise today or this evening. */
+function dueLabel(item: TodayTask): { text: string; late: boolean } {
+  const { task } = item;
+  if (item.overdue) {
+    const days = Math.round((Date.parse(istDay()) - Date.parse(task.dueDate)) / 86_400_000);
+    return { text: `${days} day${days === 1 ? '' : 's'} overdue`, late: true };
+  }
+  return { text: task.slot === 'evening' ? 'Due this evening' : task.slot === 'morning' ? 'Due this morning' : 'Due today', late: false };
+}
+
+function Step({ item, bda, readOnly }: { item: TodayTask; bda: string; readOnly: boolean }) {
   const { task, lead } = item;
+  const due = dueLabel(item);
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
   return (
     <li className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
@@ -119,12 +137,8 @@ function Step({ item, more, bda, readOnly }: { item: TodayTask; more: number; bd
         <span className="mt-0.5 h-4 w-4 shrink-0 rounded border border-line bg-surface" aria-hidden />
         <div>
           <div className="text-sm font-medium">{STEP_LABEL[task.kind]}</div>
-          <div className="text-xs text-muted">
-            {task.priority ? 'Promised callback' : task.step}
-            {task.slot !== 'day' && !task.step.toLowerCase().includes(task.slot) ? ` · ${task.slot}` : ''}
-          </div>
-          {item.overdue && <div className="text-xs font-medium text-critical-ink">Due {relativeDays(new Date(`${task.dueDate}T12:00:00+05:30`))}</div>}
-          {more > 0 && <div className="text-xs text-muted">+{more} more due</div>}
+          <div className="text-xs text-muted">{roundLabel(task)}</div>
+          <div className={`text-xs ${due.late ? 'font-medium text-critical-ink' : 'text-muted'}`}>{due.text}</div>
         </div>
       </div>
       <div className="min-w-0 flex-1">
@@ -227,10 +241,10 @@ const KIND_ORDER: Task['kind'][] = ['call', 'whatsapp', 'email', 'linkedin'];
 
 function CompanyCard({ group, bda, readOnly, others }: { group: CompanyGroup; bda: string; readOnly: boolean; others: Person[] }) {
   const { lead } = group;
-  // The next step of each kind; when it's logged, the one after it shows.
+  // One row per channel. Logging it also ticks off any earlier rounds of that channel still open (see catchUp).
   const steps = KIND_ORDER.flatMap((k) => {
     const of = group.items.filter((i) => i.task.kind === k);
-    return of.length ? [{ item: of[0], more: of.length - 1 }] : [];
+    return of.length ? [of[0]] : [];
   });
   return (
     <li className="px-5 py-4" data-company={lead.id}>
@@ -247,7 +261,7 @@ function CompanyCard({ group, bda, readOnly, others }: { group: CompanyGroup; bd
         </div>
       </div>
       <ul className="mt-2 divide-y divide-line border-t border-line">
-        {steps.map(({ item, more }) => <Step key={item.task.id} item={item} more={more} bda={bda} readOnly={readOnly} />)}
+        {steps.map((item) => <Step key={item.task.id} item={item} bda={bda} readOnly={readOnly} />)}
       </ul>
     </li>
   );
