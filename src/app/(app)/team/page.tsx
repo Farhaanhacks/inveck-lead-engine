@@ -73,7 +73,7 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
               ? `All saved contacts were cleared. Finding them again with the current rules: ${refetch.waiting} ${refetch.waiting === 1 ? 'company' : 'companies'} still to go. This page updates when you reload it.`
               : 'Done: every company has had its contacts found again from scratch with the current rules.'}
           </p>
-          <p className="mt-1 text-xs text-muted">Leads in a live conversation (a connected call, Replied, Meeting Booked, Won) kept the person they are talking to.</p>
+          <p className="mt-1 text-xs text-muted">Fresh start: every lead starts again unassigned, with no calls, outcomes or stages; the morning draw hands them out.</p>
         </section>
       )}
 
@@ -92,7 +92,9 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
           )}
         </div>
         <p className="mt-3 text-sm">
-          {draw ? (
+          {draw && draw.wanted === 0 ? (
+            'No draw today (fresh start). The first leads go out on the next working morning at 8:00.'
+          ) : draw ? (
             <>
               Today: <span className="font-medium tabular-nums">{draw.drawn}</span> of {draw.wanted} handed out at {formatTime(new Date(draw.at))}
               {people.length > 0 && ' (' + people.map((p) => `${p.name} ${draw.perOwner[p.id] ?? 0}`).join(', ') + ')'}.

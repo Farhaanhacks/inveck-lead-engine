@@ -255,6 +255,33 @@ export const SCHEMA_STATEMENTS = [
      email_status = '', other_decision_makers = '', contact_tier = '', contact_channel = '', contact_since = NULL, contact_checked_at = NULL
    WHERE refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'contactsResetV1')`,
   `INSERT INTO settings (key, value) VALUES ('contactsResetV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // Fresh start before the team begins (asked for once): every contact is wiped and found again, live
+  // conversations included, and everything done so far is cleared: call logs and Today steps, completed
+  // companies, attendance, timelines, tracker outcomes and remarks, follow-ups and stages. Every lead
+  // comes off its BDA and waits in the pool for the morning draw. Companies and their research stay.
+  `UPDATE leads SET refetch_pending = true, refetch_claimed_at = NULL
+   WHERE status NOT IN ('New', 'Processing', 'Disqualified', 'Existing Client') AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `DELETE FROM people WHERE lead_id IN (SELECT id FROM leads WHERE refetch_pending) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `UPDATE leads SET contact_name = '', contact_title = '', contact_email = '', contact_phone = '', contact_linkedin = '',
+     email_status = '', other_decision_makers = '', contact_tier = '', contact_channel = '', contact_since = NULL, contact_checked_at = NULL
+   WHERE refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `DELETE FROM tasks WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `DELETE FROM company_days WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `DELETE FROM attendance WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `DELETE FROM activities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `UPDATE leads SET owner_id = NULL, drawn_on = '', call_feedback = '', remark = '', call_remark = '', mail_outcome = '', linkedin_outcome = '',
+     sent_at = NULL, follow_up_step = 0, next_follow_up_at = NULL, follow_up_subject = '', follow_up_body = '',
+     status = CASE WHEN status IN ('Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Rejected') THEN 'Awaiting Approval' ELSE status END
+   WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `DELETE FROM settings WHERE (key LIKE 'draw:%' OR key = 'rrNext') AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  // No draw on the day of the fresh start: the first leads go out on the next working morning.
+  `INSERT INTO settings (key, value)
+   SELECT 'draw:' || to_char((now() AT TIME ZONE 'Asia/Kolkata')::date, 'YYYY-MM-DD'),
+     jsonb_build_object('day', to_char((now() AT TIME ZONE 'Asia/Kolkata')::date, 'YYYY-MM-DD'), 'at', now(), 'wanted', 0, 'drawn', 0, 'perOwner', '{}'::jsonb, 'short', false)
+   WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')
+   ON CONFLICT (key) DO NOTHING`,
+  `INSERT INTO settings (key, value) VALUES ('contactsResetV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('at', now()) WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
+  `INSERT INTO settings (key, value) VALUES ('freshStartV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

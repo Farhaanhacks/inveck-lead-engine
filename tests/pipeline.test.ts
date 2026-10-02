@@ -427,3 +427,51 @@ describe('contacts reset', () => {
     expect(ta).toMatchObject({ status: 'Contacted', fitScore: 9, researchSummary: base.researchSummary });
   });
 });
+
+describe('fresh start', () => {
+  it('clears every contact and everything done, takes leads off their BDAs, keeps companies and research', async () => {
+    const { sql } = await import('drizzle-orm');
+    const { tasks, settings, attendance, companyDays } = await import('@/lib/db/schema');
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const base = { website: 'acme.in', city: 'Pune', segment: 'Manufacturing', qualified: true, fitScore: 8, researchSummary: 'Acme makes parts.', ownerId: 1 };
+    const [a, b] = await db
+      .insert(leads)
+      .values([
+        { ...base, company: 'Acme', status: 'Meeting Booked', contactName: 'Demo Person', callFeedback: 'Demo scheduled', remark: 'hot', sentAt: new Date(), drawnOn: '2026-10-02' },
+        { ...base, company: 'Ruled Out', website: 'ro.in', status: 'Disqualified', contactName: '' },
+      ])
+      .returning();
+    await db.insert(people).values({ leadId: a.id, name: 'Demo Person', isPrimary: true });
+    await db.insert(tasks).values({ leadId: a.id, ownerId: 1, kind: 'call', title: 'c', dueDate: '2026-10-01', doneAt: new Date(), outcome: 'connected' });
+    await db.insert(attendance).values({ userId: 1, day: '2026-10-01' });
+    await db.insert(companyDays).values({ leadId: a.id, ownerId: 1, day: '2026-10-01' });
+    await db.insert(activities).values({ leadId: a.id, kind: 'note', text: 'x' });
+    await db.insert(settings).values({ key: 'draw:2026-09-30', value: { drawn: 1 } });
+
+    await db.delete(settings).where(eq(settings.key, 'freshStartV1'));
+    for (const s of SCHEMA_STATEMENTS.filter((x) => x.includes('freshStartV1'))) await db.execute(sql.raw(s));
+
+    const [ta] = await db.select().from(leads).where(eq(leads.id, a.id));
+    expect(ta).toMatchObject({
+      contactName: '', ownerId: null, status: 'Awaiting Approval', callFeedback: '', remark: '', sentAt: null, drawnOn: '', refetchPending: true,
+      fitScore: 8, researchSummary: 'Acme makes parts.',
+    });
+    expect(await db.select().from(people)).toHaveLength(0);
+    expect(await db.select().from(tasks)).toHaveLength(0);
+    expect(await db.select().from(attendance)).toHaveLength(0);
+    expect(await db.select().from(companyDays)).toHaveLength(0);
+    expect(await db.select().from(activities)).toHaveLength(0);
+    expect(await db.select().from(settings).where(eq(settings.key, 'draw:2026-09-30'))).toHaveLength(0);
+    // No draw on the day of the fresh start.
+    const { istDay } = await import('@/lib/tasks');
+    const [today] = await db.select().from(settings).where(eq(settings.key, `draw:${istDay()}`));
+    expect(today?.value).toMatchObject({ wanted: 0, drawn: 0 });
+    const [tb] = await db.select().from(leads).where(eq(leads.id, b.id));
+    expect(tb).toMatchObject({ status: 'Disqualified', refetchPending: false, ownerId: null });
+
+    // Runs once only: a second pass changes nothing.
+    await db.insert(tasks).values({ leadId: a.id, ownerId: 1, kind: 'call', title: 'c', dueDate: '2026-10-05' });
+    for (const s of SCHEMA_STATEMENTS.filter((x) => x.includes('freshStartV1'))) await db.execute(sql.raw(s));
+    expect(await db.select().from(tasks)).toHaveLength(1);
+  });
+});

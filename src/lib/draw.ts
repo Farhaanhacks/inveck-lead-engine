@@ -38,7 +38,7 @@ export async function drawPool(db: Db): Promise<{ total: number; withContact: nu
   const [row] = await db
     .select({ total: sql<number>`count(*)::int`, withContact: sql<number>`count(*) filter (where ${leads.contactName} <> '')::int` })
     .from(leads)
-    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), inArray(leads.status, DRAWABLE)));
+    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE)));
   return { total: Number(row?.total ?? 0), withContact: Number(row?.withContact ?? 0) };
 }
 
@@ -113,7 +113,7 @@ async function drawInto(db: Db, team: number[], day: string, count: number, now:
   const picked = await db
     .select({ id: leads.id })
     .from(leads)
-    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), inArray(leads.status, DRAWABLE)))
+    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE)))
     .orderBy(sql`(${leads.contactName} = '')`, sql`random()`)
     .limit(count);
   const hands = deal(shuffle(picked.map((p) => p.id), random), team, random);
