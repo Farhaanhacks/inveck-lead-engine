@@ -136,10 +136,14 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         }
         stats.prospectsAdded += found.length;
         await log(found.length ? `Added ${found.length} new prospects: ${found.map((p) => p.company).join(', ')}` : 'No new prospects found');
+        await save({ prospectsDone: true });
       } catch (e) {
-        await log('Prospect search failed: ' + errorMessage(e), 'error');
+        // Recorded on the run, so it ends as failed (not "Finished") once the waiting leads are done.
+        const error = 'Prospect search failed: ' + errorMessage(e);
+        await log(error, 'error');
+        run.error = error;
+        await save({ prospectsDone: true, error });
       }
-      await save({ prospectsDone: true });
     }
 
     if (stats.processed === 0) {
@@ -243,7 +247,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     if (refetched) await log(`Contacts found again for ${refetched} compan${refetched === 1 ? 'y' : 'ies'}`);
 
     await log(`Done: ${stats.processed} researched, ${stats.drafted} drafts ready`);
-    await save({ status: 'done', finishedAt: new Date() });
+    if (run.error) await log(`Finished with an error: ${run.error}`, 'error');
+    await save({ status: run.error ? 'failed' : 'done', finishedAt: new Date() });
     return 'done';
   } catch (e) {
     await log('Run failed: ' + errorMessage(e), 'error');

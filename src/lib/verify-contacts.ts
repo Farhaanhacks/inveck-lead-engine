@@ -2,7 +2,7 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { atBranch, candidateRank, findLinkedinProfile, rankCandidates } from './pipeline/contacts';
+import { atBranch, candidateRank, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
 import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
@@ -77,7 +77,13 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
   for (const p of next) {
-    const profile = await findLinkedinProfile(svc, p.name, lead.company, { title: p.title, city: lead.city }).catch(() => null);
+    // A failed search leaves them unchecked, so the next pass tries again.
+    let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
+    try {
+      profile = await findLinkedinProfile(svc, p.name, lead.company, { title: p.title, city: lead.city });
+    } catch {
+      continue;
+    }
     if (profile?.employer === 'elsewhere' || profile?.abroad) {
       await db.delete(people).where(eq(people.id, p.id));
       gone.push(`${p.name}${profile.abroad ? ` (based in ${profile.location || 'another country'})` : profile.title ? ` (now ${profile.title})` : ''}`);
@@ -122,7 +128,13 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
   // The main contact was checked recently (during research, say): only the others needed it.
   if (lead.contactCheckedAt && lead.contactCheckedAt > staleBefore(now)) return 'confirmed';
-  const profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
+  let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
+  try {
+    profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
+  } catch {
+    // Not "not found": left unchecked so the next pass (Today, the lead page, the morning job) tries again.
+    return 'skipped';
+  }
   if (profile?.abroad) {
     await escalate(db, lead.id, 'abroad', now, profile.location);
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
@@ -144,7 +156,14 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     .update(leads)
     .set({ contactLinkedin: url, contactCheckedAt: now, ...(retitle ? { contactTitle: profile.title, contactTier: '', updatedAt: now } : {}) })
     .where(eq(leads.id, lead.id));
-  await db.update(people).set({ linkedin: url, ...(retitle ? { title: profile.title } : {}) }).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, true)));
+  // The People list shows the same link and title (the main contact's row, by flag or by name).
+  const mine = (await db.select().from(people).where(eq(people.leadId, lead.id))).filter((p) => p.isPrimary || sameName(p.name, lead.contactName));
+  for (const p of mine) {
+    await db
+      .update(people)
+      .set({ checkedAt: now, ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
+      .where(eq(people.id, p.id));
+  }
   if (!lead.contactLinkedin) await logActivity(db, lead.id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
   if (!retitle) return 'confirmed';
   await logActivity(db, lead.id, 'contact', `Designation updated from LinkedIn: "${profile.title}" (was "${lead.contactTitle || 'blank'}")`);

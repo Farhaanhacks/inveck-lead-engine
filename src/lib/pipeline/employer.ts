@@ -134,8 +134,14 @@ const INDIA_PLACES = new RegExp(
   'i',
 );
 
-/** Countries and regions abroad, for results with no location line ("Jackson, Michigan, United States"). */
-const ABROAD = /\b(united states|usa|united kingdom|england|germany|deutschland|france|italy|spain|netherlands|belgium|sweden|poland|czech|austria|switzerland|canada|mexico|brazil|australia|new zealand|singapore|malaysia|indonesia|thailand|vietnam|philippines|china|japan|korea|united arab emirates|uae|dubai|abu dhabi|saudi|qatar|oman|kuwait|bahrain|pakistan|bangladesh|sri lanka|nepal|south africa|nigeria|kenya|metropolitan area|bay area)\b/i;
+/**
+ * Places outside India, as LinkedIn writes them: countries (a country named anywhere wins, so
+ * "Lahore, Punjab, Pakistan" is abroad), then US states, US-style metro areas and big foreign cities.
+ */
+const FOREIGN_COUNTRY = /\b(united states|usa|u\.s\.a|united kingdom|england|scotland|wales|ireland|germany|deutschland|france|italy|italia|spain|españa|portugal|netherlands|nederland|belgium|sweden|norway|denmark|finland|poland|czechia|czech republic|austria|switzerland|hungary|romania|greece|turkey|türkiye|russia|ukraine|canada|mexico|brazil|argentina|chile|colombia|peru|australia|new zealand|singapore|malaysia|indonesia|thailand|vietnam|philippines|china|hong kong|taiwan|japan|south korea|korea|united arab emirates|uae|saudi arabia|saudi|qatar|oman|kuwait|bahrain|israel|egypt|morocco|pakistan|bangladesh|sri lanka|nepal|bhutan|myanmar|south africa|nigeria|kenya|ghana|tanzania|uganda|ethiopia)\b/i;
+const FOREIGN_PLACE = /\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|metropolitan area|bay area|ontario|quebec|british columbia|alberta|new south wales|victoria|queensland|london|manchester|paris|berlin|munich|frankfurt|amsterdam|zurich|geneva|dubai|abu dhabi|sharjah|riyadh|jeddah|doha|muscat|kuala lumpur|bangkok|jakarta|manila|tokyo|shanghai|beijing|shenzhen|seoul|sydney|melbourne|toronto|vancouver|montreal|karachi|lahore|islamabad|dhaka|colombo|kathmandu|nairobi|lagos|johannesburg|cape town)\b/i;
+/** Written in another script (Arabic, Chinese, Cyrillic…): a profile from another country's LinkedIn. */
+const OTHER_SCRIPT = /[\u0400-\u04FF\u0590-\u06FF\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]/;
 
 /**
  * Where the person is based: the first part of Google's line under a LinkedIn result ("Pimpri
@@ -149,12 +155,17 @@ export function profileLocation(subtitle: string | undefined, snippet = ''): str
 
 /**
  * Based outside India. INVECK sells to Indian sites, so a "Supply Chain Manager at Rheinmetall" in the
- * Detroit Metropolitan Area is no contact for Rheinmetall Pune. A location must name an Indian place;
- * with no location, an obviously foreign place in the snippet counts.
+ * Detroit Metropolitan Area is no contact for Rheinmetall Pune. Only a place that is clearly abroad
+ * counts: any Indian town, listed or not (Jalandhar, Belagavi, Greater Tiruchirappalli Area), is kept.
  */
 export function basedAbroad(location: string, snippet = ''): boolean {
-  if (location) return !INDIA_PLACES.test(location);
-  return ABROAD.test(snippet) && !INDIA_PLACES.test(snippet);
+  if (location) {
+    if (FOREIGN_COUNTRY.test(location)) return !/\bindia\b/i.test(location);
+    if (INDIA_PLACES.test(location)) return false;
+    return OTHER_SCRIPT.test(location) || FOREIGN_PLACE.test(location);
+  }
+  // No location line: only an obviously foreign place in the snippet, with no Indian one.
+  return (FOREIGN_COUNTRY.test(snippet) || /metropolitan area/i.test(snippet)) && !INDIA_PLACES.test(snippet);
 }
 
 /** Areas that belong to one city: Pimpri Chinchwad and Chakan are Pune, Gurugram and Noida are Delhi NCR. */

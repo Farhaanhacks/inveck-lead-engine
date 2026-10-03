@@ -77,6 +77,7 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
           ) : (
             <span className="text-xs text-muted">
               {run.status === 'done' ? 'Finished' : run.status === 'cancelled' ? 'Stopped' : 'Failed'}
+              {run.status === 'failed' && run.error && <span className="text-critical-ink">: {run.error}</span>}
             </span>
           )}
         </div>

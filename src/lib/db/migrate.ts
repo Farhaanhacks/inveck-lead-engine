@@ -330,6 +330,21 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'abroadRecheckV1')`,
   `UPDATE people SET checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'abroadRecheckV1')`,
   `INSERT INTO settings (key, value) VALUES ('abroadRecheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // The People list gets the main contact's LinkedIn link and title as checked on LinkedIn (they were
+  // only saved on the lead), once.
+  `UPDATE people p SET linkedin = l.contact_linkedin FROM leads l
+     WHERE p.lead_id = l.id AND (p.is_primary OR lower(p.name) = lower(l.contact_name)) AND l.contact_linkedin <> '' AND p.linkedin <> l.contact_linkedin
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'peopleSyncV1')`,
+  `UPDATE people p SET title = l.contact_title FROM leads l
+     WHERE p.lead_id = l.id AND (p.is_primary OR lower(p.name) = lower(l.contact_name)) AND l.contact_title <> '' AND p.title <> l.contact_title
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'peopleSyncV1')`,
+  `INSERT INTO settings (key, value) VALUES ('peopleSyncV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // The first "based abroad" check also dropped people in Indian towns it didn't know (Jalandhar,
+  // Belagavi): every lead that lost someone that way has its contacts found again, once.
+  `UPDATE leads SET refetch_pending = true, refetch_claimed_at = NULL
+     WHERE id IN (SELECT lead_id FROM activities WHERE lead_id IS NOT NULL AND (text LIKE '%based outside India%' OR text LIKE '%based abroad:%'))
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'abroadRefindV1')`,
+  `INSERT INTO settings (key, value) VALUES ('abroadRefindV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

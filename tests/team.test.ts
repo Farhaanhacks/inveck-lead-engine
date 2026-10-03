@@ -858,3 +858,104 @@ describe('Rheinmetall Pune: people based abroad are not contacts', () => {
     expect(ranked[0].location).toContain('Chakan');
   });
 });
+
+describe('review fixes', () => {
+  const ok = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+  const settingsOf = async () => (await import('@/lib/settings')).settingsSchema.parse({});
+
+  it('keeps Indian towns it has never heard of, drops places that are clearly abroad', async () => {
+    const { basedAbroad } = await import('@/lib/pipeline/employer');
+    for (const l of ['Jalandhar', 'Belagavi', 'Greater Tiruchirappalli Area', 'Silvassa', 'Rudrapur, Uttarakhand', 'Mumbai Metropolitan Region', 'Greater Bengaluru Area']) expect([l, basedAbroad(l)]).toEqual([l, false]);
+    for (const l of ['Detroit Metropolitan Area', 'Warren, Arkansas, United States', 'Lahore, Punjab, Pakistan', 'Greater London', 'الإمارات العربية المتحدة']) expect([l, basedAbroad(l)]).toEqual([l, true]);
+  });
+
+  it('a failed LinkedIn lookup is not "not found": nothing is marked checked', async () => {
+    const db = await getDb();
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const { verifyContact } = await import('@/lib/verify-contacts');
+    const { people } = await import('@/lib/db/schema');
+    const fetch = (async () => new Response('quota exceeded', { status: 429 })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: await settingsOf() };
+    await expect(findLinkedinProfile(svc, 'Ravi Shah', 'Acme')).rejects.toThrow(/LinkedIn search failed/);
+    const [l] = await db.insert(leads).values(lead('Acme')).returning();
+    await db.insert(people).values([{ leadId: l.id, name: 'Ravi Shah', title: 'Plant Head', isPrimary: true }, { leadId: l.id, name: 'Anita Rao', title: 'Supply Chain Manager' }]);
+    expect(await verifyContact(db, svc, l)).toBe('skipped');
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.contactCheckedAt).toBeNull();
+    expect((await db.select().from(people).where(eq(people.leadId, l.id))).every((p) => p.checkedAt === null)).toBe(true);
+  });
+
+  it('copies the LinkedIn link and title found for the main contact into the People list', async () => {
+    const db = await getDb();
+    const { verifyContact } = await import('@/lib/verify-contacts');
+    const { companyPeople } = await import('@/lib/pipeline/process-lead');
+    const { people } = await import('@/lib/db/schema');
+    const organic = [{ title: 'Ravi Shah - Head of Supply Chain - Acme', subtitle: 'Pune, Maharashtra, India · Head of Supply Chain · Acme', link: 'https://in.linkedin.com/in/ravi-shah', snippet: '' }];
+    const fetch = (async () => ok({ organic })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: await settingsOf() };
+    const [l] = await db.insert(leads).values(lead('Acme', { contactTitle: 'Manager' })).returning();
+    // The People row isn't flagged as the main contact (an older record): matched by name.
+    await db.insert(people).values({ leadId: l.id, name: 'Ravi Shah', title: 'Manager', linkedin: '' });
+    expect(await verifyContact(db, svc, l, new Date(), { mainOnly: true })).toBe('corrected');
+    const [p] = await db.select().from(people).where(eq(people.leadId, l.id));
+    expect(p).toMatchObject({ linkedin: 'https://in.linkedin.com/in/ravi-shah', title: 'Head of Supply Chain' });
+    // During research too: the main contact's row carries what the lookup found.
+    const rows = companyPeople(
+      [{ id: 'W1', source: 'Web', name: 'Ravi Shah', title: 'Manager', email: '', phone: '', linkedin: '', snippet: '' }],
+      { name: 'Ravi Shah', email: '', phone: '', title: 'Head of Supply Chain', linkedin: 'https://in.linkedin.com/in/ravi-shah' },
+      '', [], null, false,
+    );
+    expect(rows[0]).toMatchObject({ isPrimary: true, title: 'Head of Supply Chain', linkedin: 'https://in.linkedin.com/in/ravi-shah' });
+  });
+
+  it('research drops a pick whose LinkedIn shows another employer and picks the next person', async () => {
+    const { vetPick } = await import('@/lib/pipeline/process-lead');
+    const { EMPTY_CONTACT } = await import('@/lib/pipeline/contacts');
+    const organic = [{ title: 'Sunil Rao - Plant Head', subtitle: 'Pune, Maharashtra, India · Plant Head · Tata Steel', link: 'https://in.linkedin.com/in/sunil-rao', snippet: '' }];
+    const fetch = (async (_u: string, init?: RequestInit) => ok({ organic: String(init?.body).includes('Sunil') ? organic : [] })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: await settingsOf() };
+    const cands: import('@/lib/pipeline/contacts').Candidate[] = [
+      { id: 'W1', source: 'Web' as const, name: 'Sunil Rao', title: 'Plant Head', email: '', phone: '', linkedin: '', snippet: '' },
+      { id: 'W2', source: 'Web' as const, name: 'Meera Iyer', title: 'Supply Chain Manager', email: '', phone: '', linkedin: '', snippet: '' },
+    ];
+    const pick = async (list: typeof cands) => ({ contact: { ...EMPTY_CONTACT, name: list[0]?.name ?? '', title: list[0]?.title ?? '' }, notes: [], error: '', ranked: list });
+    const notes: string[] = [];
+    const { picked, lookupFailed } = await vetPick(svc, { company: 'Acme Forgings', city: 'Pune' }, cands, [], pick, notes);
+    expect(picked.contact.name).toBe('Meera Iyer');
+    expect(lookupFailed).toBe(false);
+    expect(notes.join(' ')).toContain('Sunil Rao left out');
+  });
+
+  it('searches further when the first round only finds companies already on the list, and fails loudly when search is down', async () => {
+    const { findProspects } = await import('@/lib/pipeline/prospects');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const icps = DEFAULT_ICPS.map((i, n) => ({ ...i, id: n + 1, active: true, createdAt: new Date() })) as never;
+    const pages: number[] = [];
+    let plans = 0;
+    const fetch = (async (u: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (String(u).includes('deepseek')) {
+        const system = body.messages[0].content as string;
+        const reply = system.startsWith('You plan Google searches')
+          ? { queries: [{ query: `forging plants Pune round ${++plans}`, segment: 'Manufacturing', lookalike_of: '' }] }
+          : { companies: [{ company: 'New Forge Ltd', website: 'newforge.in', city: 'Pune', segment: 'Manufacturing', lookalike_of: '', why: 'plants' }] };
+        return ok({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(reply) } }] });
+      }
+      pages.push(body.page ?? 1);
+      // Round 1 only finds a company already on the list; round 2 finds a new one.
+      const organic = body.q.includes('round 1') ? [{ title: 'Old Forge', link: 'https://oldforge.in/', snippet: 'forging' }] : [{ title: 'New Forge Ltd', link: 'https://newforge.in/', snippet: 'forging plants in Pune' }];
+      return ok({ organic });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k', deepseek: 'd' } as never, settings: await settingsOf() };
+    const found = await findProspects(svc, icps, [], [{ company: 'Old Forge', website: 'oldforge.in' }], async () => {});
+    expect(found.map((f) => f.company)).toEqual(['New Forge Ltd']);
+    expect(plans).toBeGreaterThanOrEqual(2);
+    expect(pages).toContain(2);
+
+    const down = (async (u: string) =>
+      String(u).includes('deepseek')
+        ? ok({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ queries: [{ query: `q${Math.random()}`, segment: '', lookalike_of: '' }] }) } }] })
+        : new Response('{"message":"Not enough credits"}', { status: 400 })) as unknown as typeof globalThis.fetch;
+    await expect(findProspects({ ...svc, fetch: down }, icps, [], [], async () => {})).rejects.toThrow(/Not enough credits|Search failed/);
+  });
+});

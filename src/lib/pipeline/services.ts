@@ -46,13 +46,13 @@ export async function getJson<T = unknown>(svc: Services, url: string, init: Req
 
 export type SerperResult = { title?: string; link?: string; snippet?: string; subtitle?: string };
 
-/** Google search through Serper. */
-export async function googleSearch(svc: Services, q: string): Promise<SerperResult[]> {
+/** Google search through Serper; `page` 2, 3… gives the next ten results. */
+export async function googleSearch(svc: Services, q: string, page = 1): Promise<SerperResult[]> {
   if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set');
   const data = await getJson<{ organic?: SerperResult[] }>(svc, 'https://google.serper.dev/search', {
     method: 'POST',
     headers: { 'X-API-KEY': svc.keys.serper, 'content-type': 'application/json' },
-    body: JSON.stringify({ q, gl: 'in', num: 10 }),
+    body: JSON.stringify(page > 1 ? { q, gl: 'in', num: 10, page } : { q, gl: 'in', num: 10 }),
   });
   return Array.isArray(data.organic) ? data.organic : [];
 }

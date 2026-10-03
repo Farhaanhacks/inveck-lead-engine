@@ -336,11 +336,13 @@ export async function findLinkedinProfile(
     city && `site:linkedin.com/in "${firstLast || full}" ${short || firm} ${city}`,
   ].filter((q, i, all): q is string => !!q && all.indexOf(q) === i);
 
+  let failure: unknown = null;
   for (const q of queries) {
     let results;
     try {
       results = toLinkedInPeople(await googleSearch(svc, q), company);
-    } catch {
+    } catch (e) {
+      failure = e;
       continue;
     }
     const exact = results.filter((p) => sameName(p.name, person));
@@ -350,6 +352,8 @@ export async function findLinkedinProfile(
       exact.find((p) => p.employer === 'elsewhere');
     if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '' };
   }
+  // A search that failed (quota, network) isn't "no profile": the caller checks again later.
+  if (failure) throw new Error('LinkedIn search failed: ' + errorMessage(failure));
   return null;
 }
 

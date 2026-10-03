@@ -9,7 +9,7 @@ import { contactPriority, icpFor } from '../tiers';
 import { currentEmployer } from './employer';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
-import { domainOf, normalizeWebsite, normCompany, rootDomain, splitName } from './text';
+import { domainOf, errorMessage, normalizeWebsite, normCompany, rootDomain, splitName } from './text';
 import { findOfficialWebsite } from './website';
 import { findSignals } from './signals';
 
@@ -171,24 +171,13 @@ export async function processLead(
       (currentEmployer(c, lead.company) !== 'elsewhere' && !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
   );
   const published = websiteEmails(siteText, domain);
-  const picked = await pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, candidates);
+  const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
+  const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes);
+  const picked = vetted.picked;
+  const lookupFailed = vetted.lookupFailed;
   notes.unshift(...picked.notes);
   if (picked.error) notes.push('Contact step error: ' + picked.error);
   const contact = picked.contact;
-  // Titles from email records and old pages go stale: unless the contact came from the LinkedIn search
-  // itself, look them up on LinkedIn, and let their current LinkedIn title win.
-  const fromLinkedin = linkedin.people.some((p) => sameName(p.name, contact.name) && p.title);
-  if (contact.name && !fromLinkedin) {
-    const profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city });
-    if (profile) {
-      if (!contact.linkedin) contact.linkedin = profile.url;
-      notes.push(`LinkedIn profile found by name: ${profile.url}`);
-      if (profile.title && profile.title.toLowerCase() !== contact.title.toLowerCase()) {
-        notes.push(`Title taken from LinkedIn: "${profile.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
-        contact.title = profile.title;
-      }
-    }
-  }
 
   const email = contact.name || contact.email
     ? await findEmail(svc, contact, { company: lead.company, domain, pattern: people.pattern, websiteEmails: published, webEmails: [...webEmails, ...leaders.emails] })
@@ -230,8 +219,9 @@ export async function processLead(
   if (contact.email) update.contactEmail = contact.email;
   if (contact.phone) update.contactPhone = contact.phone;
   if (contact.linkedin) update.contactLinkedin = contact.linkedin;
-  // Checked against LinkedIn during research (found there, or looked up by name).
-  if (contact.name) update.contactCheckedAt = new Date();
+  // Checked against LinkedIn during research (found there, or looked up by name). A lookup that
+  // failed leaves it unchecked, so the next contact check tries again.
+  if (contact.name && !lookupFailed) update.contactCheckedAt = new Date();
 
   // Contacts reset on a lead already in outreach: new people, same stage, no new first email.
   if (opts.contactsOnly && !BEFORE_OUTREACH.includes(lead.status)) {
@@ -254,6 +244,59 @@ export async function processLead(
   };
 }
 
+type Picked = Awaited<ReturnType<typeof pickContact>>;
+
+/**
+ * Titles from email records and old pages go stale: unless the chosen contact came from the LinkedIn
+ * search itself, they are looked up on LinkedIn by name and their current LinkedIn title wins. When
+ * their profile shows they work somewhere else now, or are based abroad, they are dropped and the next
+ * best is picked (up to three times). Someone the sales team named is never dropped. A lookup that
+ * fails is reported as such (`lookupFailed`), so the contact is checked again later.
+ */
+export async function vetPick(
+  svc: Services,
+  lead: { company: string; city: string },
+  candidates: Candidate[],
+  linkedinPeople: { name: string; title: string }[],
+  pick: (list: Candidate[]) => Promise<Picked>,
+  notes: string[],
+): Promise<{ picked: Picked; lookupFailed: boolean }> {
+  let list = candidates;
+  let picked = await pick(list);
+  for (let attempt = 0; ; attempt++) {
+    const contact = picked.contact;
+    const fromLinkedin = linkedinPeople.some((p) => sameName(p.name, contact.name) && p.title);
+    if (!contact.name || fromLinkedin) return { picked, lookupFailed: false };
+    let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
+    try {
+      profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city });
+    } catch (e) {
+      notes.push(`LinkedIn lookup for ${contact.name} failed, will retry: ${errorMessage(e)}`);
+      return { picked, lookupFailed: true };
+    }
+    const chosen = list.find((c) => sameName(c.name, contact.name));
+    if (profile && (profile.employer === 'elsewhere' || profile.abroad) && chosen?.source !== 'Sales team' && attempt < 3) {
+      notes.push(
+        profile.abroad
+          ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
+          : `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`,
+      );
+      list = list.filter((c) => !sameName(c.name, contact.name));
+      picked = await pick(list);
+      continue;
+    }
+    if (profile) {
+      if (!contact.linkedin) contact.linkedin = profile.url;
+      notes.push(`LinkedIn profile found by name: ${profile.url}`);
+      if (profile.title && profile.title.toLowerCase() !== contact.title.toLowerCase()) {
+        notes.push(`Title taken from LinkedIn: "${profile.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
+        contact.title = profile.title;
+      }
+    }
+    return { picked, lookupFailed: false };
+  }
+}
+
 const SOURCE_NAMES: Record<Candidate['source'], string> = {
   'Sales team': 'Sales team',
   LinkedIn: 'LinkedIn',
@@ -267,7 +310,7 @@ const SOURCE_NAMES: Record<Candidate['source'], string> = {
  */
 export function companyPeople(
   ranked: Candidate[],
-  main: { name: string; email: string; phone: string },
+  main: { name: string; email: string; phone: string; title?: string; linkedin?: string },
   mainEmailStatus: string,
   published: string[],
   format: EmailFormatUsed | null,
@@ -301,11 +344,12 @@ export function companyPeople(
     }
     out.push({
       name: c.name,
-      title: c.title,
+      // The main contact's title and LinkedIn as checked on LinkedIn during research.
+      title: isPrimary ? main.title || c.title : c.title,
       email,
       emailStatus: email ? emailStatus : '',
       phone: isPrimary ? main.phone || c.phone : c.phone,
-      linkedin: c.linkedin,
+      linkedin: isPrimary ? main.linkedin || c.linkedin : c.linkedin,
       source: SOURCE_NAMES[c.source],
       isPrimary,
     });

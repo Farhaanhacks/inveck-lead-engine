@@ -525,3 +525,15 @@ describe('new prospects delegated by the admin', () => {
     expect((await db.select().from(leads)).filter((l) => c.includes(l.id)).every((l) => l.ownerId === null)).toBe(true);
   });
 });
+
+describe('a prospect search that fails', () => {
+  it('ends the run as failed with the reason, not as finished', async () => {
+    const { run } = await startRun(db, { findProspects: true, trigger: 'test' });
+    // A wrong Serper key: every search is refused.
+    const svc = { ...services(), keys: { ...services().keys, serper: 'wrong-key' } };
+    expect(await executeRun(db, run.id, svc, Number.POSITIVE_INFINITY)).toBe('done');
+    const [finished] = await db.select().from(runs).where(eq(runs.id, run.id));
+    expect(finished.status).toBe('failed');
+    expect(finished.error).toMatch(/^Prospect search failed: /);
+  });
+});
