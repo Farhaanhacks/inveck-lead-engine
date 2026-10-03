@@ -378,7 +378,7 @@ export function candidateRank(c: { title: string; snippet?: string; location?: s
   const c2 = { ...c, location: c.location ?? '' };
   // At this site first; someone with a company-wide role based elsewhere in India after everyone else.
   const elsewhere = siteOf(c2.location, city) === 'elsewhere';
-  return contactPriority(c.title, icp) - (atBranch(c2, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.phone ? 0.2 : 0) - (c.email ? 0.1 : 0);
+  return contactPriority(c.title, icp) - (atBranch(c2, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.email ? 0.1 : 0);
 }
 
 /**
@@ -443,13 +443,13 @@ export function buildCandidates(
       name: [e.first_name, e.last_name].filter(Boolean).join(' '),
       title: e.position || '',
       email: e.value || '',
-      phone: e.phone_number || '',
+      // Phone numbers aren't collected: the team finds their own.
+      phone: '',
       linkedin: e.linkedin || '',
     };
     const twin = candidates.find((c) => (c.source === 'LinkedIn' || c.source === 'Web') && person.name && sameName(c.name, person.name));
     if (twin) {
       twin.email = person.email;
-      twin.phone = person.phone;
       if (!twin.title) twin.title = person.title;
     } else {
       candidates.push({ id: `H${i + 1}`, source: 'Email database', snippet: '', ...person });

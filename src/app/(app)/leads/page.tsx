@@ -134,7 +134,6 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                 <th className="px-2 py-2 font-medium">Owner</th>
                 <th className="px-2 py-2 font-medium">Decision-maker</th>
                 <th className="px-2 py-2 font-medium">Email</th>
-                <th className="px-2 py-2 font-medium">Phone</th>
                 <th className="px-2 py-2 font-medium">LinkedIn</th>
                 <th className="px-4 py-2 text-right font-medium">Score</th>
               </tr>
@@ -178,17 +177,6 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                       <span className="text-muted">—</span>
                     )}
                     {l.emailStatus && <div className="text-xs text-muted">{l.emailStatus}</div>}
-                  </td>
-                  <td className="px-2 py-3 whitespace-nowrap">
-                    {l.contactPhone && (
-                      <a href={`tel:${l.contactPhone.replace(/[^+\d]/g, '')}`} className="block hover:underline">{l.contactPhone}</a>
-                    )}
-                    {l.companyPhone && (
-                      <a href={`tel:${l.companyPhone.replace(/[^+\d]/g, '')}`} className={`block hover:underline ${l.contactPhone ? 'text-xs text-muted' : ''}`}>
-                        {l.companyPhone} <span className="text-xs text-muted">(HQ)</span>
-                      </a>
-                    )}
-                    {!l.contactPhone && !l.companyPhone && <span className="text-muted">—</span>}
                   </td>
                   <td className="px-2 py-3 whitespace-nowrap">
                     {l.contactLinkedin ? (

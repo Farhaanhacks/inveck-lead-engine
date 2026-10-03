@@ -30,7 +30,7 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   if (withEmail) filters.push(ne(people.email, ''));
   const where = filters.length ? and(...filters) : undefined;
 
-  const [rows, [{ total, emails, phones }]] = await Promise.all([
+  const [rows, [{ total, emails }]] = await Promise.all([
     db
       .select({ p: people, company: leads.company, leadId: leads.id, status: leads.status })
       .from(people)
@@ -43,7 +43,6 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
       .select({
         total: sql<number>`count(*)::int`,
         emails: sql<number>`(count(*) filter (where ${people.email} <> ''))::int`,
-        phones: sql<number>`(count(*) filter (where ${people.phone} <> ''))::int`,
       })
       .from(people)
       .innerJoin(leads, eq(people.leadId, leads.id))
@@ -67,7 +66,7 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
           <input type="checkbox" name="email" value="1" defaultChecked={withEmail} /> With email only
         </label>
         <span className="ml-auto text-xs text-muted tabular-nums">
-          {total} people · {emails} with email · {phones} with phone
+          {total} people · {emails} with email
         </span>
       </AutoFilterForm>
 
@@ -79,7 +78,6 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
                 <th className="px-5 py-2 font-medium">Name</th>
                 <th className="px-2 py-2 font-medium">Company</th>
                 <th className="px-2 py-2 font-medium">Email</th>
-                <th className="px-2 py-2 font-medium">Phone</th>
                 <th className="px-2 py-2 font-medium">LinkedIn</th>
                 <th className="px-5 py-2 font-medium">Found via</th>
               </tr>
@@ -101,7 +99,6 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
                     {p.email ? <a href={`mailto:${p.email}`} className="hover:underline">{p.email}</a> : <span className="text-muted">—</span>}
                     {p.emailStatus && <div className="max-w-[15rem] truncate text-xs text-muted" title={p.emailStatus}>{p.emailStatus}</div>}
                   </td>
-                  <td className="px-2 py-2.5 whitespace-nowrap">{p.phone || <span className="text-muted">—</span>}</td>
                   <td className="px-2 py-2.5">
                     {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
                   </td>

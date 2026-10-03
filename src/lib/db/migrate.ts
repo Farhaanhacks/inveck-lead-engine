@@ -390,6 +390,19 @@ export const SCHEMA_STATEMENTS = [
   // Steel is not Tata Motors). Once: every main contact is checked on LinkedIn again.
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'strictBrandV1')`,
   `INSERT INTO settings (key, value) VALUES ('strictBrandV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // Phone numbers aren't collected any more (the team finds their own). Once: numbers the app fetched
+  // itself are cleared; numbers the team typed in (logged as added by the team, or a point of contact
+  // they edited, or a company added by hand) stay.
+  `UPDATE leads SET company_phone = '' WHERE company_phone <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'phonesOffV1')`,
+  `UPDATE leads SET contact_phone = ''
+     WHERE contact_phone <> '' AND source NOT IN ('Added by hand', 'Inbound lead')
+       AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.lead_id = leads.id AND (a.text LIKE '%added by the team%' OR a.text LIKE 'Point of contact updated%' OR a.text LIKE 'Main contact changed%'))
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'phonesOffV1')`,
+  `UPDATE people SET phone = ''
+     WHERE phone <> '' AND source NOT IN ('Added by the team', 'Sales team')
+       AND NOT (is_primary AND EXISTS (SELECT 1 FROM leads l WHERE l.id = people.lead_id AND l.contact_phone <> '' AND l.contact_phone = people.phone))
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'phonesOffV1')`,
+  `INSERT INTO settings (key, value) VALUES ('phonesOffV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // A company whose steps were all skipped was counted as done for the day. Once: such records are
   // removed (a company is done only when something was really done for it that day).
   `DELETE FROM company_days cd

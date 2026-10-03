@@ -70,10 +70,9 @@ function Counter({ label, done, goal }: { label: string; done: number; goal?: nu
 function Reach({ lead }: { lead: Lead }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-      {lead.contactPhone ? (
+      {/* Only a number the team found and saved: phone numbers aren't collected automatically. */}
+      {lead.contactPhone && (
         <a href={`tel:${lead.contactPhone.replace(/[^\d+]/g, '')}`} className="font-medium text-accent hover:underline">{lead.contactPhone}</a>
-      ) : (
-        <span className="text-muted">No number saved yet</span>
       )}
       {lead.contactEmail ? <span className="text-ink-2">{lead.contactEmail}</span> : <span className="text-muted">No email yet</span>}
       {lead.contactLinkedin && <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn profile</a>}
@@ -276,7 +275,7 @@ function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
               <label htmlFor={`switch-${lead.id}`} className="label">Or switch to someone else found at {lead.company}</label>
               <select id={`switch-${lead.id}`} name="personId" className="field">
                 {others.map((p) => (
-                  <option key={p.id} value={p.id}>{[p.name, p.title, p.phone || p.email].filter(Boolean).join(' · ')}</option>
+                  <option key={p.id} value={p.id}>{[p.name, p.title, p.email].filter(Boolean).join(' · ')}</option>
                 ))}
               </select>
             </div>
@@ -373,10 +372,9 @@ function CompanyCard({
                     <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                       <span className="font-medium text-ink">{p.name}</span>
                       {p.title && <span className="text-muted">{p.title}</span>}
-                      {p.phone && <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{p.phone}</a>}
                       {p.email && <a href={`mailto:${p.email}`} className="text-ink-2 hover:underline">{p.email}</a>}
                       {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
-                      {!p.phone && !p.email && !p.linkedin && <span className="text-muted">no details yet</span>}
+                      {!p.email && !p.linkedin && <span className="text-muted">no details yet</span>}
                       {!readOnly && (
                         <form action={makePrimaryAction}>
                           <input type="hidden" name="id" value={lead.id} />
@@ -456,14 +454,12 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     unattendedInbound(db, viewId),
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
   ]);
-  // Filters: a search by company or person, and only leads with a phone number.
+  // Filter: a search by company or person.
   const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
   const q = typeof sp.q === 'string' ? sp.q.trim() : '';
-  const withPhone = sp.phone === '1';
   const needle = q.toLowerCase();
   const matches = (i: TodayTask) =>
-    (!needle || [i.lead.company, i.lead.contactName, i.lead.city].some((v) => v.toLowerCase().includes(needle))) &&
-    (!withPhone || !!i.lead.contactPhone);
+    !needle || [i.lead.company, i.lead.contactName, i.lead.city].some((v) => v.toLowerCase().includes(needle));
   const filtered = items.filter(matches);
   // One entry per company, with everything due for it.
   const groupsById = new Map<number, CompanyGroup>();
@@ -488,7 +484,6 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       ...(me.role === 'admin' && viewId ? { user: String(viewId) } : {}),
       ...(tab !== 'all' && { view: tab }),
       ...(q && { q }),
-      ...(withPhone && { phone: '1' }),
       ...next,
     });
     for (const [k, v] of [...p]) if (!v || (k === 'view' && v === 'all')) p.delete(k);
@@ -614,11 +609,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           {tab !== 'all' && <input type="hidden" name="view" value={tab} />}
           <label htmlFor="today-q" className="sr-only">Search company or person</label>
           <input id="today-q" type="search" name="q" defaultValue={q} placeholder="Search company or person" className="field h-9 max-w-xs py-1.5" />
-          <label className="flex items-center gap-1.5 text-ink-2">
-            <input type="checkbox" name="phone" value="1" defaultChecked={withPhone} /> Has a phone number
-          </label>
-          {(q || withPhone) && (
-            <Link href={link({ q: '', phone: '' })} className="text-xs text-muted hover:text-ink">Clear filters</Link>
+          {q && (
+            <Link href={link({ q: '' })} className="text-xs text-muted hover:text-ink">Clear search</Link>
           )}
         </AutoFilterForm>
       </div>
@@ -689,7 +681,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
       {items.length > 0 && !filtered.length && (
         <div className="card p-8 text-center text-sm text-muted">
-          Nothing matches these filters. <Link href={link({ q: '', phone: '' })} className="text-accent hover:underline">Clear filters</Link>
+          Nothing matches this search. <Link href={link({ q: '' })} className="text-accent hover:underline">Clear search</Link>
         </div>
       )}
       {items.length > 0 && filtered.length > 0 && tab !== 'all' && tab !== 'done' && !shownGroups.length && (

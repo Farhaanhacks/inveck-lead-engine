@@ -115,12 +115,6 @@ describe('email formats and phones', () => {
     expect(inferPattern(found)).toBe('{f}.{last}');
     expect(inferPattern(['ravi.shah@x.com', 'neha.kapoor@x.com'])).toBe('{first}.{last}');
   });
-  it('reads the office phone off a website', async () => {
-    const { websitePhone } = await import('@/lib/pipeline/research');
-    expect(websitePhone('Corporate office, Pune. Tel: +91 20 6608 5000. Founded 1995.')).toBe('+91 20 6608 5000');
-    expect(websitePhone('Call us 020-66085000 today')).toBe('020-66085000');
-    expect(websitePhone('Annual report 2019-2020 and 2020-2021')).toBe('');
-  });
 });
 
 describe('readDraft', () => {

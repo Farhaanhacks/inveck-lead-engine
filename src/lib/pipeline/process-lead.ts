@@ -3,7 +3,7 @@ import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, findLinkedinProf
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
-import { researchLead, websiteEmails, websitePhone, type Research } from './research';
+import { researchLead, websiteEmails, type Research } from './research';
 import { scoreLead } from './scoring';
 import { contactPriority, icpFor } from '../tiers';
 import { currentEmployer } from './employer';
@@ -111,7 +111,6 @@ export async function processLead(
   const pages = await crawlSite(svc, site);
   if (pages.length) await log(`${lead.company}: read ${pages.length} more page${pages.length === 1 ? '' : 's'} (${pages.map((p) => new URL(p.url).pathname).join(', ')})`);
   const siteText = [site.text, ...pages.map((p) => `## ${p.url}\n${p.text}`)].join('\n\n');
-  const contactPage = pages.find((p) => /contact|reach|enquir/i.test(new URL(p.url).pathname));
 
   const reused = opts.contactsOnly && lead.researchSummary ? storedResearch(lead) : null;
   const { research, error } = reused ? { research: reused, error: '' } : await researchLead(svc, input, icp, siteText);
@@ -119,10 +118,8 @@ export async function processLead(
     await log(`${lead.company}: research failed: ${error}`, 'error');
     return { ...corrected, status: 'Error', lastError: error || 'Research failed' };
   }
-  const companyPhone = (contactPage && websitePhone(contactPage.text)) || websitePhone(siteText);
   const base: LeadUpdate = {
     ...corrected,
-    ...(companyPhone ? { companyPhone } : {}),
     segment: icp.segment,
     researchSummary: research.text,
     qualified: research.qualified,
@@ -368,7 +365,8 @@ export function companyPeople(
       title: isPrimary ? main.title || c.title : c.title,
       email,
       emailStatus: email ? emailStatus : '',
-      phone: isPrimary ? main.phone || c.phone : c.phone,
+      // Only a number the sales team gave (phone numbers aren't collected automatically).
+      phone: isPrimary ? main.phone : c.source === 'Sales team' ? c.phone : '',
       linkedin: isPrimary ? main.linkedin || c.linkedin : c.linkedin,
       location: c.location ?? '',
       source: SOURCE_NAMES[c.source],

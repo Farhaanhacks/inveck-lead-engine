@@ -458,9 +458,9 @@ describe('P2 flow', () => {
   const person = (id: number, name: string, title: string, extra: Partial<import('@/lib/db/schema').Person> = {}) =>
     ({ id, leadId: 1, name, title, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, checkedAt: null as Date | null, location: '', createdAt: new Date(), ...extra });
 
-  it('picks the next person by INVECK priority, never HR or someone already tried, preferring a number', async () => {
+  it('picks the next person by INVECK priority, never HR or someone already tried, preferring an email', async () => {
     const { nextContact } = await import('@/lib/escalate');
-    const list = [person(1, 'Hr Head', 'Head HR'), person(2, 'Store', 'Store Manager'), person(3, 'Inv A', 'Inventory Manager'), person(4, 'Inv B', 'Inventory Manager', { phone: '98' })];
+    const list = [person(1, 'Hr Head', 'Head HR'), person(2, 'Store', 'Store Manager'), person(3, 'Inv A', 'Inventory Manager'), person(4, 'Inv B', 'Inventory Manager', { email: 'invb@x.com' })];
     expect(nextContact(list, icp)?.person.name).toBe('Inv B');
     expect(nextContact(list.map((p) => (p.title === 'Inventory Manager' ? { ...p, passedAt: new Date() } : p)), icp)?.person.name).toBe('Store');
     expect(nextContact([person(1, 'Hr', 'HR Manager')], icp)).toBeNull();
@@ -1164,5 +1164,20 @@ describe('Ultra Drugs: a shared brand word is not the same company', () => {
     expect(sameFirm('Allcargo Global', 'Allcargo Logistics')).toBe(true);
     expect(sameFirm('Minda Corporation', 'Minda Industries')).toBe(true);
     expect(contactPriority('Asst.General Manager SAP/IT', DEFAULT_ICPS[0])).toBe(99);
+  });
+});
+
+describe('phone numbers are not collected', () => {
+  it('keeps only a number the sales team gave; found numbers are dropped', async () => {
+    const { companyPeople } = await import('@/lib/pipeline/process-lead');
+    const rows = companyPeople(
+      [
+        { id: 'H1', source: 'Email database', name: 'Ravi Shah', title: 'Plant Head', email: 'ravi@x.com', phone: '+91 98765 43210', linkedin: '', snippet: '' },
+        { id: 'M', source: 'Sales team', name: 'Neha Rao', title: 'Supply Chain Manager', email: '', phone: '+91 90000 00000', linkedin: '', snippet: '' },
+      ],
+      { name: 'Ravi Shah', email: 'ravi@x.com', phone: '', title: 'Plant Head' },
+      'valid', [], null, false,
+    );
+    expect(rows.map((r) => [r.name, r.phone])).toEqual([['Ravi Shah', ''], ['Neha Rao', '+91 90000 00000']]);
   });
 });

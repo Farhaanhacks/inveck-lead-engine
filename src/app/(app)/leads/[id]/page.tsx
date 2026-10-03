@@ -127,7 +127,7 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
           <h2 className="text-sm font-semibold">People to contact at {company}</h2>
           <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people who work there now.</p>
         </div>
-        <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.phone).length} with a number · {list.filter((p) => p.email).length} with email</span>
+        <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.email).length} with email</span>
       </div>
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
@@ -135,7 +135,6 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
             <tr className="text-left text-xs text-muted">
               <th className="px-5 py-2 font-medium">Name</th>
               <th className="px-2 py-2 font-medium">Email</th>
-              <th className="px-2 py-2 font-medium">Phone</th>
               <th className="px-2 py-2 font-medium">LinkedIn</th>
               <th className="px-2 py-2 font-medium">Found via</th>
               <th className="px-5 py-2"><span className="sr-only">Action</span></th>
@@ -156,7 +155,6 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
                   {p.email ? <a href={`mailto:${p.email}`} className="hover:underline">{p.email}</a> : <span className="text-muted">—</span>}
                   {p.emailStatus && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.emailStatus}>{p.emailStatus}</div>}
                 </td>
-                <td className="px-2 py-2.5 whitespace-nowrap">{p.phone || <span className="text-muted">—</span>}</td>
                 <td className="px-2 py-2.5">
                   {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
                 </td>
@@ -383,8 +381,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
                   ['contactName', 'Name', lead.contactName],
                   ['contactTitle', 'Title', lead.contactTitle],
                   ['contactEmail', 'Email', lead.contactEmail],
-                  ['contactPhone', 'Direct phone', lead.contactPhone],
-                  ['companyPhone', 'Office phone (HQ)', lead.companyPhone],
+                  ['contactPhone', 'Phone (if the team found one)', lead.contactPhone],
                   ['contactLinkedin', 'LinkedIn URL', lead.contactLinkedin],
                 ] as const
               ).map(([name, label, value]) => (
