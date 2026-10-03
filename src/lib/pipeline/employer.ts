@@ -90,6 +90,11 @@ export function sameFirm(text: string, company: string): boolean {
   if (b.every((w) => a.includes(w))) return true;
   const site = firmSiteName(company);
   if (!site) return false;
+  // A shorter form of the company's own name that keeps its brand, when the brand is also its website
+  // ("Micron Semiconductor" for Micron Semiconductor Technology India at micron.com). Never a name
+  // with a word the company's name doesn't have.
+  const brand = brandOf(company);
+  if (brand && brand === site && a[0] === brand && a.length >= 2 && a.every((w) => b.includes(w) || VAGUE.has(w))) return true;
   const named = a.filter((w) => !['com', 'in', 'co', 'net', 'org'].includes(w));
   return squash(named) === site || squash(named.filter((w) => !VAGUE.has(w))) === site;
 }
@@ -199,6 +204,11 @@ const INDIA_PLACES = new RegExp(
   'i',
 );
 
+/** A place rather than a job ("Ahmedabad, Gujarat, India"): names an Indian place and no role word. */
+export function isPlace(text: string): boolean {
+  return INDIA_PLACES.test(text) && !ROLE.test(text);
+}
+
 /**
  * Places outside India, as LinkedIn writes them: countries (a country named anywhere wins, so
  * "Lahore, Punjab, Pakistan" is abroad), then US states, US-style metro areas and big foreign cities.
@@ -251,7 +261,9 @@ const METRO: Record<string, RegExp> = {
 export function inCity(text: string, city: string): boolean {
   const place = city.split(',')[0].trim().toLowerCase();
   if (place.length < 3) return false;
-  const metro = METRO[place] ?? (place === 'new delhi' || place === 'gurgaon' || place === 'gurugram' || place === 'noida' ? METRO.delhi : undefined);
+  // A site in a metro's industrial belt (Sanand, Chakan, Hosur) counts its city's people too: staff at
+  // the Sanand plant write "Ahmedabad, Gujarat" on LinkedIn.
+  const metro = METRO[place] ?? Object.values(METRO).find((m) => m.test(place));
   return metro ? metro.test(text) : text.toLowerCase().includes(place);
 }
 

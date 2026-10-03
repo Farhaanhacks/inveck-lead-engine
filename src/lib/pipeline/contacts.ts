@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch } from './services';
-import { brandOf, firmSiteName, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
+import { brandOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -102,13 +102,15 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       const job = company ? subtitleJob(r.subtitle) : null;
       if (job) {
         if (!sameFirm(job.company, company)) return { ...person, title: roleOnly(job.role), employer: 'elsewhere' as const };
-        if (!person.title) person.title = job.role;
+        // The profile's position here is the job itself; the headline may be a phrase around it
+        // ("Working as Director Operation ...").
+        if (!person.title || JOB_WORD.test(job.role)) person.title = job.role;
       }
       // The snippet often holds the job and its dates ("Group Plant Head. CIE Automotive India Ltd. Mar
       // 2025 - Present"): a current job here gives the role; jobs here that have all ended mean they left.
       const here = company ? snippetRoles(person.snippet).filter((j) => sameFirm(j.company, company)) : [];
       const now = here.find((j) => j.current);
-      if (now && (!person.title || !JOB_WORD.test(person.title) || sameFirm(person.title, company))) person.title = now.role;
+      if (now && !isPlace(now.role) && (!person.title || !JOB_WORD.test(person.title) || sameFirm(person.title, company))) person.title = now.role;
       // Keep just the role: "Plant Head at TRACK COMPONENTS ..." is saved as "Plant Head".
       person.title = roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, '').trim();
       let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
@@ -130,7 +132,10 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
 
 /** The company as people write it on LinkedIn: its full name, and its short name only where its own website uses it. */
 function firmQuery(company: string): string {
-  const full = searchName(company) || company;
+  // "India" at the end of a subsidiary's name is rarely written by its staff ("Micron Semiconductor
+  // Technology India" people write "Micron Semiconductor Technology" or "Micron Technology").
+  const legal = searchName(company) || company;
+  const full = brandOf(company) && /\s+india$/i.test(legal) ? legal.replace(/\s+india$/i, '') : legal;
   // The first word alone only when the company's own website shows its staff use a shorter name
   // ("Lumax" for Lumax Auto Technologies at lumaxworld.in); never otherwise ("Ultra" finds every Ultra).
   const brand = brandOf(company);

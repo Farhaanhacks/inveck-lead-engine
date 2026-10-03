@@ -1276,3 +1276,42 @@ describe('only confirmed contacts go out', () => {
     expect(owned).toEqual(['Confirmed Co', 'No Contact Co']);
   });
 });
+
+describe('Micron Sanand: staff of a site in a metro belt, under the brand they write', () => {
+  it('keeps Ahmedabad-based staff for a Sanand site, reads the short name and the current position', async () => {
+    const { searchLinkedIn, linkedinQuery, confirmedAtSite, atOtherSite } = await import('@/lib/pipeline/contacts');
+    const { registerFirmWebsite, sameFirm, inCity } = await import('@/lib/pipeline/employer');
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const { settingsSchema } = await import('@/lib/settings');
+    const company = 'Micron Semiconductor Technology India';
+    registerFirmWebsite(company, 'micron.com');
+    // Sanand is in Ahmedabad's industrial belt; Bengaluru and Hyderabad are other sites.
+    expect(inCity('Ahmedabad, Gujarat, India', 'Sanand')).toBe(true);
+    expect(confirmedAtSite({ location: 'Greater Ahmedabad Area' }, 'Sanand')).toBe(true);
+    expect(atOtherSite({ title: '', location: 'Hyderabad, Telangana, India' }, 'Sanand')).toBe(true);
+    expect(inCity('Pimpri Chinchwad, Maharashtra, India', 'Chakan')).toBe(true);
+    // Short forms of the company's own name that keep its brand (= its website); never another name.
+    expect(sameFirm('Micron Technology', company)).toBe(true);
+    expect(sameFirm('MICRON SEMICONDUCTOR LIMITED', company)).toBe(true);
+    expect(sameFirm('Micron Steel', company)).toBe(false);
+    // Staff don't write "India": the search leaves it out.
+    expect(linkedinQuery(company, 'Sanand', { ...DEFAULT_ICPS[0], id: 1 } as never)).toContain('"Micron Semiconductor Technology" (');
+
+    // Exactly what Google returned.
+    const organic = [
+      { title: 'Jitender Pratap Singh-JP - Working as Director Operation ...', subtitle: 'Sanand, Gujarat, India · Director Operations Management · MICRON SEMICONDUCTOR LIMITED', link: 'https://in.linkedin.com/in/jitender-pratap-singh-jp-9567a8382', snippet: '' },
+      { title: 'Himesh Sarvaiya - Manufacturing Operations', subtitle: 'Ahmedabad, Gujarat, India · Associate - Manufacturing Operations · Micron Technology', link: 'https://in.linkedin.com/in/himesh-sarvaiya-62366b258', snippet: 'Experience: Micron Technology · Himesh Sarvaiya. Ahmedabad, Gujarat, India. Micron Technology May 2025 - Present 1 year 5 months Sanand, Gujarat. Contact ...' },
+      { title: 'Hemanth kumar vemana - Director Procurement-Micron ...', subtitle: 'Hyderabad, Telangana, India · Director Global Procurement · Micron Technology', link: 'https://in.linkedin.com/in/hemanth-kumar-vemana-b3070412', snippet: '' },
+    ];
+    const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Micron Semiconductor Technology"', company);
+    const byName = Object.fromEntries(people.map((p) => [p.name, p]));
+    expect(byName['Jitender Pratap Singh-JP']).toMatchObject({ title: 'Director Operations Management', location: 'Sanand, Gujarat, India' });
+    expect(contactPriority(byName['Jitender Pratap Singh-JP'].title, DEFAULT_ICPS[0] as never)).toBeLessThan(99);
+    // A dated line in the snippet never turns the title into a place.
+    expect(byName['Himesh Sarvaiya'].title).toBe('Associate - Manufacturing Operations');
+    expect(atOtherSite(byName['Hemanth kumar vemana'], 'Sanand')).toBe(true);
+  });
+});
