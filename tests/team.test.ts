@@ -1030,3 +1030,28 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect((await db.select().from(people).where(eq(people.leadId, l.id))).map((p) => p.name)).toEqual(['Rohan Katara']);
   });
 });
+
+describe('a pick whose real LinkedIn role is not wanted', () => {
+  it('drops "QA Analyst" found on LinkedIn and picks the next person; nobody after three wrong picks', async () => {
+    const { vetPick } = await import('@/lib/pipeline/process-lead');
+    const { EMPTY_CONTACT } = await import('@/lib/pipeline/contacts');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const { settingsSchema } = await import('@/lib/settings');
+    const profile = (name: string, role: string) => [{ title: `${name} - ${role}`, subtitle: `Gurugram, Haryana, India · ${role} · Metalman Auto`, link: `https://in.linkedin.com/in/${name.replace(' ', '-').toLowerCase()}`, snippet: '' }];
+    const roles: Record<string, string> = { 'Ashish Sharma': 'QA Analyst 1', 'Neha Gupta': 'Plant Head' };
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      const name = Object.keys(roles).find((n) => String(init?.body).includes(n));
+      return new Response(JSON.stringify({ organic: name ? profile(name, roles[name]) : [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const cands: import('@/lib/pipeline/contacts').Candidate[] = [
+      { id: 'H1', source: 'Email database', name: 'Ashish Sharma', title: 'Plant Head', email: '', phone: '', linkedin: '', snippet: '' },
+      { id: 'H2', source: 'Email database', name: 'Neha Gupta', title: 'Plant Manager', email: '', phone: '', linkedin: '', snippet: '' },
+    ];
+    const pick = async (list: typeof cands) => ({ contact: { ...EMPTY_CONTACT, name: list[0]?.name ?? '', title: list[0]?.title ?? '' }, notes: [], error: '', ranked: list });
+    const notes: string[] = [];
+    const { picked } = await vetPick(svc, { company: 'Metalman Auto', city: '' }, cands, [], pick, notes, DEFAULT_ICPS[0]);
+    expect(picked.contact).toMatchObject({ name: 'Neha Gupta', title: 'Plant Head' });
+    expect(notes.join(' ')).toContain('Ashish Sharma left out: LinkedIn shows their role is QA Analyst 1');
+  });
+});

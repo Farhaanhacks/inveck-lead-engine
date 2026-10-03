@@ -105,6 +105,14 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
   const save = async (extra: Partial<Run> = {}) => {
     await db.update(runs).set({ stats, heartbeatAt: new Date(), ...extra }).where(eq(runs.id, runId));
   };
+  // Stop means stop: companies still waiting to have their contacts found again are dropped from the
+  // queue (their saved contacts stay as they are), so opening Today doesn't start it all again.
+  const stop = async (): Promise<'done'> => {
+    const left = await db.update(leads).set({ refetchPending: false, refetchClaimedAt: null }).where(eq(leads.refetchPending, true)).returning({ id: leads.id });
+    await log(`Stopped by user${left.length ? `; ${left.length} compan${left.length === 1 ? 'y' : 'ies'} left with the contacts they had` : ''}`, 'warn');
+    await save({ status: 'cancelled', finishedAt: new Date() });
+    return 'done';
+  };
 
   try {
     // Leads stuck in "Processing" from a crashed invocation go back in the queue.
@@ -181,11 +189,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     // a fresh invocation when this one's time runs out.
     for (;;) {
       const [fresh] = await db.select({ cancel: runs.cancelRequested }).from(runs).where(eq(runs.id, runId));
-      if (fresh?.cancel) {
-        await log('Stopped by user', 'warn');
-        await save({ status: 'cancelled', finishedAt: new Date() });
-        return 'done';
-      }
+      if (fresh?.cancel) return stop();
       // Stop claiming work when a batch might not finish inside this invocation.
       if (Date.now() - started > budgetMs * 0.6) {
         await save();
@@ -218,6 +222,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     // Contacts reset: companies whose contacts are found again from scratch, research kept.
     let refetched = 0;
     for (;;) {
+      const [fresh] = await db.select({ cancel: runs.cancelRequested }).from(runs).where(eq(runs.id, runId));
+      if (fresh?.cancel) return stop();
       if (Date.now() - started > budgetMs * 0.6) {
         await save();
         return 'continue';
@@ -238,11 +244,14 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           );
           refetched++;
         } catch (e) {
-          // Left pending: tried again by a later run.
-          await log(`${lead.company}: finding contacts again failed: ${errorMessage(e)}`, 'error', lead.id);
+          // Not retried in a loop: the lead keeps the contacts it had, and the next contact check covers it.
+          await db.update(leads).set({ refetchPending: false, refetchClaimedAt: null }).where(eq(leads.id, lead.id));
+          await log(`${lead.company}: finding contacts again failed, kept the contacts it had: ${errorMessage(e)}`, 'error', lead.id);
         }
       });
       await save();
+      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(eq(leads.refetchPending, true));
+      await log(`Finding contacts again: ${refetched} done${Number(n) ? `, ${n} still waiting` : ''}`);
     }
     if (refetched) await log(`Contacts found again for ${refetched} compan${refetched === 1 ? 'y' : 'ies'}`);
 

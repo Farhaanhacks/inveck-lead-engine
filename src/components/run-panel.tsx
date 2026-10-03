@@ -144,7 +144,6 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
                 <tr key={l.id} className="border-t border-line align-top hover:bg-surface-2">
                   <td className="px-5 py-2.5">
                     <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
-                    {l.signal && <div className="mt-0.5 text-xs text-warning-ink">Signal: {l.signal}</div>}
                     {l.notes.length > 0 && (
                       <div className="mt-0.5 cursor-help text-xs text-muted" title={l.notes.join('\n')}>
                         {l.notes.length === 1 ? '1 note' : `${l.notes.length} notes`}: {l.notes[0].slice(0, 70)}{l.notes[0].length > 70 ? '…' : ''}

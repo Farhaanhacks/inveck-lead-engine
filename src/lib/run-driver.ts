@@ -93,6 +93,9 @@ export async function startRefetchIfWaiting(origin?: string) {
   if (!waiting) return;
   const db = await getDb();
   if (await activeRun(db)) return;
+  // Not again straight after a run that just ended or was stopped.
+  const [last] = await db.select().from(runs).orderBy(desc(runs.id)).limit(1);
+  if (last && Date.now() - new Date(last.finishedAt ?? last.startedAt).getTime() < 10 * 60 * 1000) return;
   const { run, created } = await startRun(db, { findProspects: false, trigger: 'auto' });
   if (created) after(() => driveRun(run.id, baseUrl(origin)));
 }

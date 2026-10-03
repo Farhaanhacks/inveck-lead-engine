@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { atBranch, atOtherSite, buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
@@ -177,7 +177,7 @@ export async function processLead(
   );
   const published = websiteEmails(siteText, domain);
   const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
-  const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes);
+  const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes, icp);
   const picked = vetted.picked;
   const lookupFailed = vetted.lookupFailed;
   notes.unshift(...picked.notes);
@@ -265,6 +265,7 @@ export async function vetPick(
   linkedinPeople: { name: string; title: string }[],
   pick: (list: Candidate[]) => Promise<Picked>,
   notes: string[],
+  icp?: Parameters<typeof contactPriority>[1],
 ): Promise<{ picked: Picked; lookupFailed: boolean }> {
   let list = candidates;
   let picked = await pick(list);
@@ -281,13 +282,23 @@ export async function vetPick(
     }
     const chosen = list.find((c) => sameName(c.name, contact.name));
     const otherSite = !!profile && atOtherSite({ title: profile.title || contact.title, location: profile.location }, lead.city);
-    if (profile && (profile.employer === 'elsewhere' || profile.abroad || otherSite) && chosen?.source !== 'Sales team' && attempt < 3) {
+    // Their real current role, from LinkedIn, isn't one INVECK wants ("QA Analyst", "Presales Engineer").
+    const unwanted = !!profile?.title && !!icp && contactPriority(profile.title, icp) >= 99;
+    const wrong = !!profile && (profile.employer === 'elsewhere' || profile.abroad || otherSite || unwanted) && chosen?.source !== 'Sales team';
+    // Three wrong picks in a row: nobody rather than the last wrong one (the team finds someone).
+    if (wrong && attempt >= 3) {
+      notes.push(`${contact.name} left out too; no one else on the ICP lists checked out`);
+      return { picked: { ...picked, contact: { ...EMPTY_CONTACT } }, lookupFailed: false };
+    }
+    if (wrong && profile) {
       notes.push(
         profile.abroad
           ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
           : profile.employer === 'elsewhere'
             ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
-            : `${contact.name} left out: based in ${profile.location}, not at the ${lead.city} site`,
+            : otherSite
+              ? `${contact.name} left out: based in ${profile.location}, not at the ${lead.city} site`
+              : `${contact.name} left out: LinkedIn shows their role is ${profile.title}, not one on the ICP lists`,
       );
       list = list.filter((c) => !sameName(c.name, contact.name));
       picked = await pick(list);
