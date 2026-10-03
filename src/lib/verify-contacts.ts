@@ -6,7 +6,10 @@ import { atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankC
 import { contactFromTeam } from './team-contact';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
-import { currentEmployer, nameIsTheCompany, registerFirmWebsite, sameFirm } from './pipeline/employer';
+import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
+import { learnFirm, recallFirm } from './pipeline/firm-identity';
+import { knowPlaces } from './pipeline/places';
+import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
 import { refreshMainEmail, refreshPersonEmail } from './email-refresh';
 import { istDay } from './tasks';
@@ -40,8 +43,9 @@ const inScope = (scope: Scope) =>
 export async function clearCompanyTitles(db: Db, scope: Scope = {}): Promise<number> {
   const rows = await db.select({ person: people, lead: leads }).from(people).innerJoin(leads, eq(people.leadId, leads.id)).where(inScope(scope));
   let n = 0;
+  const cache = dbEnrichmentCache(db);
+  for (const l of new Map(rows.map(({ lead }) => [lead.id, lead])).values()) await recallFirm(cache, l.company, l.website);
   for (const { person: p, lead: l } of rows) {
-    registerFirmWebsite(l.company, l.website);
     if (!p.title || !sameFirm(p.title, l.company)) continue;
     await db.update(people).set({ title: '' }).where(eq(people.id, p.id));
     if (p.isPrimary && sameFirm(l.contactTitle, l.company)) await db.update(leads).set({ contactTitle: '' }).where(eq(leads.id, l.id));
@@ -136,7 +140,8 @@ async function dropFormerEmployees(db: Db, lead: Lead): Promise<number> {
  * rewrites the email for them. Runs on its own; nobody has to press anything.
  */
 export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new Date(), opts: { mainOnly?: boolean } = {}): Promise<CheckResult> {
-  registerFirmWebsite(lead.company, lead.website);
+  await learnFirm(svc, lead.company, lead.website);
+  await knowPlaces(svc, [lead.city]);
   // Without any search: drop people whose stored title already shows another employer, and move off a
   // main contact who has left.
   await dropFormerEmployees(db, lead);
@@ -281,7 +286,8 @@ export async function purgeFormerEmployees(db: Db, scope: Scope = {}): Promise<n
     .from(people)
     .innerJoin(leads, eq(people.leadId, leads.id))
     .where(inScope(scope));
-  for (const { lead: l } of rows) registerFirmWebsite(l.company, l.website);
+  const cache = dbEnrichmentCache(db);
+  for (const l of new Map(rows.map(({ lead }) => [lead.id, lead])).values()) await recallFirm(cache, l.company, l.website);
   const gone = rows.filter(
     ({ person: p, lead: l }) =>
       currentEmployer({ name: p.name, title: p.title }, l.company) === 'elsewhere' || (p.source === 'LinkedIn' && nameIsTheCompany(p.name, l.company)),

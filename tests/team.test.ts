@@ -1143,7 +1143,16 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     const { people } = await import('@/lib/db/schema');
     const { settingsSchema } = await import('@/lib/settings');
     const organic = [{ title: 'Hardik Gaur - Supply Chain Manager - NBC Bearings', subtitle: 'Gurugram, Haryana, India · Supply Chain Manager · NBC Bearings', link: 'https://in.linkedin.com/in/hardik-gaur', snippet: '' }];
-    const fetch = (async (_u: string, init?: RequestInit) => new Response(JSON.stringify({ organic: String(init?.body).includes('Hardik') ? organic : [] }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    // Google Maps knows where Jaipur and Gurugram are: 230 km apart.
+    const map: Record<string, [number, number]> = { jaipur: [26.9124, 75.7873], gurugram: [28.4595, 77.0266] };
+    const fetch = (async (u: string, init?: RequestInit) => {
+      const body = String(init?.body);
+      if (String(u).endsWith('/maps')) {
+        const at = Object.entries(map).find(([k]) => body.toLowerCase().includes(k))?.[1];
+        return new Response(JSON.stringify({ places: at ? [{ title: 'x', latitude: at[0], longitude: at[1] }] : [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ organic: body.includes('Hardik') ? organic : [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     const [l] = await db.insert(leads).values(lead('NBC Bearings', { city: 'Jaipur', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', contactCheckedAt: new Date() })).returning();
     await db.insert(people).values([{ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true }, { leadId: l.id, name: 'Hardik Gaur', title: 'Supply Chain Manager' }]);

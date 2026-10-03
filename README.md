@@ -26,6 +26,21 @@ Everything happens in one run. Nobody needs Airtable or n8n.
 4. **Score and draft**: every qualified lead that can be reached gets a personalised
    email draft.
 
+### How contacts are matched
+
+A person found on LinkedIn (via Google) is a candidate only when all three hold:
+
+- **Same company**: their employer is the company's name, its website name, or the name on the
+  company's own LinkedIn page (found once by the website it lists, so a similarly named company never
+  counts). The search uses these names too.
+- **Same site**: their location is within 60 km of the lead's city, by Google Maps coordinates (each
+  place looked up once and kept in the database, about 3 Serper credits per new place). A place the
+  map doesn't know is "not known", never "another site".
+- **A role the ICP wants**: a title on the ICP's lists, or one in a function the lists name
+  (operations, supply chain, finance) at head, manager or lead level ("Senior Manager, Site
+  Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no
+  role isn't picked automatically (the team can add them by hand).
+
 ### How emails are found
 
 Emails only: phone numbers are never requested from any provider. In order, most trustworthy first:

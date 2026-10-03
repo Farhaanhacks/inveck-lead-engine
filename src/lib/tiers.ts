@@ -60,6 +60,35 @@ export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles'
     ['P3', icp.p3Titles],
   ];
   for (const [tier, roles] of tiers) if (list(roles).some((r) => matches(t, r))) return tier;
+  return tierByFunction(t, icp);
+}
+
+/**
+ * The functions an ICP's lists ask for, and a title's function: titles are written in endless ways
+ * ("Senior Manager, ATSM Site Operations", "Planning & Operations Lead"), so a title that matches no
+ * phrase on the lists word for word is placed by what it does and how senior it is.
+ */
+const FUNCTIONS: [string, RegExp][] = [
+  ['operations', /\b(operations?|ops|plant|factory|works|site|manufacturing|production)\b/],
+  ['supply', /\b(supply|chain|logistics|warehous\w*|inventory|store|materials?|procurement|purchas\w*|sourcing|supplier|vendor|planning|distribution)\b/],
+  ['finance', /\b(finance|accounts|controller|cfo)\b/],
+];
+/** Heads a function; manages within it; leads a team in it. Engineers, analysts, associates and technicians aren't contacts. */
+const HEAD_LEVEL = /\b(head|director|vp|avp|gm|president|chief|incharge|in-charge)\b/;
+const MANAGER_LEVEL = /\b(dgm|agm|manager|mgr)\b/;
+const LEAD_LEVEL = /\b(lead|leader|supervisor)\b/;
+
+function functionsOf(text: string): string[] {
+  return FUNCTIONS.filter(([, re]) => re.test(text)).map(([f]) => f);
+}
+
+function tierByFunction(t: string[], icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles'>): Tier {
+  const title = t.join(' ');
+  const wanted = new Set(functionsOf(tokens([icp.targetTitles, icp.p2Titles, icp.p3Titles].join(' ')).join(' ')));
+  if (!functionsOf(title).some((f) => wanted.has(f))) return '';
+  if (HEAD_LEVEL.test(title)) return 'P1';
+  if (MANAGER_LEVEL.test(title)) return 'P2';
+  if (LEAD_LEVEL.test(title)) return 'P3';
   return '';
 }
 

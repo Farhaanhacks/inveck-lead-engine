@@ -5,8 +5,9 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch } from './services';
-import { brandOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
+import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
+import { knowPlaces } from './places';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
 
@@ -141,7 +142,13 @@ function firmQuery(company: string): string {
   const brand = brandOf(company);
   const site = firmSiteName(company);
   const fullSquashed = full.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return brand && site && site.startsWith(brand) && !fullSquashed.startsWith(site) ? `("${full}" OR "${brand}")` : `"${full}"`;
+  const names = [full, ...(brand && site && site.startsWith(brand) && !fullSquashed.startsWith(site) ? [brand] : [])];
+  // And the name on the company's own LinkedIn page, which is what its staff's profiles show.
+  for (const alias of firmAliasesOf(company)) {
+    const n = searchName(alias.replace(/\(.*?\)/g, ' ')) || alias;
+    if (!names.some((x) => x.toLowerCase() === n.toLowerCase())) names.push(n);
+  }
+  return names.length > 1 ? `(${names.map((n) => `"${n}"`).join(' OR ')})` : `"${names[0]}"`;
 }
 
 /**
@@ -173,6 +180,8 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
       people.push(p);
     }
   }
+  // Where each of them is, so their distance from the site can be told.
+  await knowPlaces(svc, people.map((p) => p.location));
   const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
   return { people, error: failed && !people.length ? errorMessage(failed.reason) : '' };
 }
@@ -353,7 +362,10 @@ export async function findLinkedinProfile(
       exact.find((p) => p.employer === 'here') ??
       results.find((p) => p.employer === 'here' && looseName(p.name, person)) ??
       exact.find((p) => p.employer === 'elsewhere');
-    if (pick) return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '' };
+    if (pick) {
+      await knowPlaces(svc, [pick.location, hint.city]);
+      return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '' };
+    }
   }
   // A search that failed (quota, network) isn't "no profile": the caller checks again later.
   if (failure) throw new Error('LinkedIn search failed: ' + errorMessage(failure));
@@ -362,7 +374,7 @@ export async function findLinkedinProfile(
 
 /** True when the person's title or profile names the lead's city: they work at this branch. */
 export function atBranch(c: { title: string; snippet?: string; location?: string | null }, city: string): boolean {
-  return inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
+  return siteOf(c.location ?? '', city) === 'here' || inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
 }
 
 /** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */

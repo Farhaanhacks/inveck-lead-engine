@@ -1,3 +1,5 @@
+import { distanceKm, pointOf, SITE_RADIUS_KM } from './places';
+
 /**
  * Does this person work at the company now? LinkedIn results are found by searching for the company's
  * name, so they include people who used to work there ("Plant Head at PepsiCo", "ex-Nestle"). This
@@ -64,6 +66,22 @@ export function registerFirmWebsite(company: string, website: string | null | un
   if (company.trim() && label.length >= 4) firmSites.set(firmKey(company), label);
 }
 
+/**
+ * The names the company goes by on its own LinkedIn page ("Micron Technology" for Micron
+ * Semiconductor Technology India at micron.com): what its staff's profiles show as their employer.
+ * Recorded by learnFirm, only for a page that lists the company's own website.
+ */
+const firmAliases = new Map<string, string[]>();
+
+export function registerFirmAliases(company: string, names: string[]): void {
+  const own = names.map((n) => n.trim()).filter((n) => n && firmKey(n) !== firmKey(company));
+  if (company.trim() && own.length) firmAliases.set(firmKey(company), [...new Set(own)]);
+}
+
+export function firmAliasesOf(company: string): string[] {
+  return firmAliases.get(firmKey(company)) ?? [];
+}
+
 /** The company's own website name, when known ("lumaxworld"). */
 export function firmSiteName(company: string): string {
   return firmSites.get(firmKey(company)) ?? '';
@@ -80,6 +98,12 @@ export function firmSiteName(company: string): string {
  * Express Logistics") must match exactly, with nothing added.
  */
 export function sameFirm(text: string, company: string): boolean {
+  if (namesFirm(text, company, firmSiteName(company))) return true;
+  // Or the name on its own LinkedIn page, in full.
+  return firmAliasesOf(company).some((alias) => namesFirm(text, alias, ''));
+}
+
+function namesFirm(text: string, company: string, site: string): boolean {
   const a = words(text);
   const b = words(company);
   if (!a.length || !b.length) return false;
@@ -88,7 +112,6 @@ export function sameFirm(text: string, company: string): boolean {
   // "PKF Sridhar & Santhanam" is another firm in the same network.
   if (b.length === 1 && b[0].length <= 4) return a.every((w) => w === b[0] || VAGUE.has(w));
   if (b.every((w) => a.includes(w))) return true;
-  const site = firmSiteName(company);
   if (!site) return false;
   // A shorter form of the company's own name that keeps its brand, when the brand is also its website
   // ("Micron Semiconductor" for Micron Semiconductor Technology India at micron.com). Never a name
@@ -278,8 +301,14 @@ const REGION_ONLY = /^(india|bharat|maharashtra|gujarat|karnataka|tamil nadu|tel
 export function siteOf(location: string | undefined, city: string): 'here' | 'elsewhere' | 'unknown' {
   const loc = (location ?? '').trim();
   if (!loc || !city.trim()) return 'unknown';
+  // By distance, when both places have been looked up (knowPlaces): within the site's metro area.
+  const site = pointOf(city);
+  const there = pointOf(loc);
+  if (site && there) return distanceKm(site, there) <= SITE_RADIUS_KM ? 'here' : 'elsewhere';
   if (inCity(loc, city)) return 'here';
   const place = loc.split(',')[0].replace(/\b(greater|area|region|division|district|metropolitan)\b/gi, '').trim();
   if (!place || REGION_ONLY.test(place)) return 'unknown';
+  // Looked up and not found on the map: not known, rather than somewhere else.
+  if (there === null && site !== undefined) return 'unknown';
   return 'elsewhere';
 }

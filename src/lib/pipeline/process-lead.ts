@@ -8,7 +8,9 @@ import { buildSources } from './fit';
 import { scoreLead } from './scoring';
 import { contactPriority, icpFor } from '../tiers';
 import { resolveIcp } from '../icp-match';
-import { currentEmployer, registerFirmWebsite } from './employer';
+import { currentEmployer } from './employer';
+import { learnFirm } from './firm-identity';
+import { knowPlaces } from './places';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
 import { domainOf, errorMessage, normalizeWebsite, normCompany, rootDomain, splitName } from './text';
@@ -125,8 +127,10 @@ export async function processLead(
       }
     }
   }
-  // The company's own website name is the one other name its staff may use ("Lumax World").
-  registerFirmWebsite(lead.company, website);
+  // The other names its staff use: its website name ("Lumax World") and its LinkedIn page's name
+  // ("Micron Technology"); and where the site is, to tell who works there.
+  await learnFirm(svc, lead.company, website);
+  await knowPlaces(svc, [lead.city]);
   if (site.via === 'google') await log(`${lead.company}: website blocks automated reading; researched from Google's index of its pages`);
   if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
   const domain = rootDomain(website);
