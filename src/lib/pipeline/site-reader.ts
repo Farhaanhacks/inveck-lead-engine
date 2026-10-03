@@ -17,6 +17,8 @@ export type SiteText = {
   /** The address that worked, and links from it to other pages on the same site. */
   url?: string;
   links?: string[];
+  /** Read from Google's index: each page it lists, with its address (the evidence sources). */
+  results?: { url: string; title: string; snippet: string }[];
 };
 
 /** Links to other pages of the same site, from HTML (href) or the reader's markdown ([text](url)). */
@@ -260,13 +262,12 @@ export async function fetchWebsiteText(svc: Services, website: string, { useGoog
   const domain = rootDomain(website);
   if (useGoogle && domain) {
     try {
-      const results = await googleSearch(svc, `site:${domain}`);
-      const text = results
+      const results = (await googleSearch(svc, `site:${domain}`))
         .slice(0, 10)
-        .map((r) => [r.title, r.snippet].filter(Boolean).join('\n'))
-        .filter(Boolean)
-        .join('\n\n');
-      if (text.length >= 150) return { text: `Pages of ${domain} as indexed by Google:\n\n${text}`, error: '', via: 'google' };
+        .map((r) => ({ url: r.link || '', title: r.title || '', snippet: r.snippet || '' }))
+        .filter((r) => r.title || r.snippet);
+      const text = results.map((r) => [r.title, r.snippet].filter(Boolean).join('\n')).join('\n\n');
+      if (text.length >= 150) return { text: `Pages of ${domain} as indexed by Google:\n\n${text}`, error: '', via: 'google', results };
     } catch {}
   }
   return { text: '', error: [...new Set(problems)].join('; '), via: '' };

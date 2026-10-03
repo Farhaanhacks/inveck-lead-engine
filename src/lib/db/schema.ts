@@ -1,4 +1,5 @@
 import { boolean, integer, jsonb, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+import type { FitEvidence, FitStatus, RiskFlag } from '../pipeline/fit';
 
 // Keep in sync with the CREATE statements in ./migrate.ts.
 
@@ -7,6 +8,7 @@ export const LEAD_STATUSES = [
   'Processing',
   'Existing Client',
   'Disqualified',
+  'Needs Review',
   'Needs Manual Contact',
   'Low Score',
   'Awaiting Approval',
@@ -97,6 +99,22 @@ export const leads = pgTable('leads', {
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
   /** Research attempts that started; a lead whose research keeps timing out stops being retried. */
   researchAttempts: integer('research_attempts').notNull().default(0),
+  /**
+   * The ICP fit decided from evidence (see pipeline/fit.ts): 'qualified', 'not_fit' or 'review';
+   * '' for leads researched before evidence was checked (their fitScore and fitReason still stand).
+   */
+  fitStatus: text('fit_status').$type<FitStatus | ''>().notNull().default(''),
+  /** Why: the must-have that failed or the deal-breaker that applies, what needs review, or what was met. */
+  fitDecision: text('fit_decision').notNull().default(''),
+  /** Every ICP criterion with its status, the quote and the source it came from. */
+  fitEvidence: jsonb('fit_evidence').$type<FitEvidence[]>().notNull().default([]),
+  /** Commercial risks seen (insolvency, liquidation): kept apart from the fit. */
+  riskFlags: jsonb('risk_flags').$type<RiskFlag[]>().notNull().default([]),
+  /** The ICP the fit was checked against, and when. */
+  assessedIcp: text('assessed_icp').notNull().default(''),
+  assessedAt: timestamp('assessed_at', { withTimezone: true }),
+  /** A person's own call on the fit ('qualified' or 'not_fit'), which research again keeps; '' for none. */
+  fitOverride: text('fit_override').$type<'' | 'qualified' | 'not_fit'>().notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -146,6 +164,8 @@ export type RunStats = {
   processed: number;
   drafted: number;
   disqualified: number;
+  /** Absent on runs from before the Needs Review stage. */
+  needsReview?: number;
   existingClients: number;
   errors: number;
 };

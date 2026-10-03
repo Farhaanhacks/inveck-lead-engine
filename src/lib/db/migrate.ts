@@ -431,4 +431,13 @@ export const SCHEMA_STATEMENTS = [
      AND NOT EXISTS (SELECT 1 FROM tasks x WHERE x.lead_id = c.lead_id AND x.kind = k.kind AND x.due_date = c.due_date AND x.done_at IS NULL)
      AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'callbackFullSetV1')`,
   `INSERT INTO settings (key, value) VALUES ('callbackFullSetV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // The fit is decided from evidence per ICP criterion. New columns only: leads researched before keep
+  // their status and research; a disqualified one is assessed again only when someone asks for it.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS fit_status TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS fit_decision TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS fit_evidence JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS assessed_icp TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS assessed_at TIMESTAMPTZ`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS fit_override TEXT NOT NULL DEFAULT ''`,
 ];

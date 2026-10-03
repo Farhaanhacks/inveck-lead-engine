@@ -66,7 +66,9 @@ export async function getAnalytics(db: Db, now = new Date()) {
   for (const a of history) if (a.kind === 'stage' && a.stage) (reached.get(a.leadId) ?? reached.set(a.leadId, new Set()).get(a.leadId)!).add(a.stage);
   const ever = (l: Lead, stages: string[]) => stages.includes(l.status) || stages.some((s) => reached.get(l.id)?.has(s));
 
-  const researched = all.filter((l) => !['New', 'Processing', 'Existing Client'].includes(l.status));
+  // Researched and decided: not companies waiting, clients, ones whose research stopped on an error,
+  // or ones whose fit is still being reviewed.
+  const researched = all.filter((l) => !['New', 'Processing', 'Existing Client', 'Error', 'Needs Review'].includes(l.status));
   const qualified = researched.filter((l) => l.qualified);
   // Counted by where leads are now, like the pipeline board. Lost leads count for the steps
   // they reached before they were lost.

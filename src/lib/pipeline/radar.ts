@@ -8,6 +8,7 @@ import type { NewsResult, Services } from './services';
 import { mapLimit, newsSearch } from './services';
 import { asList, asText } from './text';
 import { KnownBranches } from '../branches';
+import { canonicalSegment } from '../icp-match';
 
 const KINDS = ['new_plant', 'new_warehouse', 'expansion'];
 const SCAN_EVERY_MS = 12 * 60 * 60 * 1000;
@@ -122,7 +123,8 @@ export async function scanRadar(
       headline: (asText(o.headline) || item.title!).slice(0, 160),
       location,
       kind: KINDS.includes(asText(o.kind)) ? asText(o.kind) : 'new_plant',
-      segment: segments.find((s) => s.toLowerCase() === segment.toLowerCase()) || segments[0],
+      // As given when no ICP has that name: research then flags it instead of using another ICP.
+      segment: canonicalSegment(segment, segments),
       why: asText(o.why).slice(0, 300),
       url: item.link!,
       source: item.source || '',

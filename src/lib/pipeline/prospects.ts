@@ -6,6 +6,7 @@ import { googleSearch, mapLimit } from './services';
 import { asList, asText, domainOf, errorMessage, normCompany } from './text';
 import { domainScore, isBlockedDomain } from './website';
 import { normQuery, tooSimilar } from './query-history';
+import { canonicalSegment } from '../icp-match';
 
 export type Prospect = { company: string; website: string; city: string; segment: string; source: string };
 
@@ -287,7 +288,9 @@ export async function findProspects(
         company,
         website: domain,
         city: asText(c.city),
-        segment: segmentNames.find((s) => s.toLowerCase() === asText(c.segment).toLowerCase()) || segmentNames[0] || '',
+        // The ICP's own spelling; a segment no ICP has stays as given, so research flags it for review
+        // instead of checking the company against some other ICP.
+        segment: canonicalSegment(asText(c.segment), segmentNames),
         source: (lookalike ? `Lookalike of ${lookalike}` : 'Found by prospect search') + (why ? `: ${why}` : ''),
       });
     }

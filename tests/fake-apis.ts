@@ -9,20 +9,76 @@ export type FakeLog = { calls: string[]; verified: string[]; finder: string[] };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 const text = (t: string, status = 200) => new Response(t, { status, headers: { 'content-type': 'text/plain' } });
 
-function researchFor(company: string): unknown {
+/** The criteria ids and numbered sources a research request lists, to answer it. */
+export function researchRequest(user: string) {
+  const criteria = [...user.matchAll(/^- ([A-Z]+\d*) \(([^)]+)\):/gm)].map((m) => m[1]);
+  const sources = [...user.matchAll(/^\[(S\d+)\] (\S+)[^\n]*\n<source>\n([\s\S]*?)\n<\/source>/gm)].map((m) => ({ id: m[1], url: m[2], text: m[3] }));
+  return { criteria, sources, retry: user.includes('## Your previous answer was rejected') };
+}
+
+type Finding = [status: 'met' | 'not_met' | 'unknown', evidence: string, source: string];
+
+/**
+ * A complete, well-formed assessment: must-haves and targets met by a line quoted from the first
+ * source (or widely known when there is none), deal-breakers not applying, size unknown.
+ */
+export function fitAnswer(user: string, fields: Record<string, unknown> = {}, findings: Record<string, Finding> = {}) {
+  const { criteria, sources } = researchRequest(user);
+  const s1 = sources[0];
+  const line = s1?.text.split('\n').map((l) => l.trim()).find((l) => l.length > 20) ?? '';
+  const quote = line.split(/(?<=\.)\s/)[0].slice(0, 200);
+  return {
+    summary: 'Makes things',
+    industry: 'Manufacturing',
+    company_size: 'unknown',
+    locations: 'Pune',
+    inventory_complexity: 'High',
+    warehousing_3pl: 'No',
+    erp_wms: 'SAP',
+    verification_need: 'High',
+    criteria: criteria.map((id) => {
+      const f = findings[id];
+      if (f) return { id, status: f[0], evidence: f[1], source: f[2] };
+      if (id.startsWith('D')) return { id, status: 'not_met', evidence: 'Makes physical products', source: 'K' };
+      if (id === 'SIZE') return { id, status: 'unknown', evidence: 'Not stated', source: '' };
+      return quote ? { id, status: 'met', evidence: quote, source: s1.id } : { id, status: 'met', evidence: 'A widely known manufacturer', source: 'K' };
+    }),
+    risks: [],
+    fit_score: 8,
+    qualified: true,
+    fit_reason: 'Fits',
+    target_roles: ['Plant Head'],
+    pitch_hook: 'plants',
+    ...fields,
+  };
+}
+
+function researchFor(company: string, user: string): unknown {
+  const { sources, retry } = researchRequest(user);
   switch (company) {
     case 'Garbage Output Ltd':
       return 'Sorry, I cannot help with that.';
-    case 'Bajaj Finance':
-      return { summary: 'NBFC lender', qualified: false, fit_score: 1, fit_reason: 'Lender, no physical inventory', target_roles: [], pitch_hook: '' };
+    case 'Bajaj Finance': {
+      // Its own pages (Google's index of them) say what it is: a lender, nothing physical to verify.
+      const s = sources.find((x) => x.text.includes('non-banking financial company'));
+      const quote = 'Bajaj Finance Limited is a deposit-taking non-banking financial company';
+      return fitAnswer(
+        user,
+        { summary: 'NBFC lender', fit_score: 1, qualified: false, fit_reason: 'Lender, no physical inventory', target_roles: [], pitch_hook: '' },
+        { M1: ['not_met', quote, s?.id ?? 'K'], D1: ['met', quote, s?.id ?? 'K'] },
+      );
+    }
     case 'Tata Motors':
+      // Wrong types and missing criteria the first time: asked again, it answers properly.
+      if (retry) return fitAnswer(user, { industry: 'Automotive', fit_reason: '6 plants, SAP', target_roles: ['Plant Head', 'COO'], pitch_hook: '6 plants' });
       return { summary: 'Auto OEM', industry: 'Automotive', qualified: 'true', fit_score: '8', fit_reason: { reason: '6 plants, SAP' }, target_roles: [{ role: 'Plant Head', priority: 1 }, { title: 'COO' }], pitch_hook: '6 plants' };
     case 'Kirtane & Pandit':
-      return '```json\n' + JSON.stringify({ summary: 'CA firm', qualified: true, fit_score: 7, fit_reason: 'Audit practice', target_roles: 'Managing Partner, Audit Partner', pitch_hook: 'stock audits' }) + '\n```';
+      return '```json\n' + JSON.stringify(fitAnswer(user, { summary: 'CA firm', fit_score: 7, fit_reason: 'Audit practice', target_roles: ['Managing Partner', 'Audit Partner'], pitch_hook: 'stock audits' })) + '\n```';
     case 'Mystery Castings':
-      return { summary: 'Unknown foundry', qualified: 'yes', fit_score: 6.4, fit_reason: 'Probably fits', target_roles: null, pitch_hook: null };
+      // A score that isn't a whole number fails the checks; the second answer is fine.
+      return fitAnswer(user, { summary: 'Unknown foundry', fit_score: retry ? 6 : 6.4, fit_reason: 'Probably fits', target_roles: [], pitch_hook: '' });
     default:
-      return { summary: `${company} makes things`, qualified: true, fit_score: 8, fit_reason: 'Fits', target_roles: ['Plant Head'], pitch_hook: 'plants' };
+      return fitAnswer(user, { summary: `${company} makes things` });
   }
 }
 
@@ -38,7 +94,11 @@ const PEOPLE: Record<string, string> = {
 function aiReply(system: string, user: string): unknown {
   if (system.startsWith('You are a B2B research analyst')) {
     const m = user.match(/Name: ([^\n]+)/);
-    return researchFor(m ? m[1].trim() : '');
+    return researchFor(m ? m[1].trim() : '', user);
+  }
+  if (system.startsWith('You double-check the evidence')) {
+    // Every quote behind a rejection shows what it claims.
+    return { checks: [...user.matchAll(/^- id ([A-Z]+\d*):/gm)].map((m) => ({ id: m[1], supports: true, why: 'Shows it' })) };
   }
   if (system.startsWith('You pick the best person')) {
     const ids = [...user.matchAll(/"id": "([A-Z]\d*)"/g)].map((m) => m[1]);
@@ -59,7 +119,7 @@ function aiReply(system: string, user: string): unknown {
     return {
       openings: [
         { id: '1', company: 'Tata Motors', headline: 'New EV plant in Sanand', location: 'Sanand, Gujarat', kind: 'new_plant', segment: 'Manufacturing', why: 'x' },
-        { id: '2', company: 'Varroc Engineering Ltd', headline: 'New lighting plant in Chakan', location: 'Chakan, Maharashtra', kind: 'new_plant', segment: 'manufacturing & 3pl', why: 'New plant, new stock to verify' },
+        { id: '2', company: 'Varroc Engineering Ltd', headline: 'New lighting plant in Chakan', location: 'Chakan, Maharashtra', kind: 'new_plant', segment: ' MANUFACTURING ', why: 'New plant, new stock to verify' },
         { id: '3', company: 'Invented Industries', headline: 'Not in the article', location: '', kind: 'new_plant', segment: 'Manufacturing', why: 'x' },
         { id: '9', company: 'Ghost Co', headline: 'No such item', location: '', kind: 'new_plant', segment: 'CA Firms', why: 'x' },
       ],
@@ -137,6 +197,17 @@ const handlers: Record<string, Handler> = {
       });
     }
     if (/Mystery/.test(q)) return text('boom', 500);
+    if (q === 'site:bajajfinserv.in') {
+      return json({
+        organic: [
+          {
+            title: 'Bajaj Finance Ltd: Loans, Fixed Deposits and EMI Cards',
+            link: 'https://www.bajajfinserv.in/',
+            snippet: 'Bajaj Finance Limited is a deposit-taking non-banking financial company offering personal loans, business loans and fixed deposits.',
+          },
+        ],
+      });
+    }
     if (/email format/.test(q) && /Honeywell/.test(q)) {
       return json({
         organic: [

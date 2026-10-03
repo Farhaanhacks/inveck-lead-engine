@@ -4,8 +4,10 @@ import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, type Research } from './research';
+import { buildSources } from './fit';
 import { scoreLead } from './scoring';
 import { contactPriority, icpFor } from '../tiers';
+import { resolveIcp } from '../icp-match';
 import { currentEmployer, registerFirmWebsite } from './employer';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
@@ -57,7 +59,7 @@ function storedResearch(lead: Lead): Research {
 export type TakenContact = { leadId: number; company: string; website: string; contactName: string };
 
 /** Stages before anything was sent: re-finding contacts here may set the stage and rewrite the draft. */
-const BEFORE_OUTREACH = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score', 'Rejected', 'Error'];
+const BEFORE_OUTREACH = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score', 'Rejected', 'Error', 'Needs Review', 'Disqualified'];
 
 /**
  * Researches a lead and finds its contacts. With `contactsOnly` (contacts reset), the company research
@@ -76,8 +78,29 @@ export async function processLead(
     return { status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
   }
 
-  const icp = icpFor(lead.segment, ctx.icps);
-  if (!icp) return { status: 'Error', lastError: 'No active ICP. Turn on at least one ICP.' };
+  // A person ruled the company out: that call stands until someone asks for the fit to be reassessed.
+  if (!opts.contactsOnly && lead.fitOverride === 'not_fit') {
+    await log(`${lead.company}: marked not a fit by the team; not researched again (Reassess fit checks it again)`);
+    return { status: 'Disqualified', fitDecision: lead.fitDecision, lastError: '' };
+  }
+
+  // Finding contacts again keeps the lead's own ICP (its contact lists). Anything else checks the fit
+  // against the one active ICP named by the lead's segment; no match is flagged, never guessed.
+  let icp: Icp;
+  if (opts.contactsOnly) {
+    const own = icpFor(lead.segment, ctx.icps);
+    if (!own) throw new Error(`segment "${lead.segment}" matches no ICP, so there are no contact lists to search with`);
+    icp = own;
+  } else {
+    const match = resolveIcp(lead.segment, ctx.icps);
+    if (!match.icp) {
+      await log(`${lead.company}: needs review: ${match.detail}`, 'warn');
+      return { status: 'Needs Review', qualified: null, fitStatus: 'review', fitDecision: `Needs review: ${match.detail}`, assessedIcp: '', assessedAt: new Date(), finalScore: null, lastError: '' };
+    }
+    icp = match.icp;
+  }
+  // A person confirmed the fit: research again keeps their call and only finds contacts and drafts.
+  const keepFit = !opts.contactsOnly && lead.fitOverride === 'qualified';
 
   let website = normalizeWebsite(lead.website);
   let site = await fetchWebsiteText(svc, website);
@@ -113,25 +136,55 @@ export async function processLead(
   const pages = await crawlSite(svc, site);
   if (pages.length) await log(`${lead.company}: read ${pages.length} more page${pages.length === 1 ? '' : 's'} (${pages.map((p) => new URL(p.url).pathname).join(', ')})`);
   const siteText = [site.text, ...pages.map((p) => `## ${p.url}\n${p.text}`)].join('\n\n');
+  // What research read, numbered so each piece of evidence can point at the page it came from.
+  const read = buildSources([
+    ...(site.via === 'google' && site.results?.length
+      ? site.results.map((r) => ({ url: r.url, title: "Google's index of the website", text: [r.title, r.snippet].filter(Boolean).join('\n') }))
+      : site.text
+        ? [{ url: site.url || website, title: 'company website', text: site.text }]
+        : []),
+    ...pages.map((p) => ({ url: p.url, title: '', text: p.text })),
+  ], undefined, undefined, lead.company);
 
-  const reused = opts.contactsOnly && lead.researchSummary ? storedResearch(lead) : null;
-  const { research, error } = reused ? { research: reused, error: '' } : await researchLead(svc, input, icp, siteText);
+  const reused = (opts.contactsOnly || keepFit) && lead.researchSummary ? storedResearch(lead) : null;
+  const { research, error } = reused ? { research: reused, error: '' } : await researchLead(svc, input, icp, read, log);
   if (!research) {
     await log(`${lead.company}: research failed: ${error}`, 'error');
     return { ...corrected, status: 'Error', lastError: error || 'Research failed' };
   }
-  const base: LeadUpdate = {
-    ...corrected,
-    segment: icp.segment,
-    researchSummary: research.text,
-    qualified: research.qualified,
-    fitScore: research.fitScore,
-    fitReason: research.fitReason,
-    lastError: '',
-  };
-  if (!research.qualified) {
-    await log(`${lead.company}: disqualified (fit ${research.fitScore}/10)`);
-    return { ...base, status: 'Disqualified' };
+  const base: LeadUpdate = { ...corrected, segment: icp.segment, lastError: '' };
+  const a = keepFit ? undefined : research.assessment;
+  if (keepFit) {
+    // The fit a person confirmed stands; research done now only adds the company description.
+    if (!reused && research.text) base.researchSummary = research.text;
+  } else if (a) {
+    // An answer that couldn't be used leaves the company description from before.
+    if (research.text) base.researchSummary = research.text;
+    Object.assign(base, {
+      qualified: a.status === 'qualified' ? true : a.status === 'not_fit' ? false : null,
+      fitScore: a.fitScore,
+      fitReason: research.fitReason,
+      fitStatus: a.status,
+      fitDecision: a.reason,
+      fitEvidence: a.evidence,
+      riskFlags: a.risks,
+      assessedIcp: icp.segment,
+      assessedAt: new Date(),
+    } satisfies LeadUpdate);
+    // Commercial risk is recorded apart from the fit; it changes the decision only as an ICP deal-breaker.
+    if (a.risks.length) await log(`${lead.company}: commercial risk noted, kept apart from the ICP fit: ${a.risks.map((r) => r.label).join(', ')}`, 'warn');
+    if (a.status === 'not_fit') {
+      await log(`${lead.company}: not a fit${a.fitScore != null ? ` (ICP fit ${a.fitScore}/10)` : ''}: ${a.reason.replace(/^Not a fit: /, '')}`);
+      return { ...base, status: 'Disqualified', finalScore: null };
+    }
+    if (a.status === 'review') {
+      await log(`${lead.company}: ${a.reason.replace(/^Needs review: /, 'needs review: ')}`, 'warn');
+      return { ...base, status: 'Needs Review', finalScore: null };
+    }
+  } else if (!research.qualified) {
+    // Saved research that didn't qualify: nothing to find contacts for, and the stage stays.
+    await log(`${lead.company}: not qualified, so contacts weren't searched`);
+    return base;
   }
 
   if (opts.contactsOnly) await log(`${lead.company}: finding contacts again from scratch`);

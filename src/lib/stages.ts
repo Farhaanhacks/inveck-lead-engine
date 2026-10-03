@@ -88,7 +88,8 @@ const RANK: Partial<Record<LeadStatus, number>> = {
  * conversation started (Replied), a demo means Meeting Booked, and not interested means Lost.
  */
 export function stageAfterOutreach(current: LeadStatus, kind: string, outcome: string, feedback = ''): LeadStatus | null {
-  if (['Won', 'Disqualified', 'Existing Client'].includes(current) || outcome === 'skipped' || outcome === 'closed') return null;
+  // A company whose fit is under review (or ruled out) isn't moved along by outreach until a person decides.
+  if (['Won', 'Disqualified', 'Needs Review', 'Existing Client'].includes(current) || outcome === 'skipped' || outcome === 'closed') return null;
   let target: LeadStatus = 'Contacted';
   if (kind === 'call' && outcome === 'connected') {
     if (feedback === 'Demo scheduled') target = 'Meeting Booked';

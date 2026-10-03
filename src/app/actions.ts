@@ -27,6 +27,9 @@ import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib
 import { domainOf } from '@/lib/pipeline/text';
 import { CLIENT_FIELDS, describeImport, importClients, markClientLeads, rowsToClients, type ClientField } from '@/lib/clients';
 import { parseCsv } from '@/lib/csv';
+import { canonicalSegment, normSegment } from '@/lib/icp-match';
+import { confirmFit, markNotFit, reassessLeads, recordAssessments } from '@/lib/reassess';
+import { cleanContact, contactFields, saveContactEdit } from '@/lib/contact-edit';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -120,10 +123,16 @@ async function knownCompanies() {
   );
 }
 
+/** The ICP's own spelling of a segment typed in; one no ICP has is kept as typed and flagged for review at research. */
 async function matchSegment(segment: string) {
   const db = await getDb();
   const names = (await db.select({ segment: icps.segment }).from(icps)).map((r) => r.segment);
-  return names.find((n) => n.toLowerCase() === segment.toLowerCase()) || segment;
+  return canonicalSegment(segment, names);
+}
+
+/** Who did something, for the timeline. */
+async function actorName(): Promise<string> {
+  return (await getCurrentUser())?.name || 'someone';
 }
 
 export async function addLeadAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
@@ -173,6 +182,8 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
 export async function addLeadsBulkAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
   const lines = str(form, 'bulk').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const inbound = str(form, 'inbound') === 'yes';
+  // Lines that name no segment use the one chosen for the whole paste.
+  const fallbackSegment = str(form, 'segment');
   const me = await getCurrentUser();
   const ownerId = me?.role === 'bda' && !inbound ? me.id : null;
   const known = await knownCompanies();
@@ -187,10 +198,12 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
       continue;
     }
     known.add(company, domain, city);
-    toAdd.push({ company, website: domain, city, segment: await matchSegment(segment), source: inbound ? 'Inbound lead' : 'Added by hand', inbound, ownerId });
+    toAdd.push({ company, website: domain, city, segment: await matchSegment(segment || fallbackSegment), source: inbound ? 'Inbound lead' : 'Added by hand', inbound, ownerId });
   }
+  const db = await getDb();
+  const names = (await db.select({ segment: icps.segment, active: icps.active }).from(icps)).filter((i) => i.active).map((i) => normSegment(i.segment));
+  const unmatched = [...new Set(toAdd.map((l) => l.segment ?? '').filter((s) => !names.includes(normSegment(s))))];
   if (toAdd.length) {
-    const db = await getDb();
     const rows = await db.insert(leads).values(toAdd).returning({ id: leads.id });
     for (const r of rows) await logActivity(db, r.id, 'added', inbound ? 'Inbound lead (bulk)' : 'Added by hand (bulk)');
     await assignUnowned(db);
@@ -200,33 +213,44 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
   revalidatePath('/');
   return {
     ok: toAdd.length > 0,
-    message: `Added ${toAdd.length} ${toAdd.length === 1 ? 'company' : 'companies'}${skipped ? `, skipped ${skipped} already a lead or a client` : ''}.${toAdd.length ? ' Researching now; progress is on the dashboard.' : ''}`,
+    message:
+      `Added ${toAdd.length} ${toAdd.length === 1 ? 'company' : 'companies'}${skipped ? `, skipped ${skipped} already a lead or a client` : ''}.${toAdd.length ? ' Researching now; progress is on the dashboard.' : ''}` +
+      (unmatched.length && toAdd.length
+        ? ` Segment ${unmatched.map((s) => `"${s || 'none'}"`).join(', ')} matches no active ICP: those companies wait in Needs Review until a segment is chosen.`
+        : ''),
   };
 }
 
 export async function updateLeadAction(form: FormData) {
-  if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
+  if (!id || !(await mayActOn(id))) return;
+  const company = str(form, 'company');
+  const contact = cleanContact(contactFields(form));
+  // Nothing is saved from a form with no company name or an email that isn't one.
+  if (!company || !contact) return;
   const db = await getDb();
+  const [before] = await db.select({ emailBody: leads.emailBody }).from(leads).where(eq(leads.id, id));
+  if (!before) return;
+  const emailBody = String(form.get('emailBody') ?? '');
   await db
     .update(leads)
     .set({
-      company: str(form, 'company'),
+      company,
       website: domainOf(str(form, 'website')),
       city: str(form, 'city'),
       segment: str(form, 'segment'),
-      contactName: str(form, 'contactName'),
-      contactTitle: str(form, 'contactTitle'),
-      contactEmail: str(form, 'contactEmail'),
-      contactPhone: str(form, 'contactPhone'),
-      contactLinkedin: str(form, 'contactLinkedin'),
       emailSubject: str(form, 'emailSubject'),
-      emailBody: String(form.get('emailBody') ?? ''),
+      emailBody,
       linkedinMessage: String(form.get('linkedinMessage') ?? ''),
       updatedAt: new Date(),
     })
     .where(eq(leads.id, id));
-  revalidatePath(`/leads/${id}`);
+  // The contact goes through the same path as Today's contact form: people list, confirmation,
+  // timeline. A new person gets an email written to them, unless the draft was edited in this save.
+  const saved = await saveContactEdit(db, id, contact);
+  if (saved?.newPerson && emailBody === before.emailBody) after(async () => redraftForContact(await getDb(), await liveServices(), id));
+  refreshLeadPages(id);
+  revalidatePath('/today');
 }
 
 const STATUS_ACTIONS: Record<string, LeadStatus> = {
@@ -252,6 +276,8 @@ export async function setLeadStatusAction(form: FormData) {
   const id = Number(str(form, 'id'));
   const status = STATUS_ACTIONS[str(form, 'action')];
   if (!id || !status) return;
+  // Research again keeps what the fit was judged before on the timeline.
+  if (status === 'New') await recordAssessments(await getDb(), [id], await actorName());
   await applyStage(await getDb(), [id], status);
   // Research again: a fresh set of attempts.
   if (status === 'New') await (await getDb()).update(leads).set({ researchAttempts: 0 }).where(eq(leads.id, id));
@@ -268,7 +294,10 @@ export async function bulkLeadAction(form: FormData) {
     await db.delete(leads).where(inArray(leads.id, ids));
     await db.delete(activities).where(inArray(activities.leadId, ids));
     await db.delete(people).where(inArray(people.leadId, ids));
+  } else if (action === 'reassess') {
+    if (await reassessLeads(db, ids, await actorName())) await researchNow();
   } else if (STATUS_ACTIONS[action]) {
+    if (STATUS_ACTIONS[action] === 'New') await recordAssessments(db, ids, await actorName());
     await applyStage(db, ids, STATUS_ACTIONS[action]);
     if (STATUS_ACTIONS[action] === 'New') await db.update(leads).set({ researchAttempts: 0 }).where(inArray(leads.id, ids));
     if (STATUS_ACTIONS[action] === 'New') await researchNow();
@@ -284,6 +313,33 @@ export async function addLeadAsClientAction(form: FormData) {
   await applyStage(await getDb(), [id], 'Won', str(form, 'whyBought'));
   refreshLeadPages(id);
   revalidatePath('/targets');
+}
+
+/**
+ * Reassess fit: a company ruled out or waiting on review is researched again under the evidence
+ * rules. Its earlier assessment stays on the timeline; nothing else about the lead is reset.
+ */
+export async function reassessFitAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!(await mayActOn(id))) return;
+  if (await reassessLeads(await getDb(), [id], await actorName())) await researchNow();
+  refreshLeadPages(id);
+}
+
+/** A person confirms the company fits: contacts are found and drafts written, keeping their call. */
+export async function confirmFitAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!(await mayActOn(id))) return;
+  if (await confirmFit(await getDb(), id, await actorName(), str(form, 'note').slice(0, 500))) await researchNow();
+  refreshLeadPages(id);
+}
+
+/** A person decides a company waiting on review isn't a fit. */
+export async function markNotFitAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!(await mayActOn(id))) return;
+  await markNotFit(await getDb(), id, await actorName(), str(form, 'note').slice(0, 500));
+  refreshLeadPages(id);
 }
 
 /** Scans the news for new plants and warehouses right now. */
@@ -434,21 +490,48 @@ function icpFields(form: FormData) {
   };
 }
 
+/** Leads whose segment is this ICP's name (ignoring case, spacing and punctuation). */
+async function leadsOfSegment(segment: string): Promise<number[]> {
+  const db = await getDb();
+  const want = normSegment(segment);
+  const rows = await db.select({ id: leads.id, segment: leads.segment }).from(leads);
+  return rows.filter((r) => normSegment(r.segment) === want).map((r) => r.id);
+}
+
 export async function saveIcpAction(form: FormData) {
   await requireAdmin();
   const db = await getDb();
   const id = Number(str(form, 'id'));
   const fields = icpFields(form);
   if (!fields.segment) return;
+  // Each segment name belongs to one ICP: leads are checked against the ICP their segment names.
+  const all = await db.select({ id: icps.id, segment: icps.segment }).from(icps);
+  const clash = all.find((i) => i.id !== id && normSegment(i.segment) === normSegment(fields.segment));
+  if (clash) redirect(`/targets?icpError=${encodeURIComponent(`Another ICP is already called "${clash.segment}". Give each ICP its own name.`)}`);
+  const before = all.find((i) => i.id === id);
   if (id) await db.update(icps).set(fields).where(eq(icps.id, id));
   else await db.insert(icps).values(fields);
+  // Renamed: its leads keep it (their segment is its name).
+  if (before && before.segment !== fields.segment) {
+    const moved = await leadsOfSegment(before.segment);
+    for (let i = 0; i < moved.length; i += 500) await db.update(leads).set({ segment: fields.segment }).where(inArray(leads.id, moved.slice(i, i + 500)));
+  }
   revalidatePath('/targets');
+  revalidatePath('/leads');
 }
 
 export async function deleteIcpAction(form: FormData) {
   await requireAdmin();
   const db = await getDb();
-  await db.delete(icps).where(eq(icps.id, Number(str(form, 'id'))));
+  const id = Number(str(form, 'id'));
+  const [icp] = await db.select().from(icps).where(eq(icps.id, id));
+  if (!icp) return;
+  // Its leads would be left with a segment no ICP has: switching it off keeps them readable.
+  const using = await leadsOfSegment(icp.segment);
+  if (using.length) {
+    redirect(`/targets?icpError=${encodeURIComponent(`${using.length} lead${using.length === 1 ? ' uses' : 's use'} the "${icp.segment}" ICP. Switch it off (untick Active) instead of deleting it.`)}`);
+  }
+  await db.delete(icps).where(eq(icps.id, id));
   revalidatePath('/targets');
 }
 

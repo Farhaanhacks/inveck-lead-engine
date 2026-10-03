@@ -7,7 +7,8 @@ export type RunLead = {
   company: string;
   status: string;
   contact: string;
-  score: number | null;
+  /** The ICP fit (0–10), shown for every assessed company, ruled out or not. */
+  fitScore: number | null;
   signal: string;
   notes: string[];
 };
@@ -61,7 +62,7 @@ export async function getRunView(db: Db, id: number): Promise<RunView | null> {
       company: l.company,
       status: l.status,
       contact: [l.contactName, l.contactTitle].filter(Boolean).join(' · '),
-      score: l.finalScore,
+      fitScore: l.fitScore,
       signal: l.signals[0]?.headline ?? '',
       notes: notes.get(l.id) ?? [],
     }));

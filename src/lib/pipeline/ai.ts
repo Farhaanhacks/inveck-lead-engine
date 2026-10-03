@@ -5,14 +5,20 @@ import { getJson } from './services';
 import { errorMessage } from './text';
 
 export type JsonSchema = Record<string, unknown>;
-export type AiResult = { data: Record<string, unknown>; error?: undefined } | { data?: undefined; error: string };
+/**
+ * `failure` says what went wrong: 'call' when the AI couldn't be reached (no key, network, an API
+ * error), 'reply' when it answered with something unusable (no JSON, cut off, a refusal).
+ */
+export type AiResult =
+  | { data: Record<string, unknown>; error?: undefined; failure?: undefined }
+  | { data?: undefined; error: string; failure: 'call' | 'reply' };
 
 /**
  * Parses the model's JSON reply, tolerating ```json fences, text around the object, and the small
  * slips models make (a missing colon or comma, an unescaped quote, a trailing comma).
  */
 export function parseJsonObject(text: string | undefined | null): AiResult {
-  if (!text) return { error: 'The AI returned no text' };
+  if (!text) return { error: 'The AI returned no text', failure: 'reply' };
   const raw = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
   let data: unknown;
   try {
@@ -23,10 +29,10 @@ export function parseJsonObject(text: string | undefined | null): AiResult {
       if (start < 0) throw e;
       data = JSON.parse(jsonrepair(raw.slice(start)));
     } catch {
-      return { error: 'Could not read the AI JSON: ' + errorMessage(e) };
+      return { error: 'Could not read the AI JSON: ' + errorMessage(e), failure: 'reply' };
     }
   }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return { error: 'The AI did not return a JSON object' };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { error: 'The AI did not return a JSON object', failure: 'reply' };
   return { data: data as Record<string, unknown> };
 }
 
@@ -42,12 +48,12 @@ export async function askJson(svc: Services, systemTemplate: string, userText: s
       ? await askClaude(svc, system, userText, schema)
       : await askDeepSeek(svc, system, userText, schema);
   } catch (e) {
-    return { error: 'AI call failed: ' + errorMessage(e) };
+    return { error: 'AI call failed: ' + errorMessage(e), failure: 'call' };
   }
 }
 
 async function askClaude(svc: Services, system: string, userText: string, schema: JsonSchema): Promise<AiResult> {
-  if (!svc.keys.anthropic) return { error: 'ANTHROPIC_API_KEY is not set' };
+  if (!svc.keys.anthropic) return { error: 'ANTHROPIC_API_KEY is not set', failure: 'call' };
   const client = new Anthropic({ apiKey: svc.keys.anthropic, fetch: svc.fetch, maxRetries: 2 });
   const res = await client.beta.messages.create({
     model: svc.settings.aiModel,
@@ -59,8 +65,8 @@ async function askClaude(svc: Services, system: string, userText: string, schema
     system,
     messages: [{ role: 'user', content: userText }],
   });
-  if (res.stop_reason === 'refusal') return { error: 'The AI declined this request' };
-  if (res.stop_reason === 'max_tokens') return { error: 'AI response was cut off (max_tokens)' };
+  if (res.stop_reason === 'refusal') return { error: 'The AI declined this request', failure: 'reply' };
+  if (res.stop_reason === 'max_tokens') return { error: 'AI response was cut off (max_tokens)', failure: 'reply' };
   const block = res.content.find((b) => b.type === 'text');
   return parseJsonObject(block && block.type === 'text' ? block.text : '');
 }
@@ -68,7 +74,7 @@ async function askClaude(svc: Services, system: string, userText: string, schema
 type DeepSeekResponse = { choices?: { finish_reason?: string; message?: { content?: string } }[] };
 
 async function askDeepSeek(svc: Services, system: string, userText: string, schema: JsonSchema): Promise<AiResult> {
-  if (!svc.keys.deepseek) return { error: 'DEEPSEEK_API_KEY is not set' };
+  if (!svc.keys.deepseek) return { error: 'DEEPSEEK_API_KEY is not set', failure: 'call' };
   let lastError = '';
   // DeepSeek's JSON mode doesn't enforce the schema, so describe it and retry on a bad reply.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -102,5 +108,5 @@ async function askDeepSeek(svc: Services, system: string, userText: string, sche
     if (parsed.data) return parsed;
     lastError = parsed.error;
   }
-  return { error: lastError };
+  return { error: lastError, failure: 'reply' };
 }

@@ -14,22 +14,25 @@ import { draftDueFollowUps, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
 import { getAnalytics } from '@/lib/analytics';
 import { EMPTY_CONTACT } from '@/lib/pipeline/contacts';
 
+const M = 'Manufacturing';
 const TEST_LEADS = [
-  { company: 'Tata Motors', website: 'https://www.tatamotors.com/', city: 'Pune', segment: 'Manufacturing' },
-  { company: 'Bajaj Finance', website: 'bajajfinserv.in', city: 'Pune', segment: 'Manufacturing' },
+  { company: 'Tata Motors', website: 'https://www.tatamotors.com/', city: 'Pune', segment: M },
+  { company: 'Bajaj Finance', website: 'bajajfinserv.in', city: 'Pune', segment: M },
   { company: 'Kirtane & Pandit', website: 'kirtanepandit.com', city: 'Pune', segment: 'CA Firms' },
-  { company: 'Mystery Castings', city: 'Nashik' },
-  { company: 'Garbage Output Ltd', website: 'garbage.in', segment: 'Manufacturing' },
-  { company: 'Motherson', website: 'motherson.com', segment: 'manufacturing & 3pl', contactName: 'Vijay Agrawal', contactTitle: 'Plant Head', contactEmail: 'vijay@motherson.com' },
-  { company: 'No Draft Industries', website: 'nodraft.in' },
+  { company: 'Mystery Castings', city: 'Nashik', segment: 'manufacturing' },
+  { company: 'Garbage Output Ltd', website: 'garbage.in', segment: M },
+  { company: 'Motherson', website: 'motherson.com', segment: M, contactName: 'Vijay Agrawal', contactTitle: 'Plant Head', contactEmail: 'vijay@motherson.com' },
+  { company: 'No Draft Industries', website: 'nodraft.in', segment: M },
   { company: 'Haldex India Pvt Ltd', website: 'haldexindia.in' },
   { company: 'HX Brakes', website: 'https://haldex.com/in' },
-  { company: 'Website Email Co', website: 'websiteemail.in' },
-  { company: 'Format Guess Co', website: 'formatguess.in' },
-  { company: 'Finder Co', website: 'findr.in' },
-  { company: 'Catchall Co', website: 'catchall.in' },
-  { company: 'Ash Logistics and Traders Pvt Ltd', website: 'ash-logistics.com', city: 'Pune' },
-  { company: 'Honeywell', website: 'honeywell.com', city: 'Pune' },
+  { company: 'Website Email Co', website: 'websiteemail.in', segment: M },
+  { company: 'Format Guess Co', website: 'formatguess.in', segment: M },
+  { company: 'Finder Co', website: 'findr.in', segment: M },
+  { company: 'Catchall Co', website: 'catchall.in', segment: M },
+  { company: 'Ash Logistics and Traders Pvt Ltd', website: 'ash-logistics.com', city: 'Pune', segment: M },
+  { company: 'Honeywell', website: 'honeywell.com', city: 'Pune', segment: M },
+  // A segment no ICP has: flagged for review, never checked against another ICP.
+  { company: 'Old Segment Co', website: 'oldsegment.in', segment: 'manufacturing & 3pl' },
 ];
 
 let db: Db;
@@ -74,9 +77,11 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['HX Brakes'].status).toBe('Existing Client');
     expect(log.calls.some((c) => c.includes('haldex'))).toBe(false);
 
-    // Messy AI answers (objects for text, "true" as text, fenced JSON) still work.
+    // A malformed AI answer (wrong types, criteria missing) is asked for again; the second one stands.
     expect(L['Tata Motors'].status).toBe('Awaiting Approval');
+    expect(L['Tata Motors'].fitStatus).toBe('qualified');
     expect(L['Tata Motors'].fitReason).toBe('6 plants, SAP');
+    expect(L['Tata Motors'].fitEvidence.find((e) => e.id === 'M1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.tatamotors.com/' });
     expect(L['Tata Motors'].contactName).toBe('Sangamnath Digge');
     expect(L['Tata Motors'].contactEmail).toBe('sangamnath.digge@tatamotors.com');
     expect(L['Tata Motors'].emailStatus).toBe('valid (common email format)');
@@ -86,21 +91,36 @@ describe('full run with DeepSeek-style messy answers', () => {
     // "Z9" isn't a real candidate, so it's ignored rather than invented.
     expect(L['Tata Motors'].otherDecisionMakers).not.toContain('Z9');
 
+    // Ruled out on evidence: its own pages (Google's index of them) quote what fails the ICP.
     expect(L['Bajaj Finance'].status).toBe('Disqualified');
+    expect(L['Bajaj Finance'].fitStatus).toBe('not_fit');
     expect(L['Bajaj Finance'].fitReason).toBe('Lender, no physical inventory');
+    expect(L['Bajaj Finance'].fitDecision).toContain('non-banking financial company');
+    expect(L['Bajaj Finance'].fitEvidence.find((e) => e.id === 'D1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.bajajfinserv.in/' });
+    expect(L['Bajaj Finance'].fitScore).toBe(1);
 
     expect(L['Kirtane & Pandit'].status).toBe('Needs Manual Contact');
     expect(L['Kirtane & Pandit'].otherDecisionMakers).toContain('Email search error: 429 usage limit');
     expect(L['Kirtane & Pandit'].emailStatus).toMatch(/^no email found: /);
 
+    // A segment written differently still names its ICP; finding contacts failing leaves the fit alone.
+    expect(L['Mystery Castings'].segment).toBe('Manufacturing');
     expect(L['Mystery Castings'].status).toBe('Needs Manual Contact');
+    expect(L['Mystery Castings']).toMatchObject({ fitStatus: 'qualified', qualified: true, fitScore: 6 });
     expect(L['Mystery Castings'].otherDecisionMakers).toContain('LinkedIn search error');
     // No contact found, but the email and LinkedIn message are written anyway.
     expect(L['Mystery Castings'].emailBody).toBeTruthy();
     expect(L['Mystery Castings'].linkedinMessage).toBeTruthy();
 
-    expect(L['Garbage Output Ltd'].status).toBe('Error');
-    expect(L['Garbage Output Ltd'].lastError).toContain('Could not read the AI JSON');
+    // An answer that can't be read even when asked again goes to review, never to Disqualified.
+    expect(L['Garbage Output Ltd'].status).toBe('Needs Review');
+    expect(L['Garbage Output Ltd'].qualified).toBeNull();
+    expect(L['Garbage Output Ltd'].fitDecision).toContain('Could not read the AI JSON');
+
+    expect(L['Old Segment Co'].status).toBe('Needs Review');
+    expect(L['Old Segment Co'].fitDecision).toContain('matches no ICP');
+    expect(L['Old Segment Co'].segment).toBe('manufacturing & 3pl');
+    expect(log.calls.some((c) => c.includes('oldsegment'))).toBe(false);
 
     // The sales team's contact is kept.
     expect(L['Motherson'].contactName).toBe('Vijay Agrawal');
@@ -348,6 +368,7 @@ describe('new facility radar', () => {
     await db.insert(leads).values({ company: 'Tata Motors', status: 'New' });
     const r = await scanRadar(db, services(), undefined, { force: true });
     expect(r).toEqual({ added: 1, error: '' });
+    // The AI's " MANUFACTURING " is the Manufacturing ICP, spelled its way.
     const [o] = await db.select().from(opportunities);
     expect(o).toMatchObject({
       company: 'Varroc Engineering',

@@ -119,10 +119,11 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
       )}
       {run.error && <p className="px-5 pt-3 text-sm text-critical-ink">{run.error}</p>}
 
-      <dl className="grid grid-cols-3 gap-3 px-5 py-4 sm:grid-cols-6">
+      <dl className="grid grid-cols-3 gap-3 px-5 py-4 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="New prospects" value={s.prospectsAdded} />
         <Stat label="Researched" value={s.processed} />
         <Stat label="Drafts ready" value={s.drafted} />
+        <Stat label="Needs review" value={s.needsReview ?? 0} />
         <Stat label="Disqualified" value={s.disqualified} />
         <Stat label="Clients skipped" value={s.existingClients} />
         <Stat label="Problems" value={s.errors} />
@@ -136,7 +137,7 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
                 <th className="px-5 py-2 font-medium">Company</th>
                 <th className="px-2 py-2 font-medium">Result</th>
                 <th className="px-2 py-2 font-medium">Decision-maker</th>
-                <th className="px-5 py-2 text-right font-medium">Score</th>
+                <th className="px-5 py-2 text-right font-medium">ICP fit</th>
               </tr>
             </thead>
             <tbody>
@@ -152,7 +153,7 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
                   </td>
                   <td className="px-2 py-2.5"><StatusPill status={l.status} /></td>
                   <td className="px-2 py-2.5 text-ink-2">{l.contact || <span className="text-muted">—</span>}</td>
-                  <td className="px-5 py-2.5 text-right tabular-nums">{l.score ?? '—'}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{l.fitScore != null ? `${l.fitScore}/10` : '—'}</td>
                 </tr>
               ))}
             </tbody>

@@ -4,7 +4,7 @@ import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
 import { fillMissingDrafts } from '@/lib/pipeline/redraft';
-import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
+import { icps, leads, LEAD_STATUSES, type Lead } from '@/lib/db/schema';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { runDailyDraw } from '@/lib/draw';
@@ -13,8 +13,29 @@ import { AutoFilterForm } from '@/components/auto-filter-form';
 import { StatusPill } from '@/components/status-pill';
 import { bulkLeadAction } from '../../actions';
 import { isPast, relativeDays } from '@/lib/dates';
+import { fitAssessment, TONE_CLASS } from '@/lib/fit-view';
 
 const PAGE_SIZE = 100;
+
+/** The ICP fit score, the assessment, and (unless qualified) why, with any commercial risk. */
+function FitCell({ lead }: { lead: Lead }) {
+  const fit = fitAssessment(lead);
+  if (!fit) return <span className="text-muted">—</span>;
+  // The badge already says "Needs review" or "Not a fit": the line under it says why.
+  const why = fit.tone === 'good' ? '' : fit.detail.replace(/^(Needs review|Not a fit):\s*/i, '').replace(/^./, (c) => c.toUpperCase());
+  return (
+    <div className="max-w-[20rem]">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-sm font-semibold tabular-nums">{lead.fitScore != null ? `${lead.fitScore}/10` : '—'}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ${TONE_CLASS[fit.tone]}`}>{fit.label}</span>
+      </div>
+      {why && <p className="mt-1 line-clamp-3 text-xs text-ink-2" title={why}>{why}</p>}
+      {lead.riskFlags.length > 0 && (
+        <p className="mt-1 text-xs text-warning-ink" title="Recorded apart from the ICP fit">Risk: {lead.riskFlags.map((r) => r.label).join(', ')}</p>
+      )}
+    </div>
+  );
+}
 
 // Research started from this page keeps working after the response.
 export const maxDuration = 300;
@@ -54,7 +75,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
       .select()
       .from(leads)
       .where(whereWithStatus)
-      .orderBy(desc(leads.finalScore), desc(leads.updatedAt))
+      // Best ICP fit first, whatever became of the company; companies not assessed yet last.
+      .orderBy(sql`${leads.fitScore} desc nulls last`, sql`${leads.finalScore} desc nulls last`, desc(leads.updatedAt))
       .limit(PAGE_SIZE)
       .offset((page - 1) * PAGE_SIZE),
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).where(where).groupBy(leads.status),
@@ -120,22 +142,30 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5 text-sm">
           <span className="text-ink-2">With selected:</span>
           <button name="action" value="requeue" className="btn-secondary px-2.5 py-1 text-xs">Research again</button>
+          <button
+            name="action"
+            value="reassess"
+            className="btn-secondary px-2.5 py-1 text-xs"
+            title="Companies ruled out or waiting on review are checked again under the evidence rules; their earlier assessment stays on the timeline"
+          >
+            Reassess fit
+          </button>
           <button name="action" value="approve" className="btn-secondary px-2.5 py-1 text-xs">Approve</button>
           <button name="action" value="reject" className="btn-secondary px-2.5 py-1 text-xs">Reject</button>
           <button name="action" value="delete" className="btn-danger px-2.5 py-1 text-xs">Delete</button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1020px] text-sm">
+          <table className="w-full min-w-[1180px] text-sm">
             <thead>
               <tr className="text-left text-xs text-muted">
                 <th className="w-10 px-4 py-2"><span className="sr-only">Select</span></th>
                 <th className="px-2 py-2 font-medium">Company</th>
                 <th className="px-2 py-2 font-medium">Status</th>
+                <th className="px-2 py-2 font-medium">ICP fit</th>
                 <th className="px-2 py-2 font-medium">Owner</th>
                 <th className="px-2 py-2 font-medium">Decision-maker</th>
                 <th className="px-2 py-2 font-medium">Email</th>
-                <th className="px-2 py-2 font-medium">LinkedIn</th>
-                <th className="px-4 py-2 text-right font-medium">Score</th>
+                <th className="px-4 py-2 font-medium">LinkedIn</th>
               </tr>
             </thead>
             <tbody>
@@ -155,6 +185,9 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                         Follow-up {l.followUpStep + 1} {isPast(l.nextFollowUpAt) ? 'due' : relativeDays(l.nextFollowUpAt)}
                       </div>
                     )}
+                  </td>
+                  <td className="px-2 py-3">
+                    <FitCell lead={l} />
                   </td>
                   <td className="px-2 py-3 text-ink-2">
                     {l.ownerId ? names.get(l.ownerId) ?? '' : <span className="text-muted">—</span>}
@@ -178,14 +211,13 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                     )}
                     {l.emailStatus && <div className="text-xs text-muted">{l.emailStatus}</div>}
                   </td>
-                  <td className="px-2 py-3 whitespace-nowrap">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {l.contactLinkedin ? (
                       <a href={l.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>
                     ) : (
                       <span className="text-muted">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{l.finalScore ?? '—'}</td>
                 </tr>
               ))}
               {!rows.length && (

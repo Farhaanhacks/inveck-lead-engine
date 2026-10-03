@@ -2,7 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
-import { escalate, newContactNamed, unansweredCalls, type Escalation } from '@/lib/escalate';
+import { escalate, unansweredCalls, type Escalation } from '@/lib/escalate';
+import { contactFields, saveContactEdit } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
@@ -257,12 +258,6 @@ export async function assignOwnerAction(form: FormData) {
   revalidatePath('/today');
 }
 
-/** Hands several leads to one person at once. */
-export async function assignOwnerBulk(ids: number[], ownerId: number) {
-  const db = await getDb();
-  await db.update(leads).set({ ownerId }).where(inArray(leads.id, ids));
-}
-
 /** Admin only: wipes a team member's logged tasks and attendance (testing before go-live). Their sequences are planned again. */
 export async function resetTodayLogAction(form: FormData) {
   const user = await requireUser();
@@ -357,57 +352,11 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
 export async function updateContactAction(form: FormData) {
   const id = Number(str(form, 'id'));
   if (!(await mayActOn(id))) return;
-  const v = {
-    contactName: str(form, 'contactName').slice(0, 200),
-    contactTitle: str(form, 'contactTitle').slice(0, 200),
-    contactPhone: str(form, 'contactPhone').slice(0, 40),
-    contactEmail: str(form, 'contactEmail').slice(0, 200).toLowerCase(),
-    contactLinkedin: str(form, 'contactLinkedin').slice(0, 300),
-  };
-  if (v.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.contactEmail)) return;
   const db = await getDb();
-  const [before] = await db.select().from(leads).where(eq(leads.id, id));
-  if (!before) return;
-  // A different person: the previous person's number, email and LinkedIn don't carry over unless retyped.
-  if (before.contactName && v.contactName.toLowerCase() !== before.contactName.toLowerCase()) {
-    for (const k of ['contactPhone', 'contactEmail', 'contactLinkedin'] as const) if (v[k] === before[k]) v[k] = '';
-  }
-  const emailChanged = v.contactEmail !== before.contactEmail;
-  const newPerson = v.contactName.toLowerCase() !== before.contactName.toLowerCase();
-  await db
-    .update(leads)
-    // The team vouches for a contact they enter: it counts as confirmed.
-    .set({ ...v, contactVerifiedAt: v.contactName ? new Date() : null, ...(newPerson ? { contactTier: '', contactCheckedAt: null } : {}), ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}), updatedAt: new Date() })
-    .where(eq(leads.id, id));
-  // Keep the people list in step: update the main contact, or add them if they're new.
-  const [primary] = await db.select().from(people).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
-  const person = { name: v.contactName, title: v.contactTitle, phone: v.contactPhone, email: v.contactEmail, linkedin: v.contactLinkedin };
-  if (primary && primary.name.toLowerCase() === v.contactName.toLowerCase()) {
-    await db.update(people).set({ ...person, ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}) }).where(eq(people.id, primary.id));
-  } else if (v.contactName) {
-    await db.update(people).set({ isPrimary: false }).where(eq(people.leadId, id));
-    await db.insert(people).values({ ...person, leadId: id, emailStatus: v.contactEmail ? 'entered by the team' : '', source: 'Sales team', isPrimary: true });
-  }
-  // Someone new: their own count of unanswered calls, a fresh plan if the lead was waiting for them, and an email written to them.
-  if (newPerson && v.contactName) {
-    await newContactNamed(db, id);
-    after(async () => redraftForContact(await getDb(), await liveServices(), id));
-  }
-  const changed = (['contactName', 'contactTitle', 'contactPhone', 'contactEmail', 'contactLinkedin'] as const).filter((k) => v[k] !== before[k]);
-  if (changed.length) {
-    const label = { contactName: 'name', contactTitle: 'designation', contactPhone: 'number', contactEmail: 'email', contactLinkedin: 'LinkedIn' };
-    await logActivity(db, id, 'contact', `Point of contact updated (${changed.map((k) => label[k]).join(', ')}): ${[v.contactName, v.contactTitle, v.contactPhone, v.contactEmail].filter(Boolean).join(' · ')}`);
-  }
-  // A new email address means the email steps can run: plan them if the sequence had none.
-  if (emailChanged && v.contactEmail && !before.contactEmail) {
-    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, id), isNull(tasks.doneAt)));
-    if (open.length && !open.some((t) => t.kind === 'email')) {
-      const calls = open.filter((t) => t.kind === 'call' && !t.priority);
-      for (const c of calls) {
-        await db.insert(tasks).values({ leadId: id, ownerId: c.ownerId, kind: 'email', step: c.step, title: `${c.step}: email`, dueDate: c.dueDate, slot: c.slot });
-      }
-    }
-  }
+  // Saved from the contact form itself: the team vouches for this contact even when nothing changed.
+  const saved = await saveContactEdit(db, id, contactFields(form), { force: true });
+  // Someone new gets an email written to them.
+  if (saved?.newPerson) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   revalidatePath('/today');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);

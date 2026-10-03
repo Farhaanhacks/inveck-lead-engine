@@ -1,4 +1,5 @@
 import type { Icp } from './db/schema';
+import { normSegment } from './icp-match';
 
 export type Tier = 'P1' | 'P2' | 'P3' | 'Avoid' | '';
 
@@ -107,11 +108,16 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
 }
 
 /**
- * The ICP whose rules apply to a lead: its segment's, or (as research does) the first active ICP
- * when the segment matches none, so contacts are always ranked by some list.
+ * The lead's own ICP, for ranking its contacts: the one whose name is the lead's segment (ignoring
+ * case, spacing and punctuation). A switched-off ICP still ranks the contacts of leads already being
+ * worked. None, or several with that name, gives undefined: never another segment's ICP. (Whether a
+ * company fits is checked with resolveIcp, which also needs the ICP to be active.)
  */
-export function icpFor<T extends Pick<Icp, 'segment'> & Partial<Pick<Icp, 'id' | 'active'>>>(segment: string, icps: T[]): T | undefined {
-  const s = segment.trim().toLowerCase();
-  const sorted = [...icps].sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
-  return sorted.find((i) => i.segment.trim().toLowerCase() === s) ?? sorted.find((i) => i.active !== false) ?? sorted[0];
+export function icpFor<T extends Pick<Icp, 'segment'> & Partial<Pick<Icp, 'active'>>>(segment: string, icps: T[]): T | undefined {
+  const want = normSegment(segment);
+  if (!want) return undefined;
+  const same = icps.filter((i) => normSegment(i.segment) === want);
+  const active = same.filter((i) => i.active !== false);
+  if (active.length) return active.length === 1 ? active[0] : undefined;
+  return same.length === 1 ? same[0] : undefined;
 }

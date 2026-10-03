@@ -2,7 +2,7 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { atBranch, atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
+import { atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
 import { contactFromTeam } from './team-contact';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
@@ -304,12 +304,19 @@ export async function promoteBetterContacts(db: Db, scope: Scope = {}): Promise<
   for (const { lead, list } of byLead.values()) {
     const icp = icpFor(lead.segment, icpRows);
     if (!icp) continue;
-    const current = { title: lead.contactTitle, snippet: '', phone: lead.contactPhone, email: lead.contactEmail };
-    const others = list.filter((p) => !p.isPrimary && !p.passedAt && p.name.toLowerCase() !== lead.contactName.toLowerCase() && contactPriority(p.title, icp) < 99);
+    // The main contact is ranked the same way as everyone else, with where they are based (from their
+    // People record), so two people equally placed at this site never look like a step up.
+    const primary = list.find((p) => p.isPrimary && p.name.toLowerCase() === lead.contactName.toLowerCase());
+    const current = { title: lead.contactTitle, snippet: '', phone: lead.contactPhone, email: lead.contactEmail, location: primary?.location ?? '' };
+    // Like research's own pick, the main contact has to be confirmed at this site: someone whose LinkedIn
+    // location isn't known, or is another city, is never promoted (the team finds someone instead).
+    const others = list.filter(
+      (p) => !p.isPrimary && !p.passedAt && p.name.toLowerCase() !== lead.contactName.toLowerCase() && contactPriority(p.title, icp) < 99 && confirmedAtSite(p, lead.city),
+    );
     const best = rankCandidates(others, icp, lead.city)[0];
     if (!best) continue;
     // Only a real step up: a better class of contact, not a tie decided by who has a phone number.
-    const gain = Math.floor(contactPriority(lead.contactTitle, icp) - (atBranch(current, lead.city) ? 6 : 0)) - Math.floor(candidateRank(best, icp, lead.city));
+    const gain = Math.floor(candidateRank(current, icp, lead.city)) - Math.floor(candidateRank(best, icp, lead.city));
     if (lead.contactName && gain < 5) continue;
     // Not once the team has started on this person (for someone off the lists: once they've actually
     // spoken to them), and never over someone the team chose themselves.
@@ -326,14 +333,8 @@ export async function promoteBetterContacts(db: Db, scope: Scope = {}): Promise<
       .where(and(eq(activities.leadId, lead.id), eq(activities.kind, 'contact'), or(like(activities.text, 'Main contact changed%'), like(activities.text, 'Point of contact updated%'))))
       .limit(1);
     if (chosen.length) continue;
-    await makePrimary(db, best.id);
+    await makePrimary(db, best.id, { why: `INVECK approaches ${best.title || 'them'} before ${lead.contactName ? `${lead.contactName} (${lead.contactTitle || 'no title'})` : 'anyone else'}` });
     await db.update(leads).set({ contactTier: '', contactSince: new Date() }).where(eq(leads.id, lead.id));
-    await logActivity(
-      db,
-      lead.id,
-      'contact',
-      `Main contact changed to ${best.name}${best.title ? `, ${best.title}` : ''}: INVECK approaches ${best.title || 'them'} before ${lead.contactName ? `${lead.contactName} (${lead.contactTitle || 'no title'})` : 'anyone else'}.`,
-    );
     changed.push(lead.id);
   }
   return changed;

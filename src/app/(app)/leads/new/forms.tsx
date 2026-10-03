@@ -35,8 +35,9 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
           </div>
         </div>
         <div>
-          <label htmlFor="segment" className="label">Segment</label>
-          <select id="segment" name="segment" className="field">
+          <label htmlFor="segment" className="label">Segment *</label>
+          <select id="segment" name="segment" required defaultValue="" className="field">
+            <option value="" disabled>Choose the ICP to check it against</option>
             {segments.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -91,6 +92,16 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
           className="field font-mono text-xs"
           placeholder={`Bajaj Auto, bajajauto.com, Pune, Manufacturing\nTCI Supply Chain, tcisupplychain.com, Gurgaon, 3PL & Logistics\nKirtane & Pandit, kirtanepandit.com, Pune, CA Firms\nMahindra Logistics`}
         />
+        <div>
+          <label htmlFor="bulk-segment" className="label">Segment for lines that don&apos;t name one *</label>
+          <select id="bulk-segment" name="segment" required defaultValue="" className="field">
+            <option value="" disabled>Choose an ICP</option>
+            {segments.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-muted">A segment that matches no active ICP isn&apos;t replaced: the company waits in Needs review until one is chosen.</p>
+        </div>
         <label className="flex items-start gap-2 text-sm">
           <input type="checkbox" name="inbound" value="yes" className="mt-1" />
           <span>

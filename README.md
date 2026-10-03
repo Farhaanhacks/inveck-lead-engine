@@ -6,8 +6,20 @@ Everything happens in one run. Nobody needs Airtable or n8n.
 1. **Find prospects** (optional): the AI plans Google searches from the target segments
    and existing clients, then picks real companies. Existing clients and known leads
    are skipped.
-2. **Research**: for each new company it reads the website and scores the fit. It
-   skips existing clients by name and by domain.
+2. **Research**: for each new company it reads the website and checks it against the one
+   active ICP its segment names (no segment, an unknown one or a switched-off ICP is
+   flagged, never swapped for another ICP). It skips existing clients by name and by domain.
+   The ICP's must-haves, deal-breakers and size, geography and industry targets become
+   numbered criteria; the AI answers each one met / not met / unknown with a quote and the
+   page it came from, and code checks every quote against its page. The decision follows
+   fixed rules (see `src/lib/pipeline/fit.ts`): a company is **Disqualified** only when a quote
+   shows a must-have failing or a deal-breaker applying (and a second look confirms the quote
+   shows it); anything unconfirmed after one more search, a malformed or self-contradicting AI
+   answer, or a low score with nothing against the company goes to **Needs Review**.
+   Commercial risk (insolvency, liquidation) is recorded separately and rules a company out only
+   when an ICP deal-breaker names it. A ruled-out or reviewed company can be reassessed, confirmed
+   as a fit or marked not a fit from its page or the Leads list; the earlier assessment stays on
+   its timeline.
 3. **Contact**: it searches LinkedIn (via Google) and Hunter, and the AI picks the best
    person. It finds the email cheapest-first: emails already known, emails on the
    website, the company's email pattern, then Hunter's finder.

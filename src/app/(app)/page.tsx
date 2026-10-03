@@ -91,6 +91,15 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
 
       {running && <div className="mb-6">{activity}</div>}
 
+      {(counts['Needs Review'] ?? 0) > 0 && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm text-warning-ink" role="status">
+          <span>
+            {counts['Needs Review']} {counts['Needs Review'] === 1 ? 'company needs' : 'companies need'} a fit review: the evidence didn&apos;t settle whether {counts['Needs Review'] === 1 ? 'it fits' : 'they fit'}.
+          </span>
+          <Link href="/leads?status=Needs%20Review" className="font-medium underline">Review them</Link>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Companies" value={totals.total} note={`${counts.New ?? 0} waiting for research`} />
         <StatTile label="Qualified" value={totals.qualified} note={`${totals.contacts} decision-makers, ${totals.emails} emails`} />

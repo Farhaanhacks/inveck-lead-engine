@@ -6,20 +6,53 @@ import { SubmitButton } from '@/components/submit-button';
 import { deleteIcpAction, saveIcpAction } from '../../actions';
 import { ClientsGrid } from './clients-grid';
 import { adminPage } from '@/lib/access';
+import { icpCriteria, KIND_LABEL } from '@/lib/pipeline/fit';
 
 const ICP_FIELDS: { name: keyof Icp; label: string; rows?: number; hint?: string }[] = [
   { name: 'description', label: 'Description', rows: 2 },
-  { name: 'industries', label: 'Industries', rows: 2 },
-  { name: 'companySize', label: 'Company size' },
-  { name: 'geography', label: 'Geography' },
-  { name: 'mustHaves', label: 'Must-haves', rows: 2, hint: 'Hard requirements; a company missing one is disqualified.' },
-  { name: 'dealBreakers', label: 'Deal-breakers', rows: 2, hint: 'Any of these disqualifies a company.' },
+  { name: 'industries', label: 'Industries', rows: 2, hint: 'A target: a company shown to be in another industry goes to review, never ruled out by this alone.' },
+  { name: 'companySize', label: 'Company size', hint: 'A target: a company shown to be clearly smaller goes to review; unknown size is only noted.' },
+  { name: 'geography', label: 'Geography', hint: 'A target: a company shown to be elsewhere goes to review.' },
+  {
+    name: 'mustHaves',
+    label: 'Must-haves',
+    rows: 2,
+    hint: 'One per line or separated by semicolons. A company is ruled out only when a source shows it fails one; one that can\'t be confirmed goes to review. Write "is a plus" in an item to make it optional.',
+  },
+  {
+    name: 'dealBreakers',
+    label: 'Deal-breakers',
+    rows: 2,
+    hint: 'One per line or separated by semicolons. Rules a company out only when a source shows it applies. Commercial risk (insolvency, liquidation) is recorded separately and rules a company out only when named here.',
+  },
   { name: 'targetTitles', label: 'P1: primary decision-makers', rows: 2, hint: 'Comma separated, most important first. Approached first.' },
   { name: 'p2Titles', label: 'P2: process owners', rows: 2, hint: 'Approached when nobody at P1 can be found or reached.' },
   { name: 'p3Titles', label: 'P3: process-level contacts', rows: 2, hint: 'The last resort.' },
   { name: 'avoidTitles', label: 'Do not prioritise', rows: 1, hint: 'Functions never picked as the main contact, e.g. HR, Admin, Quality Assurance.' },
   { name: 'pitchAngle', label: 'Pitch angle', rows: 3, hint: 'The problem INVECK solves for this segment; shapes the drafts.' },
 ];
+
+/** How the ICP's settings are read when a company is checked: each item a criterion with its id. */
+function CriteriaList({ icp }: { icp: Icp }) {
+  const criteria = icpCriteria(icp);
+  if (!criteria.length) return null;
+  return (
+    <div className="mb-4 rounded-md border border-line bg-surface-2 p-3">
+      <p className="mb-2 text-xs font-medium text-ink-2">How companies are checked against this ICP</p>
+      <ul className="space-y-1 text-xs text-ink-2">
+        {criteria.map((c) => (
+          <li key={c.id} className="flex gap-2">
+            <span className="w-36 shrink-0 text-muted">{c.id} · {KIND_LABEL[c.kind]}</span>
+            <span className="min-w-0 break-words">{c.text}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-muted">
+        Ruled out only by a must-have shown not met or a deal-breaker shown to apply, each with a quote from a source. Anything unconfirmed goes to Needs review.
+      </p>
+    </div>
+  );
+}
 
 function IcpForm({ icp }: { icp?: Icp }) {
   return (
@@ -55,8 +88,10 @@ function IcpForm({ icp }: { icp?: Icp }) {
   );
 }
 
-export default async function TargetsPage() {
+export default async function TargetsPage({ searchParams }: PageProps<'/targets'>) {
   await adminPage();
+  const sp = await searchParams;
+  const icpError = typeof sp.icpError === 'string' ? sp.icpError.slice(0, 300) : '';
   const db = await getDb();
   const [icpList, clientList] = await Promise.all([
     db.select().from(icps).orderBy(asc(icps.id)),
@@ -71,6 +106,11 @@ export default async function TargetsPage() {
       />
 
       <h2 className="mb-3 text-sm font-semibold">Ideal customer profiles</h2>
+      {icpError && (
+        <div className="mb-3 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink" role="alert">
+          {icpError}
+        </div>
+      )}
       <div className="space-y-3">
         {icpList.map((icp) => (
           <details key={icp.id} className="card p-5">
@@ -79,6 +119,7 @@ export default async function TargetsPage() {
               <span className="text-xs text-muted">{icp.active ? 'Active' : 'Off'}</span>
             </summary>
             <div className="mt-4">
+              <CriteriaList icp={icp} />
               <IcpForm icp={icp} />
             </div>
           </details>

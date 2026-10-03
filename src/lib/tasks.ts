@@ -69,7 +69,7 @@ export function planSequence(startDay: string): PlannedTask[] {
 /** Statuses where the lead is being worked on, so outreach tasks make sense. */
 export const WORKING_STATUSES = ['Awaiting Approval', 'Approved', 'Contacted'] as const;
 /** Once a lead is here, open sequence tasks stop showing (promised callbacks still do). */
-const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact'] as const;
+const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Needs Review', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact'] as const;
 /**
  * Here the day's steps no longer show. A conversation or a meeting still finishes today's steps
  * (moving there already ended the later rounds).
@@ -166,7 +166,8 @@ export async function unattendedInbound(db: Db, ownerId: number | null, now = ne
         eq(leads.inbound, true),
         ownerId === null ? undefined : eq(leads.ownerId, ownerId),
         lt(leads.createdAt, cutoff),
-        notInArray(leads.status, [...STOPPED_STATUSES, 'Contacted']),
+        // An inbound lead whose fit is still being reviewed asked to hear from us: it still needs a call.
+        notInArray(leads.status, [...STOPPED_STATUSES.filter((s) => s !== 'Needs Review'), 'Contacted']),
         notExists(db.select({ one: sql`1` }).from(activities).where(and(eq(activities.leadId, leads.id), inArray(activities.kind, [...TOUCH_KINDS])))),
         notExists(db.select({ one: sql`1` }).from(tasks).where(and(eq(tasks.leadId, leads.id), isNotNull(tasks.doneAt)))),
       ),

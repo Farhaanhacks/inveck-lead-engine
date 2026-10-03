@@ -16,7 +16,7 @@ import type { LeadResult, LeadUpdate } from './pipeline/process-lead';
 import { savePeople } from './people';
 import { assignUnowned } from './assign';
 
-const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, existingClients: 0, errors: 0 };
+const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, needsReview: 0, existingClients: 0, errors: 0 };
 /** A run with no heartbeat for this long is considered dead (its function timed out or crashed). */
 const STALE_MS = 10 * 60 * 1000;
 /** Research attempts that time out before a lead stops being retried (it goes to Error; Research again resets it). */
@@ -179,12 +179,15 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     }
     await db.update(leads).set({ status: 'New' }).where(stale);
 
-    const [activeIcps, clientList, taken] = await Promise.all([
-      db.select().from(icps).where(eq(icps.active, true)).orderBy(asc(icps.id)),
+    // Every ICP, so a lead whose segment names a switched-off one is flagged as such (only active ones
+    // are used to search for prospects or to check a fit).
+    const [allIcps, clientList, taken] = await Promise.all([
+      db.select().from(icps).orderBy(asc(icps.id)),
       db.select().from(clients),
       // Every lead's main contact, so two branches of one company don't get the same person.
       db.select({ leadId: leads.id, company: leads.company, website: leads.website, contactName: leads.contactName }).from(leads).where(ne(leads.contactName, '')),
     ]);
+    const activeIcps = allIcps.filter((i) => i.active);
     if (!activeIcps.length) throw new Error('No active ICP. Turn on at least one ICP.');
 
     if (run.findProspects && !run.prospectsDone) {
@@ -259,7 +262,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       await mapLimit(batch, CONCURRENCY, async (lead) => {
         let result: LeadResult;
         try {
-          result = await processLead(svc, lead, { icps: activeIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { teamContact: await contactFromTeam(db, lead) });
+          result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { teamContact: await contactFromTeam(db, lead) });
         } catch (e) {
           result = { status: 'Error' as const, lastError: errorMessage(e) };
           await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);
@@ -271,6 +274,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         stats.processed++;
         if (update.status === 'Awaiting Approval') stats.drafted++;
         if (update.status === 'Disqualified') stats.disqualified++;
+        if (update.status === 'Needs Review') stats.needsReview = (stats.needsReview ?? 0) + 1;
         if (update.status === 'Existing Client') stats.existingClients++;
         if (update.status === 'Error') stats.errors++;
       });
@@ -290,7 +294,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       if (!batch.length) break;
       await mapLimit(batch, CONCURRENCY, async (lead) => {
         try {
-          const result = await processLead(svc, lead, { icps: activeIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { contactsOnly: true, teamContact: await contactFromTeam(db, lead) });
+          const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { contactsOnly: true, teamContact: await contactFromTeam(db, lead) });
           const { people: found, ...update } = result;
           await db.update(leads).set({ ...update, refetchPending: false, refetchClaimedAt: null, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
           if (found) await savePeople(db, lead.id, found);
@@ -325,12 +329,18 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
 }
 
 /** What research found, as entries on the lead's timeline. */
-async function recordOutcome(db: Db, leadId: number, u: LeadUpdate) {
+export async function recordOutcome(db: Db, leadId: number, u: LeadUpdate) {
   if (u.status === 'Existing Client') return logActivity(db, leadId, 'researched', u.fitReason || 'Matches a current client; not contacted');
   if (u.status === 'Error') return logActivity(db, leadId, 'error', `Research stopped: ${u.lastError || 'unknown error'}`);
-  const fit = u.fitScore != null ? `fit ${u.fitScore}/10` : '';
-  await logActivity(db, leadId, 'researched', [u.status === 'Disqualified' ? `Disqualified (${fit})` : `Researched: ${fit}`, u.fitReason].filter(Boolean).join('. '));
-  if (u.status === 'Disqualified') return;
+  const fit = u.fitScore != null ? `ICP fit ${u.fitScore}/10` : '';
+  if (u.riskFlags?.length) {
+    await logActivity(db, leadId, 'note', `Commercial risk noted (kept apart from the ICP fit): ${u.riskFlags.map((r) => `${r.label}: “${r.evidence}”${r.url ? ` (${r.url})` : ''}`).join('; ')}`);
+  }
+  if (u.status === 'Disqualified' || u.status === 'Needs Review') {
+    const decision = u.fitDecision || (u.status === 'Disqualified' ? ['Not a fit', u.fitReason].filter(Boolean).join('. ') : 'Needs review');
+    return logActivity(db, leadId, 'researched', `${decision}${fit ? `. ${fit}` : ''}`);
+  }
+  await logActivity(db, leadId, 'researched', [`Researched: ${fit}`, u.fitReason].filter(Boolean).join('. '));
   if (u.contactName) {
     await logActivity(db, leadId, 'contact', `Decision-maker: ${[u.contactName, u.contactTitle].filter(Boolean).join(', ')}${u.emailStatus ? `. Email: ${u.contactEmail || '—'} (${u.emailStatus})` : ''}`);
   }

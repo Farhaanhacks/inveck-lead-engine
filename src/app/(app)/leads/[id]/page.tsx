@@ -18,10 +18,16 @@ import { assignOwnerAction } from '../../../team-actions';
 import { tidyContacts } from '@/lib/verify-contacts';
 import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
+import { contactAvailability, contactGeography, evidenceLabel, evidenceSource, evidenceTone, fitAssessment, riskAssessment, TONE_CLASS, type Assessment } from '@/lib/fit-view';
+import { KIND_LABEL } from '@/lib/pipeline/fit';
+import { REASSESSABLE } from '@/lib/reassess';
 import {
   addLeadAsClientAction,
+  confirmFitAction,
   makePrimaryAction,
+  markNotFitAction,
   deleteLeadAction,
+  reassessFitAction,
   sendFollowUpAction,
   setLeadStatusAction,
   updateLeadAction,
@@ -119,6 +125,154 @@ function FollowUpCard({ lead }: { lead: Lead }) {
 
 
 
+function Pill({ a }: { a: Pick<Assessment, 'label' | 'tone'> }) {
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${TONE_CLASS[a.tone]}`}>{a.label}</span>;
+}
+
+/** A link only for a real web address (sources come from websites and search results). */
+function SourceLink({ url }: { url: string }) {
+  if (!/^https?:\/\//i.test(url)) return null;
+  let label = url;
+  try {
+    const u = new URL(url);
+    label = `${u.hostname.replace(/^www\./, '')}${u.pathname.length > 1 ? u.pathname : ''}`;
+  } catch {}
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="break-all text-xs text-accent hover:underline" title={url}>
+      {label.length > 60 ? `${label.slice(0, 59)}…` : label}
+    </a>
+  );
+}
+
+/**
+ * The four separate judgements on a lead: whether the company fits the ICP (with the evidence for
+ * each criterion), commercial risk, whether there's someone to contact, and whether they're at this site.
+ */
+function AssessmentCard({ lead, primary, canAct }: { lead: Lead; primary?: Person; canAct: boolean }) {
+  const fit = fitAssessment(lead);
+  const risk = riskAssessment(lead);
+  const items: [string, Assessment, string][] = [
+    ['Company fit', fit ?? { label: 'Not researched yet', tone: 'neutral', detail: '' }, lead.fitScore != null ? `ICP fit ${lead.fitScore}/10` : ''],
+    ['Commercial risk', risk, ''],
+    ['Contact availability', contactAvailability(lead), ''],
+    ['Contact geography', contactGeography(lead, primary), ''],
+  ];
+  const reviewable = canAct && (REASSESSABLE as readonly string[]).includes(lead.status);
+  // Flagged before research (no segment, or one no active ICP has): fix the segment, then reassess.
+  const segmentProblem = lead.fitStatus === 'review' && !lead.assessedIcp;
+  const decision = fit?.detail ?? '';
+  const aiReason = lead.fitStatus && lead.fitReason && lead.fitReason !== lead.fitDecision ? lead.fitReason : '';
+  return (
+    <section className="card p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold">Assessment</h2>
+          <p className="mt-0.5 text-xs text-muted">
+            {lead.assessedIcp ? `Checked against the ${lead.assessedIcp} ICP${lead.assessedAt ? ` on ${formatDate(lead.assessedAt)}` : ''}. ` : ''}
+            Company fit, commercial risk and contacts are judged separately.
+          </p>
+        </div>
+        {reviewable && (
+          <div className="flex flex-wrap gap-2">
+            <form action={reassessFitAction}>
+              <input type="hidden" name="id" value={lead.id} />
+              <SubmitButton className="btn-secondary" pendingText="Queuing…">Reassess fit</SubmitButton>
+            </form>
+            {!segmentProblem && (
+              <details className="relative">
+                <summary className="btn-primary list-none [&::-webkit-details-marker]:hidden">Confirm fit</summary>
+                <form action={confirmFitAction} className="card absolute right-0 z-10 mt-2 w-80 space-y-2 p-4 shadow-lg">
+                  <input type="hidden" name="id" value={lead.id} />
+                  <p className="text-sm font-medium">Confirm {lead.company} fits?</p>
+                  <label htmlFor="confirm-note" className="label">Why (optional)</label>
+                  <textarea id="confirm-note" name="note" rows={2} className="field" placeholder="e.g. Chassis maker with 4 plants; insolvency doesn't change the fit" />
+                  <p className="text-xs text-muted">Your call stands over the AI&apos;s. Contacts are found and drafts written next; the earlier assessment stays on the timeline.</p>
+                  <SubmitButton pendingText="Confirming…">Confirm fit</SubmitButton>
+                </form>
+              </details>
+            )}
+            {lead.status === 'Needs Review' && !segmentProblem && (
+              <details className="relative">
+                <summary className="btn-secondary list-none [&::-webkit-details-marker]:hidden">Not a fit</summary>
+                <form action={markNotFitAction} className="card absolute right-0 z-10 mt-2 w-80 space-y-2 p-4 shadow-lg">
+                  <input type="hidden" name="id" value={lead.id} />
+                  <p className="text-sm font-medium">Rule {lead.company} out?</p>
+                  <label htmlFor="notfit-note" className="label">Why (optional)</label>
+                  <textarea id="notfit-note" name="note" rows={2} className="field" />
+                  <SubmitButton pendingText="Saving…">Not a fit</SubmitButton>
+                </form>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+
+      <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {items.map(([title, a, extra]) => (
+          <div key={title} className="min-w-0">
+            <dt className="text-xs text-muted">{title}</dt>
+            <dd className="mt-1 flex flex-wrap items-center gap-2">
+              <Pill a={a} />
+              {extra && <span className="text-sm font-semibold tabular-nums">{extra}</span>}
+            </dd>
+            {title !== 'Company fit' && a.detail && <dd className="mt-1 text-xs text-ink-2">{a.detail}</dd>}
+          </div>
+        ))}
+      </dl>
+
+      {decision && <p className="mt-4 text-sm leading-relaxed text-ink-2">{decision}</p>}
+      {segmentProblem && reviewable && <p className="mt-2 text-xs text-muted">Choose the segment under Company below, save, then press Reassess fit.</p>}
+      {aiReason && <p className="mt-2 text-xs text-muted">The AI&apos;s summary: {aiReason}</p>}
+
+      {lead.riskFlags.length > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {lead.riskFlags.map((r, i) => (
+            <li key={i} className="rounded-md border border-line bg-warning-soft/40 px-3 py-2 text-xs text-ink-2">
+              <span className="font-medium text-warning-ink">{r.label}:</span> “{r.evidence}” <SourceLink url={r.url} />
+              {!r.verified && <span className="text-muted"> (not found in a source)</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {lead.fitEvidence.length > 0 && (
+        <details className="mt-4" open={lead.fitStatus !== 'qualified'}>
+          <summary className="cursor-pointer text-sm text-accent">Evidence for each criterion ({lead.fitEvidence.length})</summary>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="py-2 pr-3 font-medium">Criterion</th>
+                  <th className="py-2 pr-3 font-medium">Finding</th>
+                  <th className="py-2 font-medium">Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lead.fitEvidence.map((e) => (
+                  <tr key={e.id} className="border-t border-line align-top">
+                    <td className="w-[38%] py-2 pr-3">
+                      <div className="text-xs text-muted">{e.id} · {KIND_LABEL[e.kind] ?? e.kind}</div>
+                      <div className="text-ink-2">{e.criterion}</div>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap"><Pill a={{ label: evidenceLabel(e), tone: evidenceTone(e) }} /></td>
+                    <td className="py-2">
+                      {e.evidence ? <p className="text-ink-2">{e.status === 'unknown' ? e.evidence : `“${e.evidence}”`}</p> : <span className="text-muted">—</span>}
+                      <div className="mt-0.5 flex flex-wrap gap-x-2">
+                        {e.url && <SourceLink url={e.url} />}
+                        {evidenceSource(e) && <span className="text-xs text-muted">{evidenceSource(e)}</span>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function PeopleCard({ company, city, list }: { company: string; city: string; list: Person[] }) {
   return (
     <section className="card overflow-hidden">
@@ -189,16 +343,18 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const db = await getDb();
-  // Nobody who has left the company is shown: cleared before the page is drawn.
+  const me = await getCurrentUser();
+  // A missing lead, or (for a team member) someone else's, is not found; nothing about it is touched.
+  const [visible] = await db.select({ ownerId: leads.ownerId }).from(leads).where(eq(leads.id, id));
+  if (!visible || (me?.role === 'bda' && visible.ownerId !== me.id)) notFound();
+  // Nobody who has left the company is shown: cleared before the page is drawn,
   // and the best-ranked person on file is the main contact while outreach hasn't started.
   if ((await tidyContacts(db, { leadId: id })).length) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
-  // A qualified lead missing its email or LinkedIn draft gets them written in the background.
-  if (lead && lead.qualified && (!lead.emailBody || !lead.linkedinMessage)) after(async () => { await fillMissingDrafts(await getDb(), await liveServices(), { leadId: id }); });
-  const bdas = await listBdas(db);
-  const me = await getCurrentUser();
-  if (me?.role === 'bda' && lead.ownerId !== me.id) notFound();
   if (!lead) notFound();
+  // A qualified lead missing its email or LinkedIn draft gets them written in the background.
+  if (lead.qualified && (!lead.emailBody || !lead.linkedinMessage)) after(async () => { await fillMissingDrafts(await getDb(), await liveServices(), { leadId: id }); });
+  const bdas = await listBdas(db);
   const [segmentRows, timeline, found] = await Promise.all([
     db.select().from(icps),
     db.select().from(activities).where(eq(activities.leadId, id)).orderBy(desc(activities.at), desc(activities.id)),
@@ -280,7 +436,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           {lead.status === 'Won' && (
             <Link href="/targets#clients" className="btn-secondary">View in clients</Link>
           )}
-          {!['New', 'Processing', 'Contacted', 'Replied', 'Meeting Booked', 'Won'].includes(lead.status) && (
+          {!['New', 'Processing', 'Contacted', 'Replied', 'Meeting Booked', 'Won', ...REASSESSABLE].includes(lead.status) && (
             <StatusButton id={id} action="requeue" label="Research again" />
           )}
         </div>
@@ -289,6 +445,12 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       {lead.lastError && (
         <div className="mb-6 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink" role="alert">
           <span className="font-medium">Last error:</span> {lead.lastError}
+        </div>
+      )}
+
+      {lead.status !== 'New' && lead.status !== 'Processing' && lead.status !== 'Existing Client' && (
+        <div className="mb-6">
+          <AssessmentCard lead={lead} primary={found.find((p) => p.isPrimary)} canAct={!!me && (me.role === 'admin' || lead.ownerId === me.id)} />
         </div>
       )}
 
@@ -316,7 +478,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
               )
             }
           >
-            {!hasDraft && <p className="mb-3 text-sm text-muted">No draft yet. Drafts are written for qualified leads with a reachable decision-maker.</p>}
+            {!hasDraft && <p className="mb-3 text-sm text-muted">No draft yet. Drafts are written once the company is a confirmed fit, even before a contact is found.</p>}
             <div className="space-y-3">
               <div>
                 <div className="flex items-center justify-between">
@@ -358,25 +520,6 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
         </div>
 
         <div className="space-y-6 lg:col-span-2">
-          <Section title="Fit">
-            <dl className="grid grid-cols-3 gap-3 text-sm">
-              <div>
-                <dt className="text-xs text-muted">Score</dt>
-                <dd className="text-2xl font-semibold tabular-nums">{lead.finalScore ?? '—'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted">ICP fit</dt>
-                <dd className="text-2xl font-semibold tabular-nums">{lead.fitScore ?? '—'}<span className="text-sm text-muted">/10</span></dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted">Qualified</dt>
-                <dd className="text-2xl font-semibold">{lead.qualified === null ? '—' : lead.qualified ? 'Yes' : 'No'}</dd>
-              </div>
-            </dl>
-            {lead.fitReason && <p className="mt-3 text-sm text-ink-2">{lead.fitReason}</p>}
-            {lead.scoreBreakdown && <p className="mt-2 text-xs text-muted">{lead.scoreBreakdown}</p>}
-          </Section>
-
           <Section title="Decision-maker">
             <div className="space-y-3">
               {(
@@ -442,7 +585,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
             <button formAction={deleteLeadAction} className="btn-danger">Delete lead</button>
           </div>
           <p className="text-xs text-muted">
-            Edited the contact? Save, then “Research again” to redo the email search and draft with it.
+            A contact you enter here counts as confirmed, and a new person gets the email rewritten for them (unless you edited the draft in the same save).
           </p>
         </div>
       </form>

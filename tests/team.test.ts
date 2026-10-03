@@ -666,6 +666,45 @@ describe('who to contact first', () => {
     await db.insert(activities).values({ leadId: c.id, kind: 'contact', text: 'Point of contact updated (name): Uma Iyer' });
     expect(await promoteBetterContacts(db, { leadId: c.id })).toEqual([]);
   });
+
+  it('keeps a main contact at the site when someone equally placed is on file (Bharat Forge, Pune)', async () => {
+    const db = await getDb();
+    const { promoteBetterContacts } = await import('@/lib/verify-contacts');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [bf] = await db.insert(leads).values(lead('Bharat Forge', { segment: 'Manufacturing', city: 'Pune', contactName: 'Sangamnath Digge', contactTitle: 'Plant Head' })).returning();
+    await db.insert(peopleTable).values([
+      { leadId: bf.id, name: 'Sangamnath Digge', title: 'Plant Head', source: 'LinkedIn', location: 'Pune, Maharashtra, India', isPrimary: true },
+      { leadId: bf.id, name: 'Anita Rao', title: 'Head Supply Chain', source: 'LinkedIn', location: 'Pune, Maharashtra, India' },
+    ]);
+    expect(await promoteBetterContacts(db)).toEqual([]);
+    expect((await db.select().from(leads).where(eq(leads.id, bf.id)))[0].contactName).toBe('Sangamnath Digge');
+  });
+
+  it('never makes someone not confirmed at the site the main contact (KLT, Pune)', async () => {
+    const db = await getDb();
+    const { promoteBetterContacts } = await import('@/lib/verify-contacts');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    // Research left these without a main contact: nobody it found was confirmed at the Pune site.
+    const [klt, other] = await db
+      .insert(leads)
+      .values([
+        lead('KLT Automotive', { segment: 'Manufacturing', city: 'Pune', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null }),
+        lead('Rane Pune', { segment: 'Manufacturing', city: 'Pune', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null }),
+      ])
+      .returning();
+    await db.insert(peopleTable).values([
+      { leadId: klt.id, name: 'Jogendra Jogendra', title: 'Stores Manager', source: 'LinkedIn', location: '' },
+      { leadId: klt.id, name: 'Asha Menon', title: 'Plant Head', source: 'LinkedIn', location: 'Chennai, Tamil Nadu, India' },
+      { leadId: other.id, name: 'Rohit Patil', title: 'Plant Head', source: 'LinkedIn', location: 'Pune, Maharashtra, India' },
+    ]);
+    expect(await promoteBetterContacts(db)).toEqual([other.id]);
+    const rows = Object.fromEntries((await db.select().from(leads)).map((l) => [l.company, l]));
+    expect(rows['KLT Automotive'].contactName).toBe('');
+    expect(rows['Rane Pune'].contactName).toBe('Rohit Patil');
+    // One timeline entry for the change, with the reason.
+    const notes = (await db.select().from(activities).where(eq(activities.leadId, other.id))).map((a) => a.text);
+    expect(notes).toEqual(['Main contact changed to Rohit Patil, Plant Head: INVECK approaches Plant Head before anyone else.']);
+  });
 });
 
 describe('branches of one company', () => {
