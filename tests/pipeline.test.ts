@@ -508,7 +508,7 @@ describe('clear everything', () => {
 });
 
 describe('new prospects delegated by the admin', () => {
-  it('splits them across the team, gives them to one person, or leaves them unassigned', async () => {
+  it('splits them across the team, gives them to one person, or leaves them for the draw', async () => {
     const { delegateProspects } = await import('@/lib/runs');
     const { users } = await import('@/lib/db/schema');
     const team = await db.select().from(users).orderBy(users.id);

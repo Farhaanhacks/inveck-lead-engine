@@ -7,6 +7,7 @@ import { fillMissingDrafts } from '@/lib/pipeline/redraft';
 import { icps, leads, LEAD_STATUSES } from '@/lib/db/schema';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
+import { runDailyDraw } from '@/lib/draw';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { StatusPill } from '@/components/status-pill';
@@ -28,6 +29,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   await ensureResearch(await requestOrigin());
   const db = await getDb();
   await assignUnowned(db);
+  await runDailyDraw(db);
   // Qualified leads missing an email or LinkedIn draft get them written in the background.
   after(async () => { await fillMissingDrafts(await getDb(), await liveServices(), { limit: 8 }); });
   const me = await getCurrentUser();

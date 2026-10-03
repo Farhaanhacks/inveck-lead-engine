@@ -66,8 +66,8 @@ async function claimLeads(db: Db, limit: number): Promise<Lead[]> {
 
 /**
  * Hands newly found prospects out as the admin chose when starting the search: 'team' splits them
- * evenly across the active team now, a user id gives them all to that person, '' leaves them
- * unassigned for the admin to hand out. Returns a line for the run log.
+ * evenly across the active team now, a user id gives them all to that person, '' leaves them for the
+ * morning draw. Returns a line for the run log.
  */
 export async function delegateProspects(db: Db, ids: number[], to: string): Promise<string> {
   if (!ids.length || !to) return '';
@@ -193,7 +193,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
           for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);
-          // The admin chose who gets them: the team now, one person, or nobody yet.
+          // The admin chose who gets them: the team now, one person, or (default) the morning draw.
           const given = await delegateProspects(db, rows.map((r) => r.id), run.prospectsTo);
           if (given) await log(given);
           await assignUnowned(db);

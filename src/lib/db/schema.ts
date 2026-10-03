@@ -73,7 +73,7 @@ export const leads = pgTable('leads', {
   linkedinOutcome: text('linkedin_outcome').notNull().default(''),
   /** Came in from ads, the website or a campaign: shared equally between the team and must never sit untouched. */
   inbound: boolean('inbound').notNull().default(false),
-  /** No longer used (the morning draw was removed); kept so old rows load. */
+  /** The India day (YYYY-MM-DD) this lead was handed out in the morning draw; empty when it came another way. */
   drawnOn: text('drawn_on').notNull().default(''),
   /** Point of contact tier (P1, P2, P3) set by hand on the tracker; empty means worked out from the designation. */
   contactTier: text('contact_tier').notNull().default(''),
@@ -147,7 +147,7 @@ export type RunStats = {
 export const runs = pgTable('runs', {
   id: serial('id').primaryKey(),
   findProspects: boolean('find_prospects').notNull().default(false),
-  /** Who gets the prospects this run finds: '' (nobody yet; the admin assigns them), 'team' (split across the team now) or a user id. */
+  /** Who gets the prospects this run finds: '' (the morning draw), 'team' (split across the team now) or a user id. */
   prospectsTo: text('prospects_to').notNull().default(''),
   status: text('status').$type<'running' | 'done' | 'failed' | 'cancelled'>().notNull().default('running'),
   trigger: text('trigger').notNull().default('manual'),

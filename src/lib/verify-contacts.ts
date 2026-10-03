@@ -52,7 +52,7 @@ export async function clearCompanyTitles(db: Db, scope: Scope = {}): Promise<num
 /**
  * Keeps the people on file right, with no searching: clears titles that are just the company's name,
  * removes people who work elsewhere now, and makes the best-ranked person the main contact when
- * outreach hasn't started. Runs when Today, a lead or Contacts opens, and in the morning job.
+ * outreach hasn't started. Runs when Today, a lead or Contacts opens, and before the morning draw.
  * Returns the leads whose main contact changed (their email gets rewritten).
  */
 export async function tidyContacts(db: Db, scope: Scope = {}): Promise<number[]> {
@@ -179,7 +179,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
 
 /**
  * Checks the contacts not checked yet (or not for a month), the given person's first when `ownerId`
- * is set, a few at a time. Called in the morning job, when someone opens Today, and after research.
+ * is set, a few at a time. Called before the morning draw, when someone opens Today, and after research.
  */
 export async function verifyContacts(
   db: Db,

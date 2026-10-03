@@ -10,6 +10,7 @@ import { contactPriority, icpFor } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
+import { runDailyDraw } from '@/lib/draw';
 import { getAttendance } from '@/lib/attendance';
 import {
   companyProgress,
@@ -415,6 +416,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const me = (await getCurrentUser())!;
   const db = await getDb();
   await assignUnowned(db);
+  await runDailyDraw(db);
   await startRefetchIfWaiting();
   await ensureSequences(db);
 

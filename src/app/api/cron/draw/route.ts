@@ -1,5 +1,6 @@
 import { runSecret } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { getDraw, runDailyDraw } from '@/lib/draw';
 import { liveServices } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
@@ -7,8 +8,8 @@ import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 export const maxDuration = 300;
 
 /**
- * Every working morning before the team starts (see vercel.json): checks the contacts the team will
- * see on LinkedIn, and writes any email or LinkedIn draft a qualified lead is missing.
+ * The morning draw (see vercel.json): hands out the day's leads before the team starts at 10.
+ * Pages also run it when opened after the draw hour, in case the schedule was late.
  */
 export async function GET(request: Request) {
   if (request.headers.get('authorization') !== `Bearer ${await runSecret()}`) {
@@ -20,7 +21,8 @@ export async function GET(request: Request) {
   const promoted = await tidyContacts(db);
   for (const id of promoted) await redraftForContact(db, svc, id);
   const checked = await verifyContacts(db, svc, { limit: 200 });
+  const drawn = await runDailyDraw(db);
   // Qualified leads missing an email or LinkedIn draft (none written yet, or the AI dropped one).
   const drafted = await fillMissingDrafts(db, svc, { limit: 15 });
-  return Response.json({ promoted: promoted.length, checked, drafted });
+  return Response.json({ promoted: promoted.length, checked, drafted, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
 }
