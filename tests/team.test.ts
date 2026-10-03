@@ -24,7 +24,11 @@ beforeEach(() => {
   process.env.APP_PASSWORD = 'test-secret';
 });
 
-const lead = (company: string, extra: Partial<typeof leads.$inferInsert> = {}) => ({ company, status: 'Awaiting Approval' as const, contactName: 'Ravi Shah', contactTitle: 'Plant Head', contactEmail: 'ravi@x.com', ...extra });
+// A researched, qualified lead whose main contact has been confirmed; tests about unconfirmed contacts say so.
+const lead = (company: string, extra: Partial<typeof leads.$inferInsert> = {}) => ({
+  company, status: 'Awaiting Approval' as const, contactName: 'Ravi Shah', contactTitle: 'Plant Head', contactEmail: 'ravi@x.com',
+  researchSummary: `${company} makes things.`, qualified: true, contactVerifiedAt: new Date(), ...extra,
+});
 
 describe('logins', () => {
   it('creates the four team members with the starting password, case-insensitively', async () => {
@@ -544,8 +548,8 @@ describe('contacts checked on LinkedIn automatically', () => {
     }) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     await db.insert(leads).values([
-      lead('Allcargo Logistics', { contactName: 'Amit Chhari', contactTitle: 'VP Operations, Xpressbees' }),
-      lead('Nobody Ltd', { contactName: 'Rohit Dalmia', contactTitle: 'Finance Head' }),
+      lead('Allcargo Logistics', { contactName: 'Amit Chhari', contactTitle: 'VP Operations, Xpressbees', contactVerifiedAt: null }),
+      lead('Nobody Ltd', { contactName: 'Rohit Dalmia', contactTitle: 'Finance Head', contactVerifiedAt: null }),
     ]);
     expect(await verifyContacts(db, svc)).toMatchObject({ corrected: 1, not_found: 1 });
     const [amit] = await db.select().from(leads).where(eq(leads.company, 'Allcargo Logistics'));
@@ -780,14 +784,17 @@ describe('LinkedIn headlines', () => {
 });
 
 describe('Lumax: staff write the company as "Lumax World"', () => {
-  it('keeps plant heads who list the brand name, and searches by the brand', async () => {
-    const { currentEmployer, sameFirm } = await import('@/lib/pipeline/employer');
+  it('keeps plant heads who write the company as its website name, and searches by that name', async () => {
+    const { currentEmployer, sameFirm, registerFirmWebsite } = await import('@/lib/pipeline/employer');
+    // Lumax Auto Technologies' website is lumaxworld.in: "Lumax World" is its own name for itself.
+    registerFirmWebsite('Lumax Auto Technologies', 'https://www.lumaxworld.in/');
     const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
     const { contactPriority } = await import('@/lib/tiers');
     const { DEFAULT_ICPS } = await import('@/lib/db/seed');
     const { settingsSchema } = await import('@/lib/settings');
     expect(sameFirm('Lumax World', 'Lumax Auto Technologies')).toBe(true);
-    expect(sameFirm('Lumax Industries Ltd.', 'Lumax Auto Technologies')).toBe(true);
+    // Lumax Industries is a sister company: a shared brand never proves employment.
+    expect(sameFirm('Lumax Industries Ltd.', 'Lumax Auto Technologies')).toBe(false);
     expect(currentEmployer({ name: 'Pankaj Tyagi', title: 'Plant Head @ Lumax World' }, 'Lumax Auto Technologies')).toBe('here');
     expect(contactPriority('Vice President Operations & Plant Head', DEFAULT_ICPS[0])).toBeLessThan(contactPriority('Managing Director', DEFAULT_ICPS[0]));
     const queries: string[] = [];
@@ -937,7 +944,7 @@ describe('review fixes', () => {
     const fetch = (async () => new Response('quota exceeded', { status: 429 })) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: await settingsOf() };
     await expect(findLinkedinProfile(svc, 'Ravi Shah', 'Acme')).rejects.toThrow(/LinkedIn search failed/);
-    const [l] = await db.insert(leads).values(lead('Acme')).returning();
+    const [l] = await db.insert(leads).values(lead('Acme', { contactVerifiedAt: null })).returning();
     await db.insert(people).values([{ leadId: l.id, name: 'Ravi Shah', title: 'Plant Head', isPrimary: true }, { leadId: l.id, name: 'Anita Rao', title: 'Supply Chain Manager' }]);
     expect(await verifyContact(db, svc, l)).toBe('skipped');
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
@@ -953,7 +960,7 @@ describe('review fixes', () => {
     const organic = [{ title: 'Ravi Shah - Head of Supply Chain - Acme', subtitle: 'Pune, Maharashtra, India · Head of Supply Chain · Acme', link: 'https://in.linkedin.com/in/ravi-shah', snippet: '' }];
     const fetch = (async () => ok({ organic })) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: await settingsOf() };
-    const [l] = await db.insert(leads).values(lead('Acme', { contactTitle: 'Manager' })).returning();
+    const [l] = await db.insert(leads).values(lead('Acme', { contactTitle: 'Manager', contactVerifiedAt: null })).returning();
     // The People row isn't flagged as the main contact (an older record): matched by name.
     await db.insert(people).values({ leadId: l.id, name: 'Ravi Shah', title: 'Manager', linkedin: '' });
     expect(await verifyContact(db, svc, l, new Date(), { mainOnly: true })).toBe('corrected');
@@ -968,21 +975,30 @@ describe('review fixes', () => {
     expect(rows[0]).toMatchObject({ isPrimary: true, title: 'Head of Supply Chain', linkedin: 'https://in.linkedin.com/in/ravi-shah' });
   });
 
-  it('research drops a pick whose LinkedIn shows another employer and picks the next person', async () => {
+  it('research sets aside a pick nobody can confirm, drops one at another employer, and takes one confirmed at the site', async () => {
     const { vetPick } = await import('@/lib/pipeline/process-lead');
     const { EMPTY_CONTACT } = await import('@/lib/pipeline/contacts');
-    const organic = [{ title: 'Sunil Rao - Plant Head', subtitle: 'Pune, Maharashtra, India · Plant Head · Tata Steel', link: 'https://in.linkedin.com/in/sunil-rao', snippet: '' }];
-    const fetch = (async (_u: string, init?: RequestInit) => ok({ organic: String(init?.body).includes('Sunil') ? organic : [] })) as unknown as typeof globalThis.fetch;
+    const profiles: Record<string, { title: string; subtitle: string; link: string; snippet: string }> = {
+      'Sunil Rao': { title: 'Sunil Rao - Plant Head', subtitle: 'Pune, Maharashtra, India · Plant Head · Tata Steel', link: 'https://in.linkedin.com/in/sunil-rao', snippet: '' },
+      'Meera Iyer': { title: 'Meera Iyer - Supply Chain Manager', subtitle: 'Chakan, Maharashtra, India · Supply Chain Manager · Acme Forgings', link: 'https://in.linkedin.com/in/meera-iyer', snippet: '' },
+    };
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      const name = Object.keys(profiles).find((n) => String(init?.body).includes(n));
+      return ok({ organic: name ? [profiles[name]] : [] });
+    }) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k' } as never, settings: await settingsOf() };
     const cands: import('@/lib/pipeline/contacts').Candidate[] = [
+      { id: 'W0', source: 'Web' as const, name: 'Ghost Person', title: 'Plant Head', email: '', phone: '', linkedin: '', snippet: '' },
       { id: 'W1', source: 'Web' as const, name: 'Sunil Rao', title: 'Plant Head', email: '', phone: '', linkedin: '', snippet: '' },
       { id: 'W2', source: 'Web' as const, name: 'Meera Iyer', title: 'Supply Chain Manager', email: '', phone: '', linkedin: '', snippet: '' },
     ];
     const pick = async (list: typeof cands) => ({ contact: { ...EMPTY_CONTACT, name: list[0]?.name ?? '', title: list[0]?.title ?? '' }, notes: [], error: '', ranked: list });
     const notes: string[] = [];
-    const { picked, lookupFailed } = await vetPick(svc, { company: 'Acme Forgings', city: 'Pune' }, cands, [], pick, notes);
+    const { picked, lookupFailed, verified } = await vetPick(svc, { company: 'Acme Forgings', city: 'Pune' }, cands, [], pick, notes);
     expect(picked.contact.name).toBe('Meera Iyer');
+    expect(verified).toBe(true);
     expect(lookupFailed).toBe(false);
+    expect(notes.join(' ')).toContain('Ghost Person set aside: no LinkedIn profile confirms');
     expect(notes.join(' ')).toContain('Sunil Rao left out');
   });
 
@@ -1034,6 +1050,8 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect(sameFirm('Bharat Petroleum', 'Bharat Forge')).toBe(false);
     expect(sameFirm('MRF Tyres', 'Apollo Tyres')).toBe(false);
     // Brands still match the way staff write them.
+    // Lumax World only as the company's own website name (lumaxworld.in).
+    (await import('@/lib/pipeline/employer')).registerFirmWebsite('Lumax Auto Technologies', 'lumaxworld.in');
     expect(sameFirm('Lumax World', 'Lumax Auto Technologies')).toBe(true);
     expect(sameFirm('Godamwale.com', 'Godamwale')).toBe(true);
   });
@@ -1053,7 +1071,7 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect(people[0].location).toBe('Jaipur, Rajasthan, India');
   });
 
-  it('keeps the Jaipur site; another Indian city only for company-wide roles, ranked last', async () => {
+  it('keeps the Jaipur site; anyone at another site is left out, whatever the role', async () => {
     const { siteOf } = await import('@/lib/pipeline/employer');
     const { atOtherSite, rankCandidates } = await import('@/lib/pipeline/contacts');
     const { nextContact } = await import('@/lib/escalate');
@@ -1066,7 +1084,8 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect(siteOf('', 'Jaipur')).toBe('unknown');
     expect(siteOf('Gurugram, Haryana, India', '')).toBe('unknown');
     expect(atOtherSite({ title: 'Supply Chain Manager', location: 'Gurugram, Haryana, India' }, 'Jaipur')).toBe(true);
-    expect(atOtherSite({ title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' }, 'Jaipur')).toBe(false);
+    // No head-office exception: a lead is one site, whatever the role.
+    expect(atOtherSite({ title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' }, 'Jaipur')).toBe(true);
     expect(atOtherSite({ title: 'Supply Chain Manager', location: '' }, 'Jaipur')).toBe(false);
     const ranked = rankCandidates([
       { title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' },
@@ -1153,16 +1172,20 @@ describe('a company is done only when something was really done', () => {
 });
 
 describe('Ultra Drugs: a shared brand word is not the same company', () => {
-  it('rejects Ultra Corpotech and sister companies, keeps how staff write their own company', async () => {
+  it('rejects Ultra Corpotech, sister companies and network firms; keeps the company written in full', async () => {
     const { sameFirm } = await import('@/lib/pipeline/employer');
     const { contactPriority } = await import('@/lib/tiers');
     const { DEFAULT_ICPS } = await import('@/lib/db/seed');
     expect(sameFirm('Ultra Corpotech Pvt. Ltd.', 'Ultra Drugs Pvt Ltd')).toBe(false);
     expect(sameFirm('Tata Steel', 'Tata Motors')).toBe(false);
     expect(sameFirm('Ultra Drugs Private Limited', 'Ultra Drugs Pvt Ltd')).toBe(true);
-    expect(sameFirm('Lumax World', 'Lumax Auto Technologies')).toBe(true);
-    expect(sameFirm('Allcargo Global', 'Allcargo Logistics')).toBe(true);
-    expect(sameFirm('Minda Corporation', 'Minda Industries')).toBe(true);
+    // Group and sister companies are separate firms; a shared brand never proves employment.
+    expect(sameFirm('Allcargo Global', 'Allcargo Logistics')).toBe(false);
+    expect(sameFirm('Minda Corporation', 'Minda Industries')).toBe(false);
+    expect(sameFirm('Sakthi Auto Component Limited', 'Sakthi Auto Ancillary Pvt. Ltd.')).toBe(false);
+    expect(sameFirm('PKF Sridhar & Santhanam', 'PKF India')).toBe(false);
+    expect(sameFirm('ABC Warehousing Express Logistics', 'Warehousing Express Logistics Pvt Ltd')).toBe(false);
+    expect(sameFirm('Allcargo Logistics Limited', 'Allcargo Logistics')).toBe(true);
     expect(contactPriority('Asst.General Manager SAP/IT', DEFAULT_ICPS[0])).toBe(99);
   });
 });
@@ -1179,5 +1202,38 @@ describe('phone numbers are not collected', () => {
       'valid', [], null, false,
     );
     expect(rows.map((r) => [r.name, r.phone])).toEqual([['Ravi Shah', ''], ['Neha Rao', '+91 90000 00000']]);
+  });
+});
+
+describe('only confirmed contacts go out', () => {
+  it('sets aside a main contact LinkedIn cannot confirm (kept, retryable), instead of marking it checked', async () => {
+    const db = await getDb();
+    const { verifyContact } = await import('@/lib/verify-contacts');
+    const { people } = await import('@/lib/db/schema');
+    const { settingsSchema } = await import('@/lib/settings');
+    const fetch = (async () => new Response(JSON.stringify({ organic: [] }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const [l] = await db.insert(leads).values(lead('KSH Integrated Logistics', { contactName: 'Wrong Person', contactVerifiedAt: null })).returning();
+    await db.insert(people).values({ leadId: l.id, name: 'Wrong Person', title: 'Plant Head', isPrimary: true });
+    expect(await verifyContact(db, svc, l)).toBe('not_found');
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ contactName: '', contactVerifiedAt: null });
+    const [kept] = await db.select().from(people).where(eq(people.leadId, l.id));
+    expect(kept.name).toBe('Wrong Person');
+    expect(kept.passedAt).not.toBeNull();
+  });
+
+  it('the morning draw hands out only qualified leads with a confirmed contact, or none yet', async () => {
+    const db = await getDb();
+    const { runDailyDraw } = await import('@/lib/draw');
+    await db.insert(leads).values([
+      lead('Confirmed Co'),
+      lead('No Contact Co', { contactName: '', contactEmail: '', contactVerifiedAt: null }),
+      lead('Unconfirmed Co', { contactVerifiedAt: null }),
+      lead('Unqualified Co', { qualified: false }),
+    ]);
+    await runDailyDraw(db, { now: new Date('2026-09-28T03:30:00Z'), force: true });
+    const owned = (await db.select().from(leads)).filter((l) => l.ownerId !== null).map((l) => l.company).sort();
+    expect(owned).toEqual(['Confirmed Co', 'No Contact Co']);
   });
 });

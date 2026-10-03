@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
-import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, companyWideRole, type Employer } from './employer';
+import { brandOf, firmSiteName, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -127,14 +127,15 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
     .filter((p) => p.name && /^https?:\/\/(www\.|in\.)?linkedin\.com\//i.test(p.linkedin));
 }
 
-/**
- * The company as people write it on LinkedIn: the full name or its brand ("Lumax Auto Technologies"
- * OR "Lumax"), since staff often list "Lumax World" or "Lumax Industries".
- */
+/** The company as people write it on LinkedIn: its full name, and its short name only where its own website uses it. */
 function firmQuery(company: string): string {
   const full = searchName(company) || company;
+  // The first word alone only when the company's own website shows its staff use a shorter name
+  // ("Lumax" for Lumax Auto Technologies at lumaxworld.in); never otherwise ("Ultra" finds every Ultra).
   const brand = brandOf(company);
-  return brand && brand !== full.toLowerCase() ? `("${full}" OR "${brand}")` : `"${full}"`;
+  const site = firmSiteName(company);
+  const fullSquashed = full.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return brand && site && site.startsWith(brand) && !fullSquashed.startsWith(site) ? `("${full}" OR "${brand}")` : `"${full}"`;
 }
 
 /**
@@ -383,11 +384,19 @@ export function candidateRank(c: { title: string; snippet?: string; location?: s
 
 /**
  * The lead is one site (NBC Bearings, Jaipur): someone based at another of the company's locations
- * in India isn't a contact for it, unless their role covers the whole company ("National Head of
- * Supply Chain"). Abroad is never kept (see basedAbroad). True when they should be left out.
+ * isn't a contact for it, whatever their role. Abroad is never kept (see basedAbroad). True when
+ * they should be left out.
  */
 export function atOtherSite(c: { title: string; location?: string | null }, city: string): boolean {
-  return siteOf(c.location ?? '', city) === 'elsewhere' && !companyWideRole(c.title);
+  return siteOf(c.location ?? '', city) === 'elsewhere';
+}
+
+/**
+ * Can be the main contact for this site: when the lead has a city, their location must be confirmed
+ * there (or its metro area). A location not known yet doesn't count.
+ */
+export function confirmedAtSite(c: { location?: string | null }, city: string): boolean {
+  return !city.trim() || siteOf(c.location ?? '', city) === 'here';
 }
 
 export function rankCandidates<T extends { title: string; snippet?: string; location?: string | null; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
@@ -516,24 +525,30 @@ export async function pickContact(
     return { contact: manual ? toContact(manual, false, 'Supplied by the sales team') : { ...EMPTY_CONTACT }, notes: [], error: result.error, ranked: candidates };
   }
   const d = result.data;
-  let chosen = byId.get(asText(d.chosen_id));
-  // INVECK's order decides who comes first, not the AI: plant heads, then hands-on heads, then process
-  // owners, with the MD last (see contactPriority), and someone at this branch before someone at another.
-  // The AI's job is to vet: pick among the people it chose or listed as relevant, and only fall back to
-  // the rest when it vetted nobody on the lists. The sales team's own contact always stays.
-  // Everyone here has passed the works-there-now checks (LinkedIn profiles showing this company,
-  // company records naming it), so rank all of them; the AI's pick only wins a tie.
-  const best = rankCandidates(candidates, icp, lead.city)[0];
-  if (chosen?.source !== 'Sales team' && best && contactPriority(best.title, icp) < 99 && (!chosen || candidateRank(best, icp, lead.city) < candidateRank(chosen, icp, lead.city))) {
-    chosen = best;
-  }
+  const aiChosen = byId.get(asText(d.chosen_id));
+  // Only people who passed the hard checks are ranked, so ranking never brings back someone excluded:
+  // a role on the ICP's lists, an employer confirmed (a LinkedIn profile showing this company, or a
+  // person the AI vetted as working there), and, to be the main contact, a location confirmed at this
+  // site when the lead has a city. People from records and email lists get their location confirmed on
+  // LinkedIn before they are used (see vetPick). INVECK's order then decides who comes first: plant
+  // heads, then hands-on heads, then process owners. The sales team's own contact always stays.
+  const vetted = new Set([asText(d.chosen_id), ...asTextList(d.other_ids).map((x) => x.trim())]);
+  const passed = candidates.filter(
+    (c) => c.source === 'Sales team' || (contactPriority(c.title, icp) < 99 && (c.source === 'LinkedIn' || vetted.has(c.id)) && !atOtherSite(c, lead.city)),
+  );
+  const mainPool = passed.filter((c) => c.source !== 'LinkedIn' || confirmedAtSite(c, lead.city));
+  const manualPick = candidates.find((c) => c.source === 'Sales team');
+  let chosen: Candidate | undefined = manualPick ?? rankCandidates(mainPool, icp, lead.city)[0];
+  if (!manualPick && aiChosen && chosen && aiChosen !== chosen && mainPool.includes(aiChosen) && candidateRank(aiChosen, icp, lead.city) <= candidateRank(chosen, icp, lead.city)) chosen = aiChosen;
   if (chosen && tierOf(chosen.title, icp) === 'Avoid') chosen = undefined;
   const contact = chosen
     ? toContact(chosen, tierOf(chosen.title, icp) === 'P1', chosen.id === asText(d.chosen_id) ? asText(d.reason) : `Ranked first by INVECK's contact priority: ${chosen.title}`)
     : { ...EMPTY_CONTACT };
 
   // Everyone found, best first by INVECK's contact priority, the chosen contact on top.
-  const ranked = [...(chosen ? [chosen] : []), ...rankCandidates(candidates.filter((c) => c !== chosen), icp, lead.city)];
+  // Shown and kept: people with a LinkedIn profile at this company, and the sales team's own contact.
+  // Someone named only in records or an email list is used only once LinkedIn confirms them (vetPick).
+  const ranked = [...(chosen ? [chosen] : []), ...rankCandidates(passed.filter((c) => c !== chosen && (c.source === 'LinkedIn' || c.source === 'Sales team')), icp, lead.city)];
   // The others worth contacting: the next best on the ICP's lists, in the same order as the People card.
   const others = ranked
     .filter((c) => c !== chosen && contactPriority(c.title, icp) < 99)

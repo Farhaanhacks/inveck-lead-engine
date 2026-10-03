@@ -86,6 +86,12 @@ export const leads = pgTable('leads', {
   contactSince: timestamp('contact_since', { withTimezone: true }),
   /** When the point of contact was last checked on LinkedIn (profile and current designation); null = not yet. */
   contactCheckedAt: timestamp('contact_checked_at', { withTimezone: true }),
+  /**
+   * When the main contact was confirmed: a LinkedIn profile showing them at this company now, at this
+   * site when the lead has a city (or entered by the sales team). Empty until then; the morning draw
+   * only hands out leads whose contact is confirmed, or that have none yet.
+   */
+  contactVerifiedAt: timestamp('contact_verified_at', { withTimezone: true }),
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),

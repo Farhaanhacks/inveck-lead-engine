@@ -2,10 +2,11 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { atBranch, atOtherSite, candidateRank, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
+import { atBranch, atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
+import { contactFromTeam } from './team-contact';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
-import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
+import { currentEmployer, nameIsTheCompany, registerFirmWebsite, sameFirm } from './pipeline/employer';
 import { escalate } from './escalate';
 import { istDay } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
@@ -39,6 +40,7 @@ export async function clearCompanyTitles(db: Db, scope: Scope = {}): Promise<num
   const rows = await db.select({ person: people, lead: leads }).from(people).innerJoin(leads, eq(people.leadId, leads.id)).where(inScope(scope));
   let n = 0;
   for (const { person: p, lead: l } of rows) {
+    registerFirmWebsite(l.company, l.website);
     if (!p.title || !sameFirm(p.title, l.company)) continue;
     await db.update(people).set({ title: '' }).where(eq(people.id, p.id));
     if (p.isPrimary && sameFirm(l.contactTitle, l.company)) await db.update(leads).set({ contactTitle: '' }).where(eq(leads.id, l.id));
@@ -90,6 +92,11 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
       gone.push(`${p.name}${profile!.abroad || otherSite ? ` (based in ${profile!.location || 'another country'})` : profile!.title ? ` (now ${profile!.title})` : ''}`);
       continue;
     }
+    // No profile confirms they work here: set aside (shown as tried, never picked), not "checked and fine".
+    if (!profile) {
+      await db.update(people).set({ checkedAt: now, passedAt: now }).where(eq(people.id, p.id));
+      continue;
+    }
     const retitle = !!profile?.title && newRole(p.title, profile.title);
     await db
       .update(people)
@@ -117,6 +124,7 @@ async function dropFormerEmployees(db: Db, lead: Lead): Promise<number> {
  * rewrites the email for them. Runs on its own; nobody has to press anything.
  */
 export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new Date(), opts: { mainOnly?: boolean } = {}): Promise<CheckResult> {
+  registerFirmWebsite(lead.company, lead.website);
   // Without any search: drop people whose stored title already shows another employer, and move off a
   // main contact who has left.
   await dropFormerEmployees(db, lead);
@@ -127,14 +135,26 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   }
   if (!lead.contactName || !svc.keys.serper) return 'skipped';
   if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
-  // The main contact was checked recently (during research, say): only the others needed it.
-  if (lead.contactCheckedAt && lead.contactCheckedAt > staleBefore(now)) return 'confirmed';
+  // The sales team's own contact is theirs to vouch for.
+  if (await contactFromTeam(db, lead)) {
+    if (!lead.contactVerifiedAt) await db.update(leads).set({ contactVerifiedAt: now }).where(eq(leads.id, lead.id));
+    return 'confirmed';
+  }
+  // Confirmed recently (during research, say): only the others needed it. A contact never confirmed
+  // is always checked; being looked at before isn't the same as being confirmed.
+  if (lead.contactVerifiedAt && lead.contactVerifiedAt > staleBefore(now)) return 'confirmed';
   let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
   try {
     profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
   } catch {
     // Not "not found": left unchecked so the next pass (Today, the lead page, the morning job) tries again.
     return 'skipped';
+  }
+  if (!profile) {
+    // No profile confirms they work here: set aside (kept, retryable), not "fine for a month".
+    await escalate(db, lead.id, 'unverified', now, 'no LinkedIn profile found');
+    await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
+    return 'not_found';
   }
   if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ title: profile.title || lead.contactTitle, location: profile.location }, lead.city)) {
     await escalate(db, lead.id, 'other_site', now, profile.location);
@@ -152,15 +172,17 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
   }
-  if (!profile) {
-    await db.update(leads).set({ contactCheckedAt: now }).where(eq(leads.id, lead.id));
+  if (!confirmedAtSite({ location: profile.location }, lead.city)) {
+    // At this company, but nothing shows they are at this site.
+    await escalate(db, lead.id, 'unverified', now, 'location not confirmed');
+    await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
   const url = lead.contactLinkedin || profile.url;
   const retitle = !!profile.title && newRole(lead.contactTitle, profile.title);
   await db
     .update(leads)
-    .set({ contactLinkedin: url, contactCheckedAt: now, ...(retitle ? { contactTitle: profile.title, contactTier: '', updatedAt: now } : {}) })
+    .set({ contactLinkedin: url, contactCheckedAt: now, contactVerifiedAt: now, ...(retitle ? { contactTitle: profile.title, contactTier: '', updatedAt: now } : {}) })
     .where(eq(leads.id, lead.id));
   // The People list shows the same link and title (the main contact's row, by flag or by name).
   const mine = (await db.select().from(people).where(eq(people.leadId, lead.id))).filter((p) => p.isPrimary || sameName(p.name, lead.contactName));
@@ -206,6 +228,9 @@ export async function verifyContacts(
         or(
           isNull(leads.contactCheckedAt),
           lt(leads.contactCheckedAt, stale),
+          // or the main contact isn't confirmed yet, or not for a month
+          isNull(leads.contactVerifiedAt),
+          lt(leads.contactVerifiedAt, stale),
           // or someone else at the company hasn't been checked yet
           exists(
             db
@@ -237,6 +262,7 @@ export async function purgeFormerEmployees(db: Db, scope: Scope = {}): Promise<n
     .from(people)
     .innerJoin(leads, eq(people.leadId, leads.id))
     .where(inScope(scope));
+  for (const { lead: l } of rows) registerFirmWebsite(l.company, l.website);
   const gone = rows.filter(
     ({ person: p, lead: l }) =>
       currentEmployer({ name: p.name, title: p.title }, l.company) === 'elsewhere' || (p.source === 'LinkedIn' && nameIsTheCompany(p.name, l.company)),

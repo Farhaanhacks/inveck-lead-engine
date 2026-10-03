@@ -29,9 +29,9 @@ function researchFor(company: string): unknown {
 const PEOPLE: Record<string, string> = {
   'Website Email Co': 'Arjun Mehta - Plant Head',
   'Format Guess Co': 'Neha Kapoor - Plant Head',
-  'Finder Co': 'Kiran Rao - COO',
+  'Finder Co': 'Kiran Rao - Plant Head',
   'Catchall Co': 'Amit Joshi - Plant Head',
-  'No Draft Industries': 'Ravi Shah - COO',
+  'No Draft Industries': 'Ravi Shah - Plant Head',
   Honeywell: 'Mayank Singh - Plant Head',
 };
 
@@ -129,7 +129,8 @@ const handlers: Record<string, Handler> = {
     if (/Tata Motors/.test(q)) {
       return json({
         organic: [
-          { title: 'Sangamnath Digge - Plant Head - Tata Motors | LinkedIn', link: 'https://in.linkedin.com/in/sdigge', snippet: 'Pune' },
+          { title: 'Sangamnath Digge - Plant Head - Tata Motors | LinkedIn', subtitle: 'Pune, Maharashtra, India · Plant Head · Tata Motors', link: 'https://in.linkedin.com/in/sdigge', snippet: 'Pune' },
+          // No location shown: listed, but not the main contact for the Pune lead until it's confirmed.
           { title: 'Anita Rao – Head Supply Chain – Tata Motors | LinkedIn', link: 'https://in.linkedin.com/in/anita', snippet: '' },
           { title: 'Tata Motors | LinkedIn', link: 'https://www.linkedin.com/company/tata-motors', snippet: '' },
         ],
@@ -172,7 +173,7 @@ const handlers: Record<string, Handler> = {
       });
     }
     for (const [co, who] of Object.entries(PEOPLE)) {
-      if (q.includes(`"${co}"`)) return json({ organic: [{ title: `${who} - ${co} | LinkedIn`, link: 'https://in.linkedin.com/in/' + who.split(' ')[0].toLowerCase(), snippet: '' }] });
+      if (q.includes(`"${co}"`)) return json({ organic: [{ title: `${who} - ${co} | LinkedIn`, subtitle: `Pune, Maharashtra, India · ${co}`, link: 'https://in.linkedin.com/in/' + who.split(' ')[0].toLowerCase(), snippet: '' }] });
     }
     if (!q.startsWith('site:')) {
       return json({

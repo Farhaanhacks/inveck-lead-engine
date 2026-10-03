@@ -1,12 +1,12 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, type Research } from './research';
 import { scoreLead } from './scoring';
 import { contactPriority, icpFor } from '../tiers';
-import { currentEmployer } from './employer';
+import { currentEmployer, registerFirmWebsite } from './employer';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
 import { domainOf, errorMessage, normalizeWebsite, normCompany, rootDomain, splitName } from './text';
@@ -102,6 +102,8 @@ export async function processLead(
       }
     }
   }
+  // The company's own website name is the one other name its staff may use ("Lumax World").
+  registerFirmWebsite(lead.company, website);
   if (site.via === 'google') await log(`${lead.company}: website blocks automated reading; researched from Google's index of its pages`);
   if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
   const domain = rootDomain(website);
@@ -224,6 +226,8 @@ export async function processLead(
   // Checked against LinkedIn during research (found there, or looked up by name). A lookup that
   // failed leaves it unchecked, so the next contact check tries again.
   if (contact.name && !lookupFailed) update.contactCheckedAt = new Date();
+  // Confirmed at this company and site, or not (the morning draw holds back an unconfirmed contact).
+  update.contactVerifiedAt = contact.name && vetted.verified ? new Date() : null;
 
   // Contacts reset on a lead already in outreach: new people, same stage, no new first email.
   if (opts.contactsOnly && !BEFORE_OUTREACH.includes(lead.status)) {
@@ -263,54 +267,58 @@ export async function vetPick(
   pick: (list: Candidate[]) => Promise<Picked>,
   notes: string[],
   icp?: Parameters<typeof contactPriority>[1],
-): Promise<{ picked: Picked; lookupFailed: boolean }> {
+): Promise<{ picked: Picked; lookupFailed: boolean; verified: boolean }> {
   let list = candidates;
   let picked = await pick(list);
   for (let attempt = 0; ; attempt++) {
     const contact = picked.contact;
-    const fromLinkedin = linkedinPeople.some((p) => sameName(p.name, contact.name) && p.title);
-    if (!contact.name || fromLinkedin) return { picked, lookupFailed: false };
+    if (!contact.name) return { picked, lookupFailed: false, verified: false };
+    const chosen = list.find((c) => sameName(c.name, contact.name));
+    // The sales team's own contact is theirs to vouch for. Someone found in the LinkedIn search has a
+    // profile showing this company, and was only picked with a location confirmed at the site.
+    if (chosen?.source === 'Sales team') return { picked, lookupFailed: false, verified: true };
+    if (linkedinPeople.some((p) => sameName(p.name, contact.name) && p.title)) return { picked, lookupFailed: false, verified: true };
     let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
     try {
       profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city });
     } catch (e) {
       notes.push(`LinkedIn lookup for ${contact.name} failed, will retry: ${errorMessage(e)}`);
-      return { picked, lookupFailed: true };
+      return { picked, lookupFailed: true, verified: false };
     }
-    const chosen = list.find((c) => sameName(c.name, contact.name));
-    const otherSite = !!profile && atOtherSite({ title: profile.title || contact.title, location: profile.location }, lead.city);
     // Their real current role, from LinkedIn, isn't one INVECK wants ("QA Analyst", "Presales Engineer").
     const unwanted = !!profile?.title && !!icp && contactPriority(profile.title, icp) >= 99;
-    const wrong = !!profile && (profile.employer === 'elsewhere' || profile.abroad || otherSite || unwanted) && chosen?.source !== 'Sales team';
-    // Three wrong picks in a row: nobody rather than the last wrong one (the team finds someone).
-    if (wrong && attempt >= 3) {
-      notes.push(`${contact.name} left out too; no one else on the ICP lists checked out`);
-      return { picked: { ...picked, contact: { ...EMPTY_CONTACT } }, lookupFailed: false };
-    }
-    if (wrong && profile) {
-      notes.push(
-        profile.abroad
-          ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
-          : profile.employer === 'elsewhere'
-            ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
-            : otherSite
-              ? `${contact.name} left out: based in ${profile.location}, not at the ${lead.city} site`
-              : `${contact.name} left out: LinkedIn shows their role is ${profile.title}, not one on the ICP lists`,
-      );
+    // Not found on LinkedIn means not confirmed, not "fine": they are set aside, not used.
+    const why = !profile
+      ? `${contact.name} set aside: no LinkedIn profile confirms they work at ${lead.company}`
+      : profile.abroad
+        ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
+        : profile.employer !== 'here'
+          ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
+          : !confirmedAtSite({ location: profile.location }, lead.city)
+            ? `${contact.name} left out: ${profile.location ? `based in ${profile.location}` : 'location not confirmed'}, not at the ${lead.city} site`
+            : unwanted
+              ? `${contact.name} left out: LinkedIn shows their role is ${profile.title}, not one on the ICP lists`
+              : '';
+    if (why) {
+      notes.push(why);
+      // Three wrong picks in a row: nobody rather than the last wrong one (the team finds someone).
+      if (attempt >= 2) {
+        notes.push('No one else on the ICP lists could be confirmed at this site');
+        return { picked: { ...picked, contact: { ...EMPTY_CONTACT } }, lookupFailed: false, verified: false };
+      }
       list = list.filter((c) => !sameName(c.name, contact.name));
       picked = await pick(list);
       continue;
     }
-    if (profile) {
-      if (!contact.linkedin) contact.linkedin = profile.url;
-      if (chosen && profile.location && !chosen.location) chosen.location = profile.location;
-      notes.push(`LinkedIn profile found by name: ${profile.url}`);
-      if (profile.title && profile.title.toLowerCase() !== contact.title.toLowerCase()) {
-        notes.push(`Title taken from LinkedIn: "${profile.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
-        contact.title = profile.title;
-      }
+    const found = profile!;
+    if (!contact.linkedin) contact.linkedin = found.url;
+    if (chosen && found.location && !chosen.location) chosen.location = found.location;
+    notes.push(`LinkedIn profile found by name: ${found.url}`);
+    if (found.title && found.title.toLowerCase() !== contact.title.toLowerCase()) {
+      notes.push(`Title taken from LinkedIn: "${found.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
+      contact.title = found.title;
     }
-    return { picked, lookupFailed: false };
+    return { picked, lookupFailed: false, verified: true };
   }
 }
 

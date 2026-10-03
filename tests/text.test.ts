@@ -194,5 +194,9 @@ describe('matching domains to companies', () => {
     expect(domainScore('Crystal Logistic Cool Chain', 'crystal.com')).toBeLessThan(3);
     expect(domainScore('Tata AutoComp Systems', 'tatautocomp.com')).toBeGreaterThan(domainScore('Tata AutoComp Systems', 'tatamotors.com'));
     expect(domainScore('Yazaki India Private Limited', 'yazaki-group.com')).toBeGreaterThanOrEqual(3);
+    // A shared first word is another company: Madras Fertilizers is not Madras Engineering Industries.
+    expect(domainScore('Madras Engineering Industries Private Limited', 'madrasfert.com')).toBe(0);
+    expect(domainScore('Madras Engineering Industries Private Limited', 'madrasengineering.com')).toBeGreaterThan(0);
+    expect(domainScore('Ultra Drugs Pvt Ltd', 'ultracorpotech.com')).toBe(0);
   });
 });

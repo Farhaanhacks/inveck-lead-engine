@@ -376,7 +376,8 @@ export async function updateContactAction(form: FormData) {
   const newPerson = v.contactName.toLowerCase() !== before.contactName.toLowerCase();
   await db
     .update(leads)
-    .set({ ...v, ...(newPerson ? { contactTier: '', contactCheckedAt: null } : {}), ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}), updatedAt: new Date() })
+    // The team vouches for a contact they enter: it counts as confirmed.
+    .set({ ...v, contactVerifiedAt: v.contactName ? new Date() : null, ...(newPerson ? { contactTier: '', contactCheckedAt: null } : {}), ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}), updatedAt: new Date() })
     .where(eq(leads.id, id));
   // Keep the people list in step: update the main contact, or add them if they're new.
   const [primary] = await db.select().from(people).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));

@@ -24,8 +24,9 @@ export async function makePrimary(db: Db, personId: number, opts: { byTeam?: boo
       contactPhone: p.phone,
       contactLinkedin: p.linkedin,
       emailStatus: p.emailStatus,
-      // Someone new: checked on LinkedIn again.
+      // Someone new: checked on LinkedIn again, and not confirmed until then (unless the team chose them).
       contactCheckedAt: null,
+      contactVerifiedAt: opts.byTeam ? new Date() : null,
       updatedAt: new Date(),
     })
     .where(eq(leads.id, p.leadId));

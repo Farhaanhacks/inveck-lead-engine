@@ -119,13 +119,13 @@ function FollowUpCard({ lead }: { lead: Lead }) {
 
 
 
-function PeopleCard({ company, list }: { company: string; list: Person[] }) {
+function PeopleCard({ company, city, list }: { company: string; city: string; list: Person[] }) {
   return (
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
         <div>
           <h2 className="text-sm font-semibold">People to contact at {company}</h2>
-          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people who work there now.</p>
+          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people a LinkedIn profile confirms at this company now; the main contact also at this site.</p>
         </div>
         <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.email).length} with email</span>
       </div>
@@ -150,6 +150,9 @@ function PeopleCard({ company, list }: { company: string; list: Person[] }) {
                     {p.passedAt && <span className="ml-2 text-xs font-normal text-muted">tried, no luck</span>}
                   </div>
                   <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>
+                  {(p.location || city) && (
+                    <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location || 'Location not confirmed'}</div>
+                  )}
                 </td>
                 <td className="px-2 py-2.5">
                   {p.email ? <a href={`mailto:${p.email}`} className="hover:underline">{p.email}</a> : <span className="text-muted">—</span>}
@@ -291,7 +294,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
 
       {team.length > 0 && (
         <div className="mb-6">
-          <PeopleCard company={lead.company} list={team} />
+          <PeopleCard company={lead.company} city={lead.city} list={team} />
         </div>
       )}
 

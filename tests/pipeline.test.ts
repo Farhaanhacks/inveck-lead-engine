@@ -127,13 +127,13 @@ describe('full run with DeepSeek-style messy answers', () => {
       'nkapoor@formatguess.in',
     ]);
 
-    // No LinkedIn hits: leadership from company records is used; invented names are dropped.
-    expect(L['Ash Logistics and Traders Pvt Ltd'].contactName).toBe('Jitendra Govind Joshi');
-    expect(L['Ash Logistics and Traders Pvt Ltd'].contactTitle).toBe('Founder, Chairman and Managing Director');
+    // No LinkedIn hits: leadership named only in company records can't be confirmed on LinkedIn, so it is
+    // set aside, not used: no main contact (the team finds one); invented names are dropped.
+    expect(L['Ash Logistics and Traders Pvt Ltd'].contactName).toBe('');
+    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).toContain('Jitendra Govind Joshi set aside: no LinkedIn profile confirms');
     // A CFO isn't on the Manufacturing P1/P2/P3 lists, so the client doesn't want their details.
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Vidya Girish Pathak');
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Invented Person');
-    expect(L['Ash Logistics and Traders Pvt Ltd'].contactEmail).toBe('jg.joshi@ash-logistics.com');
 
     // Catch-all server, but the company's format is published (RocketReach-style page):
     // the address is saved as "likely", like ZoomInfo's business emails.
@@ -153,9 +153,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(tataPeople[0]).toMatchObject({ name: 'Sangamnath Digge', isPrimary: true, email: 'sangamnath.digge@tatamotors.com' });
     expect(tataPeople.find((p) => p.name === 'Anita Rao')).toMatchObject({ email: 'anita.rao@tatamotors.com', emailStatus: 'known (Hunter)', source: 'LinkedIn', isPrimary: false });
     const ashPeople = await db.select().from(people).where(eq(people.leadId, L['Ash Logistics and Traders Pvt Ltd'].id));
-    expect(ashPeople.map((p) => [p.name, p.source, p.isPrimary])).toEqual([
-      ['Jitendra Govind Joshi', 'Company website / records', true],
-    ]);
+    expect(ashPeople).toEqual([]);
 
     // Switching the main contact updates the lead.
     const anita = tataPeople.find((p) => p.name === 'Anita Rao')!;

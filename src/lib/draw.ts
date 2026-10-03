@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, settings, users, type LeadStatus } from './db/schema';
 import { getSettings } from './settings';
@@ -9,6 +9,13 @@ export const DRAW_HOUR_IST = 8;
 
 /** Researched and still worth a call: these can be handed out. */
 export const DRAWABLE: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score'];
+
+/**
+ * The release gate: only a researched company that qualified, whose main contact is confirmed (a
+ * LinkedIn profile at this company and site, or entered by the team), or that has no contact yet for
+ * the team to find. A lead whose contact isn't confirmed waits until it is, or is set aside.
+ */
+const RELEASABLE = and(eq(leads.qualified, true), or(eq(leads.contactName, ''), isNotNull(leads.contactVerifiedAt)));
 
 export type DrawRecord = { day: string; at: string; wanted: number; drawn: number; perOwner: Record<string, number>; short: boolean };
 
@@ -38,7 +45,7 @@ export async function drawPool(db: Db): Promise<{ total: number; withContact: nu
   const [row] = await db
     .select({ total: sql<number>`count(*)::int`, withContact: sql<number>`count(*) filter (where ${leads.contactName} <> '')::int` })
     .from(leads)
-    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE)));
+    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE), RELEASABLE));
   return { total: Number(row?.total ?? 0), withContact: Number(row?.withContact ?? 0) };
 }
 
@@ -113,7 +120,7 @@ async function drawInto(db: Db, team: number[], day: string, count: number, now:
   const picked = await db
     .select({ id: leads.id })
     .from(leads)
-    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE)))
+    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE), RELEASABLE))
     .orderBy(sql`(${leads.contactName} = '')`, sql`random()`)
     .limit(count);
   const hands = deal(shuffle(picked.map((p) => p.id), random), team, random);

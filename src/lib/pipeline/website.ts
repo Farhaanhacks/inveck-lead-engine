@@ -39,8 +39,32 @@ export function domainScore(company: string, domain: string): number {
   if (!matched.length) return 0;
   const rest = matched.reduce((r, t) => r.replace(t, ''), label);
   if (OTHER_ORG.test(rest) && !OTHER_ORG.test(company.toLowerCase())) return 0;
+  // What's left of the domain must be the company's own other words, or short forms of them
+  // ("bodalchem" for Bodal Chemicals), or harmless extras ("india", "group"). Anything else is another
+  // company sharing a word: madrasfert.com is Madras Fertilizers, not Madras Engineering Industries.
+  // A domain holding every distinctive word of a longer name (tatautocomp.com) needs no such check.
+  const fullName = tokens.length >= 2 && matched.length === tokens.length;
+  if (!fullName && !SAME_ORG.test(ownWordsRemoved(rest, company))) return 0;
   const clean = SAME_ORG.test(rest);
   return matched.length + (clean && matched.length === tokens.length ? 1 : 0) + (clean ? 1 : 0);
+}
+
+/** The domain's leftover letters with the company's own words (whole, or their first 3+ letters) and initials taken out. */
+function ownWordsRemoved(rest: string, company: string): string {
+  const words = company.toLowerCase().replace(/&/g, ' ').split(/[^a-z0-9]+/).filter(Boolean);
+  let r = rest;
+  const initials = words.map((w) => w[0]).join('');
+  if (initials.length >= 2 && r.includes(initials)) r = r.replace(initials, '');
+  for (const w of words) {
+    for (let len = w.length; len >= 3; len--) {
+      const piece = w.slice(0, len);
+      if (r.includes(piece)) {
+        r = r.replace(piece, '');
+        break;
+      }
+    }
+  }
+  return r;
 }
 
 /**

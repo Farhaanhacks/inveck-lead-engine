@@ -51,24 +51,47 @@ export function brandOf(company: string): string {
 }
 
 /**
- * The same company under the names its people use: "Nestlé India Ltd" matches "Nestle" and "Nestle
- * India"; "Lumax Auto Technologies" matches "Lumax World" and "Lumax Industries" (same brand, how its
- * staff write it on LinkedIn). Words that only say what a company does never match on their own:
- * "Bearings" is not NBC Bearings.
+ * Each company's own website name, as an alias its staff write ("Lumax World" for Lumax Auto
+ * Technologies, whose site is lumaxworld.in). Recorded wherever a lead is worked on (registerFirmWebsite).
+ */
+const firmSites = new Map<string, string>();
+const firmKey = (company: string) => words(company).join(' ');
+const squash = (ws: string[]) => ws.join('');
+
+export function registerFirmWebsite(company: string, website: string | null | undefined): void {
+  const host = String(website ?? '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  const label = host.split('.')[0]?.replace(/-/g, '') ?? '';
+  if (company.trim() && label.length >= 4) firmSites.set(firmKey(company), label);
+}
+
+/** The company's own website name, when known ("lumaxworld"). */
+export function firmSiteName(company: string): string {
+  return firmSites.get(firmKey(company)) ?? '';
+}
+
+/**
+ * Whether a person's employer, as they write it, is this company. It must name the company in full
+ * (every word of its name, legal words like "Pvt Ltd" aside): "National Engineering Industries Ltd.
+ * (NBC Bearings)" is NBC Bearings, "Nestlé" is Nestle India. A shared word is never enough: Ultra
+ * Corpotech is not Ultra Drugs, Tata Steel is not Tata Motors, Minda Corporation is not Minda
+ * Industries, Sakthi Auto Component is not Sakthi Auto Ancillary, PKF Sridhar & Santhanam is not PKF India.
+ * The one alias is the company's own
+ * website name ("Lumax World" for lumaxworld.in). A name made only of generic words ("Warehousing
+ * Express Logistics") must match exactly, with nothing added.
  */
 export function sameFirm(text: string, company: string): boolean {
   const a = words(text);
   const b = words(company);
   if (!a.length || !b.length) return false;
+  if (b.every((w) => GENERIC.has(w))) return a.length === b.length && b.every((w) => a.includes(w));
+  // A name that comes down to one short word ("PKF" India, "Ucal"): exactly that, nothing added.
+  // "PKF Sridhar & Santhanam" is another firm in the same network.
+  if (b.length === 1 && b[0].length <= 4) return a.every((w) => w === b[0] || VAGUE.has(w));
   if (b.every((w) => a.includes(w))) return true;
-  if (a.every((w) => b.includes(w)) && a.some((w) => !GENERIC.has(w))) return true;
-  // Same brand, written another way ("Lumax World" for Lumax Auto Technologies): only when every other
-  // word is generic or part of the company's own name. "Ultra Corpotech" is another company, not Ultra Drugs.
-  const brand = brandOf(company);
-  if (!brand || brandOf(text) !== brand) return false;
-  // What a company does tells sister companies apart (Tata Steel is not Tata Motors): an industry word
-  // must be in the company's own name; only vague words ("World", "Industries", "Group") may differ.
-  return a.filter((w) => w !== brand).every((w) => VAGUE.has(w) || b.includes(w));
+  const site = firmSiteName(company);
+  if (!site) return false;
+  const named = a.filter((w) => !['com', 'in', 'co', 'net', 'org'].includes(w));
+  return squash(named) === site || squash(named.filter((w) => !VAGUE.has(w))) === site;
 }
 
 /** Words a company's staff add or drop without it being another company. */
@@ -247,13 +270,4 @@ export function siteOf(location: string | undefined, city: string): 'here' | 'el
   const place = loc.split(',')[0].replace(/\b(greater|area|region|division|district|metropolitan)\b/gi, '').trim();
   if (!place || REGION_ONLY.test(place)) return 'unknown';
   return 'elsewhere';
-}
-
-/**
- * A role that covers the whole company or country, not one site ("National Head of Supply Chain",
- * "Corporate Head - Operations"): kept for a site's lead even when based at head office elsewhere in
- * India, ranked after the people at the site.
- */
-export function companyWideRole(title: string): boolean {
-  return /\b(national|corporate|group|all[- ]india|pan[- ]india|india head|country|head office|headquarters|central)\b/i.test(title);
 }
