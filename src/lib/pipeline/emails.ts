@@ -3,18 +3,22 @@ import type { Services } from './services';
 import { googleSearch, hunter } from './services';
 import { errorMessage, splitName } from './text';
 import { classifyLocal, fillPattern, lookupEmailFormat, patternLabel, personEmailHints } from './email-format';
-import { apolloEmail, type ApolloResult } from './apollo';
+import { apolloEmail, type PersonQuery, type ProviderResult } from './apollo';
+import { prospeoEmail } from './prospeo';
 
 export { fillPattern } from './email-format';
 
 /**
  * Where an address came from, kept apart from whether it is verified: typed by the sales team, the
- * person's own address published on the company website or elsewhere on the web, Apollo, or
- * inferred from the company's email format. Hunter is no longer a source (only the mail-server check).
+ * person's own address published on the company website or elsewhere on the web, an email provider
+ * (Prospeo, Apollo), or inferred from the company's email format. Hunter is no longer a source (only
+ * the mail-server check).
  */
-export type EmailSource = 'manual' | 'website' | 'web' | 'apollo' | 'inferred';
+export type EmailSource = 'manual' | 'website' | 'web' | 'prospeo' | 'apollo' | 'inferred';
+export type ProviderSource = Extract<EmailSource, 'prospeo' | 'apollo'>;
+export type ProviderName = 'Prospeo' | 'Apollo';
 /**
- * Our verdict on an address. `verified`: confirmed deliverable (by Apollo's own check, or the
+ * Our verdict on an address. `verified`: confirmed deliverable (by the provider's own check, or the
  * mail-server check); `catch_all`: the company's server accepts every address, so this one can't be
  * confirmed; `unverified`: not confirmed either way; `invalid`: rejected by the mail server.
  */
@@ -29,10 +33,10 @@ export type EmailResult = {
   source: EmailSource | '';
   verification: Verification | '';
   /** Who confirmed a verified address. */
-  verifiedBy?: 'Apollo' | 'mail-server check';
-  /** Apollo's own email_status, exactly as returned (kept apart from our verdict). */
+  verifiedBy?: ProviderName | 'mail-server check';
+  /** The provider's own email status, exactly as returned (kept apart from our verdict). */
   providerStatus?: string;
-  /** When Apollo returned the address (ISO date-time). */
+  /** When the provider returned the address (ISO date-time). */
   retrievedAt?: string;
   notes: string[];
   reason?: string;
@@ -46,6 +50,7 @@ export const SOURCE_LABELS: Record<EmailSource, string> = {
   manual: 'entered by the team',
   website: 'company website',
   web: 'found on the web',
+  prospeo: 'Prospeo',
   apollo: 'Apollo',
   inferred: "inferred from the company's email format",
 };
@@ -54,11 +59,13 @@ export const SOURCE_LABELS: Record<EmailSource, string> = {
  * The readable email status: the source first, then our verdict, never one dressed up as the other.
  * "Apollo (Apollo status: extrapolated, retrieved 2026-10-04) · unverified".
  */
+const PROVIDER_NAME: Record<ProviderSource, ProviderName> = { prospeo: 'Prospeo', apollo: 'Apollo' };
+
 export function emailLabel(r: Pick<EmailResult, 'source' | 'verification' | 'verifiedBy' | 'providerStatus' | 'retrievedAt' | 'detail'>): string {
   if (!r.source) return '';
   const source =
-    r.source === 'apollo'
-      ? `Apollo (${[r.providerStatus && `Apollo status: ${r.providerStatus}`, r.retrievedAt && `retrieved ${r.retrievedAt.slice(0, 10)}`].filter(Boolean).join(', ')})`
+    r.source === 'apollo' || r.source === 'prospeo'
+      ? `${PROVIDER_NAME[r.source]} (${[r.providerStatus && `${PROVIDER_NAME[r.source]} status: ${r.providerStatus}`, r.retrievedAt && `retrieved ${r.retrievedAt.slice(0, 10)}`].filter(Boolean).join(', ')})`
       : r.source === 'inferred'
         ? `inferred${r.detail ? ` from the company's email format: ${r.detail}` : " from the company's email format"}`
         : SOURCE_LABELS[r.source];
@@ -99,12 +106,12 @@ export async function verifyEmail(svc: Services, email: string): Promise<{ statu
 
 const VERDICT: Record<string, Verification> = { valid: 'verified', accept_all: 'catch_all', invalid: 'invalid', unknown: 'unverified' };
 
-/** The scoring status for a verdict: an unconfirmed address from Apollo or the company's format still counts as likely. */
+/** The scoring status for a verdict: an unconfirmed address from a provider or the company's format still counts as likely. */
 function scoringStatus(v: Verification, source: EmailSource): EmailStatus {
   if (v === 'verified') return 'valid';
   if (v === 'catch_all') return 'accept_all';
   if (v === 'invalid') return 'invalid';
-  return source === 'apollo' || source === 'inferred' ? 'likely' : 'unknown';
+  return source === 'apollo' || source === 'prospeo' || source === 'inferred' ? 'likely' : 'unknown';
 }
 
 /** People's addresses at the domain that Google has indexed (one search, no Hunter credits). */
@@ -151,16 +158,33 @@ function namesComplete(pattern: string, first: string, last: string): boolean {
   return (!pattern.includes('{first}') || first.length > 1) && (!pattern.includes('{last}') || last.length > 1);
 }
 
-/** Apollo lookups left for this company; cached results don't use one. */
-export type ApolloBudget = { left: number };
+/** Paid provider lookups left for this company; cached results don't use one. */
+export type LookupBudget = { left: number };
+
+export type EmailProvider = {
+  name: ProviderName;
+  source: ProviderSource;
+  keyName: string;
+  ready: (svc: Services) => boolean;
+  lookup: (svc: Services, q: PersonQuery, opts?: { cacheOnly?: boolean }) => Promise<ProviderResult>;
+};
+
+/** The email providers, in the order they are asked: Prospeo first, Apollo when Prospeo has nothing verified. */
+export const EMAIL_PROVIDERS: EmailProvider[] = [
+  { name: 'Prospeo', source: 'prospeo', keyName: 'PROSPEO_API_KEY', ready: (svc) => !!svc.keys.prospeo, lookup: prospeoEmail },
+  { name: 'Apollo', source: 'apollo', keyName: 'APOLLO_API_KEY', ready: (svc) => !!svc.keys.apollo, lookup: apolloEmail },
+];
+
+/** The providers with a key set, in order. */
+export const emailProviders = (svc: Services) => EMAIL_PROVIDERS.filter((p) => p.ready(svc));
 
 export type FindEmailContext = {
   company?: string;
   domain: string;
   websiteEmails: string[];
   webEmails?: string[];
-  /** Apollo lookups this company may still spend; none when absent (no Apollo). */
-  apollo?: ApolloBudget;
+  /** Provider lookups this company may still spend; none when absent (no provider is asked). */
+  lookups?: LookupBudget;
   /** The company's format already found (for the others at a company): skips looking it up again. */
   format?: EmailFormatUsed | null;
   /** Off for the others at a company: no people-search page search, no guessing common formats. */
@@ -172,14 +196,15 @@ export type FindEmailContext = {
  *  1. an address the sales team typed in: always kept (checked only to label it)
  *  2. the person's own address published on the company website, the web or a people-search page,
  *     confirmed by the mail-server check
- *  3. Apollo (an identified contact: LinkedIn profile, name and employer), when nothing above is
- *     verified: Apollo's "verified" counts as verified; anything else gets the mail-server check
+ *  3. the email providers, Prospeo then Apollo (an identified contact: LinkedIn profile, name and
+ *     employer), when nothing above is verified: the provider's "verified" counts as verified;
+ *     anything else gets the mail-server check
  *  4. a published address that couldn't be confirmed (catch-all server, check unavailable)
- *  5. Apollo's unconfirmed address
+ *  5. a provider's unconfirmed address
  *  6. inferred from the company's proven format: verified when the mail-server check confirms it,
  *     else saved as inferred (catch-all included) when the format is proven and the setting is on
  *  7. common formats, kept only when the mail-server check confirms them, labelled inferred
- * Source and verdict are kept apart; nothing is called verified unless Apollo's check or the mail
+ * Source and verdict are kept apart; nothing is called verified unless a provider's check or the mail
  * server confirmed it.
  */
 export async function findEmail(svc: Services, contact: Contact, ctx: FindEmailContext): Promise<EmailResult> {
@@ -253,27 +278,33 @@ async function findEmailInner(svc: Services, contact: Contact, ctx: FindEmailCon
     }
   }
 
-  // 3. Apollo, for an identified contact: before any address is built from a format.
-  let apolloUnconfirmed: EmailResult | null = null;
-  const apollo = ctx.apollo && ctx.company !== undefined ? await askApollo(svc, contact, ctx, notes) : null;
-  if (apollo?.outcome === 'found') {
-    const meta = { providerStatus: apollo.status, retrievedAt: apollo.retrievedAt };
-    if (apollo.status === 'verified') {
-      // The address published for them, now confirmed by Apollo, keeps its source.
-      if (direct && direct.email === apollo.email) return done(direct.email, direct.source, 'verified', { verifiedBy: 'Apollo', ...meta });
-      return done(apollo.email, 'apollo', 'verified', { verifiedBy: 'Apollo', ...meta });
+  // 3. The email providers, for an identified contact: before any address is built from a format.
+  let providerUnconfirmed: EmailResult | null = null;
+  let lookupFailed = '';
+  if (ctx.lookups && ctx.company !== undefined) {
+    const q = { name: contact.name, company: ctx.company, domain: ctx.domain, linkedin: contact.linkedin };
+    for (const p of emailProviders(svc)) {
+      const r = await askProvider(svc, p, q, ctx.lookups, notes);
+      if (r.outcome === 'failed') lookupFailed ||= `${p.name} lookup failed (${r.reason})`;
+      if (r.outcome !== 'found') continue;
+      const meta = { providerStatus: r.status, retrievedAt: r.retrievedAt };
+      if (r.status === 'verified') {
+        // The address published for them, now confirmed by the provider, keeps its source.
+        if (direct && direct.email === r.email) return done(direct.email, direct.source, 'verified', { verifiedBy: p.name, ...meta });
+        return done(r.email, p.source, 'verified', { verifiedBy: p.name, ...meta });
+      }
+      // The provider's own status isn't "verified": the mail-server check decides, and anything it
+      // can't settle stays labelled unverified (the next provider may still have a verified one).
+      const c = await check(r.email);
+      if (c && c.status === 'invalid') notes.push(`${p.name}'s address ${r.email} was rejected by the mail server; not used`);
+      else if (c?.verification === 'verified') return done(c.email, p.source, 'verified', meta);
+      else providerUnconfirmed ??= done(r.email, p.source, c?.verification ?? 'unverified', meta);
     }
-    // Apollo's own status isn't "verified": the mail-server check decides, and anything it can't
-    // settle stays labelled unverified.
-    const r = await check(apollo.email);
-    if (r && r.status === 'invalid') notes.push(`Apollo's address ${apollo.email} was rejected by the mail server; not used`);
-    else if (r?.verification === 'verified') return done(r.email, 'apollo', 'verified', meta);
-    else apolloUnconfirmed = done(apollo.email, 'apollo', r?.verification ?? 'unverified', meta);
   }
 
-  // 4–5. Unconfirmed direct addresses first, then Apollo's.
+  // 4–5. Unconfirmed direct addresses first, then a provider's.
   if (direct) return done(direct.email, direct.source, direct.verification);
-  if (apolloUnconfirmed) return apolloUnconfirmed;
+  if (providerUnconfirmed) return providerUnconfirmed;
 
   // 6. The company's proven email format.
   let domain = ctx.domain;
@@ -337,31 +368,30 @@ async function findEmailInner(svc: Services, contact: Contact, ctx: FindEmailCon
   }
   if (unconfirmable === 'unknown') return none("the company's mail server didn't answer the email check");
   if (rejected) return none('the addresses tried were rejected by the mail server');
-  if (apollo?.outcome === 'failed') return none(`Apollo lookup failed (${apollo.reason}); no other source had an email`);
+  if (lookupFailed) return none(`${lookupFailed}; no other source had an email`);
   return none('no email found in any source');
 }
 
 /**
- * One Apollo lookup for the contact, within the company's budget (a cached result spends nothing).
- * What happened is noted either way: a match, no match, or a lookup that failed.
+ * One provider lookup for the contact, within the company's budget (a cached result spends nothing,
+ * nor does a provider that isn't set up or is held back this run). What happened is noted either
+ * way: a match, no match, or a lookup that failed.
  */
-async function askApollo(svc: Services, contact: Contact, ctx: FindEmailContext, notes: string[]): Promise<ApolloResult> {
-  const q = { name: contact.name, company: ctx.company ?? '', domain: ctx.domain, linkedin: contact.linkedin };
-  const budget = ctx.apollo!;
-  const cached = await apolloEmail(svc, q, { cacheOnly: true });
-  let r: ApolloResult = cached;
-  if (cached.outcome === 'skipped' && cached.reason === 'no cached Apollo result') {
+export async function askProvider(svc: Services, p: EmailProvider, q: PersonQuery, budget: LookupBudget, notes?: string[]): Promise<ProviderResult> {
+  const cached = await p.lookup(svc, q, { cacheOnly: true });
+  let r: ProviderResult = cached;
+  if (cached.outcome === 'skipped' && cached.reason === `no cached ${p.name} result`) {
     if (budget.left <= 0) {
-      notes.push(`Apollo not asked for ${contact.name}: this company's Apollo lookups are used up`);
+      notes?.push(`${p.name} not asked for ${q.name}: this company's email lookups are used up`);
       return { outcome: 'skipped', reason: 'budget' };
     }
-    r = await apolloEmail(svc, q);
-    if (r.outcome !== 'skipped' && !(r.outcome === 'failed' && r.kind === 'no_key')) budget.left--;
+    r = await p.lookup(svc, q);
+    if (r.outcome !== 'skipped' && !(r.outcome === 'failed' && (r.kind === 'no_key' || r.held))) budget.left--;
   }
-  const who = contact.name;
-  if (r.outcome === 'found') notes.push(`Apollo: ${r.email} for ${who} (Apollo status: ${r.status}${r.cached ? ', from an earlier lookup' : ''})`);
-  else if (r.outcome === 'no_email' || r.outcome === 'not_found') notes.push(`Apollo: nothing for ${who}: ${r.reason}${r.cached ? ' (earlier lookup)' : ''}`);
-  else if (r.outcome === 'failed') notes.push(r.kind === 'no_key' ? 'Apollo not set up (APOLLO_API_KEY missing)' : `Apollo lookup failed for ${who}: ${r.reason}`);
-  else if (r.outcome === 'skipped') notes.push(`Apollo not asked for ${who}: ${r.reason}`);
+  const who = q.name;
+  if (r.outcome === 'found') notes?.push(`${p.name}: ${r.email} for ${who} (${p.name} status: ${r.status}${r.cached ? ', from an earlier lookup' : ''})`);
+  else if (r.outcome === 'no_email' || r.outcome === 'not_found') notes?.push(`${p.name}: nothing for ${who}: ${r.reason}${r.cached ? ' (earlier lookup)' : ''}`);
+  else if (r.outcome === 'failed') notes?.push(r.kind === 'no_key' ? `${p.name} not set up (${p.keyName} missing)` : `${p.name} lookup failed for ${who}: ${r.reason}`);
+  else if (r.outcome === 'skipped') notes?.push(`${p.name} not asked for ${who}: ${r.reason}`);
   return r;
 }

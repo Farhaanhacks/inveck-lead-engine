@@ -26,7 +26,7 @@ function services(routes: Record<string, (url: string) => Response | Promise<Res
     if (!route) throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } });
     return routes[route](url);
   }) as typeof fetch;
-  return { fetch: fakeFetch, keys: { deepseek: '', anthropic: '', serper: 'serper-test', hunter: '', apollo: '', jina: '' }, settings: settingsSchema.parse({}) };
+  return { fetch: fakeFetch, keys: { deepseek: '', anthropic: '', serper: 'serper-test', hunter: '', apollo: '', prospeo: '', jina: '' }, settings: settingsSchema.parse({}) };
 }
 
 const html = (body: string, status = 200) => new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });

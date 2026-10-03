@@ -86,8 +86,8 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
   const icp = icpFor(lead.segment, icpRows);
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
-  // Apollo for the best-ranked others confirmed now (the main contact has its own lookup).
-  const emailBudget = { left: Math.max(0, svc.settings.apolloPerCompany - 1) };
+  // Email providers for the best-ranked others confirmed now (the main contact has its own lookup).
+  const emailBudget = { left: Math.max(0, svc.settings.emailLookupsPerCompany - 1) };
   for (const p of next) {
     // A failed search leaves them unchecked, so the next pass tries again.
     let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
@@ -147,7 +147,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   }
   if (!lead.contactName || !svc.keys.serper) return 'skipped';
   if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
-  const emailBudget = { left: svc.settings.apolloPerCompany };
+  const emailBudget = { left: svc.settings.emailLookupsPerCompany };
   // The sales team's own contact is theirs to vouch for (their email too: only a conflict is flagged).
   if (await contactFromTeam(db, lead)) {
     if (!lead.contactVerifiedAt) await db.update(leads).set({ contactVerifiedAt: now }).where(eq(leads.id, lead.id));

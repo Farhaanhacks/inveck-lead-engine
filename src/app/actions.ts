@@ -605,7 +605,7 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   const parsed = settingsSchema.safeParse({
     leadsPerMorning: str(form, 'leadsPerMorning'),
     maxEmailGuesses: str(form, 'maxEmailGuesses'),
-    apolloPerCompany: str(form, 'apolloPerCompany'),
+    emailLookupsPerCompany: str(form, 'emailLookupsPerCompany'),
     useCompanyFormat: form.get('useCompanyFormat') === 'on',
     radarEnabled: form.get('radarEnabled') === 'on',
     prospectsPerRun: str(form, 'prospectsPerRun'),

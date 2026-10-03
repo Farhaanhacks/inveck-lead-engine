@@ -91,7 +91,7 @@ function scriptedServices(script: Script, seen: Seen): Services {
     }
     throw new Error('Unexpected request to ' + url.host);
   }) as typeof fetch;
-  return { fetch: fetchFn, keys: { deepseek: 'ds-test', anthropic: '', serper: 'serper-test', hunter: 'hunter-test', apollo: '', jina: '' }, settings: settingsSchema.parse({}) };
+  return { fetch: fetchFn, keys: { deepseek: 'ds-test', anthropic: '', serper: 'serper-test', hunter: 'hunter-test', apollo: '', prospeo: '', jina: '' }, settings: settingsSchema.parse({}) };
 }
 
 /** A quote from the numbered source whose text contains `needle`, as the AI should give it. */

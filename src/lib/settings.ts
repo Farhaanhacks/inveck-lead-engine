@@ -23,10 +23,10 @@ export const settingsSchema = z.object({
   /** Common email formats to try, and verify with the mail-server check, when the company's format is unknown. */
   maxEmailGuesses: z.coerce.number().int().min(0).max(6).default(3),
   /**
-   * Apollo email lookups per company: the main contact first, then the best-ranked others the
-   * pipeline selected. Cached results don't count. 0 switches Apollo off.
+   * Paid email lookups per company (Prospeo, then Apollo): the main contact first, then the
+   * best-ranked others the pipeline selected. Cached results don't count. 0 switches them off.
    */
-  apolloPerCompany: z.coerce.number().int().min(0).max(10).default(3),
+  emailLookupsPerCompany: z.coerce.number().int().min(0).max(10).default(3),
   /**
    * Save an address built from the company's proven email format when its mail server can't
    * confirm single addresses (marked "likely"). Plain guesses are never saved.
@@ -57,7 +57,10 @@ export const DEFAULT_MODELS: Record<Settings['aiProvider'], string> = {
 export async function getSettings(db: Db): Promise<Settings> {
   const rows = await db.select().from(settingsTable).where(eq(settingsTable.key, 'app'));
   const stored = rows[0]?.value;
-  const parsed = settingsSchema.safeParse(stored && typeof stored === 'object' ? stored : {});
+  const value: Record<string, unknown> = stored && typeof stored === 'object' ? { ...(stored as Record<string, unknown>) } : {};
+  // Saved before the setting covered every email provider (it was Apollo's alone).
+  if (value.emailLookupsPerCompany === undefined && value.apolloPerCompany !== undefined) value.emailLookupsPerCompany = value.apolloPerCompany;
+  const parsed = settingsSchema.safeParse(value);
   return parsed.success ? parsed.data : settingsSchema.parse({});
 }
 
@@ -83,6 +86,8 @@ export function apiKeys() {
     hunter: envKey('HUNTER_API_KEY'),
     /** Email enrichment (emails only). Server-side only: never sent to the browser or written to logs. */
     apollo: envKey('APOLLO_API_KEY'),
+    /** Email enrichment, asked before Apollo (emails only). Server-side only, like Apollo's. */
+    prospeo: envKey('PROSPEO_API_KEY'),
     /** Optional: Jina Reader works without a key, but with lower rate limits. */
     jina: envKey('JINA_API_KEY'),
   };

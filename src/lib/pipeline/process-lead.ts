@@ -1,7 +1,7 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
 import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
-import { belongsTo, emailLabel, findEmail, searchWebEmails, type ApolloBudget, type EmailFormatUsed, type EmailResult } from './emails';
+import { belongsTo, emailLabel, findEmail, searchWebEmails, emailProviders, type LookupBudget, type EmailFormatUsed, type EmailResult } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, type Research } from './research';
 import { buildSources } from './fit';
@@ -234,11 +234,11 @@ export async function processLead(
   if (picked.error) notes.push('Contact step error: ' + picked.error);
   const contact = picked.contact;
 
-  // Apollo lookups this company may spend: the main contact first, then the best-ranked others.
-  const apollo: ApolloBudget | undefined = svc.keys.apollo && svc.settings.apolloPerCompany > 0 ? { left: svc.settings.apolloPerCompany } : undefined;
+  // Provider lookups (Prospeo, Apollo) this company may spend: the main contact first, then the best-ranked others.
+  const lookups: LookupBudget | undefined = emailProviders(svc).length && svc.settings.emailLookupsPerCompany > 0 ? { left: svc.settings.emailLookupsPerCompany } : undefined;
   const allEmails = [...webEmails, ...leaders.emails];
   const email: EmailResult = contact.name || contact.email
-    ? await findEmail(svc, contact, { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, apollo })
+    ? await findEmail(svc, contact, { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, lookups })
     : { email: '', status: 'no email found', source: '', verification: '', notes: [], reason: 'no contact found' };
   notes.push(...email.notes);
   contact.email = email.email;
@@ -254,7 +254,7 @@ export async function processLead(
     signals: news.signals.length ? news.signals : lead.signals,
     signalsCheckedAt: new Date(),
   };
-  // Everyone else at the company: the best-ranked few go through the same chain (Apollo included,
+  // Everyone else at the company: the best-ranked few go through the same chain (the providers included,
   // within the company's budget); the rest get what is free (a published address, the format).
   let format: EmailFormatUsed | null = email.format ?? null;
   const needFormat = picked.ranked.some((c) => !c.email && c.name !== contact.name);
@@ -270,14 +270,14 @@ export async function processLead(
     (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
   );
   const others = new Map<string, EmailResult>();
-  if (apollo) {
+  if (lookups) {
     for (const c of wanted) {
-      if (apollo.left <= 0) break;
+      if (lookups.left <= 0) break;
       if (sameName(c.name, contact.name) || c.email || (c.source !== 'LinkedIn' && c.source !== 'Sales team')) continue;
       const r = await findEmail(
         svc,
         { ...EMPTY_CONTACT, name: c.name, title: c.title, linkedin: c.linkedin },
-        { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, apollo, format, thorough: false },
+        { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, lookups, format, thorough: false },
       );
       if (r.email) others.set(personKey(c.name), r);
     }

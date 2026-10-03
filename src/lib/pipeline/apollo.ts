@@ -38,11 +38,15 @@ export type ApolloResult =
   | { outcome: 'found'; email: string; status: string; retrievedAt: string; cached: boolean }
   | { outcome: 'no_email' | 'not_found'; reason: string; retrievedAt: string; cached: boolean }
   | { outcome: 'skipped'; reason: string }
-  | { outcome: 'failed'; kind: 'no_key' | 'auth' | 'credits' | 'rate_limit' | 'unavailable' | 'error'; reason: string };
+  | { outcome: 'failed'; kind: 'no_key' | 'auth' | 'credits' | 'rate_limit' | 'unavailable' | 'error'; reason: string; held?: boolean };
+
+/** Every email provider (Apollo, Prospeo) answers in the same shape. */
+export type PersonQuery = ApolloQuery;
+export type ProviderResult = ApolloResult;
 
 const FOUND_TTL_DAYS = 90;
 const MISS_TTL_DAYS = 30;
-const TIMEOUT_MS = 30_000;
+export const TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;
 
 /** The profile's handle: "https://in.linkedin.com/in/sdigge/?x" gives "sdigge"; '' for anything else. */
@@ -78,8 +82,8 @@ export function apolloParams(q: ApolloQuery): URLSearchParams | { skip: string }
   return params;
 }
 
-/** The few fields read from Apollo's reply. Phone numbers and everything else are never read. */
-type ApolloPerson = {
+/** The few facts read from a provider's reply. Phone numbers and everything else are never read. */
+export type PersonFacts = {
   name: string;
   linkedin: string;
   email: string;
@@ -89,7 +93,7 @@ type ApolloPerson = {
   confidence: string;
 };
 
-function readPerson(body: unknown): ApolloPerson | null {
+function readPerson(body: unknown): PersonFacts | null {
   const p = (body as { person?: unknown } | null)?.person;
   if (!p || typeof p !== 'object') return null;
   const o = p as Record<string, unknown>;
@@ -107,34 +111,39 @@ function readPerson(body: unknown): ApolloPerson | null {
 }
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/;
-/** Apollo's stand-in for an email it hasn't unlocked ("email_not_unlocked@domain.com"). */
-const PLACEHOLDER = /not_unlocked|email_not|^n\/a$|@domain\.com$/;
+/** A stand-in for an email not unlocked ("email_not_unlocked@domain.com") or masked ("a***@x.com"). */
+const PLACEHOLDER = /not_unlocked|email_not|^n\/a$|@domain\.com$|\*/;
 
 /**
- * Whether Apollo's person is ours, and their usable work email. Rejected: another LinkedIn profile,
- * another name, another employer (or none given), a low-confidence match, and an address that isn't
- * on the company's domain.
+ * Whether a provider's person is ours, and their usable work email. Rejected: another LinkedIn
+ * profile, another name, another employer (or none given), a low-confidence match, and an address
+ * that isn't on the company's domain. The same rules for every provider (Apollo, Prospeo).
  */
-export function judgeApolloPerson(q: ApolloQuery, person: ApolloPerson | null): { email: string; status: string } | { outcome: 'not_found' | 'no_email'; reason: string } {
-  if (!person) return { outcome: 'not_found', reason: 'Apollo has no matching person' };
+export function judgeMatch(provider: string, q: ApolloQuery, person: PersonFacts | null): { email: string; status: string } | { outcome: 'not_found' | 'no_email'; reason: string } {
+  if (!person) return { outcome: 'not_found', reason: `${provider} has no matching person` };
   const ours = linkedinHandle(q.linkedin);
   const theirs = linkedinHandle(person.linkedin);
-  if (ours && theirs && ours !== theirs) return { outcome: 'not_found', reason: `Apollo matched a different LinkedIn profile (${theirs})` };
-  if (!person.name || !sameName(person.name, q.name)) return { outcome: 'not_found', reason: `Apollo matched a different person (${person.name || 'no name'})` };
-  if (/^(none|low)$/.test(person.confidence)) return { outcome: 'not_found', reason: `Apollo's match is ambiguous (confidence: ${person.confidence})` };
+  if (ours && theirs && ours !== theirs) return { outcome: 'not_found', reason: `${provider} matched a different LinkedIn profile (${theirs})` };
+  if (!person.name || !sameName(person.name, q.name)) return { outcome: 'not_found', reason: `${provider} matched a different person (${person.name || 'no name'})` };
+  if (/^(none|low)$/.test(person.confidence)) return { outcome: 'not_found', reason: `${provider}'s match is ambiguous (confidence: ${person.confidence})` };
   const domain = rootDomain(q.domain);
   const sameEmployer = domain && person.orgDomain ? person.orgDomain === domain : !!person.orgName && sameFirm(person.orgName, q.company);
   if (!sameEmployer) {
-    return { outcome: 'not_found', reason: person.orgName || person.orgDomain ? `Apollo has them at another employer (${person.orgName || person.orgDomain})` : "Apollo doesn't say where they work now" };
+    return {
+      outcome: 'not_found',
+      reason: person.orgName || person.orgDomain ? `${provider} has them at another employer (${person.orgName || person.orgDomain})` : `${provider} doesn't say where they work now`,
+    };
   }
   if (!person.email || !EMAIL_RE.test(person.email) || PLACEHOLDER.test(person.email) || person.emailStatus === 'unavailable') {
-    return { outcome: 'no_email', reason: 'Apollo has no work email for them' };
+    return { outcome: 'no_email', reason: `${provider} has no work email for them` };
   }
   const onDomain = rootDomain(person.email.split('@')[1]);
   const allowed = [domain, person.orgDomain].filter(Boolean);
-  if (!allowed.includes(onDomain)) return { outcome: 'no_email', reason: `Apollo's address is not on the company's domain (${onDomain})` };
+  if (!allowed.includes(onDomain)) return { outcome: 'no_email', reason: `${provider}'s address is not on the company's domain (${onDomain})` };
   return { email: person.email, status: person.emailStatus || 'unknown' };
 }
+
+export const judgeApolloPerson = (q: ApolloQuery, person: PersonFacts | null) => judgeMatch('Apollo', q, person);
 
 /** The cache key for a person: their LinkedIn handle, else their name at the company's domain. */
 export function apolloCacheKey(q: ApolloQuery): string {
@@ -144,9 +153,9 @@ export function apolloCacheKey(q: ApolloQuery): string {
   return `apollo:v1:name:${`${first} ${last}`.toLowerCase().replace(/[^a-z ]/g, '').trim()}@${rootDomain(q.domain) || normCompany(q.company)}`;
 }
 
-type Cached = Exclude<ApolloResult, { outcome: 'skipped' | 'failed' }>;
+export type Cached = Exclude<ApolloResult, { outcome: 'skipped' | 'failed' }>;
 
-function fresh(value: unknown, now: number): Cached | null {
+export function freshCached(value: unknown, now: number): Cached | null {
   const v = value as Cached | null;
   if (!v || !['found', 'no_email', 'not_found'].includes(v.outcome) || !v.retrievedAt) return null;
   const age = now - new Date(v.retrievedAt).getTime();
@@ -156,7 +165,7 @@ function fresh(value: unknown, now: number): Cached | null {
 /** Per run: Apollo stops being asked after a refused key, exhausted credits or a long rate limit. */
 const holds = new WeakMap<Services, { until: number; kind: Extract<ApolloResult, { outcome: 'failed' }>['kind']; reason: string }>();
 
-const redact = (text: string, key: string) => (key ? text.split(key).join('[key]') : text);
+export const redact = (text: string, key: string) => (key ? text.split(key).join('[key]') : text);
 
 /**
  * Apollo's work email for an identified contact, from the cache when it's there. `cacheOnly` reads
@@ -168,7 +177,7 @@ export async function apolloEmail(svc: Services, q: ApolloQuery, opts: { cacheOn
   const key = apolloCacheKey(q);
   const now = Date.now();
   try {
-    const hit = fresh(await svc.cache?.get(key), now);
+    const hit = freshCached(await svc.cache?.get(key), now);
     if (hit) return hit;
   } catch {
     // A cache that can't be read only means the lookup is made again.
@@ -177,7 +186,7 @@ export async function apolloEmail(svc: Services, q: ApolloQuery, opts: { cacheOn
   const apiKey = svc.keys.apollo;
   if (!apiKey) return { outcome: 'failed', kind: 'no_key', reason: 'APOLLO_API_KEY is not set' };
   const hold = holds.get(svc);
-  if (hold && hold.until > now) return { outcome: 'failed', kind: hold.kind, reason: `${hold.reason} (not asked again this run)` };
+  if (hold && hold.until > now) return { outcome: 'failed', kind: hold.kind, reason: `${hold.reason} (not asked again this run)`, held: true };
 
   for (let attempt = 0; attempt < 2; attempt++) {
     let status = 0;
@@ -206,7 +215,7 @@ export async function apolloEmail(svc: Services, q: ApolloQuery, opts: { cacheOn
     }
 
     if (status === 200) {
-      const judged = judgeApolloPerson(q, readPerson(body));
+      const judged = judgeMatch('Apollo', q, readPerson(body));
       const retrievedAt = new Date().toISOString();
       const result: Cached = 'email' in judged ? { outcome: 'found', email: judged.email, status: judged.status, retrievedAt, cached: false } : { ...judged, retrievedAt, cached: false };
       try {

@@ -101,9 +101,9 @@ export const leads = pgTable('leads', {
   researchAttempts: integer('research_attempts').notNull().default(0),
   /**
    * The main contact's email, kept as four separate facts (emailStatus is the readable summary):
-   * where it came from ('manual' typed by the team, 'website', 'web', 'apollo', 'inferred' from the
+   * where it came from ('manual' typed by the team, 'website', 'web', 'prospeo', 'apollo', 'inferred' from the
    * company's format), our verdict ('verified', 'catch_all', 'unverified', 'invalid'), the provider's
-   * own status as returned (Apollo's email_status), and when the provider returned it.
+   * own status as returned (Prospeo's or Apollo's), and when the provider returned it.
    */
   emailSource: text('email_source').notNull().default(''),
   emailVerification: text('email_verification').notNull().default(''),

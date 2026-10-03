@@ -2,8 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Db } from './db';
 import { activities, leads, people, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { apolloEmail } from './pipeline/apollo';
-import { emailLabel, verifyEmail, type ApolloBudget } from './pipeline/emails';
+import { askProvider, emailLabel, emailProviders, verifyEmail, type LookupBudget, type ProviderName } from './pipeline/emails';
 import type { Services } from './pipeline/services';
 import { sameName } from './pipeline/contacts';
 import { rootDomain } from './pipeline/text';
@@ -35,11 +34,12 @@ async function logOnce(db: Db, leadId: number, text: string) {
 }
 
 /**
- * One contact's email, looked at again: an inferred or unconfirmed address is replaced when Apollo
- * has a verified address for the same person at the same company (Apollo's own "verified", or its
- * address confirmed by the mail-server check). An address the team typed is never replaced, and a
- * verified one never by anything less: a different verified address from Apollo is logged as a
- * conflict for review instead. Nothing here throws; a failed lookup changes nothing.
+ * One contact's email, looked at again: an inferred or unconfirmed address is replaced when an email
+ * provider (Prospeo, then Apollo) has a verified address for the same person at the same company (the
+ * provider's own "verified", or its address confirmed by the mail-server check). An address the team
+ * typed is never replaced, and a verified one never by anything less: a different verified address
+ * from a provider is logged as a conflict for review instead. Nothing here throws; a failed lookup
+ * changes nothing.
  */
 export async function refreshEmail(
   db: Db,
@@ -47,66 +47,71 @@ export async function refreshEmail(
   lead: Pick<Lead, 'id' | 'company' | 'website'>,
   holder: Holder,
   save: (fields: Record<string, unknown>) => Promise<void>,
-  budget: ApolloBudget,
+  budget: LookupBudget,
 ): Promise<RefreshOutcome> {
-  if (!holder.name || !svc.keys.apollo) return 'skipped';
+  const providers = emailProviders(svc);
+  if (!holder.name || !providers.length) return 'skipped';
   const kind = emailKind(holder);
   const q = { name: holder.name, company: lead.company, domain: rootDomain(lead.website), linkedin: holder.linkedin };
   const current = holder.email.trim().toLowerCase();
 
-  // Team-typed and verified addresses stay. Only an earlier Apollo result is looked at (no credit),
+  // Team-typed and verified addresses stay. Only earlier provider results are looked at (no credit),
   // to flag a different verified address for the team to review.
   if (kind === 'team' || kind === 'verified') {
-    const cached = await apolloEmail(svc, q, { cacheOnly: true });
-    if (cached.outcome === 'found' && cached.status === 'verified' && cached.email !== current) {
-      await logOnce(
-        db,
-        lead.id,
-        `Email conflict for review: ${holder.name}'s address on file is ${holder.email} (${kind === 'team' ? 'entered by the team' : 'verified'}); Apollo has a verified ${cached.email}. The address on file is kept.`,
-      );
-      return 'conflict';
+    for (const p of providers) {
+      const cached = await p.lookup(svc, q, { cacheOnly: true });
+      if (cached.outcome === 'found' && cached.status === 'verified' && cached.email !== current) {
+        await logOnce(
+          db,
+          lead.id,
+          `Email conflict for review: ${holder.name}'s address on file is ${holder.email} (${kind === 'team' ? 'entered by the team' : 'verified'}); ${p.name} has a verified ${cached.email}. The address on file is kept.`,
+        );
+        return 'conflict';
+      }
     }
     return 'kept';
   }
 
-  const cachedFirst = await apolloEmail(svc, q, { cacheOnly: true });
-  let r = cachedFirst;
-  if (cachedFirst.outcome === 'skipped' && cachedFirst.reason === 'no cached Apollo result') {
-    if (budget.left <= 0) return 'skipped';
-    r = await apolloEmail(svc, q);
-    if (r.outcome !== 'skipped') budget.left--;
-  }
-  if (r.outcome === 'failed') return 'failed';
-  if (r.outcome !== 'found') return 'kept';
+  let failed = false;
+  let asked = false;
+  for (const p of providers) {
+    const r = await askProvider(svc, p, q, budget);
+    if (r.outcome === 'failed') failed = true;
+    if (r.outcome === 'skipped' && r.reason === 'budget') continue;
+    asked = true;
+    if (r.outcome !== 'found') continue;
 
-  let verifiedBy: 'Apollo' | 'mail-server check';
-  if (r.status === 'verified') verifiedBy = 'Apollo';
-  else {
-    // Not verified by Apollo: only the mail-server check can make it an upgrade.
-    const check = await verifyEmail(svc, r.email);
-    if (check.status !== 'valid') return 'kept';
-    verifiedBy = 'mail-server check';
+    let verifiedBy: ProviderName | 'mail-server check';
+    if (r.status === 'verified') verifiedBy = p.name;
+    else {
+      // Not verified by the provider: only the mail-server check can make it an upgrade.
+      const check = await verifyEmail(svc, r.email);
+      if (check.status !== 'valid') continue;
+      verifiedBy = 'mail-server check';
+    }
+    const result = { email: r.email, source: p.source, verification: 'verified' as const, verifiedBy, providerStatus: r.status, retrievedAt: r.retrievedAt };
+    await save({
+      email: r.email,
+      emailStatus: emailLabel(result),
+      emailSource: p.source,
+      emailVerification: 'verified',
+      emailProviderStatus: r.status,
+      emailRetrievedAt: new Date(r.retrievedAt),
+    });
+    await logActivity(
+      db,
+      lead.id,
+      'contact',
+      `Email upgraded for ${holder.name}: ${current ? `${current} (${kind})` : 'none on file'} → ${r.email} (${p.name}, verified by ${verifiedBy})`,
+    );
+    return 'upgraded';
   }
-  const result = { email: r.email, source: 'apollo' as const, verification: 'verified' as const, verifiedBy, providerStatus: r.status, retrievedAt: r.retrievedAt };
-  await save({
-    email: r.email,
-    emailStatus: emailLabel(result),
-    emailSource: 'apollo',
-    emailVerification: 'verified',
-    emailProviderStatus: r.status,
-    emailRetrievedAt: new Date(r.retrievedAt),
-  });
-  await logActivity(
-    db,
-    lead.id,
-    'contact',
-    `Email upgraded for ${holder.name}: ${current ? `${current} (${kind})` : 'none on file'} → ${r.email} (Apollo, verified by ${verifiedBy})`,
-  );
-  return 'upgraded';
+  if (!asked) return 'skipped';
+  return failed ? 'failed' : 'kept';
 }
 
 /** The lead's main contact (lead and their People row together). */
-export async function refreshMainEmail(db: Db, svc: Services, lead: Lead, budget: ApolloBudget): Promise<RefreshOutcome> {
+export async function refreshMainEmail(db: Db, svc: Services, lead: Lead, budget: LookupBudget): Promise<RefreshOutcome> {
   const holder = {
     name: lead.contactName,
     linkedin: lead.contactLinkedin,
@@ -124,7 +129,7 @@ export async function refreshMainEmail(db: Db, svc: Services, lead: Lead, budget
 }
 
 /** Someone else at the company (their People row). */
-export async function refreshPersonEmail(db: Db, svc: Services, lead: Lead, p: Person, budget: ApolloBudget): Promise<RefreshOutcome> {
+export async function refreshPersonEmail(db: Db, svc: Services, lead: Lead, p: Person, budget: LookupBudget): Promise<RefreshOutcome> {
   return refreshEmail(db, svc, lead, p, async (f) => {
     await db.update(people).set(f).where(eq(people.id, p.id));
   }, budget);
