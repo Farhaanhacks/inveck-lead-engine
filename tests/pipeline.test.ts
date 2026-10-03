@@ -664,3 +664,27 @@ describe('research that keeps timing out', () => {
     expect(b.lastError).toMatch(/timed out\) 2 times/);
   });
 });
+
+describe('"Sales team" means the team entered it', () => {
+  it('a contact an earlier research run picked is not kept as the team\'s', async () => {
+    const { contactFromTeam } = await import('@/lib/runs');
+    const [fresh, researched, edited] = await db
+      .insert(leads)
+      .values([
+        { company: 'Typed In Co', contactName: 'Asha Rao' },
+        { company: 'Researched Co', contactName: 'Rohan Katara', researchSummary: 'Makes bearings.' },
+        { company: 'Edited Co', contactName: 'Neha Iyer', researchSummary: 'Makes gears.' },
+      ])
+      .returning();
+    await db.insert(activities).values({ leadId: edited.id, kind: 'contact', text: 'Point of contact updated: Neha Iyer' });
+    expect(await contactFromTeam(db, fresh)).toBe(true);
+    expect(await contactFromTeam(db, researched)).toBe(false);
+    expect(await contactFromTeam(db, edited)).toBe(true);
+    // An automatic switch (next person after no answer, a better-ranked contact) is not the team's choice.
+    const [p1, p2] = await db.insert(people).values([{ leadId: researched.id, name: 'Rohan Katara', isPrimary: true }, { leadId: researched.id, name: 'Pratap Naruka' }]).returning();
+    await makePrimary(db, p2.id);
+    expect(await contactFromTeam(db, { ...researched, contactName: 'Pratap Naruka' })).toBe(false);
+    await makePrimary(db, p1.id, { byTeam: true });
+    expect(await contactFromTeam(db, researched)).toBe(true);
+  });
+});

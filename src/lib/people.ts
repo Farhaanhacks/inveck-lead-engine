@@ -10,7 +10,7 @@ export async function savePeople(db: Db, leadId: number, found: Omit<NewPerson, 
 }
 
 /** Makes someone at the company the lead's main contact. */
-export async function makePrimary(db: Db, personId: number): Promise<number | null> {
+export async function makePrimary(db: Db, personId: number, opts: { byTeam?: boolean } = {}): Promise<number | null> {
   const [p] = await db.select().from(people).where(eq(people.id, personId));
   if (!p) return null;
   await db.update(people).set({ isPrimary: false }).where(eq(people.leadId, p.leadId));
@@ -29,6 +29,6 @@ export async function makePrimary(db: Db, personId: number): Promise<number | nu
       updatedAt: new Date(),
     })
     .where(eq(leads.id, p.leadId));
-  await logActivity(db, p.leadId, 'contact', `Main contact changed to ${[p.name, p.title].filter(Boolean).join(', ')}`);
+  await logActivity(db, p.leadId, 'contact', `Main contact changed to ${[p.name, p.title].filter(Boolean).join(', ')}${opts.byTeam ? ' (chosen by the team)' : ''}`);
   return p.leadId;
 }

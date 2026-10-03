@@ -68,7 +68,7 @@ export async function processLead(
   lead: Lead,
   ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[] },
   log: Log,
-  opts: { contactsOnly?: boolean } = {},
+  opts: { contactsOnly?: boolean; teamContact?: boolean } = {},
 ): Promise<LeadResult> {
   const client = matchClient(lead, ctx.clients);
   if (client) {
@@ -133,14 +133,14 @@ export async function processLead(
   }
 
   if (opts.contactsOnly) await log(`${lead.company}: finding contacts again from scratch`);
-  // Decision-makers: public LinkedIn profiles via Google, plus Hunter's people at the domain.
-  const manual = {
-    name: lead.contactName,
-    title: lead.contactTitle,
-    email: lead.contactEmail,
-    phone: lead.contactPhone,
-    linkedin: lead.contactLinkedin,
-  };
+  // Decision-makers: public LinkedIn profiles via Google, plus Hunter's people at the domain. A contact
+  // the sales team entered is kept and never replaced; one an earlier research run picked is not the
+  // team's (it has to be found again like everyone else). Without a say from the caller, a lead never
+  // researched before counts its contact as the team's (typed in when the company was added).
+  const fromTeam = opts.teamContact ?? !lead.researchSummary;
+  const manual = fromTeam
+    ? { name: lead.contactName, title: lead.contactTitle, email: lead.contactEmail, phone: lead.contactPhone, linkedin: lead.contactLinkedin }
+    : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
   const [linkedin, people, webEmails, leaders, news] = await Promise.all([
     searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company),

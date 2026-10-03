@@ -317,7 +317,7 @@ export async function dismissOpportunityAction(form: FormData) {
 export async function makePrimaryAction(form: FormData) {
   if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const db = await getDb();
-  const leadId = await makePrimary(db, Number(str(form, 'personId')));
+  const leadId = await makePrimary(db, Number(str(form, 'personId')), { byTeam: true });
   if (leadId) {
     // A new point of contact: the tier is worked out again, calls count afresh, and the email is rewritten for them.
     await db.update(leads).set({ contactTier: '' }).where(eq(leads.id, leadId));

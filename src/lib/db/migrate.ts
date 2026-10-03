@@ -403,6 +403,16 @@ export const SCHEMA_STATEMENTS = [
        AND NOT (is_primary AND EXISTS (SELECT 1 FROM leads l WHERE l.id = people.lead_id AND l.contact_phone <> '' AND l.contact_phone = people.phone))
        AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'phonesOffV1')`,
   `INSERT INTO settings (key, value) VALUES ('phonesOffV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // A contact an earlier research run had picked was labelled 'Sales team' when the lead was researched
+  // again (and so kept as if the team had chosen it). Once: those are relabelled; contacts the team really
+  // entered (on a company added by hand or as an inbound lead, or set on the lead by someone since) keep it.
+  `UPDATE people SET source = 'Earlier research'
+     WHERE source = 'Sales team'
+       AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = people.lead_id AND l.source IN ('Added by hand', 'Inbound lead'))
+       AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.lead_id = people.lead_id
+         AND (a.text LIKE 'Point of contact updated%' OR a.text LIKE 'Main contact changed%' OR a.text LIKE '%added by the team%'))
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'salesTeamLabelV1')`,
+  `INSERT INTO settings (key, value) VALUES ('salesTeamLabelV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // A company whose steps were all skipped was counted as done for the day. Once: such records are
   // removed (a company is done only when something was really done for it that day).
   `DELETE FROM company_days cd
