@@ -254,6 +254,8 @@ export async function setLeadStatusAction(form: FormData) {
   const status = STATUS_ACTIONS[str(form, 'action')];
   if (!id || !status) return;
   await applyStage(await getDb(), [id], status);
+  // Research again: a fresh set of attempts.
+  if (status === 'New') await (await getDb()).update(leads).set({ researchAttempts: 0 }).where(eq(leads.id, id));
   if (status === 'New') await researchNow();
   refreshLeadPages(id);
 }
@@ -269,6 +271,7 @@ export async function bulkLeadAction(form: FormData) {
     await db.delete(people).where(inArray(people.leadId, ids));
   } else if (STATUS_ACTIONS[action]) {
     await applyStage(db, ids, STATUS_ACTIONS[action]);
+    if (STATUS_ACTIONS[action] === 'New') await db.update(leads).set({ researchAttempts: 0 }).where(inArray(leads.id, ids));
     if (STATUS_ACTIONS[action] === 'New') await researchNow();
   }
   refreshLeadPages();

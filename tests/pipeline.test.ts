@@ -569,3 +569,98 @@ describe('stopping a run that is finding contacts again', () => {
     expect(after.filter((l) => rows.some((r) => r.id === l.id)).every((l) => !l.refetchPending && l.contactName === 'Old Contact')).toBe(true);
   });
 });
+
+describe('prospect search remembers what it searched and saw', () => {
+  const ok = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+  const ai = (reply: unknown) => ok({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(reply) } }] });
+
+  it('treats reworded queries as the same search', async () => {
+    const { normQuery, tooSimilar } = await import('@/lib/pipeline/query-history');
+    expect(normQuery('automotive suppliers Pune')).toBe(normQuery('Pune automotive supplier companies'));
+    expect(tooSimilar('Pune automotive supplier companies', ['automotive suppliers Pune'])).toBeTruthy();
+    expect(tooSimilar('auto component manufacturer Pune ISO 9001', ['auto component manufacturer Pune'])).toBeTruthy();
+    expect(tooSimilar('CA firm Delhi stock audit', ['chartered accountants Delhi stock audit'])).toBeTruthy();
+    expect(tooSimilar('auto component manufacturer Chennai', ['auto component manufacturer Pune'])).toBeNull();
+    expect(tooSimilar('forging companies Ludhiana', ['casting foundry Kolhapur'])).toBeNull();
+  });
+
+  it('never runs a search again across runs, and never re-adds a company an earlier run turned up', async () => {
+    const { findProspects } = await import('@/lib/pipeline/prospects');
+    const { prospectHistory } = await import('@/lib/runs');
+    const { prospectSearches, prospectResults, icps } = await import('@/lib/db/schema');
+    const activeIcps = await db.select().from(icps);
+    // The planner keeps suggesting the first run's query (reworded) next to new ones.
+    const plans = [
+      [{ query: 'automotive suppliers Pune', segment: 'Manufacturing', lookalike_of: '' }],
+      [{ query: 'Pune automotive supplier companies', segment: 'Manufacturing', lookalike_of: '' }, { query: 'forging companies Ludhiana', segment: 'Manufacturing', lookalike_of: '' }],
+    ];
+    let plan = 0;
+    const searched: string[] = [];
+    const pickTexts: string[] = [];
+    const fetch = (async (u: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (String(u).includes('deepseek')) {
+        const system = body.messages[0].content as string;
+        if (system.startsWith('You plan Google searches')) return ai({ queries: plans[Math.min(plan++, plans.length - 1)] });
+        pickTexts.push(body.messages[1].content);
+        // The AI picks every company it sees (it would pick Pune Auto again if it saw it).
+        const companies = [];
+        if (body.messages[1].content.includes('puneauto.in')) companies.push({ company: 'Pune Auto Parts', website: 'puneauto.in', city: 'Pune', segment: 'Manufacturing', lookalike_of: '', why: 'plants' });
+        if (body.messages[1].content.includes('ludhianaforge.in')) companies.push({ company: 'Ludhiana Forge', website: 'ludhianaforge.in', city: 'Ludhiana', segment: 'Manufacturing', lookalike_of: '', why: 'forgings' });
+        return ai({ companies });
+      }
+      searched.push(body.q);
+      const organic = /ludhiana/i.test(body.q)
+        ? [{ title: 'Ludhiana Forge | Forgings', link: 'https://ludhianaforge.in/', snippet: 'forging plant Ludhiana' }, { title: 'Pune Auto Parts', link: 'https://puneauto.in/', snippet: 'also here' }]
+        : [{ title: 'Pune Auto Parts', link: 'https://puneauto.in/', snippet: 'auto parts plants in Pune' }];
+      return ok({ organic });
+    }) as unknown as typeof globalThis.fetch;
+    const svc = { ...services(), fetch, settings: settingsSchema.parse({ prospectsPerRun: 1 }) };
+
+    const first = await findProspects(svc, activeIcps, [], [], async () => {}, await prospectHistory(db, 1));
+    expect(first.map((p) => p.company)).toEqual(['Pune Auto Parts']);
+    // The lead list was cleared since: the company is still remembered from the search history.
+    searched.length = 0;
+    pickTexts.length = 0;
+    const logs: string[] = [];
+    const second = await findProspects(svc, activeIcps, [], [], async (m) => { logs.push(m); }, await prospectHistory(db, 2));
+    expect(second.map((p) => p.company)).toEqual(['Ludhiana Forge']);
+    // The reworded repeat was never searched; the known company never reached the AI.
+    expect(searched.some((q) => /pune/i.test(q))).toBe(false);
+    expect(logs.join(' ')).toContain('Skipped 1 search already run before');
+    expect(pickTexts.join(' ')).not.toContain('puneauto.in');
+
+    const rows = await db.select().from(prospectSearches).orderBy(prospectSearches.id);
+    expect(rows.map((r) => [r.query, r.runId, r.status, r.addedCount])).toEqual([
+      ['automotive suppliers Pune', 1, 'ok', 1],
+      ['forging companies Ludhiana', 2, 'ok', 1],
+    ]);
+    const results = await db.select().from(prospectResults);
+    expect(results.filter((r) => r.outcome === 'added').map((r) => r.company).sort()).toEqual(['Ludhiana Forge', 'Pune Auto Parts']);
+    expect(results.some((r) => r.outcome === 'known' && r.domain === 'puneauto.in' && r.runId === 2)).toBe(true);
+  });
+});
+
+describe('research that keeps timing out', () => {
+  it('goes back to the queue once, then to Error instead of looping', async () => {
+    const { MAX_RESEARCH_ATTEMPTS } = await import('@/lib/runs');
+    const long = new Date(Date.now() - 60 * 60 * 1000);
+    const [retry, giveUp] = await db
+      .insert(leads)
+      .values([
+        { company: 'Slow Once', status: 'Processing', processingStartedAt: long, researchAttempts: 1 },
+        { company: 'Slow Always', status: 'Processing', processingStartedAt: long, researchAttempts: MAX_RESEARCH_ATTEMPTS },
+      ])
+      .returning();
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    // The first is put back in the queue and researched again (its second attempt); the second has
+    // used its attempts and is not.
+    await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY);
+    const [a] = await db.select().from(leads).where(eq(leads.id, retry.id));
+    const [b] = await db.select().from(leads).where(eq(leads.id, giveUp.id));
+    expect(a.status).not.toBe('Processing');
+    expect(a.researchAttempts).toBe(2);
+    expect(b).toMatchObject({ status: 'Error', researchAttempts: MAX_RESEARCH_ATTEMPTS });
+    expect(b.lastError).toMatch(/timed out\) 2 times/);
+  });
+});

@@ -89,6 +89,8 @@ export const leads = pgTable('leads', {
   signals: jsonb('signals').$type<Signal[]>().notNull().default([]),
   signalsCheckedAt: timestamp('signals_checked_at', { withTimezone: true }),
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
+  /** Research attempts that started; a lead whose research keeps timing out stops being retried. */
+  researchAttempts: integer('research_attempts').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -168,6 +170,48 @@ export const runEvents = pgTable('run_events', {
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type RunEvent = typeof runEvents.$inferSelect;
+
+/**
+ * Every Google search the prospect finder has run, kept across runs so later runs search somewhere
+ * new instead of repeating themselves. `normQuery` is the query's words as a set (see query-history).
+ */
+export const prospectSearches = pgTable('prospect_searches', {
+  id: serial('id').primaryKey(),
+  query: text('query').notNull(),
+  normQuery: text('norm_query').notNull().default(''),
+  segment: text('segment').notNull().default(''),
+  runId: integer('run_id'),
+  searchedAt: timestamp('searched_at', { withTimezone: true }).notNull().defaultNow(),
+  /** 'ok', or 'failed' when Google refused it (no credits, a wrong key). */
+  status: text('status').$type<'ok' | 'failed'>().notNull().default('ok'),
+  resultsCount: integer('results_count').notNull().default(0),
+  /** Results not about a company already known. */
+  freshCount: integer('fresh_count').notNull().default(0),
+  /** New companies added from this search. */
+  addedCount: integer('added_count').notNull().default(0),
+  error: text('error').notNull().default(''),
+});
+export type ProspectSearch = typeof prospectSearches.$inferSelect;
+
+/**
+ * What the searches turned up: each result seen, and each company the AI picked out of them, with what
+ * became of it. Companies seen before are skipped before any research is spent on them.
+ * outcome: 'known' (a result about a company already known), 'result' (a new result, looked at),
+ * 'added' (a company saved as a new prospect), 'duplicate' (a company picked but already known).
+ */
+export const prospectResults = pgTable('prospect_results', {
+  id: serial('id').primaryKey(),
+  searchId: integer('search_id'),
+  runId: integer('run_id'),
+  url: text('url').notNull().default(''),
+  domain: text('domain').notNull().default(''),
+  title: text('title').notNull().default(''),
+  company: text('company').notNull().default(''),
+  normCompany: text('norm_company').notNull().default(''),
+  outcome: text('outcome').$type<'known' | 'result' | 'added' | 'duplicate'>().notNull(),
+  seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type ProspectResult = typeof prospectResults.$inferSelect;
 
 export const ACTIVITY_KINDS = [
   'added', 'researched', 'contact', 'draft', 'approved', 'sent', 'follow_up_drafted', 'follow_up_sent',

@@ -81,6 +81,34 @@ export const SCHEMA_STATEMENTS = [
     at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)`,
+  `CREATE TABLE IF NOT EXISTS prospect_searches (
+    id SERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    norm_query TEXT NOT NULL DEFAULT '',
+    segment TEXT NOT NULL DEFAULT '',
+    run_id INTEGER,
+    searched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status TEXT NOT NULL DEFAULT 'ok',
+    results_count INTEGER NOT NULL DEFAULT 0,
+    fresh_count INTEGER NOT NULL DEFAULT 0,
+    added_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS prospect_searches_at_idx ON prospect_searches (searched_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS prospect_results (
+    id SERIAL PRIMARY KEY,
+    search_id INTEGER,
+    run_id INTEGER,
+    url TEXT NOT NULL DEFAULT '',
+    domain TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    norm_company TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL,
+    seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS prospect_results_domain_idx ON prospect_results (domain)`,
+  `CREATE INDEX IF NOT EXISTS prospect_results_company_idx ON prospect_results (norm_company)`,
   // Added after the first release.
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_phone TEXT NOT NULL DEFAULT ''`,
   // Unconfirmed guessed emails were briefly saved; they're not trusted, so clear them.
@@ -239,6 +267,7 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS passed_at TIMESTAMPTZ`,
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ`,
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS research_attempts INTEGER NOT NULL DEFAULT 0`,
   // The LinkedIn search got broader: everyone it couldn't find before is searched again, once.
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_linkedin = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'broaderLinkedinV1')`,
   `UPDATE people SET checked_at = NULL WHERE linkedin = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'broaderLinkedinV1')`,

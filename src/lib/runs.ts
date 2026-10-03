@@ -1,11 +1,12 @@
-import { and, asc, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { clients, icps, leads, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
+import { clients, icps, leads, prospectResults, prospectSearches, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
-import { findProspects } from './pipeline/prospects';
+import { findProspects, type ProspectHistory } from './pipeline/prospects';
+import { normQuery } from './pipeline/query-history';
 import type { Services } from './pipeline/services';
 import { hunterCredits, mapLimit } from './pipeline/services';
-import { errorMessage } from './pipeline/text';
+import { errorMessage, normCompany } from './pipeline/text';
 import { draftDueFollowUps } from './pipeline/follow-ups';
 import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
@@ -16,6 +17,11 @@ import { assignUnowned } from './assign';
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, existingClients: 0, errors: 0 };
 /** A run with no heartbeat for this long is considered dead (its function timed out or crashed). */
 const STALE_MS = 10 * 60 * 1000;
+/** Research attempts that time out before a lead stops being retried (it goes to Error; Research again resets it). */
+export const MAX_RESEARCH_ATTEMPTS = 2;
+/** How far back the prospect finder looks: searches not to repeat, and companies already turned up. */
+const SEARCH_MEMORY_DAYS = 90;
+const SEEN_MEMORY_DAYS = 180;
 /** Leads researched in parallel. */
 const CONCURRENCY = 3;
 
@@ -48,7 +54,7 @@ async function claimLeads(db: Db, limit: number): Promise<Lead[]> {
   if (limit <= 0) return [];
   // Claim atomically so two overlapping invocations never process the same lead.
   const rows = await db.execute(sql`
-    UPDATE leads SET status = 'Processing', processing_started_at = now(), updated_at = now()
+    UPDATE leads SET status = 'Processing', processing_started_at = now(), research_attempts = research_attempts + 1, updated_at = now()
     WHERE id IN (
       SELECT id FROM leads WHERE status = 'New' ORDER BY id LIMIT ${limit} FOR UPDATE SKIP LOCKED
     )
@@ -75,6 +81,48 @@ export async function delegateProspects(db: Db, ids: number[], to: string): Prom
     per.set(owner.id, (per.get(owner.id) ?? 0) + 1);
   }
   return `New prospects handed out: ${chosen.map((u) => `${u.name} ${per.get(u.id) ?? 0}`).join(', ')}`;
+}
+
+/**
+ * The prospect finder's memory, kept in the database across runs: recent searches (not to be
+ * repeated), companies earlier searches turned up, and where this run records its own.
+ */
+export async function prospectHistory(db: Db, runId: number | null): Promise<ProspectHistory> {
+  const since = (days: number) => new Date(Date.now() - days * 86_400_000);
+  const [searches, seen] = await Promise.all([
+    db
+      .select({ query: prospectSearches.query, fresh: prospectSearches.freshCount, added: prospectSearches.addedCount })
+      .from(prospectSearches)
+      .where(and(eq(prospectSearches.status, 'ok'), gte(prospectSearches.searchedAt, since(SEARCH_MEMORY_DAYS))))
+      .orderBy(desc(prospectSearches.searchedAt))
+      .limit(400),
+    db
+      .select({ name: prospectResults.normCompany, domain: prospectResults.domain })
+      .from(prospectResults)
+      .where(and(inArray(prospectResults.outcome, ['added', 'duplicate']), gte(prospectResults.seenAt, since(SEEN_MEMORY_DAYS)))),
+  ]);
+  return {
+    searches,
+    seenNames: seen.map((r) => r.name).filter(Boolean),
+    seenDomains: seen.map((r) => r.domain).filter(Boolean),
+    async recordSearch(s) {
+      const [row] = await db
+        .insert(prospectSearches)
+        .values({ query: s.query, normQuery: normQuery(s.query), segment: s.segment, runId, status: s.status, resultsCount: s.resultsCount, freshCount: s.freshCount, error: s.error ?? '' })
+        .returning({ id: prospectSearches.id });
+      return row?.id ?? null;
+    },
+    async recordResults(searchId, rows) {
+      if (!rows.length) return;
+      await db.insert(prospectResults).values(
+        rows.map((r) => ({ searchId, runId, url: r.url, domain: r.domain, title: r.title.slice(0, 500), company: r.company ?? '', normCompany: normCompany(r.company ?? ''), outcome: r.outcome })),
+      );
+    },
+    async recordAdded(searchId, count) {
+      if (searchId === null || !count) return;
+      await db.update(prospectSearches).set({ addedCount: sql`${prospectSearches.addedCount} + ${count}` }).where(eq(prospectSearches.id, searchId));
+    },
+  };
 }
 
 /** Claims leads waiting for their contacts to be found again; a claim older than 15 minutes is retried. */
@@ -115,11 +163,19 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
   };
 
   try {
-    // Leads stuck in "Processing" from a crashed invocation go back in the queue.
-    await db
+    // Leads stuck in "Processing" from a crashed or timed-out invocation go back in the queue, but
+    // only so often: one that keeps timing out goes to Error instead of being researched forever.
+    const stale = and(eq(leads.status, 'Processing'), lt(leads.processingStartedAt, new Date(Date.now() - STALE_MS)));
+    const gaveUp = await db
       .update(leads)
-      .set({ status: 'New' })
-      .where(and(eq(leads.status, 'Processing'), lt(leads.processingStartedAt, new Date(Date.now() - STALE_MS))));
+      .set({ status: 'Error', lastError: `Research didn't finish (timed out) ${MAX_RESEARCH_ATTEMPTS} times. Press Research again to try once more.`, processingStartedAt: null })
+      .where(and(stale, sql`${leads.researchAttempts} >= ${MAX_RESEARCH_ATTEMPTS}`))
+      .returning({ id: leads.id, company: leads.company });
+    for (const l of gaveUp) {
+      await logActivity(db, l.id, 'error', `Research didn't finish (timed out) ${MAX_RESEARCH_ATTEMPTS} times; stopped retrying. Press Research again to try once more.`);
+      await log(`${l.company}: research timed out ${MAX_RESEARCH_ATTEMPTS} times; not retried automatically`, 'error', l.id);
+    }
+    await db.update(leads).set({ status: 'New' }).where(stale);
 
     const [activeIcps, clientList, taken] = await Promise.all([
       db.select().from(icps).where(eq(icps.active, true)).orderBy(asc(icps.id)),
@@ -133,7 +189,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       await log('Finding new prospects');
       try {
         const known = await db.select({ company: leads.company, website: leads.website }).from(leads);
-        const found = await findProspects(svc, activeIcps, clientList, known, (m, l) => log(m, l));
+        const found = await findProspects(svc, activeIcps, clientList, known, (m, l) => log(m, l), await prospectHistory(db, runId));
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
           for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);

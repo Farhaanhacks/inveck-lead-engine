@@ -5,6 +5,7 @@ import type { SerperResult, Services } from './services';
 import { googleSearch, mapLimit } from './services';
 import { asList, asText, domainOf, errorMessage, normCompany } from './text';
 import { domainScore, isBlockedDomain } from './website';
+import { normQuery, tooSimilar } from './query-history';
 
 export type Prospect = { company: string; website: string; city: string; segment: string; source: string };
 
@@ -52,18 +53,59 @@ const companySchema = {
 
 /** Search rounds per run: when a round turns up too few companies not already on the list, plan new searches. */
 const MAX_ROUNDS = 3;
+/** Planning attempts per run: a plan whose queries all repeat earlier searches is asked for again. */
+const MAX_PLANS = 5;
 /** Result pages read per search (ten results each). */
 const PAGES = 2;
+/** Queries per round. */
+const PER_ROUND = 8;
 
 type Query = { query: string; segment: string; lookalike_of: string };
 type Found = { query: string; segment: string; lookalike_of: string; title?: string; link?: string; snippet: string };
 
+/** An earlier search, as the history gives it: what was searched and how many results were new. */
+export type PastSearch = { query: string; fresh: number; added: number };
+
+/**
+ * What earlier runs searched and saw, kept in the database (see runs.ts), and where this run records
+ * its own. Without it (tests, one-off use) only the current lead list is checked.
+ */
+export type ProspectHistory = {
+  /** Recent searches, newest first. */
+  searches: PastSearch[];
+  /** Companies earlier searches already turned up (picked before, added or not), by name and domain. */
+  seenNames: string[];
+  seenDomains: string[];
+  recordSearch(s: { query: string; segment: string; status: 'ok' | 'failed'; resultsCount: number; freshCount: number; error?: string }): Promise<number | null>;
+  recordResults(searchId: number | null, rows: { url: string; domain: string; title: string; company?: string; outcome: 'known' | 'result' | 'added' | 'duplicate' }[]): Promise<void>;
+  recordAdded(searchId: number | null, count: number): Promise<void>;
+};
+
+const NO_HISTORY: ProspectHistory = {
+  searches: [],
+  seenNames: [],
+  seenDomains: [],
+  recordSearch: async () => null,
+  recordResults: async () => {},
+  recordAdded: async () => {},
+};
+
+/** The company a result is about, from its title ("Bharat Forge | Forging Solutions" → Bharat Forge). */
+const titleCompany = (title = '') => title.split(/\s+[|–—-]\s+|\s*\|\s*/)[0]?.trim() ?? '';
+
 /**
  * Finds new companies like the current clients and matching the ICPs: the AI plans Google searches,
- * then picks real companies out of the results. Anything already a lead or a client is skipped, and
- * as the list grows the search goes further: two pages per search, and up to three rounds of new
- * searches until enough new companies are found. Throws when the searches themselves fail (so the
- * run shows it), not when they only turn up companies already on the list.
+ * then picks real companies out of the results.
+ *
+ * It searches somewhere new each time: the searches of earlier runs (kept in the database) go to the
+ * planner as ones not to repeat, and any query that is the same as or a trivial variation of an
+ * earlier one is dropped in code (see query-history), not left to the AI. Companies already known
+ * (leads in any state, clients, and companies earlier searches turned up) are removed from the results
+ * before the AI sees them, so no picking or research is spent rediscovering them. Two pages per search,
+ * and up to three rounds of new searches until enough new companies are found.
+ *
+ * Throws when the searches themselves fail (so the run shows it), not when they only turn up
+ * companies already known.
  */
 export async function findProspects(
   svc: Services,
@@ -71,6 +113,7 @@ export async function findProspects(
   clients: Client[],
   known: { company: string; website: string }[],
   log: (msg: string, level?: 'info' | 'warn' | 'error') => Promise<void>,
+  history: ProspectHistory = NO_HISTORY,
 ): Promise<Prospect[]> {
   const planText = [
     '## ICPs',
@@ -84,20 +127,27 @@ export async function findProspects(
       : '(none listed)',
   ].join('\n');
 
-  const seenNames = new Set([...known.map((k) => normCompany(k.company)), ...clients.map((c) => normCompany(c.company))].filter(Boolean));
-  const seenDomains = new Set([...known.map((k) => domainOf(k.website)), ...clients.map((c) => domainOf(c.website))].filter(Boolean));
+  const seenNames = new Set([...known.map((k) => normCompany(k.company)), ...clients.map((c) => normCompany(c.company)), ...history.seenNames].filter(Boolean));
+  const seenDomains = new Set([...known.map((k) => domainOf(k.website)), ...clients.map((c) => domainOf(c.website)), ...history.seenDomains].filter(Boolean));
   const knownList = [...known.map((k) => k.company), ...clients.map((c) => c.company)].filter(Boolean);
   const segmentNames = icps.map((i) => i.segment);
   const want = svc.settings.prospectsPerRun;
+  // Everything searched before (recent runs) and in this run: no query that repeats any of them is run.
+  const earlier = history.searches.map((s) => s.query);
   const tried: string[] = [];
   const prospects: Prospect[] = [];
   let searchesOk = 0;
   let lastError = '';
   let searchError = '';
+  let rounds = 0;
 
-  for (let round = 0; round < MAX_ROUNDS && prospects.length < want; round++) {
-    const text = tried.length
-      ? `${planText}\n\n## Searches already run (write different ones: other cities, sub-industries, lookalikes, wording; these found mostly companies already on the list)\n${tried.map((q) => `- ${q}`).join('\n')}`
+  for (let plans = 0; plans < MAX_PLANS && rounds < MAX_ROUNDS && prospects.length < want; plans++) {
+    const past = [
+      ...tried.map((q) => `- ${q} (this run)`),
+      ...history.searches.slice(0, 150).map((s) => `- ${s.query}${s.added ? '' : s.fresh ? ' (found little new)' : ' (exhausted: found nothing new)'}`),
+    ];
+    const text = past.length
+      ? `${planText}\n\n## Searches already run (do not repeat them or reword them; search elsewhere)\n${past.join('\n')}`
       : planText;
     const plan = await askJson(svc, PROSPECT_QUERIES_PROMPT, text, querySchema);
     if (plan.error !== undefined) {
@@ -105,7 +155,7 @@ export async function findProspects(
       await log(lastError, 'warn');
       continue;
     }
-    const queries: Query[] = asList(plan.data.queries)
+    const proposed: Query[] = asList(plan.data.queries)
       .map((q) =>
         typeof q === 'string'
           ? { query: q, segment: '', lookalike_of: '' }
@@ -115,46 +165,76 @@ export async function findProspects(
               lookalike_of: asText((q as Record<string, unknown>)?.lookalike_of),
             },
       )
-      .filter((q) => q.query && !tried.some((t) => t.toLowerCase() === q.query.toLowerCase()))
-      .slice(0, 8);
+      .filter((q) => q.query && normQuery(q.query));
+    // Repeats are dropped here, whatever the AI was told: the same words reworded, or an earlier
+    // query with a word or two added.
+    const queries: Query[] = [];
+    const repeats: string[] = [];
+    for (const q of proposed) {
+      if (tooSimilar(q.query, [...earlier, ...tried, ...queries.map((x) => x.query)])) repeats.push(q.query);
+      else if (queries.length < PER_ROUND) queries.push(q);
+    }
+    if (repeats.length) await log(`Skipped ${repeats.length} search${repeats.length === 1 ? '' : 'es'} already run before: ${repeats.map((q) => `"${q}"`).join(', ')}`);
     if (!queries.length) {
-      lastError = 'The AI returned no new search queries';
+      lastError = 'The AI only suggested searches already run before';
       continue;
     }
+    rounds++;
     tried.push(...queries.map((q) => q.query));
-    await log(`Searching Google${round ? ` (round ${round + 1})` : ''}: ${queries.map((q) => `"${q.query}"`).join(', ')}`);
+    await log(`Searching Google${rounds > 1 ? ` (round ${rounds})` : ''}: ${queries.map((q) => `"${q.query}"`).join(', ')}`);
 
-    const jobs = queries.flatMap((q) => Array.from({ length: PAGES }, (_, i) => ({ q, page: i + 1 })));
     let okThisRound = 0;
     let failedThisRound = 0;
-    const searched = await mapLimit(jobs, 4, async ({ q, page }) => {
-      try {
-        const results = await googleSearch(svc, q.query, page);
-        searchesOk++;
-        okThisRound++;
-        return { q, results };
-      } catch (e) {
-        searchError = errorMessage(e);
-        lastError = `Search failed for "${q.query}": ${searchError}`;
-        if (++failedThisRound === 1) await log(lastError, 'warn');
-        return { q, results: [] as SerperResult[] };
+    // Each query's pages together, so the search is recorded once with what it found.
+    const searched = await mapLimit(queries, 4, async (q) => {
+      const results: SerperResult[] = [];
+      let error = '';
+      for (let page = 1; page <= PAGES; page++) {
+        try {
+          const found = await googleSearch(svc, q.query, page);
+          searchesOk++;
+          okThisRound++;
+          results.push(...found);
+          if (found.length < 10) break;
+        } catch (e) {
+          error = errorMessage(e);
+          searchError = error;
+          lastError = `Search failed for "${q.query}": ${error}`;
+          if (++failedThisRound === 1) await log(lastError, 'warn');
+          break;
+        }
       }
+      return { q, results, error };
     });
-    // Results on companies already on the list are left out, so the AI only sees what's new.
+
+    // Results about companies already known are left out (and recorded as such), so the AI only sees
+    // what's new and no research is spent rediscovering them.
     const seenLinks = new Set<string>();
-    const results: Found[] = searched
-      .flatMap(({ q, results }) => results.map((r) => ({ query: q.query, segment: q.segment, lookalike_of: q.lookalike_of, title: r.title, link: r.link, snippet: r.snippet || '' })))
-      .filter((r) => {
-        const link = (r.link || '').toLowerCase();
-        if (!link || seenLinks.has(link)) return false;
-        seenLinks.add(link);
-        const d = domainOf(r.link || '');
-        return !(d && seenDomains.has(d));
-      });
+    const results: (Found & { searchId: number | null })[] = [];
+    for (const { q, results: raw, error } of searched) {
+      const rows: Parameters<ProspectHistory['recordResults']>[1] = [];
+      let fresh = 0;
+      const mine: Found[] = [];
+      for (const r of raw) {
+        const link = (r.link || '').trim();
+        if (!link || seenLinks.has(link.toLowerCase())) continue;
+        seenLinks.add(link.toLowerCase());
+        const d = domainOf(link);
+        const named = normCompany(titleCompany(r.title));
+        const isKnown = (!!d && seenDomains.has(d)) || (named.length > 3 && seenNames.has(named));
+        rows.push({ url: link, domain: d, title: r.title || '', outcome: isKnown ? 'known' : 'result' });
+        if (isKnown) continue;
+        fresh++;
+        mine.push({ query: q.query, segment: q.segment, lookalike_of: q.lookalike_of, title: r.title, link, snippet: r.snippet || '' });
+      }
+      const searchId = await history.recordSearch({ query: q.query, segment: q.segment, status: error && !raw.length ? 'failed' : 'ok', resultsCount: raw.length, freshCount: fresh, error });
+      await history.recordResults(searchId, rows);
+      results.push(...mine.map((m) => ({ ...m, searchId })));
+    }
     // Every search failed (no credits, a wrong key): more rounds would fail the same way.
     if (!okThisRound) break;
     if (!results.length) {
-      await log('Every result was a company already on the list; searching again with new queries', 'info');
+      await log('Every result was a company already known; searching again with new queries', 'info');
       continue;
     }
 
@@ -162,10 +242,10 @@ export async function findProspects(
       `ICP segments: ${icps.map((i) => i.segment).join(', ')}`,
       '',
       '## Already on the list (skip these)',
-      knownList.length ? knownList.join(', ') : '(none)',
+      knownList.length ? knownList.slice(-400).join(', ') : '(none)',
       '',
       '## Search results',
-      JSON.stringify(results, null, 2),
+      JSON.stringify(results.map((r) => ({ query: r.query, segment: r.segment, lookalike_of: r.lookalike_of, title: r.title, link: r.link, snippet: r.snippet })), null, 2),
     ].join('\n');
     const picked = await askJson(svc, PROSPECT_EXTRACT_PROMPT, pickText, companySchema);
     if (picked.error !== undefined) {
@@ -178,6 +258,7 @@ export async function findProspects(
     // wrong (bodalchemicals.com for bodal.com); research looks the real one up instead.
     const resultDomains = new Set(results.map((r) => domainOf(r.link || '')).filter(Boolean));
     const before = prospects.length;
+    const addedBySearch = new Map<number | null, number>();
     for (const raw of asList(picked.data.companies)) {
       if (!raw || typeof raw !== 'object') continue;
       const c = raw as Record<string, unknown>;
@@ -185,10 +266,21 @@ export async function findProspects(
       let domain = domainOf(asText(c.website));
       // …and only when the domain is plausibly this company's (not "cumminscollege.org" for Cummins).
       if (isBlockedDomain(domain) || !resultDomains.has(domain) || !domainScore(company, domain)) domain = '';
-      if (!company || seenNames.has(normCompany(company)) || (domain && seenDomains.has(domain))) continue;
-      seenNames.add(normCompany(company));
+      if (!company) continue;
+      // The search this company came from (its website's result, else the first that names it).
+      const from = results.find((r) => domain && domainOf(r.link || '') === domain) ?? results.find((r) => `${r.title} ${r.snippet}`.toLowerCase().includes(company.toLowerCase()));
+      const searchId = from?.searchId ?? null;
+      const name = normCompany(company);
+      if (seenNames.has(name) || (domain && seenDomains.has(domain))) {
+        await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, outcome: 'duplicate' }]);
+        continue;
+      }
+      if (prospects.length >= want) continue;
+      seenNames.add(name);
       knownList.push(company);
       if (domain) seenDomains.add(domain);
+      await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, outcome: 'added' }]);
+      addedBySearch.set(searchId, (addedBySearch.get(searchId) ?? 0) + 1);
       const lookalike = asText(c.lookalike_of);
       const why = asText(c.why);
       prospects.push({
@@ -198,9 +290,9 @@ export async function findProspects(
         segment: segmentNames.find((s) => s.toLowerCase() === asText(c.segment).toLowerCase()) || segmentNames[0] || '',
         source: (lookalike ? `Lookalike of ${lookalike}` : 'Found by prospect search') + (why ? `: ${why}` : ''),
       });
-      if (prospects.length >= want) break;
     }
-    if (prospects.length < want && round < MAX_ROUNDS - 1) await log(`Round ${round + 1}: ${prospects.length - before} new companies; searching further`, 'info');
+    for (const [searchId, count] of addedBySearch) await history.recordAdded(searchId, count);
+    if (prospects.length < want && rounds < MAX_ROUNDS) await log(`Round ${rounds}: ${prospects.length - before} new companies; searching further`, 'info');
   }
 
   // Nothing came back from Google at all, or every step failed: that's a failure, not "no new prospects".

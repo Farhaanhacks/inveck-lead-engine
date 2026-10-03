@@ -943,7 +943,10 @@ describe('review fixes', () => {
       }
       pages.push(body.page ?? 1);
       // Round 1 only finds a company already on the list; round 2 finds a new one.
-      const organic = body.q.includes('round 1') ? [{ title: 'Old Forge', link: 'https://oldforge.in/', snippet: 'forging' }] : [{ title: 'New Forge Ltd', link: 'https://newforge.in/', snippet: 'forging plants in Pune' }];
+      // A full first page (ten results), so the second page is read too.
+      const organic = body.q.includes('round 1')
+        ? Array.from({ length: 10 }, (_, i) => ({ title: 'Old Forge', link: `https://oldforge.in/page${i}`, snippet: 'forging' }))
+        : [{ title: 'New Forge Ltd', link: 'https://newforge.in/', snippet: 'forging plants in Pune' }];
       return ok({ organic });
     }) as unknown as typeof globalThis.fetch;
     const svc = { fetch, keys: { serper: 'k', deepseek: 'd' } as never, settings: await settingsOf() };
