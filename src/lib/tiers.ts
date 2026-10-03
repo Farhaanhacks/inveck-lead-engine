@@ -88,7 +88,7 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   const tier = tierOf(title, icp);
   if (tier === 'Avoid' || tier === '') return 99;
   // Functions that have nothing to do with stock or assets, whatever their rank ("GM - Marketing").
-  if (/\b(marketing|sales|business development|legal|secretarial|investor|public relations|human resources|talent|commercial|customer service|engineering|maintenance|projects?|safety|design|r&d|research)\b/i.test(roleOnly(title))) return 99;
+  if (/\b(marketing|sales|business development|legal|secretarial|investor|public relations|human resources|talent|commercial|customer service|engineering|maintenance|projects?|safety|design|r&d|research|it|sap|erp|information technology|software)\b/i.test(roleOnly(title))) return 99;
   const t = tokens(roleOnly(title)).join(' ');
   const vpOrCxo = SENIOR.test(t) || /\bdirector\b/i.test(title);
   if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;

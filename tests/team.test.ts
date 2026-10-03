@@ -1151,3 +1151,18 @@ describe('a company is done only when something was really done', () => {
     expect((await companyProgress(db, 1, day)).done).toBe(1);
   });
 });
+
+describe('Ultra Drugs: a shared brand word is not the same company', () => {
+  it('rejects Ultra Corpotech and sister companies, keeps how staff write their own company', async () => {
+    const { sameFirm } = await import('@/lib/pipeline/employer');
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    expect(sameFirm('Ultra Corpotech Pvt. Ltd.', 'Ultra Drugs Pvt Ltd')).toBe(false);
+    expect(sameFirm('Tata Steel', 'Tata Motors')).toBe(false);
+    expect(sameFirm('Ultra Drugs Private Limited', 'Ultra Drugs Pvt Ltd')).toBe(true);
+    expect(sameFirm('Lumax World', 'Lumax Auto Technologies')).toBe(true);
+    expect(sameFirm('Allcargo Global', 'Allcargo Logistics')).toBe(true);
+    expect(sameFirm('Minda Corporation', 'Minda Industries')).toBe(true);
+    expect(contactPriority('Asst.General Manager SAP/IT', DEFAULT_ICPS[0])).toBe(99);
+  });
+});

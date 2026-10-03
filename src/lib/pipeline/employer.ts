@@ -29,7 +29,7 @@ const GENERIC = new Set([
   'tiles', 'sugar', 'sugars', 'dairy', 'agro', 'fertilizers', 'fertilisers', 'seeds', 'beverages', 'spices', 'exports', 'export', 'impex',
   'overseas', 'traders', 'trading', 'distributors', 'retail', 'express', 'transport', 'transports', 'carriers', 'shipping', 'freight', 'cargo',
   'warehousing', 'supply', 'chain', 'infra', 'infrastructure', 'construction', 'builders', 'projects', 'consultants', 'associates', 'partners',
-  'brothers', 'sons', 'mills', 'works', 'plant', 'plants', 'parts', 'ancillaries', 'precision',
+  'brothers', 'sons', 'mills', 'works', 'plant', 'plants', 'parts', 'ancillaries', 'ancillary', 'precision', 'drugs', 'lifesciences', 'life', 'sciences', 'biotech', 'formulations', 'unit', 'division', 'com', 'co', 'in', 'pvt', 'ltd',
   // Common first words that many unrelated companies share ("Bharat Forge", "Bharat Petroleum").
   'bharat', 'hindustan', 'indian', 'national', 'united', 'general', 'standard', 'royal', 'shree', 'shri', 'sree', 'modern', 'super',
   'star', 'prime', 'supreme', 'apex', 'asian', 'eastern', 'western', 'southern', 'northern', 'central', 'premier', 'universal', 'golden',
@@ -62,9 +62,21 @@ export function sameFirm(text: string, company: string): boolean {
   if (!a.length || !b.length) return false;
   if (b.every((w) => a.includes(w))) return true;
   if (a.every((w) => b.includes(w)) && a.some((w) => !GENERIC.has(w))) return true;
+  // Same brand, written another way ("Lumax World" for Lumax Auto Technologies): only when every other
+  // word is generic or part of the company's own name. "Ultra Corpotech" is another company, not Ultra Drugs.
   const brand = brandOf(company);
-  return !!brand && brandOf(text) === brand;
+  if (!brand || brandOf(text) !== brand) return false;
+  // What a company does tells sister companies apart (Tata Steel is not Tata Motors): an industry word
+  // must be in the company's own name; only vague words ("World", "Industries", "Group") may differ.
+  return a.filter((w) => w !== brand).every((w) => VAGUE.has(w) || b.includes(w));
 }
+
+/** Words a company's staff add or drop without it being another company. */
+const VAGUE = new Set([
+  'world', 'global', 'international', 'industries', 'industry', 'industrial', 'enterprises', 'enterprise', 'group', 'holdings', 'ventures',
+  'technologies', 'technology', 'tech', 'solutions', 'systems', 'services', 'corporation', 'corp', 'unit', 'division', 'plant', 'plants',
+  'com', 'co', 'in', 'pvt', 'ltd', 'private', 'limited', 'llp', 'inc', 'and',
+]);
 
 const ROLE = /\b(head|manager|director|officer|vp|president|engineer|executive|lead|chief|gm|dgm|agm|founder|partner|analyst|consultant|specialist|supervisor|coordinator|associate|intern|ceo|cfo|coo|cto|md|controller|owner|incharge|in-charge|planner|buyer|leader|member|trainee|assistant|deputy|senior|sr|general)\b/i;
 

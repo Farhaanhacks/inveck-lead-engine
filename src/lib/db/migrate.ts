@@ -386,6 +386,10 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
   `UPDATE people SET checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
   `INSERT INTO settings (key, value) VALUES ('siteRulesV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // A brand alone no longer makes two companies the same ("Ultra Corpotech" is not Ultra Drugs; Tata
+  // Steel is not Tata Motors). Once: every main contact is checked on LinkedIn again.
+  `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'strictBrandV1')`,
+  `INSERT INTO settings (key, value) VALUES ('strictBrandV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // A company whose steps were all skipped was counted as done for the day. Once: such records are
   // removed (a company is done only when something was really done for it that day).
   `DELETE FROM company_days cd
