@@ -111,6 +111,12 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       // Keep just the role: "Plant Head at TRACK COMPONENTS ..." is saved as "Plant Head".
       person.title = roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, '').trim();
       let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
+      // A headline "Head of Supply Chain | NBC Bearings | CKA Birla Group": a piece naming the company
+      // (and none naming another as current) means they work there.
+      if (employer === 'unknown' && company) {
+        const pieces = rest.flatMap((p) => p.split(/\s*\|\s*/)).map((p) => p.trim()).filter(Boolean);
+        if (pieces.slice(1).some((p) => sameFirm(p, company))) employer = 'here';
+      }
       if (job) employer = 'here';
       else if (now) employer = 'here';
       else if (here.length) employer = 'elsewhere';
@@ -141,6 +147,9 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
   // The broad search looks for the people who run operations, not the top of the company.
   if (name) queries.push(`site:linkedin.com/in ${firmQuery(company)} ("plant head" OR "plant manager" OR operations OR "supply chain" OR warehouse OR logistics OR inventory OR head OR manager)`);
   const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q)));
+  // The broad search's first page was full: the next ten often hold the people at the site we want.
+  const broad = settled[1];
+  if (queries[1] && broad?.status === 'fulfilled' && broad.value.length >= 10) settled.push(...(await Promise.allSettled([googleSearch(svc, queries[1], 2)])));
   const people: LinkedInPerson[] = [];
   const seen = new Set<string>();
   for (const s of settled) {

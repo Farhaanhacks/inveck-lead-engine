@@ -1058,3 +1058,18 @@ describe('a pick whose real LinkedIn role is not wanted', () => {
     expect(notes.join(' ')).toContain('Ashish Sharma left out: LinkedIn shows their role is QA Analyst 1');
   });
 });
+
+describe('NBC Bearings live findings', () => {
+  it('reads "Head of Supply Chain | NBC Bearings" as working there, and SCM as supply chain', async () => {
+    const { searchLinkedIn } = await import('@/lib/pipeline/contacts');
+    const { contactPriority } = await import('@/lib/tiers');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const { settingsSchema } = await import('@/lib/settings');
+    const organic = [{ title: 'Pratap Naruka - Head of Supply Chain | NBC Bearings', link: 'https://in.linkedin.com/in/pratap-naruka', snippet: 'Pratap Naruka. Head of Supply Chain | NBC Bearings | CKA Birla Group | MBA Operations' }];
+    const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "NBC Bearings"', 'NBC Bearings');
+    expect(people.map((p) => [p.name, p.title])).toEqual([['Pratap Naruka', 'Head of Supply Chain']]);
+    expect(contactPriority('Sr.Manager SCM', DEFAULT_ICPS[0])).toBe(5);
+  });
+});

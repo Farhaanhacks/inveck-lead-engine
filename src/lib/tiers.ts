@@ -13,6 +13,8 @@ const ALIASES: [RegExp, string][] = [
   [/\bchief operating officer\b|\bc\.?o\.?o\b/g, 'coo'],
   // "Chief of Operations" is the Operations Head.
   [/\bchief of\b/g, 'head of'],
+  // "Sr. Manager SCM" is a Supply Chain Manager.
+  [/\bscm\b|\bs\.c\.m\b/g, 'supply chain'],
   [/\bchief financial officer\b|\bc\.?f\.?o\b/g, 'cfo'],
   [/\bmanaging director\b|\bm\.?d\b/g, 'md'],
   [/\bhuman resources?\b|\bh\.?r\b/g, 'hr'],
