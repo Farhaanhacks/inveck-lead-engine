@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { atBranch, buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { atBranch, atOtherSite, buildCandidates, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
@@ -154,6 +154,8 @@ export async function processLead(
   ]);
   if (news.signals.length) await log(`${lead.company}: buying signal: ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
   if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
+  // Finding contacts again must not replace good ones with nothing because the search is down.
+  if (opts.contactsOnly && linkedin.error && !linkedin.people.length) throw new Error('LinkedIn search failed: ' + linkedin.error);
   if (people.error) notes.push('Email search error: ' + people.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
 
@@ -168,7 +170,10 @@ export async function processLead(
   const candidates = buildCandidates(manual, linkedin.people, people.emails, leaders.people).filter(
     (c) =>
       c.source === 'Sales team' ||
-      (currentEmployer(c, lead.company) !== 'elsewhere' && !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
+      (currentEmployer(c, lead.company) !== 'elsewhere' &&
+        // Based at another of the company's sites (unless their role covers the whole company).
+        !atOtherSite(c, lead.city) &&
+        !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
   );
   const published = websiteEmails(siteText, domain);
   const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
@@ -275,11 +280,14 @@ export async function vetPick(
       return { picked, lookupFailed: true };
     }
     const chosen = list.find((c) => sameName(c.name, contact.name));
-    if (profile && (profile.employer === 'elsewhere' || profile.abroad) && chosen?.source !== 'Sales team' && attempt < 3) {
+    const otherSite = !!profile && atOtherSite({ title: profile.title || contact.title, location: profile.location }, lead.city);
+    if (profile && (profile.employer === 'elsewhere' || profile.abroad || otherSite) && chosen?.source !== 'Sales team' && attempt < 3) {
       notes.push(
         profile.abroad
           ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
-          : `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`,
+          : profile.employer === 'elsewhere'
+            ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
+            : `${contact.name} left out: based in ${profile.location}, not at the ${lead.city} site`,
       );
       list = list.filter((c) => !sameName(c.name, contact.name));
       picked = await pick(list);
@@ -287,6 +295,7 @@ export async function vetPick(
     }
     if (profile) {
       if (!contact.linkedin) contact.linkedin = profile.url;
+      if (chosen && profile.location && !chosen.location) chosen.location = profile.location;
       notes.push(`LinkedIn profile found by name: ${profile.url}`);
       if (profile.title && profile.title.toLowerCase() !== contact.title.toLowerCase()) {
         notes.push(`Title taken from LinkedIn: "${profile.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
@@ -350,6 +359,7 @@ export function companyPeople(
       emailStatus: email ? emailStatus : '',
       phone: isPrimary ? main.phone || c.phone : c.phone,
       linkedin: isPrimary ? main.linkedin || c.linkedin : c.linkedin,
+      location: c.location ?? '',
       source: SOURCE_NAMES[c.source],
       isPrimary,
     });

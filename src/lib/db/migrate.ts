@@ -238,6 +238,7 @@ export const SCHEMA_STATEMENTS = [
   `INSERT INTO settings (key, value) VALUES ('employerCheckV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS passed_at TIMESTAMPTZ`,
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT ''`,
   // The LinkedIn search got broader: everyone it couldn't find before is searched again, once.
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_linkedin = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'broaderLinkedinV1')`,
   `UPDATE people SET checked_at = NULL WHERE linkedin = '' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'broaderLinkedinV1')`,
@@ -345,6 +346,17 @@ export const SCHEMA_STATEMENTS = [
      WHERE id IN (SELECT lead_id FROM activities WHERE lead_id IS NOT NULL AND (text LIKE '%based outside India%' OR text LIKE '%based abroad:%'))
        AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'abroadRefindV1')`,
   `INSERT INTO settings (key, value) VALUES ('abroadRefindV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // Brands are no longer matched on what a company does ("NBC Bearings" matched RBC Bearings), and a
+  // lead is one site: people at the company's other locations are left out. Once: leads nobody has
+  // worked yet have their contacts found again; on the rest, every saved contact is checked again.
+  `UPDATE leads SET refetch_pending = true, refetch_claimed_at = NULL
+     WHERE status IN ('Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score')
+       AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.lead_id = leads.id AND t.done_at IS NOT NULL)
+       AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.lead_id = leads.id AND (a.text LIKE 'Main contact changed%' OR a.text LIKE 'Point of contact updated%'))
+       AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
+  `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
+  `UPDATE people SET checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
+  `INSERT INTO settings (key, value) VALUES ('siteRulesV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'

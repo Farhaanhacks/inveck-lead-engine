@@ -13,25 +13,55 @@ const words = (s: string) =>
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length > 1);
 
-/** Words that don't make a company name distinctive on their own. */
-const GENERIC = new Set(['auto', 'automotive', 'industries', 'industry', 'technologies', 'technology', 'tech', 'world', 'global', 'international', 'enterprises', 'systems', 'solutions', 'logistics', 'motors', 'steel', 'foods', 'products', 'engineering', 'manufacturing', 'services', 'holdings', 'ventures', 'group', 'and']);
+/**
+ * Words that don't make a company name distinctive on their own: what the company does
+ * ("bearings", "tyres", "paints") rather than who it is. Many companies share them.
+ */
+const GENERIC = new Set([
+  'auto', 'automotive', 'automobiles', 'industries', 'industry', 'industrial', 'technologies', 'technology', 'tech', 'world', 'global',
+  'international', 'enterprises', 'enterprise', 'systems', 'solutions', 'logistics', 'motor', 'motors', 'steel', 'steels', 'foods', 'food',
+  'products', 'engineering', 'engineers', 'manufacturing', 'manufacturers', 'services', 'holdings', 'ventures', 'group', 'and',
+  'bearings', 'bearing', 'tyres', 'tyre', 'tires', 'tire', 'paints', 'paint', 'coatings', 'chemicals', 'chemical', 'pharma', 'pharmaceuticals',
+  'pharmaceutical', 'healthcare', 'laboratories', 'labs', 'textiles', 'textile', 'fabrics', 'garments', 'apparel', 'cables', 'cable', 'wires',
+  'wire', 'forgings', 'forging', 'castings', 'casting', 'plastics', 'polymers', 'packaging', 'rubber', 'metals', 'metal', 'alloys', 'fasteners',
+  'springs', 'gears', 'pumps', 'valves', 'pipes', 'tubes', 'tools', 'machines', 'machinery', 'equipment', 'instruments', 'components',
+  'electricals', 'electrical', 'electronics', 'electric', 'power', 'energy', 'solar', 'cement', 'cements', 'glass', 'paper', 'papers', 'ceramics',
+  'tiles', 'sugar', 'sugars', 'dairy', 'agro', 'fertilizers', 'fertilisers', 'seeds', 'beverages', 'spices', 'exports', 'export', 'impex',
+  'overseas', 'traders', 'trading', 'distributors', 'retail', 'express', 'transport', 'transports', 'carriers', 'shipping', 'freight', 'cargo',
+  'warehousing', 'supply', 'chain', 'infra', 'infrastructure', 'construction', 'builders', 'projects', 'consultants', 'associates', 'partners',
+  'brothers', 'sons', 'mills', 'works', 'plant', 'plants', 'parts', 'ancillaries', 'precision',
+  // Common first words that many unrelated companies share ("Bharat Forge", "Bharat Petroleum").
+  'bharat', 'hindustan', 'indian', 'national', 'united', 'general', 'standard', 'royal', 'shree', 'shri', 'sree', 'modern', 'super',
+  'star', 'prime', 'supreme', 'apex', 'asian', 'eastern', 'western', 'southern', 'northern', 'central', 'premier', 'universal', 'golden',
+  'classic', 'new', 'first', 'best', 'great', 'jai', 'maa', 'om', 'sai',
+]);
 
-/** The brand: the company name's first distinctive word ("Lumax" in "Lumax Auto Technologies"). */
+/**
+ * The brand: the company name's first word, when it is distinctive ("Lumax" in "Lumax Auto
+ * Technologies"), so staff who write "Lumax World" or "Lumax Industries" still match. A short first
+ * word ("NBC" in "NBC Bearings", "MRF Tyres") is no brand: the name must then match in full, and the
+ * next word never stands in for it ("bearings" would match RBC Bearings and SKF Bearings).
+ */
 export function brandOf(company: string): string {
-  const w = words(company).find((x) => x.length >= 4 && !GENERIC.has(x));
-  return w ?? '';
+  const first = plain(company)
+    .replace(/\b(the)\b/g, ' ')
+    .split(/[^a-z0-9]+/)
+    .find(Boolean);
+  return first && first.length >= 4 && !GENERIC.has(first) && !/^(pvt|private|ltd|limited|india|indian)$/.test(first) ? first : '';
 }
 
 /**
  * The same company under the names its people use: "Nestlé India Ltd" matches "Nestle" and "Nestle
  * India"; "Lumax Auto Technologies" matches "Lumax World" and "Lumax Industries" (same brand, how its
- * staff write it on LinkedIn).
+ * staff write it on LinkedIn). Words that only say what a company does never match on their own:
+ * "Bearings" is not NBC Bearings.
  */
 export function sameFirm(text: string, company: string): boolean {
   const a = words(text);
   const b = words(company);
   if (!a.length || !b.length) return false;
-  if (b.every((w) => a.includes(w)) || a.every((w) => b.includes(w))) return true;
+  if (b.every((w) => a.includes(w))) return true;
+  if (a.every((w) => b.includes(w)) && a.some((w) => !GENERIC.has(w))) return true;
   const brand = brandOf(company);
   return !!brand && brandOf(text) === brand;
 }
@@ -171,6 +201,7 @@ export function basedAbroad(location: string, snippet = ''): boolean {
 /** Areas that belong to one city: Pimpri Chinchwad and Chakan are Pune, Gurugram and Noida are Delhi NCR. */
 const METRO: Record<string, RegExp> = {
   pune: /\b(pune|pimpri|chinchwad|chakan|hinjewadi|talegaon|ranjangaon|bhosari|hadapsar)\b/i,
+  jaipur: /\b(jaipur|sitapura|bagru|vishwakarma industrial|mahindra world city,? jaipur)\b/i,
   mumbai: /\b(mumbai|bombay|thane|navi mumbai|bhiwandi|panvel|vasai|kalyan|andheri|powai)\b/i,
   delhi: /\b(delhi|ncr|gurugram|gurgaon|noida|ghaziabad|faridabad|manesar)\b/i,
   bengaluru: /\b(bengaluru|bangalore|hosur|whitefield|electronic city)\b/i,
@@ -187,4 +218,30 @@ export function inCity(text: string, city: string): boolean {
   if (place.length < 3) return false;
   const metro = METRO[place] ?? (place === 'new delhi' || place === 'gurgaon' || place === 'gurugram' || place === 'noida' ? METRO.delhi : undefined);
   return metro ? metro.test(text) : text.toLowerCase().includes(place);
+}
+
+/** States and the country: a location naming only these doesn't say which site someone is at. */
+const REGION_ONLY = /^(india|bharat|maharashtra|gujarat|karnataka|tamil nadu|telangana|andhra pradesh|kerala|goa|rajasthan|madhya pradesh|uttar pradesh|uttarakhand|haryana|punjab|himachal pradesh|jammu and kashmir|jammu & kashmir|bihar|jharkhand|odisha|west bengal|assam|chhattisgarh|north india|south india|east india|west india)$/i;
+
+/**
+ * Whether someone works at the lead's site: 'here' when their location is the lead's city or its
+ * metro area, 'elsewhere' when it names another place, 'unknown' when there is no location, it names
+ * only a state or the country, or the lead has no city. (Abroad is decided by basedAbroad.)
+ */
+export function siteOf(location: string | undefined, city: string): 'here' | 'elsewhere' | 'unknown' {
+  const loc = (location ?? '').trim();
+  if (!loc || !city.trim()) return 'unknown';
+  if (inCity(loc, city)) return 'here';
+  const place = loc.split(',')[0].replace(/\b(greater|area|region|division|district|metropolitan)\b/gi, '').trim();
+  if (!place || REGION_ONLY.test(place)) return 'unknown';
+  return 'elsewhere';
+}
+
+/**
+ * A role that covers the whole company or country, not one site ("National Head of Supply Chain",
+ * "Corporate Head - Operations"): kept for a site's lead even when based at head office elsewhere in
+ * India, ranked after the people at the site.
+ */
+export function companyWideRole(title: string): boolean {
+  return /\b(national|corporate|group|all[- ]india|pan[- ]india|india head|country|head office|headquarters|central)\b/i.test(title);
 }

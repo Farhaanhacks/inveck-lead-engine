@@ -537,3 +537,19 @@ describe('a prospect search that fails', () => {
     expect(finished.error).toMatch(/^Prospect search failed: /);
   });
 });
+
+describe('finding contacts again while search is down', () => {
+  it('keeps the saved contacts and tries again later instead of replacing them with nothing', async () => {
+    const [l] = await db
+      .insert(leads)
+      .values({ company: 'Acme Forgings', website: 'acmeforgings.in', city: 'Jaipur', segment: 'Manufacturing', status: 'Awaiting Approval', qualified: true, fitScore: 8, researchSummary: 'Acme forges parts.', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', refetchPending: true })
+      .returning();
+    await db.insert(people).values({ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true });
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    const svc = { ...services(), keys: { ...services().keys, serper: 'wrong-key' } };
+    await executeRun(db, run.id, svc, Number.POSITIVE_INFINITY);
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ contactName: 'Rohan Katara', refetchPending: true });
+    expect(await db.select().from(people).where(eq(people.leadId, l.id))).toHaveLength(1);
+  });
+});

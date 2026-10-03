@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch, hunter } from './services';
-import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, type Employer } from './employer';
+import { brandOf, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, companyWideRole, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
@@ -358,18 +358,30 @@ export async function findLinkedinProfile(
 }
 
 /** True when the person's title or profile names the lead's city: they work at this branch. */
-export function atBranch(c: { title: string; snippet?: string; location?: string }, city: string): boolean {
+export function atBranch(c: { title: string; snippet?: string; location?: string | null }, city: string): boolean {
   return inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
 }
 
 /** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */
 type RankIcp = Parameters<typeof contactPriority>[1];
 
-export function candidateRank(c: { title: string; snippet?: string; location?: string; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
-  return contactPriority(c.title, icp) - (atBranch(c, city) ? 6 : 0) - (c.phone ? 0.2 : 0) - (c.email ? 0.1 : 0);
+export function candidateRank(c: { title: string; snippet?: string; location?: string | null; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
+  const c2 = { ...c, location: c.location ?? '' };
+  // At this site first; someone with a company-wide role based elsewhere in India after everyone else.
+  const elsewhere = siteOf(c2.location, city) === 'elsewhere';
+  return contactPriority(c.title, icp) - (atBranch(c2, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.phone ? 0.2 : 0) - (c.email ? 0.1 : 0);
 }
 
-export function rankCandidates<T extends { title: string; snippet?: string; location?: string; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
+/**
+ * The lead is one site (NBC Bearings, Jaipur): someone based at another of the company's locations
+ * in India isn't a contact for it, unless their role covers the whole company ("National Head of
+ * Supply Chain"). Abroad is never kept (see basedAbroad). True when they should be left out.
+ */
+export function atOtherSite(c: { title: string; location?: string | null }, city: string): boolean {
+  return siteOf(c.location ?? '', city) === 'elsewhere' && !companyWideRole(c.title);
+}
+
+export function rankCandidates<T extends { title: string; snippet?: string; location?: string | null; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {
   return [...list].sort((a, b) => candidateRank(a, icp, city) - candidateRank(b, icp, city));
 }
 

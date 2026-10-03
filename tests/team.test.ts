@@ -396,7 +396,7 @@ describe('callback days get the full set', () => {
 describe('P2 flow', () => {
   const icp = { targetTitles: 'Plant Head, Head of Supply Chain', p2Titles: 'Inventory Manager, Warehouse Head', p3Titles: 'Store Manager', avoidTitles: 'HR, Admin, Quality' };
   const person = (id: number, name: string, title: string, extra: Partial<import('@/lib/db/schema').Person> = {}) =>
-    ({ id, leadId: 1, name, title, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, checkedAt: null as Date | null, createdAt: new Date(), ...extra });
+    ({ id, leadId: 1, name, title, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, checkedAt: null as Date | null, location: '', createdAt: new Date(), ...extra });
 
   it('picks the next person by INVECK priority, never HR or someone already tried, preferring a number', async () => {
     const { nextContact } = await import('@/lib/escalate');
@@ -957,5 +957,76 @@ describe('review fixes', () => {
         ? ok({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ queries: [{ query: `q${Math.random()}`, segment: '', lookalike_of: '' }] }) } }] })
         : new Response('{"message":"Not enough credits"}', { status: 400 })) as unknown as typeof globalThis.fetch;
     await expect(findProspects({ ...svc, fetch: down }, icps, [], [], async () => {})).rejects.toThrow(/Not enough credits|Search failed/);
+  });
+});
+
+describe('NBC Bearings, Jaipur: the right company and the right site', () => {
+  it('never matches another company on what it does (Bearings), only on its name', async () => {
+    const { sameFirm, brandOf } = await import('@/lib/pipeline/employer');
+    expect(brandOf('NBC Bearings')).toBe('');
+    expect(sameFirm('RBC Bearings', 'NBC Bearings')).toBe(false);
+    expect(sameFirm('SKF Bearings India', 'NBC Bearings')).toBe(false);
+    expect(sameFirm('Bearings', 'NBC Bearings')).toBe(false);
+    expect(sameFirm('NBC Bearings Jaipur', 'NBC Bearings')).toBe(true);
+    expect(sameFirm('Bharat Petroleum', 'Bharat Forge')).toBe(false);
+    expect(sameFirm('MRF Tyres', 'Apollo Tyres')).toBe(false);
+    // Brands still match the way staff write them.
+    expect(sameFirm('Lumax World', 'Lumax Auto Technologies')).toBe(true);
+    expect(sameFirm('Godamwale.com', 'Godamwale')).toBe(true);
+  });
+
+  it('drops RBC Bearings staff and anyone abroad from the search, whatever their title', async () => {
+    const { searchLinkedIn } = await import('@/lib/pipeline/contacts');
+    const { settingsSchema } = await import('@/lib/settings');
+    const organic = [
+      { title: 'Jamie King - Vice President and General Manager at RBC Bearings', subtitle: 'United States · Vice President and General Manager · RBC Bearings', link: 'https://www.linkedin.com/in/jamie-king', snippet: '' },
+      { title: 'Alex Moore - National Head Supply Chain at NBC Bearings', subtitle: 'Detroit Metropolitan Area · National Head Supply Chain · NBC Bearings', link: 'https://www.linkedin.com/in/alex-moore', snippet: '' },
+      { title: 'Rohan Katara - Supply Chain Manager - NBC Bearings', subtitle: 'Jaipur, Rajasthan, India · Supply Chain Manager · NBC Bearings', link: 'https://in.linkedin.com/in/rohan-katara', snippet: '' },
+    ];
+    const fetch = (async () => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "NBC Bearings"', 'NBC Bearings');
+    expect(people.map((p) => p.name)).toEqual(['Rohan Katara']);
+    expect(people[0].location).toBe('Jaipur, Rajasthan, India');
+  });
+
+  it('keeps the Jaipur site; another Indian city only for company-wide roles, ranked last', async () => {
+    const { siteOf } = await import('@/lib/pipeline/employer');
+    const { atOtherSite, rankCandidates } = await import('@/lib/pipeline/contacts');
+    const { nextContact } = await import('@/lib/escalate');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const icp = DEFAULT_ICPS[0];
+    expect(siteOf('Jaipur, Rajasthan, India', 'Jaipur')).toBe('here');
+    expect(siteOf('Sitapura Industrial Area, Jaipur', 'Jaipur')).toBe('here');
+    expect(siteOf('Gurugram, Haryana, India', 'Jaipur')).toBe('elsewhere');
+    expect(siteOf('Rajasthan, India', 'Jaipur')).toBe('unknown');
+    expect(siteOf('', 'Jaipur')).toBe('unknown');
+    expect(siteOf('Gurugram, Haryana, India', '')).toBe('unknown');
+    expect(atOtherSite({ title: 'Supply Chain Manager', location: 'Gurugram, Haryana, India' }, 'Jaipur')).toBe(true);
+    expect(atOtherSite({ title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' }, 'Jaipur')).toBe(false);
+    expect(atOtherSite({ title: 'Supply Chain Manager', location: '' }, 'Jaipur')).toBe(false);
+    const ranked = rankCandidates([
+      { title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' },
+      { title: 'Supply Chain Manager', location: '' },
+      { title: 'Supply Chain Manager', location: 'Jaipur, Rajasthan, India' },
+    ], icp, 'Jaipur');
+    expect(ranked.map((r) => r.location)).toEqual(['Jaipur, Rajasthan, India', '', 'Mumbai, Maharashtra, India']);
+    const person = (id: number, name: string, title: string, location: string) =>
+      ({ id, leadId: 1, name, title, location, email: '', emailStatus: '', phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null, checkedAt: null, createdAt: new Date() });
+    expect(nextContact([person(1, 'Gurgaon Guy', 'Plant Head', 'Gurugram, Haryana, India'), person(2, 'Jaipur Lady', 'Store Manager', 'Jaipur, Rajasthan, India')], icp, 'Jaipur')?.person.name).toBe('Jaipur Lady');
+  });
+
+  it('a recheck removes a saved contact based at another site', async () => {
+    const db = await getDb();
+    const { verifyContact } = await import('@/lib/verify-contacts');
+    const { people } = await import('@/lib/db/schema');
+    const { settingsSchema } = await import('@/lib/settings');
+    const organic = [{ title: 'Hardik Gaur - Supply Chain Manager - NBC Bearings', subtitle: 'Gurugram, Haryana, India · Supply Chain Manager · NBC Bearings', link: 'https://in.linkedin.com/in/hardik-gaur', snippet: '' }];
+    const fetch = (async (_u: string, init?: RequestInit) => new Response(JSON.stringify({ organic: String(init?.body).includes('Hardik') ? organic : [] }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof globalThis.fetch;
+    const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const [l] = await db.insert(leads).values(lead('NBC Bearings', { city: 'Jaipur', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', contactCheckedAt: new Date() })).returning();
+    await db.insert(people).values([{ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true }, { leadId: l.id, name: 'Hardik Gaur', title: 'Supply Chain Manager' }]);
+    await verifyContact(db, svc, l);
+    expect((await db.select().from(people).where(eq(people.leadId, l.id))).map((p) => p.name)).toEqual(['Rohan Katara']);
   });
 });

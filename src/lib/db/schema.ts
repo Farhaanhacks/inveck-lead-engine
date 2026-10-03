@@ -222,6 +222,8 @@ export const people = pgTable('people', {
   passedAt: timestamp('passed_at', { withTimezone: true }),
   /** When this person was last checked on LinkedIn (still there, current title); null = not yet. */
   checkedAt: timestamp('checked_at', { withTimezone: true }),
+  /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */
+  location: text('location').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Person = typeof people.$inferSelect;

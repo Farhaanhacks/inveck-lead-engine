@@ -2,7 +2,7 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { atBranch, candidateRank, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
+import { atBranch, atOtherSite, candidateRank, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
 import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
@@ -84,18 +84,19 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     } catch {
       continue;
     }
-    if (profile?.employer === 'elsewhere' || profile?.abroad) {
+    const otherSite = !!profile && atOtherSite({ title: profile.title || p.title, location: profile.location }, lead.city);
+    if (profile?.employer === 'elsewhere' || profile?.abroad || otherSite) {
       await db.delete(people).where(eq(people.id, p.id));
-      gone.push(`${p.name}${profile.abroad ? ` (based in ${profile.location || 'another country'})` : profile.title ? ` (now ${profile.title})` : ''}`);
+      gone.push(`${p.name}${profile!.abroad || otherSite ? ` (based in ${profile!.location || 'another country'})` : profile!.title ? ` (now ${profile!.title})` : ''}`);
       continue;
     }
     const retitle = !!profile?.title && newRole(p.title, profile.title);
     await db
       .update(people)
-      .set({ checkedAt: now, ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
+      .set({ checkedAt: now, ...(profile?.location ? { location: profile.location } : {}), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
       .where(eq(people.id, p.id));
   }
-  if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company} or ${gone.length === 1 ? 'is' : 'are'} based abroad: ${gone.join('; ')}`);
+  if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}${lead.city ? ` ${lead.city}` : ''} (left, or based elsewhere): ${gone.join('; ')}`);
 }
 
 /** Removes, from a lead's people, anyone whose profile shows they work somewhere else now. */
@@ -135,6 +136,11 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     // Not "not found": left unchecked so the next pass (Today, the lead page, the morning job) tries again.
     return 'skipped';
   }
+  if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ title: profile.title || lead.contactTitle, location: profile.location }, lead.city)) {
+    await escalate(db, lead.id, 'other_site', now, profile.location);
+    await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
+    return 'left';
+  }
   if (profile?.abroad) {
     await escalate(db, lead.id, 'abroad', now, profile.location);
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
@@ -161,7 +167,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   for (const p of mine) {
     await db
       .update(people)
-      .set({ checkedAt: now, ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
+      .set({ checkedAt: now, ...(profile.location ? { location: profile.location } : {}), ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
       .where(eq(people.id, p.id));
   }
   if (!lead.contactLinkedin) await logActivity(db, lead.id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
