@@ -100,6 +100,16 @@ export const leads = pgTable('leads', {
   /** Research attempts that started; a lead whose research keeps timing out stops being retried. */
   researchAttempts: integer('research_attempts').notNull().default(0),
   /**
+   * The main contact's email, kept as four separate facts (emailStatus is the readable summary):
+   * where it came from ('manual' typed by the team, 'website', 'web', 'apollo', 'inferred' from the
+   * company's format), our verdict ('verified', 'catch_all', 'unverified', 'invalid'), the provider's
+   * own status as returned (Apollo's email_status), and when the provider returned it.
+   */
+  emailSource: text('email_source').notNull().default(''),
+  emailVerification: text('email_verification').notNull().default(''),
+  emailProviderStatus: text('email_provider_status').notNull().default(''),
+  emailRetrievedAt: timestamp('email_retrieved_at', { withTimezone: true }),
+  /**
    * The ICP fit decided from evidence (see pipeline/fit.ts): 'qualified', 'not_fit' or 'review';
    * '' for leads researched before evidence was checked (their fitScore and fitReason still stand).
    */
@@ -285,7 +295,7 @@ export const people = pgTable('people', {
   emailStatus: text('email_status').notNull().default(''),
   phone: text('phone').notNull().default(''),
   linkedin: text('linkedin').notNull().default(''),
-  /** Where they were found: LinkedIn, Company website / records, Hunter, Sales team. */
+  /** Where they were found: LinkedIn, Company website / records, Sales team (Hunter on older rows). */
   source: text('source').notNull().default(''),
   isPrimary: boolean('is_primary').notNull().default(false),
   /** When the P2 flow moved on from this person (no answer, not the right person): not tried again automatically. */
@@ -294,9 +304,22 @@ export const people = pgTable('people', {
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */
   location: text('location').notNull().default(''),
+  /** The email's source, our verdict, the provider's status and retrieval date (see leads.emailSource). */
+  emailSource: text('email_source').notNull().default(''),
+  emailVerification: text('email_verification').notNull().default(''),
+  emailProviderStatus: text('email_provider_status').notNull().default(''),
+  emailRetrievedAt: timestamp('email_retrieved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Person = typeof people.$inferSelect;
+
+/** Paid lookups already made (Apollo), so a person isn't paid for twice. Never holds phone numbers. */
+export const enrichmentCache = pgTable('enrichment_cache', {
+  key: text('key').primaryKey(),
+  provider: text('provider').notNull().default(''),
+  value: jsonb('value').notNull(),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+});
 export type NewPerson = typeof people.$inferInsert;
 
 export const USER_ROLES = ['admin', 'bda'] as const;

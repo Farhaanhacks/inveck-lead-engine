@@ -4,7 +4,37 @@
 
 type Handler = (url: URL, init: RequestInit & { body?: string }) => Response | Promise<Response>;
 
-export type FakeLog = { calls: string[]; verified: string[]; finder: string[] };
+export type FakeLog = { calls: string[]; verified: string[]; finder: string[]; apollo?: URL[] };
+
+/**
+ * Apollo's People Enrichment, as the fake knows it: who it has, at which employer, with what email
+ * and status. Every reply also carries phone numbers, which the app must never read or keep.
+ */
+const APOLLO_PEOPLE: Record<string, { email: string; status: string; org: string; domain: string; linkedin?: string }> = {
+  'ravi shah@nodraft.in': { email: 'ravi.shah@nodraft.in', status: 'verified', org: 'No Draft Industries', domain: 'nodraft.in' },
+  'kiran rao@findr.in': { email: 'k.rao@findr.in', status: 'extrapolated', org: 'Finder Co', domain: 'findr.in' },
+  'anita rao@tatamotors.com': { email: 'anita.rao@tatamotors.com', status: 'verified', org: 'Tata Motors Limited', domain: 'tatamotors.com', linkedin: 'https://in.linkedin.com/in/anita' },
+};
+
+export function apolloReply(url: URL): Response {
+  const q = url.searchParams;
+  const key = `${(q.get('first_name') ?? '').toLowerCase()} ${(q.get('last_name') ?? '').toLowerCase()}@${q.get('domain') ?? ''}`;
+  const p = APOLLO_PEOPLE[key];
+  if (!p) return json({ person: null });
+  return json({
+    person: {
+      id: 'ap1',
+      first_name: q.get('first_name'),
+      last_name: q.get('last_name'),
+      name: `${q.get('first_name')} ${q.get('last_name')}`,
+      linkedin_url: p.linkedin ?? null,
+      email: p.email,
+      email_status: p.status,
+      phone_numbers: [{ raw_number: '+91 98765 43210', sanitized_number: '+919876543210', type: 'mobile' }],
+      organization: { name: p.org, primary_domain: p.domain, primary_phone: { number: '+91 20 1234 5678' }, phone: '+91 20 1234 5678' },
+    },
+  });
+}
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 const text = (t: string, status = 200) => new Response(t, { status, headers: { 'content-type': 'text/plain' } });
@@ -299,6 +329,12 @@ export function fakeFetch(log: FakeLog): typeof fetch {
         if (e.endsWith('@johndeere.com')) return json({ errors: [{ details: "You've used all your verification credits" }] }, 429);
         return json({ data: { status: e.startsWith('vijay') ? 'accept_all' : 'valid' } });
       }
+    }
+
+    if (url.host === 'api.apollo.io') {
+      log.apollo?.push(url);
+      if (headers['x-api-key'] !== 'apollo-test') return json({ error: 'Invalid access credentials.' }, 401);
+      return apolloReply(url);
     }
 
     if (url.host === 'api.deepseek.com') {

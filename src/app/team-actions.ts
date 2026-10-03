@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, unansweredCalls, type Escalation } from '@/lib/escalate';
-import { contactFields, saveContactEdit } from '@/lib/contact-edit';
+import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
@@ -387,7 +387,7 @@ export async function saveFoundDetailAction(form: FormData) {
   if (field === 'contactLinkedin' && !/^https?:\/\//i.test(value)) value = `https://${value}`;
   if (!value) return;
   const db = await getDb();
-  const extra = field === 'contactEmail' ? { emailStatus: 'entered by the team' } : {};
+  const extra = field === 'contactEmail' ? teamEmail(value) : {};
   await db.update(leads).set({ [field]: value, ...extra, updatedAt: new Date() }).where(eq(leads.id, id));
   const personField = { contactPhone: 'phone', contactEmail: 'email', contactLinkedin: 'linkedin' } as const;
   await db.update(people).set({ [personField[field]]: value, ...extra }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));

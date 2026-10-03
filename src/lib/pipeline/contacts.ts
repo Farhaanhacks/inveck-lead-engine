@@ -4,7 +4,7 @@ import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
-import { googleSearch, hunter } from './services';
+import { googleSearch } from './services';
 import { brandOf, firmSiteName, currentEmployer, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
@@ -12,6 +12,7 @@ import { isBlockedDomain } from './website';
 
 export type Candidate = {
   id: string;
+  /** 'Email database' (Hunter) is no longer produced; kept so older data still reads. */
   source: 'Sales team' | 'LinkedIn' | 'Email database' | 'Web';
   name: string;
   title: string;
@@ -31,8 +32,8 @@ export type Contact = {
   email: string;
   phone: string;
   linkedin: string;
-  /** Where the email came from, when it came with the contact. */
-  emailSource: '' | 'hunter' | 'manual';
+  /** Where the email came from, when it came with the contact: only the sales team's own. */
+  emailSource: '' | 'manual';
   roleMatch: boolean;
   reason: string;
 };
@@ -257,19 +258,6 @@ export async function searchLeaders(
   }
 }
 
-type HunterEmail = { value?: string; first_name?: string; last_name?: string; position?: string; phone_number?: string; linkedin?: string };
-
-/** People with known work emails at a domain, and the domain's email format (e.g. "{first}.{last}"). */
-export async function hunterDomainSearch(svc: Services, domain: string): Promise<{ emails: HunterEmail[]; pattern: string; error: string }> {
-  if (!domain) return { emails: [], pattern: '', error: '' };
-  try {
-    const data = await hunter<{ emails?: HunterEmail[]; pattern?: string }>(svc, 'domain-search', { domain, type: 'personal', limit: '10' });
-    return { emails: Array.isArray(data.emails) ? data.emails : [], pattern: typeof data.pattern === 'string' ? data.pattern : '', error: '' };
-  } catch (e) {
-    return { emails: [], pattern: '', error: errorMessage(e) };
-  }
-}
-
 const norm = (s: string) => s.toLowerCase().replace(HONORIFIC, '').replace(/[^a-z]/g, '');
 /** "Dr. Jitendra Govind Joshi" and "Jitendra Joshi" are the same person. */
 export function sameName(a: string, b: string): boolean {
@@ -430,11 +418,14 @@ function mentionsFirm(text: string, company: string, domain: string): boolean {
   return (!!domain && text.toLowerCase().includes(domain.toLowerCase())) || (words.length > 0 && t.includes(` ${head} `));
 }
 
-/** One candidate list from the sales team's contact, LinkedIn and Hunter; the same person on two lists is merged. */
+/**
+ * One candidate list from the sales team's contact, LinkedIn and the company's leaders; the same
+ * person on two lists is merged. (Hunter's people search is no longer a source; emails are found
+ * for the chosen people afterwards, see findEmail.)
+ */
 export function buildCandidates(
   manual: ManualContact,
   linkedin: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[],
-  hunterEmails: HunterEmail[],
   leaders: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[] = [],
 ): Candidate[] {
   const candidates: Candidate[] = linkedin.map((p, i) => ({ id: `L${i + 1}`, source: 'LinkedIn', email: '', phone: '', ...p }));
@@ -445,23 +436,6 @@ export function buildCandidates(
       if (!twin.title || twin.title.length < 4) twin.title = p.title;
     } else {
       candidates.push({ id: `W${i + 1}`, source: 'Web', email: '', phone: '', ...p });
-    }
-  });
-  hunterEmails.forEach((e, i) => {
-    const person = {
-      name: [e.first_name, e.last_name].filter(Boolean).join(' '),
-      title: e.position || '',
-      email: e.value || '',
-      // Phone numbers aren't collected: the team finds their own.
-      phone: '',
-      linkedin: e.linkedin || '',
-    };
-    const twin = candidates.find((c) => (c.source === 'LinkedIn' || c.source === 'Web') && person.name && sameName(c.name, person.name));
-    if (twin) {
-      twin.email = person.email;
-      if (!twin.title) twin.title = person.title;
-    } else {
-      candidates.push({ id: `H${i + 1}`, source: 'Email database', snippet: '', ...person });
     }
   });
   if (manual.name || manual.email) candidates.unshift({ id: 'M', source: 'Sales team', snippet: '', ...manual });
@@ -509,10 +483,11 @@ export async function pickContact(
   const toContact = (c: Candidate, roleMatch: boolean, reason: string): Contact => ({
     name: c.name,
     title: c.title,
-    email: c.email,
     phone: c.phone,
     linkedin: c.linkedin,
-    emailSource: c.email ? (c.source === 'Sales team' ? 'manual' : 'hunter') : '',
+    // Only the sales team's own address comes with a candidate; other emails are found afterwards.
+    email: c.source === 'Sales team' ? c.email : '',
+    emailSource: c.email && c.source === 'Sales team' ? 'manual' : '',
     roleMatch,
     reason,
   });

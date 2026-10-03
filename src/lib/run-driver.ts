@@ -1,6 +1,7 @@
 import 'server-only';
 import { getDb } from './db';
 import { apiKeys, getSettings } from './settings';
+import { dbEnrichmentCache } from './enrichment-cache';
 import { activeRun, executeRun, startRun } from './runs';
 import { desc, eq, sql } from 'drizzle-orm';
 import { after } from 'next/server';
@@ -16,7 +17,8 @@ const BUDGET_MS = (RUN_MAX_DURATION - 90) * 1000;
 
 export async function liveServices(): Promise<Services> {
   const db = await getDb();
-  return { fetch: globalThis.fetch.bind(globalThis), keys: apiKeys(), settings: await getSettings(db) };
+  // Paid lookups (Apollo) are cached in the database, so a person is never paid for twice.
+  return { fetch: globalThis.fetch.bind(globalThis), keys: apiKeys(), settings: await getSettings(db), cache: dbEnrichmentCache(db) };
 }
 
 /** The app's own URL, for a run to call its next invocation. */

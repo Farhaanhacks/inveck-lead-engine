@@ -9,6 +9,13 @@ export type ContactEdit = { contactName: string; contactTitle: string; contactPh
 const FIELDS = ['contactName', 'contactTitle', 'contactPhone', 'contactEmail', 'contactLinkedin'] as const;
 const LABEL: Record<(typeof FIELDS)[number], string> = { contactName: 'name', contactTitle: 'designation', contactPhone: 'number', contactEmail: 'email', contactLinkedin: 'LinkedIn' };
 
+/** The email fields for an address the team typed: theirs, not checked yet, never replaced by a lookup. */
+export function teamEmail(email: string) {
+  return email
+    ? { emailStatus: 'entered by the team', emailSource: 'manual', emailVerification: 'unverified', emailProviderStatus: '', emailRetrievedAt: null }
+    : { emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null };
+}
+
 /** The contact fields of a submitted form. */
 export function contactFields(form: FormData): ContactEdit {
   const get = (k: string) => String(form.get(k) ?? '');
@@ -53,7 +60,7 @@ export async function saveContactEdit(db: Db, id: number, input: ContactEdit, op
       ...v,
       contactVerifiedAt: v.contactName ? new Date() : null,
       ...(newPerson ? { contactTier: '', contactCheckedAt: null } : {}),
-      ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}),
+      ...(emailChanged ? teamEmail(v.contactEmail) : {}),
       updatedAt: new Date(),
     })
     .where(eq(leads.id, id));
@@ -61,10 +68,10 @@ export async function saveContactEdit(db: Db, id: number, input: ContactEdit, op
   const [primary] = await db.select().from(people).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
   const person = { name: v.contactName, title: v.contactTitle, phone: v.contactPhone, email: v.contactEmail, linkedin: v.contactLinkedin };
   if (primary && primary.name.toLowerCase() === v.contactName.toLowerCase()) {
-    await db.update(people).set({ ...person, ...(emailChanged ? { emailStatus: v.contactEmail ? 'entered by the team' : '' } : {}) }).where(eq(people.id, primary.id));
+    await db.update(people).set({ ...person, ...(emailChanged ? teamEmail(v.contactEmail) : {}) }).where(eq(people.id, primary.id));
   } else if (v.contactName) {
     await db.update(people).set({ isPrimary: false }).where(eq(people.leadId, id));
-    await db.insert(people).values({ ...person, leadId: id, emailStatus: v.contactEmail ? 'entered by the team' : '', source: 'Sales team', isPrimary: true });
+    await db.insert(people).values({ ...person, leadId: id, ...teamEmail(v.contactEmail), source: 'Sales team', isPrimary: true });
   } else if (primary) {
     // The contact was cleared: nobody is the main contact any more.
     await db.update(people).set({ isPrimary: false }).where(eq(people.id, primary.id));

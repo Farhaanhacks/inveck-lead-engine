@@ -1,11 +1,19 @@
 import type { ApiKeys, Settings } from '../settings';
 import { errorMessage } from './text';
 
+/** Results of paid lookups (Apollo), kept so the same person isn't paid for twice. */
+export type EnrichmentCache = {
+  get(key: string): Promise<unknown | null>;
+  set(key: string, value: unknown): Promise<void>;
+};
+
 /** Everything a pipeline step needs from the outside world; tests pass fakes. */
 export type Services = {
   fetch: typeof fetch;
   keys: ApiKeys;
   settings: Settings;
+  /** Where Apollo results are kept between runs; without one, nothing is reused across runs. */
+  cache?: EnrichmentCache;
 };
 
 export class HttpError extends Error {

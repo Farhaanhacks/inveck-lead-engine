@@ -1,7 +1,7 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, sameName, hunterDomainSearch, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
-import { belongsTo, findEmail, searchWebEmails, SOURCE_LABELS, type EmailFormatUsed } from './emails';
+import { belongsTo, emailLabel, findEmail, searchWebEmails, type ApolloBudget, type EmailFormatUsed, type EmailResult } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
 import { researchLead, websiteEmails, type Research } from './research';
 import { buildSources } from './fit';
@@ -188,7 +188,7 @@ export async function processLead(
   }
 
   if (opts.contactsOnly) await log(`${lead.company}: finding contacts again from scratch`);
-  // Decision-makers: public LinkedIn profiles via Google, plus Hunter's people at the domain. A contact
+  // Decision-makers: public LinkedIn profiles via Google, and leaders named on the website. A contact
   // the sales team entered is kept and never replaced; one an earlier research run picked is not the
   // team's (it has to be found again like everyone else). Without a say from the caller, a lead never
   // researched before counts its contact as the team's (typed in when the company was added).
@@ -197,9 +197,8 @@ export async function processLead(
     ? { name: lead.contactName, title: lead.contactTitle, email: lead.contactEmail, phone: lead.contactPhone, linkedin: lead.contactLinkedin }
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
-  const [linkedin, people, webEmails, leaders, news] = await Promise.all([
+  const [linkedin, webEmails, leaders, news] = await Promise.all([
     searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company),
-    manual.email ? Promise.resolve({ emails: [], pattern: '', error: '' }) : hunterDomainSearch(svc, domain),
     manual.email ? Promise.resolve([]) : searchWebEmails(svc, domain),
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
@@ -208,7 +207,6 @@ export async function processLead(
   if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
   // Finding contacts again must not replace good ones with nothing because the search is down.
   if (opts.contactsOnly && linkedin.error && !linkedin.people.length) throw new Error('LinkedIn search failed: ' + linkedin.error);
-  if (people.error) notes.push('Email search error: ' + people.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
 
   // Nobody who works somewhere else now ("Plant Head at PepsiCo"), whatever source listed them.
@@ -219,7 +217,7 @@ export async function processLead(
   const otherBranches = (ctx.taken ?? []).filter(
     (t) => t.leadId !== lead.id && t.contactName && ((firmName && normCompany(t.company) === firmName) || (firmSite && rootDomain(t.website) === firmSite)),
   );
-  const candidates = buildCandidates(manual, linkedin.people, people.emails, leaders.people).filter(
+  const candidates = buildCandidates(manual, linkedin.people, leaders.people).filter(
     (c) =>
       c.source === 'Sales team' ||
       (currentEmployer(c, lead.company) !== 'elsewhere' &&
@@ -236,26 +234,29 @@ export async function processLead(
   if (picked.error) notes.push('Contact step error: ' + picked.error);
   const contact = picked.contact;
 
-  const email = contact.name || contact.email
-    ? await findEmail(svc, contact, { company: lead.company, domain, pattern: people.pattern, websiteEmails: published, webEmails: [...webEmails, ...leaders.emails] })
-    : { email: '', status: 'no email found' as const, source: '' as const, notes: [], reason: 'no contact found' };
+  // Apollo lookups this company may spend: the main contact first, then the best-ranked others.
+  const apollo: ApolloBudget | undefined = svc.keys.apollo && svc.settings.apolloPerCompany > 0 ? { left: svc.settings.apolloPerCompany } : undefined;
+  const allEmails = [...webEmails, ...leaders.emails];
+  const email: EmailResult = contact.name || contact.email
+    ? await findEmail(svc, contact, { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, apollo })
+    : { email: '', status: 'no email found', source: '', verification: '', notes: [], reason: 'no contact found' };
   notes.push(...email.notes);
   contact.email = email.email;
 
   const score = scoreLead(research.fitScore, contact, email.status);
   const update: LeadResult = {
     ...base,
-    emailStatus: email.email && email.source
-      ? `${email.status} (${SOURCE_LABELS[email.source]}${email.detail ? `: ${email.detail}` : ''})`
-      : email.reason ? `no email found: ${email.reason}` : email.status,
+    emailStatus: email.email ? emailLabel(email) : `no email found: ${email.reason || 'no source had one'}`,
+    ...emailFields(email),
     finalScore: score.finalScore,
     scoreBreakdown: score.breakdown,
     otherDecisionMakers: notes.join('\n\n'),
     signals: news.signals.length ? news.signals : lead.signals,
     signalsCheckedAt: new Date(),
   };
-  // Everyone else at the company, with the best email we can give them for free.
-  let format: EmailFormatUsed | null = email.format ?? (people.pattern && domain ? { pattern: people.pattern, domain, strong: true, detail: `${patternLabel(people.pattern)} per Hunter` } : null);
+  // Everyone else at the company: the best-ranked few go through the same chain (Apollo included,
+  // within the company's budget); the rest get what is free (a published address, the format).
+  let format: EmailFormatUsed | null = email.format ?? null;
   const needFormat = picked.ranked.some((c) => !c.email && c.name !== contact.name);
   if (!format && needFormat && domain && svc.settings.useCompanyFormat) {
     const web = await lookupEmailFormat(svc, lead.company, domain);
@@ -268,12 +269,26 @@ export async function processLead(
   const wanted = picked.ranked.filter(
     (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
   );
-  update.people = companyPeople(wanted, contact, update.emailStatus ?? '', [...published, ...webEmails, ...leaders.emails], format, svc.settings.useCompanyFormat);
+  const others = new Map<string, EmailResult>();
+  if (apollo) {
+    for (const c of wanted) {
+      if (apollo.left <= 0) break;
+      if (sameName(c.name, contact.name) || c.email || (c.source !== 'LinkedIn' && c.source !== 'Sales team')) continue;
+      const r = await findEmail(
+        svc,
+        { ...EMPTY_CONTACT, name: c.name, title: c.title, linkedin: c.linkedin },
+        { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, apollo, format, thorough: false },
+      );
+      if (r.email) others.set(personKey(c.name), r);
+    }
+  }
+  update.people = companyPeople(wanted, contact, update.emailStatus ?? '', [...published, ...allEmails], format, svc.settings.useCompanyFormat, { main: email, others });
 
-  // Never wipe contact details the sales team typed in.
+  // Never wipe contact details the sales team typed in. A person chosen now gets their own email
+  // (or none): never the previous contact's.
   if (contact.name) update.contactName = contact.name;
   if (contact.title) update.contactTitle = contact.title;
-  if (contact.email) update.contactEmail = contact.email;
+  if (contact.name || contact.email) update.contactEmail = contact.email;
   if (contact.phone) update.contactPhone = contact.phone;
   if (contact.linkedin) update.contactLinkedin = contact.linkedin;
   // Checked against LinkedIn during research (found there, or looked up by name). A lookup that
@@ -382,9 +397,23 @@ const SOURCE_NAMES: Record<Candidate['source'], string> = {
   Web: 'Company website / records',
 };
 
+/** An email's source, verdict, provider status and retrieval date, as stored on a lead or person. */
+export function emailFields(r: Pick<EmailResult, 'email' | 'source' | 'verification' | 'providerStatus' | 'retrievedAt'>) {
+  return {
+    emailSource: r.email ? r.source : '',
+    emailVerification: r.email ? r.verification : '',
+    emailProviderStatus: r.email ? (r.providerStatus ?? '') : '',
+    emailRetrievedAt: r.email && r.retrievedAt ? new Date(r.retrievedAt) : null,
+  };
+}
+
+const personKey = (name: string) => name.toLowerCase().replace(/[^a-z]/g, '');
+
 /**
- * The company's people, best first, each with the best free email: one Hunter already knows,
- * one published on the web, or (when the company's format is proven) one built from it.
+ * The company's people, best first, each with the best email we have: the main contact's from the
+ * full chain, the best-ranked others' from the same chain (`found`), and for the rest what is free:
+ * the sales team's own, a published address, or one inferred from the company's proven format (both
+ * labelled unverified, never checked).
  */
 export function companyPeople(
   ranked: Candidate[],
@@ -393,6 +422,7 @@ export function companyPeople(
   published: string[],
   format: EmailFormatUsed | null,
   useFormat: boolean,
+  found: { main?: EmailResult; others?: Map<string, EmailResult> } = {},
 ): Omit<NewPerson, 'leadId'>[] {
   const seen = new Set<string>();
   const out: Omit<NewPerson, 'leadId'>[] = [];
@@ -401,31 +431,34 @@ export function companyPeople(
     if (!key || seen.has(key)) continue;
     seen.add(key);
     const isPrimary = !!main.name && c.name === main.name;
-    let email = isPrimary ? main.email : c.email;
-    // Emails on candidates come from Hunter, or from the sales team for their own contact.
-    let emailStatus = isPrimary ? mainEmailStatus : c.email ? (c.source === 'Sales team' ? 'known (sales team)' : 'known (Hunter)') : '';
-    if (!email) {
+    // The sales team's own address for their contact; nobody else's email comes with the candidate.
+    let result: Pick<EmailResult, 'email' | 'source' | 'verification' | 'providerStatus' | 'retrievedAt' | 'verifiedBy' | 'detail'> | null = isPrimary
+      ? (found.main ?? (main.email ? { email: main.email, source: '', verification: '' } : null))
+      : c.email && c.source === 'Sales team'
+        ? { email: c.email, source: 'manual', verification: 'unverified' }
+        : (found.others?.get(key) ?? null);
+    let emailStatus = isPrimary ? mainEmailStatus : result ? emailLabel(result) : '';
+    if (!result?.email && !isPrimary) {
       const { first, last, middle } = splitName(c.name);
       const f = first.toLowerCase().replace(/[^a-z]/g, '');
       const l = last.toLowerCase().replace(/[^a-z]/g, '');
-      const found = published.find((e) => belongsTo(e.split('@')[0], f, l));
-      if (found) {
-        email = found;
-        emailStatus = 'found on the web';
+      const published1 = published.find((e) => belongsTo(e.split('@')[0], f, l));
+      if (published1) {
+        result = { email: published1, source: 'web', verification: 'unverified' };
       } else if (format?.strong && useFormat && first.length > 1 && last.length > 1) {
         const local = fillPattern(format.pattern, first, last, middle);
-        if (local) {
-          email = `${local}@${format.domain}`;
-          emailStatus = `likely (company's email format: ${format.detail})`;
-        }
+        if (local) result = { email: `${local}@${format.domain}`, source: 'inferred', verification: 'unverified', detail: format.detail };
       }
+      emailStatus = result ? emailLabel(result) : '';
     }
+    const email = result?.email ?? '';
     out.push({
       name: c.name,
       // The main contact's title and LinkedIn as checked on LinkedIn during research.
       title: isPrimary ? main.title || c.title : c.title,
       email,
       emailStatus: email ? emailStatus : '',
+      ...(result && result.source ? emailFields(result) : {}),
       // Only a number the sales team gave (phone numbers aren't collected automatically).
       phone: isPrimary ? main.phone : c.source === 'Sales team' ? c.phone : '',
       linkedin: isPrimary ? main.linkedin || c.linkedin : c.linkedin,

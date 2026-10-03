@@ -440,4 +440,20 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS assessed_icp TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS assessed_at TIMESTAMPTZ`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS fit_override TEXT NOT NULL DEFAULT ''`,
+  // Emails: source, verification, the provider's own status and retrieval date kept apart (Apollo).
+  // New columns only; older rows keep their readable email status.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_source TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_verification TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_provider_status TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_retrieved_at TIMESTAMPTZ`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS email_source TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS email_verification TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS email_provider_status TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE people ADD COLUMN IF NOT EXISTS email_retrieved_at TIMESTAMPTZ`,
+  `CREATE TABLE IF NOT EXISTS enrichment_cache (
+    key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT '',
+    value JSONB NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
 ];

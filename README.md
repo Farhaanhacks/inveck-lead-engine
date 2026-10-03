@@ -20,21 +20,41 @@ Everything happens in one run. Nobody needs Airtable or n8n.
    when an ICP deal-breaker names it. A ruled-out or reviewed company can be reassessed, confirmed
    as a fit or marked not a fit from its page or the Leads list; the earlier assessment stays on
    its timeline.
-3. **Contact**: it searches LinkedIn (via Google) and Hunter, and the AI picks the best
-   person. It finds the email cheapest-first: emails already known, emails on the
-   website, the company's email pattern, then Hunter's finder.
+3. **Contact**: it searches LinkedIn (via Google) and the company's own pages, and the AI picks the best
+   person. It finds the email in a fixed order: the team's own, the person's published address,
+   Apollo, then the company's email format (see below).
 4. **Score and draft**: every qualified lead that can be reached gets a personalised
    email draft.
 
 ### How emails are found
 
-Most trustworthy and cheapest first: an address the team typed in or Hunter already knows →
-the person's address published on the company website or the web → the company's proven
-email format (from Hunter, or the formats RocketReach/ZoomInfo/LeadIQ publish, read through
-Google) → Hunter's email finder → common formats, kept only when Hunter confirms them.
-Many company mail servers can't confirm single addresses; there, an address built from the
-company's proven format is saved as **likely** (the way ZoomInfo shows business emails).
-This can be switched off in Settings. Plain guesses are never saved.
+Emails only: phone numbers are never requested from any provider. In order, most trustworthy first:
+
+1. An address the sales team typed in: always kept, never replaced (checked only to label it).
+2. The person's own address published on the company website, the web or a people-search page,
+   confirmed by the mail-server check.
+3. **Apollo** (People Enrichment), for a contact already identified: their LinkedIn profile when
+   known, name and employer. A reply is used only for the same person (name, and LinkedIn profile
+   when both have one) at the same employer (domain, or the company's name in full) with an address
+   on the company's domain. Apollo's "verified" counts as verified; any other status goes through the
+   mail-server check and otherwise stays labelled unverified.
+4. A published address that couldn't be confirmed (catch-all server), then Apollo's unconfirmed one.
+5. Inferred from the company's proven format (published format data, or its people's published
+   addresses), always labelled **inferred**, including on a catch-all domain. Plain guesses are kept
+   only when the mail server confirms them, also labelled inferred.
+
+Each address keeps its source, our verdict, Apollo's own status and the date Apollo returned it,
+apart from one another. Hunter is no longer a source; its email verifier is the mail-server check.
+The best-ranked others at a company go through the same chain, within **Apollo lookups per company**
+(Settings, default 3; the main contact first; 0 switches Apollo off). Apollo results, including "no
+match", are cached in the database (90 days for an address, 30 for no match), so a person is never
+paid for twice; failed lookups are not cached. After a refused key, used-up credits or a long rate
+limit, Apollo isn't asked again in the same run. Contact checks upgrade an inferred or unconfirmed
+address when Apollo has a verified one, never touch the team's addresses, and log a conflict for
+review when Apollo's verified address differs from one on file.
+
+Configuration: `APOLLO_API_KEY` (server-side environment variable; never sent to the browser or
+logged) and optionally `HUNTER_API_KEY` for the mail-server check.
 
 The one human step is **approval**. A person reads the draft, edits it if needed, approves
 it and marks it as sent. Nothing is ever sent automatically.
@@ -61,7 +81,8 @@ it and marks it as sent. Nothing is ever sent automatically.
    | `DEEPSEEK_API_KEY` | yes* | DeepSeek key (the default AI) |
    | `ANTHROPIC_API_KEY` | optional* | Only needed if you switch the AI to Claude in Settings |
    | `SERPER_API_KEY` | yes | serper.dev key for Google / LinkedIn search |
-   | `HUNTER_API_KEY` | yes | hunter.io key for emails |
+   | `APOLLO_API_KEY` | yes | apollo.io key for email enrichment (emails only; needs People Enrichment API access) |
+   | `HUNTER_API_KEY` | optional | hunter.io key, used only to verify addresses (mail-server check) |
    | `APP_URL` | optional | Your public URL, if you use a custom domain |
 
    \* You need the key for whichever AI provider is selected in Settings.

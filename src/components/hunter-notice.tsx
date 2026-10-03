@@ -1,12 +1,12 @@
 import { liveServices } from '@/lib/run-driver';
 import { hunterCredits } from '@/lib/pipeline/services';
 
-/** Warns when Hunter is out of credits, since emails can't be found or confirmed without it. */
+/** Warns when the mail-server check (Hunter's email verifier) is out of credits: addresses can't be confirmed then. */
 export async function HunterNotice({ always = false }: { always?: boolean }) {
   const svc = await liveServices();
   if (!svc.keys.hunter) return null;
   const c = await hunterCredits(svc);
-  const out = !c.error && (!c.verificationsLeft || !c.searchesLeft);
+  const out = !c.error && !c.verificationsLeft;
   if (!out && !always) return null;
   return (
     <div className={`rounded-lg border p-4 text-sm ${out ? 'border-warning-ink/40 bg-warning-soft text-warning-ink' : 'border-line text-ink-2'}`} role={out ? 'alert' : undefined}>
@@ -14,9 +14,9 @@ export async function HunterNotice({ always = false }: { always?: boolean }) {
         <>Couldn&apos;t read Hunter credits: {c.error}</>
       ) : (
         <>
-          <strong className="font-semibold">Hunter:</strong> {c.searchesLeft} searches and {c.verificationsLeft} email checks left
+          <strong className="font-semibold">Email verification (Hunter):</strong> {c.verificationsLeft} email checks left
           {c.resetDate ? ` (resets ${c.resetDate})` : ''}.
-          {out && ' Until it has credits, the app can only use emails published on the web; guessed emails can’t be confirmed, so most leads get no email.'}
+          {out && ' Until it has credits, addresses from Apollo or the company’s format can’t be confirmed: they are saved labelled unverified or inferred, never as verified.'}
         </>
       )}
     </div>

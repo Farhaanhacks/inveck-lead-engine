@@ -20,8 +20,13 @@ export const settingsSchema = z.object({
   minScore: z.coerce.number().int().min(0).max(100).default(55),
   /** Companies handed out to the team each working morning, split evenly between them. */
   leadsPerMorning: z.coerce.number().int().min(0).max(500).default(100),
-  /** Common email formats to try, and verify with Hunter, when the company's format is unknown. */
+  /** Common email formats to try, and verify with the mail-server check, when the company's format is unknown. */
   maxEmailGuesses: z.coerce.number().int().min(0).max(6).default(3),
+  /**
+   * Apollo email lookups per company: the main contact first, then the best-ranked others the
+   * pipeline selected. Cached results don't count. 0 switches Apollo off.
+   */
+  apolloPerCompany: z.coerce.number().int().min(0).max(10).default(3),
   /**
    * Save an address built from the company's proven email format when its mail server can't
    * confirm single addresses (marked "likely"). Plain guesses are never saved.
@@ -74,7 +79,10 @@ export function apiKeys() {
     deepseek: envKey('DEEPSEEK_API_KEY'),
     anthropic: envKey('ANTHROPIC_API_KEY'),
     serper: envKey('SERPER_API_KEY'),
+    /** Only for the mail-server check (verifying addresses); Hunter is no longer an email source. */
     hunter: envKey('HUNTER_API_KEY'),
+    /** Email enrichment (emails only). Server-side only: never sent to the browser or written to logs. */
+    apollo: envKey('APOLLO_API_KEY'),
     /** Optional: Jina Reader works without a key, but with lower rate limits. */
     jina: envKey('JINA_API_KEY'),
   };

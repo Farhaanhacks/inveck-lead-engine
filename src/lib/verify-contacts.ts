@@ -8,6 +8,7 @@ import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
 import { currentEmployer, nameIsTheCompany, registerFirmWebsite, sameFirm } from './pipeline/employer';
 import { escalate } from './escalate';
+import { refreshMainEmail, refreshPersonEmail } from './email-refresh';
 import { istDay } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
@@ -63,6 +64,13 @@ export async function tidyContacts(db: Db, scope: Scope = {}): Promise<number[]>
   return promoteBetterContacts(db, scope);
 }
 
+/** An email refresh never stops a contact check. */
+async function safely(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch {}
+}
+
 /** Others checked per company per pass: the best-ranked ones, the people the team would switch to. */
 const OTHERS_PER_LEAD = 4;
 
@@ -78,6 +86,8 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
   const icp = icpFor(lead.segment, icpRows);
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
+  // Apollo for the best-ranked others confirmed now (the main contact has its own lookup).
+  const emailBudget = { left: Math.max(0, svc.settings.apolloPerCompany - 1) };
   for (const p of next) {
     // A failed search leaves them unchecked, so the next pass tries again.
     let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
@@ -102,6 +112,8 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
       .update(people)
       .set({ checkedAt: now, ...(profile?.location ? { location: profile.location } : {}), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
       .where(eq(people.id, p.id));
+    // Confirmed at the company: an inferred or unconfirmed email may be upgraded (never a team's or verified one).
+    await safely(() => refreshPersonEmail(db, svc, lead, { ...p, linkedin: p.linkedin || profile!.url }, emailBudget));
   }
   if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}${lead.city ? ` ${lead.city}` : ''} (left, or based elsewhere): ${gone.join('; ')}`);
 }
@@ -135,14 +147,19 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   }
   if (!lead.contactName || !svc.keys.serper) return 'skipped';
   if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
-  // The sales team's own contact is theirs to vouch for.
+  const emailBudget = { left: svc.settings.apolloPerCompany };
+  // The sales team's own contact is theirs to vouch for (their email too: only a conflict is flagged).
   if (await contactFromTeam(db, lead)) {
     if (!lead.contactVerifiedAt) await db.update(leads).set({ contactVerifiedAt: now }).where(eq(leads.id, lead.id));
+    await safely(() => refreshMainEmail(db, svc, lead, emailBudget));
     return 'confirmed';
   }
   // Confirmed recently (during research, say): only the others needed it. A contact never confirmed
   // is always checked; being looked at before isn't the same as being confirmed.
-  if (lead.contactVerifiedAt && lead.contactVerifiedAt > staleBefore(now)) return 'confirmed';
+  if (lead.contactVerifiedAt && lead.contactVerifiedAt > staleBefore(now)) {
+    await safely(() => refreshMainEmail(db, svc, lead, emailBudget));
+    return 'confirmed';
+  }
   let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
   try {
     profile = await findLinkedinProfile(svc, lead.contactName, lead.company, { title: lead.contactTitle, city: lead.city });
@@ -193,6 +210,8 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
       .where(eq(people.id, p.id));
   }
   if (!lead.contactLinkedin) await logActivity(db, lead.id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
+  // Confirmed at this company and site: an inferred or unconfirmed email may be upgraded from Apollo.
+  await safely(() => refreshMainEmail(db, svc, { ...lead, contactLinkedin: url }, emailBudget));
   if (!retitle) return 'confirmed';
   await logActivity(db, lead.id, 'contact', `Designation updated from LinkedIn: "${profile.title}" (was "${lead.contactTitle || 'blank'}")`);
   if (lead.emailBody) await redraftForContact(db, svc, lead.id);

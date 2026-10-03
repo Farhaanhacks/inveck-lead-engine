@@ -216,14 +216,18 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     }
 
     if (stats.processed === 0) {
-      const credits = await hunterCredits(svc);
-      if (credits.error) await log(`Couldn't read Hunter credits: ${credits.error}`, 'warn');
-      else if (!credits.verificationsLeft || !credits.searchesLeft) {
-        await log(
-          `Hunter has ${credits.searchesLeft} searches and ${credits.verificationsLeft} email checks left${credits.resetDate ? ` (resets ${credits.resetDate})` : ''}. ` +
-            'Until then only emails published on the web can be found; guessed emails can\'t be confirmed.',
-          'warn',
-        );
+      if (!svc.keys.apollo) await log('Apollo is not set up (APOLLO_API_KEY): emails come only from published addresses and the company\'s format.', 'warn');
+      // Hunter is only the mail-server check now.
+      if (svc.keys.hunter) {
+        const credits = await hunterCredits(svc);
+        if (credits.error) await log(`Couldn't read the email verification credits (Hunter): ${credits.error}`, 'warn');
+        else if (!credits.verificationsLeft) {
+          await log(
+            `Email verification (Hunter) has no checks left${credits.resetDate ? ` (resets ${credits.resetDate})` : ''}. ` +
+              'Until then addresses are saved labelled unverified or inferred, never as verified, unless Apollo verified them.',
+            'warn',
+          );
+        }
       }
     }
 
