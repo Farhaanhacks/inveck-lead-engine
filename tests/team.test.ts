@@ -1133,3 +1133,21 @@ describe('NBC Bearings live findings', () => {
     expect(contactPriority('Sr.Manager SCM', DEFAULT_ICPS[0])).toBe(5);
   });
 });
+
+describe('a company is done only when something was really done', () => {
+  it('skipping every step does not count; a real call or message does', async () => {
+    const db = await getDb();
+    const { markCompanyDay, companyProgress } = await import('@/lib/tasks');
+    const day = istDay();
+    const [l] = await db.insert(leads).values(lead('Skipped Co', { ownerId: 1 })).returning();
+    const kinds = ['call', 'whatsapp', 'email', 'linkedin'] as const;
+    const rows = await db.insert(tasks).values(kinds.map((kind) => ({ leadId: l.id, ownerId: 1, kind, title: kind, dueDate: day }))).returning();
+    await db.update(tasks).set({ doneAt: new Date(), outcome: 'skipped' }).where(eq(tasks.leadId, l.id));
+    expect(await markCompanyDay(db, l.id, 1, day)).toBe(false);
+    expect((await companyProgress(db, 1, day)).done).toBe(0);
+    // One step really done (the WhatsApp sent) and the rest skipped: done.
+    await db.update(tasks).set({ outcome: 'sent' }).where(eq(tasks.id, rows[1].id));
+    expect(await markCompanyDay(db, l.id, 1, day)).toBe(true);
+    expect((await companyProgress(db, 1, day)).done).toBe(1);
+  });
+});

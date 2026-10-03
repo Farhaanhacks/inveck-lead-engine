@@ -7,6 +7,8 @@ export const DAILY_LINKEDIN_LIMIT = 50;
 export const MAX_CALL_ATTEMPTS = 5;
 /** Calls each person should attempt in a day. */
 export const DAILY_CALL_TARGET = 25;
+/** Companies each person should complete in a day (every step done). */
+export const DAILY_COMPANY_TARGET = 25;
 export const DAILY_CA_CONNECTED_CALLS = 10;
 /** Inbound leads nobody has touched after this long are flagged. */
 export const UNATTENDED_AFTER_HOURS = 2;
@@ -193,12 +195,24 @@ async function openStepsFor(db: Db, leadId: number, day: string): Promise<number
   return rows.length;
 }
 
+/** Something was really done for the company that day: a call attempted or a message sent (not only skips). */
+async function workedOn(db: Db, leadId: number, day: string): Promise<boolean> {
+  const { start, end } = istDayBounds(day);
+  const [row] = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.leadId, leadId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), notInArray(tasks.outcome, ['skipped', 'closed', ''])))
+    .limit(1);
+  return !!row;
+}
+
 /**
- * Records a company as done for the day once every step due for it is ticked off, and takes it back
- * off when something is undone or a new step for today appears.
+ * Records a company as done for the day once every step due for it is ticked off and at least one was
+ * really done (a call attempted or a message sent: skipping everything doesn't count), and takes it
+ * back off when something is undone or a new step for today appears.
  */
 export async function markCompanyDay(db: Db, leadId: number, ownerId: number, day = istDay()): Promise<boolean> {
-  const finished = (await openStepsFor(db, leadId, day)) === 0;
+  const finished = (await openStepsFor(db, leadId, day)) === 0 && (await workedOn(db, leadId, day));
   if (finished) await db.insert(companyDays).values({ leadId, ownerId, day }).onConflictDoNothing();
   else await db.delete(companyDays).where(and(eq(companyDays.leadId, leadId), eq(companyDays.day, day)));
   return finished;

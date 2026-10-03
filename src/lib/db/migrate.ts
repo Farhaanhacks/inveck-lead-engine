@@ -386,6 +386,15 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET contact_checked_at = NULL WHERE contact_name <> '' AND NOT refetch_pending AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
   `UPDATE people SET checked_at = NULL WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'siteRulesV1')`,
   `INSERT INTO settings (key, value) VALUES ('siteRulesV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
+  // A company whose steps were all skipped was counted as done for the day. Once: such records are
+  // removed (a company is done only when something was really done for it that day).
+  `DELETE FROM company_days cd
+     WHERE NOT EXISTS (
+       SELECT 1 FROM tasks t
+       WHERE t.lead_id = cd.lead_id AND t.done_at IS NOT NULL AND t.outcome NOT IN ('skipped', 'closed', '')
+         AND to_char(t.done_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') = cd.day)
+     AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'skipOnlyDaysV1')`,
+  `INSERT INTO settings (key, value) VALUES ('skipOnlyDaysV1', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`,
   // Callbacks and call-again days planned before every day got the full set: add their WhatsApp and email, once.
   `INSERT INTO tasks (lead_id, owner_id, kind, step, title, due_date, slot)
    SELECT c.lead_id, c.owner_id, k.kind, c.step, c.step || ': ' || k.label, c.due_date, 'day'
