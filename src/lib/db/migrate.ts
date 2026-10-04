@@ -457,4 +457,12 @@ export const SCHEMA_STATEMENTS = [
     value JSONB NOT NULL,
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Emails aren't kept at all (like phone numbers found automatically): every stored address, its
+  // labels and the email lookups cached for reuse are cleared. Nothing can store one again, so this
+  // only ever changes anything once.
+  `UPDATE leads SET contact_email = '', email_status = '', email_source = '', email_verification = '', email_provider_status = '', email_retrieved_at = NULL
+    WHERE contact_email <> '' OR email_status <> '' OR email_source <> '' OR email_retrieved_at IS NOT NULL`,
+  `UPDATE people SET email = '', email_status = '', email_source = '', email_verification = '', email_provider_status = '', email_retrieved_at = NULL
+    WHERE email <> '' OR email_status <> '' OR email_source <> '' OR email_retrieved_at IS NOT NULL`,
+  `DELETE FROM enrichment_cache WHERE key LIKE 'apollo:%' OR key LIKE 'prospeo:%'`,
 ];

@@ -16,10 +16,10 @@ export function teamEmail(email: string) {
     : { emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null };
 }
 
-/** The contact fields of a submitted form. */
+/** The contact fields of a submitted form. Emails aren't kept at all (no field anywhere), so always empty. */
 export function contactFields(form: FormData): ContactEdit {
   const get = (k: string) => String(form.get(k) ?? '');
-  return { contactName: get('contactName'), contactTitle: get('contactTitle'), contactPhone: get('contactPhone'), contactEmail: get('contactEmail'), contactLinkedin: get('contactLinkedin') };
+  return { contactName: get('contactName'), contactTitle: get('contactTitle'), contactPhone: get('contactPhone'), contactEmail: '', contactLinkedin: get('contactLinkedin') };
 }
 
 /** The point of contact as typed: trimmed, cut to size, email in lower case. Null when the email isn't one. */

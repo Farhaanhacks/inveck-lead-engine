@@ -1380,3 +1380,20 @@ describe('Micron Sanand: staff of a site in a metro belt, under the brand they w
     expect(atOtherSite(byName['Hemanth kumar vemana'], 'Sanand')).toBe(true);
   });
 });
+
+describe('emails are not kept anywhere', () => {
+  it('clears every stored email and its labels, and no tracker column shows one', async () => {
+    const db = await getDb();
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const { people } = await import('@/lib/db/schema');
+    const { TRACKER_HEADERS } = await import('@/lib/tracker');
+    const { sql } = await import('drizzle-orm');
+    const [l] = await db.insert(leads).values(lead('Mojj Engineering', { contactEmail: 'dhirendra@mojj.in', emailStatus: 'Prospeo (verified)', emailSource: 'prospeo', emailRetrievedAt: new Date() })).returning();
+    await db.insert(people).values({ leadId: l.id, name: 'Dhirendra Oke', email: 'dhirendra@mojj.in', emailStatus: 'inferred', emailSource: 'inferred', isPrimary: true });
+    for (const s of SCHEMA_STATEMENTS.filter((s) => /SET contact_email = ''|SET email = ''/.test(s))) await db.execute(sql.raw(s));
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ contactEmail: '', emailStatus: '', emailSource: '', emailRetrievedAt: null, contactName: 'Ravi Shah' });
+    expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0]).toMatchObject({ email: '', emailStatus: '', emailSource: '', name: 'Dhirendra Oke' });
+    expect(TRACKER_HEADERS.some((h) => /email id/i.test(h))).toBe(false);
+  });
+});

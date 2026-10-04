@@ -70,9 +70,6 @@ function FollowUpCard({ lead }: { lead: Lead }) {
   }
   const due = lead.nextFollowUpAt;
   const overdue = !!due && isPast(due);
-  const mailto = lead.contactEmail && lead.followUpBody
-    ? `mailto:${lead.contactEmail}?subject=${encodeURIComponent(lead.followUpSubject)}&body=${encodeURIComponent(lead.followUpBody)}`
-    : '';
   return (
     <Section
       title={`Follow-up ${step} of ${total}`}
@@ -103,7 +100,6 @@ function FollowUpCard({ lead }: { lead: Lead }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <SubmitButton pendingText="Saving…">Mark follow-up {step} as sent</SubmitButton>
-            {mailto && <a href={mailto} className="btn-secondary">Open in email app</a>}
             <button name="skip" value="1" className="btn-secondary">Skip</button>
           </div>
           <p className="text-xs text-muted">Send it as a reply to your first email, then mark it as sent. The next follow-up is scheduled automatically.</p>
@@ -281,14 +277,13 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
           <h2 className="text-sm font-semibold">People to contact at {company}</h2>
           <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people a LinkedIn profile confirms at this company now; the main contact also at this site.</p>
         </div>
-        <span className="text-xs text-muted">{list.length} found · {list.filter((p) => p.email).length} with email</span>
+        <span className="text-xs text-muted">{list.length} found</span>
       </div>
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="text-left text-xs text-muted">
               <th className="px-5 py-2 font-medium">Name</th>
-              <th className="px-2 py-2 font-medium">Email</th>
               <th className="px-2 py-2 font-medium">LinkedIn</th>
               <th className="px-2 py-2 font-medium">Found via</th>
               <th className="px-5 py-2"><span className="sr-only">Action</span></th>
@@ -311,10 +306,6 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                   {(p.location || city) && (
                     <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location || 'Location not confirmed'}</div>
                   )}
-                </td>
-                <td className="px-2 py-2.5">
-                  {p.email ? <a href={`mailto:${p.email}`} className="hover:underline">{p.email}</a> : <span className="text-muted">—</span>}
-                  {p.emailStatus && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.emailStatus}>{p.emailStatus}</div>}
                 </td>
                 <td className="px-2 py-2.5">
                   {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
@@ -373,9 +364,6 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   );
   const inSequence = lead.status === 'Contacted';
 
-  const mailto = lead.contactEmail
-    ? `mailto:${lead.contactEmail}?subject=${encodeURIComponent(lead.emailSubject)}&body=${encodeURIComponent(lead.emailBody)}`
-    : '';
   const hasDraft = !!(lead.emailSubject || lead.emailBody || lead.linkedinMessage);
 
   return (
@@ -476,11 +464,6 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
         <div className="space-y-6 lg:col-span-3">
           <Section
             title="Outreach draft"
-            aside={
-              mailto && (
-                <a href={mailto} className="btn-secondary px-2.5 py-1 text-xs">Open in email app</a>
-              )
-            }
           >
             {!hasDraft && <p className="mb-3 text-sm text-muted">No draft yet. Drafts are written once the company is a confirmed fit, even before a contact is found.</p>}
             <div className="space-y-3">
@@ -530,7 +513,6 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
                 [
                   ['contactName', 'Name', lead.contactName],
                   ['contactTitle', 'Title', lead.contactTitle],
-                  ['contactEmail', 'Email', lead.contactEmail],
                   ['contactPhone', 'Phone (if the team found one)', lead.contactPhone],
                   ['contactLinkedin', 'LinkedIn URL', lead.contactLinkedin],
                 ] as const
@@ -541,7 +523,6 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
                 </div>
               ))}
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-                {lead.contactEmail && lead.emailStatus && <span>Email: {lead.emailStatus}</span>}
                 {lead.contactLinkedin && (
                   <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open LinkedIn profile</a>
                 )}

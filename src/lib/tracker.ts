@@ -109,13 +109,13 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       pointOfContact: lead.contactChannel || channelFromLog(lead, mine),
       autoChannel: channelFromLog(lead, mine),
       // Logged sends fill these in until someone picks an outcome by hand.
-      mailOutcome: lead.mailOutcome || (emailed.has(lead.id) || lead.sentAt ? 'Sent' : lead.contactEmail ? 'Not sent' : ''),
+      mailOutcome: lead.mailOutcome || (emailed.has(lead.id) || lead.sentAt ? 'Sent' : ''),
       linkedinOutcome: lead.linkedinOutcome || (linked.has(lead.id) ? 'Request sent' : lead.contactLinkedin ? 'Not sent' : 'Not on LinkedIn'),
     };
   });
 }
 
-/** The sheet's columns, in the team's order, with the email and LinkedIn outcomes added. */
+/** The sheet's columns, in the team's order, with the mail and LinkedIn outcomes added (no email address: emails aren't kept). */
 export const TRACKER_HEADERS = [
   'Company Name',
   'Company Location',
@@ -129,7 +129,6 @@ export const TRACKER_HEADERS = [
   'Call Remark',
   'Calls logged',
   'Call Date',
-  'Client Email ID',
   'Mail Outcome',
   'LinkedIn Outreach Outcome',
   'Lead_Status',
@@ -157,7 +156,6 @@ export function trackerCells(r: TrackerRow): string[] {
     r.callRemark,
     r.callsDone ? `${r.callsDone} ${r.callsDone === 1 ? 'call' : 'calls'} logged` : 'No calls yet',
     day(r.lastCallAt),
-    l.contactEmail,
     r.mailOutcome,
     r.linkedinOutcome,
     l.status,

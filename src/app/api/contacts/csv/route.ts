@@ -18,8 +18,8 @@ export async function GET() {
     .where(owner === null ? undefined : eq(leads.ownerId, owner))
     .orderBy(asc(leads.company), asc(people.id));
   const csv = toCsv([
-    ['Name', 'Title', 'Company', 'Website', 'Email', 'Email status', 'Phone', 'LinkedIn', 'Found via', 'Main contact', 'Lead status'],
-    ...rows.map(({ p, company, website, status }) => [p.name, p.title, company, website, p.email, p.emailStatus, p.phone, p.linkedin, p.source, p.isPrimary ? 'Yes' : '', status]),
+    ['Name', 'Title', 'Company', 'Website', 'Phone', 'LinkedIn', 'Found via', 'Main contact', 'Lead status'],
+    ...rows.map(({ p, company, website, status }) => [p.name, p.title, company, website, p.phone, p.linkedin, p.source, p.isPrimary ? 'Yes' : '', status]),
   ]);
   return new Response('﻿' + csv, {
     headers: {

@@ -53,7 +53,6 @@ export function AddLeadRow({ segments, columns, showOwner }: { segments: string[
       <td className={td}>{f('contactTitle', 'Designation', 'Client designation')}</td>
       <td className={td} />
       <td className={td}>{f('contactPhone', 'Number', 'Client contact number')}</td>
-      <td className={td}>{f('contactEmail', 'Email', 'Client email')}</td>
       <td className={td} colSpan={9}>
         <div className="flex flex-wrap items-center gap-2">
           <button form="tracker-add" className="btn-primary px-2.5 py-1 text-xs">Save lead</button>

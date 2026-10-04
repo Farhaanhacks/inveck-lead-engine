@@ -23,7 +23,6 @@ export default async function PipelinePage() {
     stage: l.status as Card['stage'],
     contact: [l.contactName, l.contactTitle].filter(Boolean).join(' · '),
     score: l.finalScore,
-    email: !!l.contactEmail,
     followUp:
       l.status === 'Contacted' && l.nextFollowUpAt
         ? { due: isPast(l.nextFollowUpAt), label: `Follow-up ${l.followUpStep + 1} ${isPast(l.nextFollowUpAt) ? 'due' : relativeDays(l.nextFollowUpAt)}` }

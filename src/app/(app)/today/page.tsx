@@ -74,7 +74,6 @@ function Reach({ lead }: { lead: Lead }) {
       {lead.contactPhone && (
         <a href={`tel:${lead.contactPhone.replace(/[^\d+]/g, '')}`} className="font-medium text-accent hover:underline">{lead.contactPhone}</a>
       )}
-      {lead.contactEmail ? <span className="text-ink-2">{lead.contactEmail}</span> : <span className="text-muted">No email yet</span>}
       {lead.contactLinkedin && <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn profile</a>}
     </div>
   );
@@ -192,9 +191,6 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
         {!readOnly && askPhone && !finding && !lead.contactPhone && (
           <FoundDetail leadId={lead.id} field="contactPhone" label="Found the number? Save it" placeholder="+91 98xxx xxxxx" type="tel" />
         )}
-        {!readOnly && task.kind === 'email' && !lead.contactEmail && (
-          <FoundDetail leadId={lead.id} field="contactEmail" label="Found the email? Save it" placeholder="name@company.com" type="email" />
-        )}
         {!readOnly && task.kind === 'linkedin' && !lead.contactLinkedin && (
           <FoundDetail
             leadId={lead.id}
@@ -245,7 +241,6 @@ const CONTACT_FIELDS: [name: keyof Lead, label: string, type?: string][] = [
   ['contactName', 'Name'],
   ['contactTitle', 'Designation'],
   ['contactPhone', 'Contact number', 'tel'],
-  ['contactEmail', 'Email', 'email'],
   ['contactLinkedin', 'LinkedIn URL', 'url'],
 ];
 
@@ -275,7 +270,7 @@ function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
               <label htmlFor={`switch-${lead.id}`} className="label">Or switch to someone else found at {lead.company}</label>
               <select id={`switch-${lead.id}`} name="personId" className="field">
                 {others.map((p) => (
-                  <option key={p.id} value={p.id}>{[p.name, p.title, p.email].filter(Boolean).join(' · ')}</option>
+                  <option key={p.id} value={p.id}>{[p.name, p.title].filter(Boolean).join(' · ')}</option>
                 ))}
               </select>
             </div>
@@ -372,9 +367,8 @@ function CompanyCard({
                     <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                       <span className="font-medium text-ink">{p.name}</span>
                       {p.title && <span className="text-muted">{p.title}</span>}
-                      {p.email && <a href={`mailto:${p.email}`} className="text-ink-2 hover:underline">{p.email}</a>}
                       {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
-                      {!p.email && !p.linkedin && <span className="text-muted">no details yet</span>}
+                      {!p.linkedin && <span className="text-muted">no details yet</span>}
                       {!readOnly && (
                         <form action={makePrimaryAction}>
                           <input type="hidden" name="id" value={lead.id} />

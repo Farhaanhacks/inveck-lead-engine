@@ -96,7 +96,6 @@ export function TrackerTable({
             <th className={th}>Designation</th>
             <th className={th}>Point of Contact</th>
             <th className={th}>Contact Number</th>
-            <th className={th}>Email ID</th>
             <th className={th}>Call Status</th>
             <th className={th}>Call Outcome / Feedback</th>
             <th className={th}>Call Remark</th>
@@ -139,7 +138,6 @@ export function TrackerTable({
                 />
               </td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.phone}</td>
-              <td className={td}>{r.cells.email}</td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callStatus}</td>
               <td className={`${td} p-1`}><Choice id={r.id} field="callFeedback" value={r.callFeedback} options={options.callFeedback} label={`${r.cells.company}: call outcome`} /></td>
               <td className={`${td} p-1`}><Remark id={r.id} field="callRemark" value={r.cells.callRemark} placeholder="Add a call remark" label={`${r.cells.company}: call remark`} /></td>

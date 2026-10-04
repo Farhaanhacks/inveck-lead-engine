@@ -50,7 +50,6 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
               [
                 ['contactName', 'Name'],
                 ['contactTitle', 'Title'],
-                ['contactEmail', 'Email'],
                 ['contactPhone', 'Phone'],
               ] as const
             ).map(([name, label]) => (

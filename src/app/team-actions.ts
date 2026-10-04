@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, unansweredCalls, type Escalation } from '@/lib/escalate';
-import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
+import { contactFields, saveContactEdit } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
@@ -371,26 +371,21 @@ export async function drawNowAction() {
   for (const p of ['/team', '/today', '/tracker', '/leads']) revalidatePath(p);
 }
 
-const QUICK_FIELDS = { contactPhone: 'number', contactEmail: 'email', contactLinkedin: 'LinkedIn' } as const;
+const QUICK_FIELDS = { contactPhone: 'number', contactLinkedin: 'LinkedIn' } as const;
 
-/** Saves a number, email or LinkedIn link the team member found themselves, straight from a Today row. */
+/** Saves a number or LinkedIn link the team member found themselves, straight from a Today row. */
 export async function saveFoundDetailAction(form: FormData) {
   const id = Number(str(form, 'id'));
   const field = str(form, 'field') as keyof typeof QUICK_FIELDS;
   if (!(field in QUICK_FIELDS) || !(await mayActOn(id))) return;
   let value = str(form, 'value').slice(0, field === 'contactLinkedin' ? 300 : 200);
-  if (field === 'contactEmail') {
-    value = value.toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return;
-  }
   if (field === 'contactPhone' && value.replace(/\D/g, '').length < 6) return;
   if (field === 'contactLinkedin' && !/^https?:\/\//i.test(value)) value = `https://${value}`;
   if (!value) return;
   const db = await getDb();
-  const extra = field === 'contactEmail' ? teamEmail(value) : {};
-  await db.update(leads).set({ [field]: value, ...extra, updatedAt: new Date() }).where(eq(leads.id, id));
-  const personField = { contactPhone: 'phone', contactEmail: 'email', contactLinkedin: 'linkedin' } as const;
-  await db.update(people).set({ [personField[field]]: value, ...extra }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+  await db.update(leads).set({ [field]: value, updatedAt: new Date() }).where(eq(leads.id, id));
+  const personField = { contactPhone: 'phone', contactLinkedin: 'linkedin' } as const;
+  await db.update(people).set({ [personField[field]]: value }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
   await logActivity(db, id, 'contact', `Point of contact's ${QUICK_FIELDS[field]} added by the team: ${value}`);
   revalidatePath('/today');
   revalidatePath('/tracker');

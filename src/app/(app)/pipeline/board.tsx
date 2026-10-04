@@ -10,7 +10,6 @@ export type Card = {
   stage: PipelineStage;
   contact: string;
   score: number | null;
-  email: boolean;
   followUp: { due: boolean; label: string } | null;
 };
 
@@ -100,7 +99,7 @@ export function Board({ cards }: { cards: Card[] }) {
                     {c.contact && <p className="mt-0.5 truncate text-xs text-ink-2" title={c.contact}>{c.contact}</p>}
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <span className={`text-xs ${c.followUp?.due ? 'font-medium text-warning-ink' : 'text-muted'}`}>
-                        {c.followUp?.label ?? (c.email ? 'Email found' : 'LinkedIn only')}
+                        {c.followUp?.label ?? ''}
                       </span>
                       <label className="sr-only" htmlFor={`move-${c.id}`}>Move {c.company} to</label>
                       <select

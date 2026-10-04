@@ -160,7 +160,6 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     source: inbound ? 'Inbound lead' : 'Added by hand',
     contactName: str(form, 'contactName'),
     contactTitle: str(form, 'contactTitle'),
-    contactEmail: str(form, 'contactEmail'),
     contactPhone: str(form, 'contactPhone'),
     contactLinkedin: str(form, 'contactLinkedin'),
   }).returning({ id: leads.id });
