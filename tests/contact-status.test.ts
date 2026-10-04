@@ -61,4 +61,17 @@ describe('the status follows the contact after every change', () => {
     const l2 = await addLead({ contactName: 'Nobody Reachable', contactVerifiedAt: new Date() });
     expect(await reconcileContactStatus(db, l2.id)).toBeNull();
   });
+
+  it('never moves a lead already in outreach: Contacted, Replied, Meeting Booked and Won keep their stage', async () => {
+    for (const status of ['Contacted', 'Replied', 'Meeting Booked', 'Won'] as const) {
+      const l = await addLead({ status, contactName: 'Karthik R', contactLinkedin: 'https://in.linkedin.com/in/karthik-r', contactVerifiedAt: new Date() });
+      await saveContactEdit(db, l.id, edit({ contactName: 'Someone New', contactTitle: 'Plant Head', contactLinkedin: 'https://in.linkedin.com/in/someone-new' }));
+      expect(await statusOf(l.id)).toBe(status);
+      await saveContactEdit(db, l.id, edit({}));
+      expect(await statusOf(l.id)).toBe(status);
+      const [p] = await db.insert(people).values({ leadId: l.id, name: 'Third Person', title: 'Plant Head', linkedin: 'https://in.linkedin.com/in/third', source: 'LinkedIn', location: 'Hosur', checkedAt: new Date() }).returning();
+      await makePrimary(db, p.id, { byTeam: true });
+      expect(await statusOf(l.id)).toBe(status);
+    }
+  });
 });

@@ -597,6 +597,24 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(r.otherDecisionMakers).toContain("Contact picked by INVECK's ranking alone");
   });
 
+  it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
+    const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
+    const results = [
+      { title: 'Asha R - HR Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · HR Manager · Hosur Gears', link: 'https://in.linkedin.com/in/asha-r', snippet: '' },
+      { title: 'Vikram P - Plant Head - Hosur Gears', subtitle: 'Chennai, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/vikram-p', snippet: '' },
+      { title: 'Divya N - Plant Head', subtitle: '', link: 'https://in.linkedin.com/in/divya-n', snippet: 'Plant Head. Hosur Gears. Jan 2015 - Dec 2022 8 years. Hosur, Tamil Nadu, India' },
+      { title: 'Meena S - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', link: 'https://in.linkedin.com/in/meena-s', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present. Hosur, Tamil Nadu, India' },
+    ];
+    const r = await run(lead, { contactAiDown: true, research: (user) => kltAnswer(user, { risks: [] }), google: (q) => (q.startsWith('site:linkedin.com/in') ? results : []) });
+    // HR (role), Chennai (site), left in 2022 (employer), two current jobs (unverified): nobody is the main contact.
+    expect(r.contactName ?? '').toBe('');
+    expect(r.status).toBe('Needs Manual Contact');
+    const meena = r.people?.find((p) => p.name === 'Meena S');
+    expect(meena).toMatchObject({ isPrimary: false, passedReason: 'unverified' });
+    expect(meena?.whyNot).toContain('needs verification');
+    expect(r.people?.some((p) => p.name === 'Divya N')).toBe(false);
+  });
+
   it('research again that finds nobody clears the earlier (non-team) contact instead of leaving it showing', async () => {
     const lead = await klt({
       company: 'Hosur Gears',

@@ -310,14 +310,39 @@ describe('search evidence is read in full before deciding (contact pipeline revi
     expect(people[0].location).toBe('Hosur, Tamil Nadu, India');
   });
 
-  it('a dated current job here outranks an undated line naming another company', async () => {
+  it('a "Present" job here contradicted by another current job is kept for verification, never taken as fact', async () => {
     const r = { title: 'Meena S - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', link: 'https://in.linkedin.com/in/meena-s', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present 1 year 9 months. Hosur, Tamil Nadu, India' };
     const { people } = await searchLinkedIn(services(seen, () => [r]), 'q', company);
     expect(people.map((p) => [p.name, p.title])).toEqual([['Meena S', 'Plant Head']]);
-    expect(people[0].evidence).toContain('the undated line under the result names Lean Partners');
-    // Without the dated job here, the other company's line still means elsewhere.
-    const old = { ...r, snippet: '' };
-    expect((await searchLinkedIn(services(seen, () => [old]), 'q', company)).people).toEqual([]);
+    expect(people[0].conflict).toContain('LinkedIn shows two current jobs: Plant Head at Hosur Gears Pvt Ltd, and Consultant at Lean Partners; needs verification');
+    // Two dated current jobs contradict each other the same way.
+    const two = { ...r, subtitle: '', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present · Director. Lean Partners. Mar 2024 - Present' };
+    expect((await searchLinkedIn(services(seen, () => [two]), 'q', company)).people[0].conflict).toContain('needs verification');
+    // Looked up by name, the contradiction is not a confirmation.
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const found = await findLinkedinProfile(services(seen, () => [r]), 'Meena S', company, { city: 'Hosur' });
+    expect(found).toMatchObject({ employer: 'unknown' });
+    expect(found?.evidence).toContain('needs verification');
+    // With nothing contradicting it, a dated current job here is the job.
+    const plain = { ...r, subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears' };
+    expect((await searchLinkedIn(services(seen, () => [plain]), 'q', company)).people[0].conflict).toBeUndefined();
+    // Without the dated job here, the other company's line means elsewhere.
+    expect((await searchLinkedIn(services(seen, () => [{ ...r, snippet: '' }]), 'q', company)).people).toEqual([]);
+  });
+
+  it('results are combined by LinkedIn address, never by name; and a former job\'s city is never taken as where the job is', async () => {
+    const a = { title: 'Ravi Kumar - Plant Head - Hosur Gears', subtitle: 'India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/ravi-kumar', snippet: '' };
+    const namesake = { title: 'Ravi Kumar - Stores Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Stores Manager · Hosur Gears', link: 'https://in.linkedin.com/in/ravi-kumar-2', snippet: '' };
+    const { people } = await searchLinkedIn(services(seen, () => [a, namesake]), 'q', company);
+    expect(people.map((p) => [p.linkedin, p.location])).toEqual([
+      ['https://in.linkedin.com/in/ravi-kumar', 'India'],
+      ['https://in.linkedin.com/in/ravi-kumar-2', 'Hosur, Tamil Nadu, India'],
+    ]);
+    // A job here that ended, in Hosur; the current one elsewhere: no Hosur job location, not at the site.
+    const moved = { title: 'Divya N - Plant Head', subtitle: '', link: 'https://in.linkedin.com/in/divya-n', snippet: 'Plant Head. Hosur Gears. Jan 2015 - Dec 2022 8 years. Hosur, Tamil Nadu, India · Plant Head. Other Gears. Jan 2023 - Present. Pune, Maharashtra, India' };
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const found = await findLinkedinProfile(services(seen, () => [moved]), 'Divya N', company, { city: 'Hosur' });
+    expect(found).toMatchObject({ employer: 'elsewhere', jobLocation: '' });
   });
 
   it('keeps searching while the only person at the site is not eligible (HR), within a budget of two more searches', async () => {

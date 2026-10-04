@@ -368,6 +368,15 @@ export async function processLead(
     p.whyNot = why;
   }
   update.people.push(...setAside);
+  // Contradictory current jobs on a profile: never confirmed from the search alone. They stay set
+  // aside for verification (checked on LinkedIn again weekly), whatever else applied to them.
+  for (const p of update.people) {
+    const conflict = linkedin.people.find((c) => sameName(c.name, p.name))?.conflict;
+    if (!conflict || p.isPrimary) continue;
+    p.passedAt = now;
+    p.passedReason = 'unverified';
+    p.whyNot = conflict;
+  }
 
   // Never wipe contact details the sales team typed in. A person chosen now gets their own email
   // (or none): never the previous contact's.

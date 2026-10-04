@@ -29,6 +29,11 @@ export type Candidate = {
   responsibility?: string;
   /** What showed they work here, and whether it was dated ("LinkedIn (via Google, undated): …"). */
   evidence?: string;
+  /**
+   * Contradictory current jobs (a "Present" job here, and another current job elsewhere): kept, but
+   * never made the main contact until verified; what the contradiction is.
+   */
+  conflict?: string;
 };
 
 export type ManualContact = { name: string; title: string; email: string; phone: string; linkedin: string };
@@ -128,6 +133,7 @@ export function mergeSameProfile<T extends FoundPerson>(list: T[]): T[] {
     if (!best.responsibility && other.responsibility) best.responsibility = other.responsibility;
     if (!best.title && other.title) best.title = other.title;
     best.abroad = best.abroad && other.abroad;
+    if (!best.conflict && other.conflict) best.conflict = other.conflict;
     byKey.set(key, best);
   }
   return [...byKey.values()];
@@ -183,9 +189,14 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       const currentElsewhere = dated.find((j) => j.current && !sameFirm(j.company, company));
       const endedHere = here.length > 0 && !now;
       let evidence = '';
+      let conflict = '';
       if (now) {
         employer = 'here';
-        evidence = `LinkedIn (via Google): ${cleanTitle(now.role)} at ${now.company}, current${elsewhereLine ? ` (the undated line under the result names ${subtitleJobAny!.company})` : ''}`;
+        evidence = `LinkedIn (via Google): ${cleanTitle(now.role)} at ${now.company}, current`;
+        // A "Present" entry in a search snippet may be an old copy: when the same profile also shows a
+        // current job somewhere else, neither is taken as fact. Kept for verification, never confirmed.
+        const otherNow = currentElsewhere ? `${currentElsewhere.role} at ${currentElsewhere.company}` : elsewhereLine ? `${cleanTitle(subtitleJobAny!.role)} at ${subtitleJobAny!.company}` : '';
+        if (otherNow) conflict = `LinkedIn shows two current jobs: ${cleanTitle(now.role)} at ${now.company}, and ${otherNow}; needs verification`;
       } else if (currentElsewhere) {
         employer = 'elsewhere';
         evidence = `LinkedIn (via Google): now ${currentElsewhere.role} at ${currentElsewhere.company}`;
@@ -203,7 +214,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       // entry, and the site their title names.
       const jobLocation = now?.location ?? '';
       const responsibility = placeNamedIn(`${person.title} ${job?.role ?? ''}`);
-      return { ...person, employer, evidence, jobLocation, responsibility };
+      return { ...person, employer, evidence, jobLocation, responsibility, ...(conflict ? { conflict } : {}) };
     })
     // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) aren't wanted;
     // people based abroad on www. profiles are flagged `abroad`.
@@ -445,12 +456,13 @@ export async function findLinkedinProfile(
     return {
       url: pick.linkedin,
       title: pick.title,
-      employer: pick.employer,
+      // Contradictory current jobs: found, but not confirmed here (the reason is shown).
+      employer: pick.conflict ? ('unknown' as const) : pick.employer,
       abroad: pick.abroad,
       location: pick.location ?? '',
       jobLocation: pick.jobLocation ?? '',
       responsibility: pick.responsibility ?? '',
-      evidence: pick.evidence ?? '',
+      evidence: pick.conflict || (pick.evidence ?? ''),
     };
   };
   let failure: unknown = null;
@@ -694,7 +706,8 @@ export async function pickContact(
   const passed = candidates.filter(
     (c) => c.source === 'Sales team' || (contactPriority(c.title, icp) < 99 && (c.source === 'LinkedIn' || vetted.has(c.id)) && !atOtherSite(c, lead.city)),
   );
-  const mainPool = passed.filter((c) => c.source !== 'LinkedIn' || confirmedAtSite(c, lead.city));
+  // The main contact: confirmed at this site, and no contradictory current job on their profile.
+  const mainPool = passed.filter((c) => c.source !== 'LinkedIn' || (confirmedAtSite(c, lead.city) && !c.conflict));
   const manualPick = candidates.find((c) => c.source === 'Sales team');
   let chosen: Candidate | undefined = manualPick ?? rankCandidates(mainPool, icp, lead.city)[0];
   if (!manualPick && aiChosen && chosen && aiChosen !== chosen && mainPool.includes(aiChosen) && candidateRank(aiChosen, icp, lead.city) <= candidateRank(chosen, icp, lead.city)) chosen = aiChosen;
