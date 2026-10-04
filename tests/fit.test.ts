@@ -539,19 +539,23 @@ describe('the company name, checked against its own website (Advance Forgings)',
     expect(seen.research.every((u) => !u.includes('Advanced Forgings'))).toBe(true);
   });
 
-  it('a name a letter off its domain, with nothing on the website to settle it, goes to review before research', async () => {
-    const lead = await addLead({ company: 'Smithe Forge', website: 'smithforge.example', city: 'Pune' });
+  it('a website that shows no name: the spelling its own domain uses is taken, before any research', async () => {
+    const lead = await addLead({ company: 'Smith Forges', website: 'smithforge.example', city: 'Pune' });
     const r = await run(lead, { research: (user) => fitAnswer(user) });
-    expect(r).toMatchObject({ status: 'Needs Review', fitStatus: 'review' });
-    expect(r.fitDecision).toContain("the company name isn't confirmed");
-    expect(seen.research).toEqual([]);
+    expect(r).toMatchObject({ company: 'Smith Forge', nameAsFound: 'Smith Forges' });
+    expect(r.status).not.toBe('Needs Review');
+    expect(seen.research.every((u) => !u.includes('Smith Forges'))).toBe(true);
   });
 
   it('a name its website shows is confirmed; a domain unlike the name is normal', async () => {
     const { checkCompanyName } = await import('@/lib/pipeline/company-name');
     expect(checkCompanyName('Advance Forgings Pvt Ltd', 'advanceforgings.in', 'Title: Advance Forgings').status).toBe('confirmed');
     expect(checkCompanyName('Lumax Auto Technologies', 'lumaxworld.in', 'Title: Lumax World').status).toBe('unchecked');
-    expect(checkCompanyName('Advanced Forgings Pvt. Ltd.', 'advanceforgings.in', 'Title: Home')).toMatchObject({ status: 'mismatch' });
+    // The live site shows no name: the domain decides the spelling.
+    expect(checkCompanyName('Advanced Forgings Pvt. Ltd.', 'advanceforgings.in', 'Title: Home')).toMatchObject({ status: 'corrected', name: 'Advance Forgings Pvt. Ltd.' });
+    expect(checkCompanyName('ADVANCED FORGINGS', 'advanceforgings.in', '')).toMatchObject({ status: 'corrected', name: 'ADVANCE FORGINGS' });
+    // A brand spelled its own way in its domain is not a typo in the name.
+    expect(checkCompanyName('Finder Co', 'findr.in', '').name).toBe('Finder Co');
   });
 });
 

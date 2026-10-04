@@ -50,6 +50,32 @@ function namesOnPage(text: string): string[] {
   return out;
 }
 
+/**
+ * The name respelled to match its domain, when the domain is the name with one word a letter or two
+ * different: "Advanced Forgings Pvt. Ltd." at advanceforgings.in gives "Advance Forgings Pvt. Ltd.".
+ * The domain is the company's own, so its spelling is the one to use. '' when no single word explains it.
+ */
+export function respellToDomain(given: string, label: string): string {
+  const tokens = given.split(/(\s+)/);
+  const words = tokens.map((t, i) => ({ t, i, key: nameKey(t) })).filter((w) => w.key);
+  for (let k = 0; k < words.length; k++) {
+    const before = words.slice(0, k).map((w) => w.key).join('');
+    const after = words.slice(k + 1).map((w) => w.key).join('');
+    if (!label.startsWith(before) || !label.endsWith(after) || label.length < before.length + after.length + 2) continue;
+    const middle = label.slice(before.length, label.length - after.length);
+    const word = words[k];
+    // Only an ending added or dropped ("advanced" / "advance", "forging" / "forgings"): a brand's own
+    // spelling inside a word ("findr" for Finder) is deliberate, not a typo.
+    if (middle === word.key || editDistance(middle, word.key) > 2 || !(middle.startsWith(word.key) || word.key.startsWith(middle))) continue;
+    // Keep how the word was written: capitalised, or in capitals.
+    const cased = word.t === word.t.toUpperCase() ? middle.toUpperCase() : word.t[0] === word.t[0].toUpperCase() ? middle[0].toUpperCase() + middle.slice(1) : middle;
+    const out = [...tokens];
+    out[word.i] = cased;
+    return out.join('');
+  }
+  return '';
+}
+
 export type NameCheck =
   | { status: 'confirmed'; name: string; evidence: string }
   | { status: 'corrected'; name: string; evidence: string }
@@ -83,6 +109,10 @@ export function checkCompanyName(given: string, domain: string, pageText: string
     const name = registered ?? `${official}${suffix && !/\b(ltd|limited|llp)\b/i.test(official) ? suffix : ''}`;
     return { status: 'corrected', name, evidence: `its website names it "${registered ?? official}"${nameKey(official) === label ? `, as its domain ${domain} does` : ''}` };
   }
+  // No name on the website settles it, but the domain is the name with one word spelled differently:
+  // the company's own domain decides the spelling.
+  const respelled = label && nearly(key, label) ? respellToDomain(given, label) : '';
+  if (respelled) return { status: 'corrected', name: respelled, evidence: `spelled as its own domain, ${domain}, spells it` };
   if (label && nearly(key, label)) {
     return { status: 'mismatch', name: given, evidence: `"${given}" is a letter or two off its domain, ${domain}, and its website doesn't show which spelling is right` };
   }
