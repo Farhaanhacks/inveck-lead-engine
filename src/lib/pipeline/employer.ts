@@ -190,13 +190,16 @@ export function nameIsTheCompany(name: string, company: string): boolean {
   return words(name).slice(1).some((w) => firm.includes(w));
 }
 
-export type SnippetRole = { role: string; company: string; current: boolean };
+/** `location`: where that job is, when the entry names it ("… Jan 2010 - Present · 14 yrs. Coimbatore, Tamil Nadu, India"). */
+export type SnippetRole = { role: string; company: string; current: boolean; location?: string };
 
 const DATE = String.raw`(?:[A-Z][a-z]{2,8}\s)?\d{4}`;
 // The company may hold a dot inside it ("Godamwale.com"), never one followed by a space.
 const ROLE_LINE = new RegExp(String.raw`([A-Za-z][^.|·]{1,70}?)\.\s+((?:[^.|·]|\.(?=\S)){2,80}?)\.?,?\s+(${DATE})\s*[-–]\s*(Present|${DATE})`, 'g');
 /** About-section prose ("My career spans roles including Regional Head at X") isn't a current job. */
 const PROSE = /\b(my|i|career|including|included|roles|spans|years|worked|previously|formerly|former|was|were|have|has|had|experience|journey|from|served|as)\b/i;
+/** After a job's dates: its length ("14 yrs 9 mos"), then the place it is at, up to the end of the entry. */
+const JOB_PLACE = /^[\s.,·]*(?:\(?\s*(?:\d+\s*(?:yrs?|years?|mos?|months?)\s*)+\)?[\s.,·]*)?([A-Z][A-Za-z ]{2,40}(?:,\s*[A-Z][A-Za-z ]{2,30}){0,2})(?=\s*(?:[.·|]|$))/;
 const HEADLINE = /([A-Za-z][^·|.]{2,60}?)\s*(?:-?@|\bat\b)\s*([^·|.,]{2,60})/;
 
 /**
@@ -209,7 +212,12 @@ export function snippetRoles(snippet: string): SnippetRole[] {
   const out: SnippetRole[] = [];
   for (const m of text.matchAll(ROLE_LINE)) {
     const role = m[1].replace(/^(experience|present)\s*/i, '').trim();
-    if (role && !/^experience$/i.test(role)) out.push({ role, company: m[2].trim(), current: /present/i.test(m[4]) });
+    if (!role || /^experience$/i.test(role)) continue;
+    // The entry's own place, after its dates and length: the location of that job, not of the profile.
+    const after = text.slice((m.index ?? 0) + m[0].length);
+    const at = JOB_PLACE.exec(after)?.[1]?.trim() ?? '';
+    const location = at && INDIA_PLACES.test(at) && !ROLE.test(at) ? at : '';
+    out.push({ role, company: m[2].trim(), current: /present/i.test(m[4]), ...(location ? { location } : {}) });
   }
   const h = HEADLINE.exec(snippet.split(/\s*[·|]\s*/).find((p) => /-?@|\bat\b/.test(p)) ?? '');
   const role = h ? h[1].replace(/^.*?·\s*/, '').trim() : '';
@@ -236,6 +244,18 @@ const INDIA_PLACES = new RegExp(
     String.raw`mumbai|bombay|thane|navi mumbai|bhiwandi|pune|pimpri|chinchwad|chakan|hinjewadi|nashik|nagpur|aurangabad|kolhapur|ahmedabad|vadodara|baroda|surat|rajkot|vapi|bengaluru|bangalore|mysuru|mysore|hosur|chennai|madras|coimbatore|hyderabad|secunderabad|vizag|visakhapatnam|kochi|cochin|trivandrum|thiruvananthapuram|gurugram|gurgaon|noida|ghaziabad|faridabad|ncr|kolkata|calcutta|jaipur|indore|bhopal|lucknow|kanpur|ludhiana|jamshedpur|ranchi|patna|bhubaneswar|guwahati|dehradun|haridwar|sonipat|manesar|neemrana|sri city|sanand|halol)\b`,
   'i',
 );
+
+/**
+ * The site a title says someone is responsible for: "Plant Head - Coimbatore", "Head of Operations,
+ * Hosur Plant" give that town. A state or the country ("Head - South India") names no one site.
+ */
+export function placeNamedIn(title: string): string {
+  const m = new RegExp(INDIA_PLACES.source, 'gi');
+  for (const hit of String(title ?? '').matchAll(m)) {
+    if (!REGION_ONLY.test(hit[1]) && !/^(jammu|kashmir|ladakh|dadra|daman|ncr)$/i.test(hit[1])) return hit[1];
+  }
+  return '';
+}
 
 /** A place rather than a job ("Ahmedabad, Gujarat, India"): names an Indian place and no role word. */
 export function isPlace(text: string): boolean {

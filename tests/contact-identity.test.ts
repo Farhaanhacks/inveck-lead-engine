@@ -4,7 +4,7 @@ import type { EnrichmentCache, Services } from '@/lib/pipeline/services';
 import { distanceKm, forgetPlaces, knowPlaces, placeKey, pointOf } from '@/lib/pipeline/places';
 import { learnFirm, linkedinPageName, recallFirm } from '@/lib/pipeline/firm-identity';
 import { firmAliasesOf, sameFirm, siteOf } from '@/lib/pipeline/employer';
-import { linkedinQuery, searchLinkedIn } from '@/lib/pipeline/contacts';
+import { atOtherSite, confirmedAtSite, linkedinQuery, personSite, searchLinkedIn } from '@/lib/pipeline/contacts';
 import { contactPriority, tierOf } from '@/lib/tiers';
 import { DEFAULT_ICPS } from '@/lib/db/seed';
 
@@ -16,6 +16,8 @@ const MAP: Record<string, { latitude: number; longitude: number; type?: string }
   dolvi: { latitude: 18.702, longitude: 73.05 },
   panvel: { latitude: 18.99, longitude: 73.12 },
   raigad: { latitude: 18.236, longitude: 73.443, type: 'Tourist attraction' },
+  coimbatore: { latitude: 11.017, longitude: 76.956 },
+  chennai: { latitude: 13.083, longitude: 80.271 },
 };
 
 const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -214,5 +216,55 @@ describe('Auto Diecasting Company (ADC): the CEO with a comma-style title and an
     const r = { title: 'Ravi K - Head, Operations | LinkedIn', subtitle: 'Coimbatore, Tamil Nadu, India · Head, Operations · Auto Diecasting Company', link: 'https://in.linkedin.com/in/ravi-k', snippet: '' };
     const { people } = await searchLinkedIn(services(seen, () => [r]), 'q', company);
     expect(people.map((p) => p.title)).toEqual(['Head, Operations']);
+  });
+});
+
+describe('Alumina India Casting: the managing partner, and where her job is', () => {
+  const company = 'Alumina India Casting';
+  const mfg = DEFAULT_ICPS[0];
+  const nandini = { title: 'Nandini Easwaran - Managing Partner - Alumina India Casting Company | LinkedIn', subtitle: 'Chennai, Tamil Nadu, India · Managing Partner · Alumina India Casting Company', link: 'https://in.linkedin.com/in/nandini-easwaran', snippet: '' };
+
+  it('ranks Managing Partner like Partner and Owner (the top-of-company fallback); CA firms keep their own lists', () => {
+    expect(contactPriority('Managing Partner', mfg)).toBe(50);
+    expect(contactPriority('Partner', mfg)).toBe(50);
+    expect(contactPriority('Owner', mfg)).toBe(50);
+    const ca = DEFAULT_ICPS.find((i) => /^CA/.test(i.segment))!;
+    expect(contactPriority('Managing Partner', ca)).toBeLessThan(50);
+    expect(contactPriority('Channel Partner Manager', mfg)).toBe(99);
+  });
+
+  it('the location of the current job wins over the profile location', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Coimbatore']);
+    const withJob = { ...nandini, snippet: 'Managing Partner. Alumina India Casting Company. Jan 2010 - Present · 14 yrs 9 mos. Coimbatore, Tamil Nadu, India' };
+    const found = (await searchLinkedIn(services(seen, () => [withJob]), 'q', company)).people[0];
+    expect(found).toMatchObject({ name: 'Nandini Easwaran', title: 'Managing Partner', location: 'Chennai, Tamil Nadu, India', jobLocation: 'Coimbatore, Tamil Nadu, India' });
+    expect(personSite(found, 'Coimbatore')).toBe('here');
+    expect(confirmedAtSite(found, 'Coimbatore')).toBe(true);
+  });
+
+  it('when nobody at the company turns up, its owners and partners are searched for once', async () => {
+    const { people } = await searchLinkedIn(services(seen, (q) => (q.includes('"managing partner"') ? [nandini] : [])), 'site:linkedin.com/in "Alumina India Casting" "Plant Head"', company);
+    expect(people.map((p) => p.name)).toEqual(['Nandini Easwaran']);
+    expect(seen.searches.filter((q) => q.includes('"managing partner"'))).toHaveLength(1);
+  });
+
+  it('the site a title names wins over both', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Coimbatore', 'Chennai, Tamil Nadu, India']);
+    expect(personSite({ title: 'Plant Head - Coimbatore', responsibility: 'Coimbatore', location: 'Chennai, Tamil Nadu, India' }, 'Coimbatore')).toBe('here');
+    expect(personSite({ title: 'Plant Head - Chennai', responsibility: 'Chennai', location: 'Coimbatore' }, 'Coimbatore')).toBe('elsewhere');
+  });
+
+  it('with only a Chennai profile location, she is kept (company-wide role) but not confirmed at the Coimbatore site', async () => {
+    const svc = services(seen, () => [nandini]);
+    await knowPlaces(svc, ['Coimbatore']);
+    const found = (await searchLinkedIn(svc, 'q', company)).people[0];
+    expect(found).toMatchObject({ name: 'Nandini Easwaran', jobLocation: '', responsibility: '' });
+    expect(personSite(found, 'Coimbatore')).toBe('elsewhere');
+    expect(atOtherSite(found, 'Coimbatore')).toBe(false);
+    expect(confirmedAtSite(found, 'Coimbatore')).toBe(false);
+    // A plant manager based in Chennai is still at another site.
+    expect(atOtherSite({ ...found, title: 'Plant Manager' }, 'Coimbatore')).toBe(true);
   });
 });

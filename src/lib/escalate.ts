@@ -4,7 +4,7 @@ import { icps, leads, people, tasks, type Lead, type Person } from './db/schema'
 import { logActivity } from './activity';
 import { makePrimary } from './people';
 import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
-import { atOtherSite, rankCandidates } from './pipeline/contacts';
+import { personSite, rankCandidates } from './pipeline/contacts';
 import { istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
 
 /** Call outcomes where nobody useful picked up. */
@@ -27,7 +27,7 @@ export async function unansweredCalls(db: Db, lead: Pick<Lead, 'id' | 'contactSi
  */
 export function nextContact(candidates: Person[], icp: Parameters<typeof tierOf>[1], city = ''): { person: Person; tier: Tier } | null {
   // Never someone known to be at another of the company's sites (company-wide roles aside).
-  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99 && !atOtherSite(p, city));
+  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99 && personSite(p, city) !== 'elsewhere');
   const person = rankCandidates(listed, icp, city)[0];
   return person ? { person, tier: tierOf(person.title, icp) } : null;
 }

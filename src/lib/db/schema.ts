@@ -328,6 +328,10 @@ export const people = pgTable('people', {
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */
   location: text('location').notNull().default(''),
+  /** Where their current job at the company is, from that job's own entry; empty when not shown. */
+  jobLocation: text('job_location').notNull().default(''),
+  /** The site their title says they are responsible for ("Plant Head - Coimbatore"); empty when none. */
+  responsibility: text('responsibility').notNull().default(''),
   /** The email's source, our verdict, the provider's status and retrieval date (see leads.emailSource). */
   emailSource: text('email_source').notNull().default(''),
   emailVerification: text('email_verification').notNull().default(''),

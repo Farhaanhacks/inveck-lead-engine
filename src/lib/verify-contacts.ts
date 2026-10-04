@@ -2,7 +2,17 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName } from './pipeline/contacts';
+import { atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName, siteEvidence } from './pipeline/contacts';
+
+/** The places a profile shows, kept apart: where they live, where the job is, the site their title names. */
+function placeFields(profile: { location: string; jobLocation: string; responsibility: string } | null | undefined) {
+  if (!profile) return {};
+  return {
+    ...(profile.location ? { location: profile.location } : {}),
+    ...(profile.jobLocation ? { jobLocation: profile.jobLocation } : {}),
+    ...(profile.responsibility ? { responsibility: profile.responsibility } : {}),
+  };
+}
 import { contactFromTeam } from './team-contact';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
@@ -97,7 +107,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     } catch {
       continue;
     }
-    const otherSite = !!profile && atOtherSite({ title: profile.title || p.title, location: profile.location }, lead.city);
+    const otherSite = !!profile && atOtherSite({ ...profile!, title: profile!.title || p.title }, lead.city);
     if (profile?.employer === 'elsewhere' || profile?.abroad || otherSite) {
       await db.delete(people).where(eq(people.id, p.id));
       gone.push(`${p.name}${profile!.abroad || otherSite ? ` (based in ${profile!.location || 'another country'})` : profile!.title ? ` (now ${profile!.title})` : ''}`);
@@ -111,7 +121,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     const retitle = !!profile?.title && newRole(p.title, profile.title);
     await db
       .update(people)
-      .set({ checkedAt: now, ...(profile?.evidence ? { evidence: profile.evidence } : {}), ...(profile?.location ? { location: profile.location } : {}), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
+      .set({ checkedAt: now, ...(profile?.evidence ? { evidence: profile.evidence } : {}), ...placeFields(profile), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
       .where(eq(people.id, p.id));
   }
   if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}${lead.city ? ` ${lead.city}` : ''} (left, or based elsewhere): ${gone.join('; ')}`);
@@ -173,7 +183,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
-  if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ title: profile.title || lead.contactTitle, location: profile.location }, lead.city)) {
+  if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ ...profile, title: profile.title || lead.contactTitle }, lead.city)) {
     await moveOn(db, svc, lead, 'other_site', now, profile.location)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
@@ -195,9 +205,9 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
-  if (!confirmedAtSite({ location: profile.location }, lead.city)) {
+  if (!confirmedAtSite({ ...profile, title: profile.title || lead.contactTitle }, lead.city)) {
     // At this company, but nothing shows they are at this site.
-    await moveOn(db, svc, lead, 'unverified', now, 'location not confirmed')
+    await moveOn(db, svc, lead, 'unverified', now, `${siteEvidence({ ...profile, title: profile.title || lead.contactTitle }, lead.city)}, not confirmed at the ${lead.city} site`)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
@@ -212,7 +222,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   for (const p of mine) {
     await db
       .update(people)
-      .set({ checkedAt: now, ...(profile.evidence ? { evidence: profile.evidence } : {}), ...(profile.location ? { location: profile.location } : {}), ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
+      .set({ checkedAt: now, ...(profile.evidence ? { evidence: profile.evidence } : {}), ...placeFields(profile), ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
       .where(eq(people.id, p.id));
   }
   if (!lead.contactLinkedin) await logActivity(db, lead.id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
@@ -253,8 +263,8 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
     } catch {
       return 'skipped';
     }
-    await db.update(people).set({ checkedAt: now, isPrimary: false, ...(profile?.location ? { location: profile.location } : {}) }).where(eq(people.id, p.id));
-    if (!profile || profile.abroad || profile.employer !== 'here' || !confirmedAtSite({ location: profile.location }, lead.city)) continue;
+    await db.update(people).set({ checkedAt: now, isPrimary: false, ...placeFields(profile) }).where(eq(people.id, p.id));
+    if (!profile || profile.abroad || profile.employer !== 'here' || !confirmedAtSite({ ...profile, title: profile.title || p.title }, lead.city)) continue;
     await db
       .update(people)
       .set({ passedAt: null, passedReason: '', linkedin: p.linkedin || profile.url, ...(profile.title ? { title: profile.title } : {}) })

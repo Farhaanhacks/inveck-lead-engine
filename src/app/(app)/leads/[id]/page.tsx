@@ -276,7 +276,7 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
       <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
         <div>
           <h2 className="text-sm font-semibold">People to contact at {company}</h2>
-          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people a LinkedIn profile confirms at this company now; the main contact also at this site.</p>
+          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people a LinkedIn profile confirms at this company now. The main contact&apos;s job must be at this site: the site their title names, else where their current job is, else their profile location.</p>
         </div>
         <span className="text-xs text-muted">{list.length} found</span>
       </div>
@@ -305,8 +305,10 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                   </div>
                   <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>
                   {(p.location || city) && (
-                    <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location || 'Location not confirmed'}</div>
+                    <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location ? `Profile: ${p.location}` : 'Location not confirmed'}</div>
                   )}
+                  {p.jobLocation && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.jobLocation}>Job here: {p.jobLocation}</div>}
+                  {p.responsibility && <div className="max-w-[16rem] truncate text-xs text-muted">Responsible for: {p.responsibility}</div>}
                   {p.evidence && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Why: {p.evidence}</div>}
                 </td>
                 <td className="px-2 py-2.5">

@@ -1,11 +1,11 @@
 import type { Icp } from '../db/schema';
-import { contactPriority, roleOnly, tierOf } from '../tiers';
+import { companyWide, contactPriority, roleOnly, tierOf } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch } from './services';
-import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
+import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, placeNamedIn, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { knowPlaces } from './places';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
@@ -23,6 +23,10 @@ export type Candidate = {
   snippet: string;
   /** Where they are based, from their LinkedIn profile ("Pimpri Chinchwad, Maharashtra, India"). */
   location?: string;
+  /** Where their current job here is, from that job's own entry on the profile. */
+  jobLocation?: string;
+  /** The site their title says they are responsible for ("Plant Head - Coimbatore"). */
+  responsibility?: string;
   /** What showed they work here, and whether it was dated ("LinkedIn (via Google, undated): …"). */
   evidence?: string;
 };
@@ -156,7 +160,11 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       } else if (employer === 'here') {
         evidence = `LinkedIn (via Google, undated): ${[person.title, location].filter(Boolean).join(' · ')}`;
       }
-      return { ...person, employer, evidence };
+      // Where the job is, kept apart from where the profile says they live: the current job's own
+      // entry, and the site their title names.
+      const jobLocation = now?.location ?? '';
+      const responsibility = placeNamedIn(`${person.title} ${job?.role ?? ''}`);
+      return { ...person, employer, evidence, jobLocation, responsibility };
     })
     // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) aren't wanted;
     // people based abroad on www. profiles are flagged `abroad`.
@@ -213,7 +221,19 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
     }
   }
   // Where each of them is, so their distance from the site can be told.
-  await knowPlaces(svc, people.map((p) => p.location));
+  // Small firms often have nobody below the owner on LinkedIn: when no one at the company was found,
+  // its owners, partners and directors are looked for (one more search, only then).
+  if (name && !people.length && !settled.some((s) => s.status === 'rejected')) {
+    try {
+      for (const p of toLinkedInPeople(await googleSearch(svc, `site:linkedin.com/in ${firmQuery(company)} (owner OR founder OR "managing partner" OR partner OR "managing director" OR director OR proprietor OR CEO)`), company)) {
+        if (p.employer !== 'here' || p.abroad || people.some((q) => q.linkedin === p.linkedin)) continue;
+        people.push(p);
+      }
+    } catch {
+      // Nothing more found this time.
+    }
+  }
+  await knowPlaces(svc, people.flatMap((p) => [p.location, p.jobLocation, p.responsibility]));
   const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
   return { people, error: failed && !people.length ? errorMessage(failed.reason) : '' };
 }
@@ -360,7 +380,7 @@ export async function findLinkedinProfile(
   person: string,
   company: string,
   hint: { title?: string; city?: string } = {},
-): Promise<{ url: string; title: string; employer: Employer; abroad: boolean; location: string; evidence: string } | null> {
+): Promise<{ url: string; title: string; employer: Employer; abroad: boolean; location: string; jobLocation: string; responsibility: string; evidence: string } | null> {
   // As written (Google ignores case), without honorifics or initials' dots.
   const words = person.replace(HONORIFIC, '').replace(/[.,]/g, ' ').split(/\s+/).filter(Boolean);
   if (!words.length) return null;
@@ -397,8 +417,17 @@ export async function findLinkedinProfile(
       // Found, but the evidence conflicts (the job here has ended): returned so the reason is shown.
       exact.find((p) => p.employer === 'unknown' && !!p.evidence);
     if (pick) {
-      await knowPlaces(svc, [pick.location, hint.city]);
-      return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '', evidence: pick.evidence ?? '' };
+      await knowPlaces(svc, [pick.location, pick.jobLocation, pick.responsibility, hint.city]);
+      return {
+        url: pick.linkedin,
+        title: pick.title,
+        employer: pick.employer,
+        abroad: pick.abroad,
+        location: pick.location ?? '',
+        jobLocation: pick.jobLocation ?? '',
+        responsibility: pick.responsibility ?? '',
+        evidence: pick.evidence ?? '',
+      };
     }
   }
   // A search that failed (quota, network) isn't "no profile": the caller checks again later.
@@ -406,36 +435,62 @@ export async function findLinkedinProfile(
   return null;
 }
 
+type Placed = { title?: string; snippet?: string; location?: string | null; jobLocation?: string | null; responsibility?: string | null };
+
+/**
+ * Where someone works, relative to the lead's site, from the most specific evidence first: the site
+ * their title says they run ("Plant Head - Coimbatore"), then the location of their current job here,
+ * then the location on their profile (where they live, which can be another city).
+ */
+export function personSite(c: Placed, city: string): 'here' | 'elsewhere' | 'unknown' {
+  if (!city.trim()) return 'unknown';
+  const named = siteOf(c.responsibility ?? '', city);
+  if (named !== 'unknown') return named;
+  if (inCity(c.title ?? '', city)) return 'here';
+  const job = siteOf(c.jobLocation ?? '', city);
+  if (job !== 'unknown') return job;
+  return siteOf(c.location ?? '', city);
+}
+
+/** How personSite decided, for the evidence shown to the team. */
+export function siteEvidence(c: Placed, city: string): string {
+  if (!city.trim()) return '';
+  if (c.responsibility && siteOf(c.responsibility, city) !== 'unknown') return `title names ${c.responsibility}`;
+  if (inCity(c.title ?? '', city)) return `title names ${city}`;
+  if (c.jobLocation && siteOf(c.jobLocation, city) !== 'unknown') return `current job's location: ${c.jobLocation}${c.location && c.location !== c.jobLocation ? ` (profile location: ${c.location})` : ''}`;
+  return c.location ? `profile location: ${c.location}` : 'no location shown';
+}
+
 /** True when the person's title or profile names the lead's city: they work at this branch. */
-export function atBranch(c: { title: string; snippet?: string; location?: string | null }, city: string): boolean {
-  return siteOf(c.location ?? '', city) === 'here' || inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
+export function atBranch(c: Placed & { title: string }, city: string): boolean {
+  return personSite(c, city) === 'here' || inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
 }
 
 /** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */
 type RankIcp = Parameters<typeof contactPriority>[1];
 
-export function candidateRank(c: { title: string; snippet?: string; location?: string | null; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
-  const c2 = { ...c, location: c.location ?? '' };
+export function candidateRank(c: Placed & { title: string; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
   // At this site first; someone with a company-wide role based elsewhere in India after everyone else.
-  const elsewhere = siteOf(c2.location, city) === 'elsewhere';
-  return contactPriority(c.title, icp) - (atBranch(c2, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.email ? 0.1 : 0);
+  const elsewhere = personSite(c, city) === 'elsewhere';
+  return contactPriority(c.title, icp) - (atBranch(c, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.email ? 0.1 : 0);
 }
 
 /**
- * The lead is one site (NBC Bearings, Jaipur): someone based at another of the company's locations
- * isn't a contact for it, whatever their role. Abroad is never kept (see basedAbroad). True when
- * they should be left out.
+ * The lead is one site (NBC Bearings, Jaipur): someone whose job is at another of the company's
+ * locations isn't a contact for it. The top of the company (owner, partner, MD, CEO) covers every
+ * site: kept, though only made the main contact once confirmed at this one. Abroad is never kept
+ * (see basedAbroad). True when they should be left out.
  */
-export function atOtherSite(c: { title: string; location?: string | null }, city: string): boolean {
-  return siteOf(c.location ?? '', city) === 'elsewhere';
+export function atOtherSite(c: Placed & { title: string }, city: string): boolean {
+  return personSite(c, city) === 'elsewhere' && !companyWide(c.title);
 }
 
 /**
- * Can be the main contact for this site: when the lead has a city, their location must be confirmed
+ * Can be the main contact for this site: when the lead has a city, their job must be confirmed
  * there (or its metro area). A location not known yet doesn't count.
  */
-export function confirmedAtSite(c: { location?: string | null }, city: string): boolean {
-  return !city.trim() || siteOf(c.location ?? '', city) === 'here';
+export function confirmedAtSite(c: Placed, city: string): boolean {
+  return !city.trim() || personSite(c, city) === 'here';
 }
 
 export function rankCandidates<T extends { title: string; snippet?: string; location?: string | null; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {

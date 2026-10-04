@@ -457,6 +457,26 @@ describe('Auto Diecasting Company (ADC): a CEO found with no location shown', ()
   });
 });
 
+describe('Alumina India Casting: the managing partner of a small firm', () => {
+  const nandini = { title: 'Nandini Easwaran - Managing Partner - Alumina India Casting Company | LinkedIn', subtitle: 'Chennai, Tamil Nadu, India · Managing Partner · Alumina India Casting Company', link: 'https://in.linkedin.com/in/nandini-easwaran', snippet: '' };
+  const lead = () => klt({ company: 'Alumina India Casting', city: 'Coimbatore' });
+
+  it('with only a Chennai profile, is kept as a potential company contact pending verification', async () => {
+    const r = await run(await lead(), { research: (user) => kltAnswer(user, { risks: [] }), google: (q) => (q.startsWith('site:linkedin.com/in') ? [nandini] : []) });
+    expect(r.contactName ?? '').toBe('');
+    const person = r.people?.find((p) => p.name === 'Nandini Easwaran');
+    expect(person).toMatchObject({ title: 'Managing Partner', location: 'Chennai, Tamil Nadu, India', passedReason: 'unverified' });
+    expect(person?.evidence).toContain('Potential company contact, pending verification: title and current employment need confirmation');
+  });
+
+  it('with her current job shown in Coimbatore, becomes the main contact', async () => {
+    const withJob = { ...nandini, snippet: 'Managing Partner. Alumina India Casting Company. Jan 2010 - Present · 14 yrs 9 mos. Coimbatore, Tamil Nadu, India' };
+    const r = await run(await lead(), { research: (user) => kltAnswer(user, { risks: [] }), google: (q) => (q.startsWith('site:linkedin.com/in') ? [withJob] : []) });
+    expect(r.contactName).toBe('Nandini Easwaran');
+    expect(r.people?.find((p) => p.isPrimary)).toMatchObject({ jobLocation: 'Coimbatore, Tamil Nadu, India', location: 'Chennai, Tamil Nadu, India' });
+  });
+});
+
 // ─── Reassessing, and a person's own call ────────────────────────────────
 
 describe('reassessing companies ruled out before', () => {

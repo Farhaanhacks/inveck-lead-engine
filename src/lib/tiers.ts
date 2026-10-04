@@ -63,6 +63,21 @@ export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles'
   return tierByFunction(t, icp);
 }
 
+/** Named on the ICP's own P1/P2/P3 lists (not just placed by function or seniority). */
+function onLists(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles'>): boolean {
+  const t = tokens(roleOnly(title));
+  return [icp.targetTitles, icp.p2Titles, icp.p3Titles].some((roles) => list(roles).some((r) => matches(t, r)));
+}
+
+/**
+ * The top of the company: owners, partners, founders, the MD, CEO and other CXOs. Their role covers
+ * every site, so where their profile says they live doesn't rule them out of one.
+ */
+export function companyWide(title: string): boolean {
+  const t = tokens(roleOnly(title)).join(' ');
+  return !/\bvice\b/.test(t) && (TOP_ONLY.test(t) || TOP_EXEC.test(t));
+}
+
 /**
  * The functions an ICP's lists ask for, and a title's function: titles are written in endless ways
  * ("Senior Manager, ATSM Site Operations", "Planning & Operations Lead"), so a title that matches no
@@ -83,7 +98,7 @@ function functionsOf(text: string): string[] {
 }
 
 /** The person at the top of the company, written without a function: "Director", "Owner", "Founder & CEO". */
-const TOP_ONLY = /^(?:(?:managing|whole ?time|executive|joint managing)?\s*director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|chairperson|ceo|md|president)(?:\s+(?:and|cum)?\s*(?:managing|whole ?time|executive)?\s*(?:director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|ceo|md))*$/;
+const TOP_ONLY = /^(?:(?:managing|whole ?time|executive|joint managing)?\s*director|(?:managing|founding|joint managing)?\s*partner|owner|founder|co-?founder|proprietor|promoter|chairman|chairperson|ceo|md|president)(?:\s+(?:and|cum)?\s*(?:managing|whole ?time|executive|founding)?\s*(?:director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|ceo|md))*$/;
 
 function tierByFunction(t: string[], icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles'>): Tier {
   const title = t.join(' ');
@@ -129,6 +144,9 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   const t = tokens(roleOnly(title)).join(' ');
   const vpOrCxo = SENIOR.test(t) || /\bdirector\b/i.test(title);
   if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;
+  // A partner or managing partner of a company is its owner, ranked like one; where the ICP names
+  // partners itself (CA firms), its lists decide.
+  if (/\bpartner\b/.test(t) && TOP_ONLY.test(t) && icp && !onLists(title, icp)) return 50;
   if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
   // Plant heads and supply chain managers / heads answer and own the stock: they come first.
   if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;

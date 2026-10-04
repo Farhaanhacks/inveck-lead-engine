@@ -1,6 +1,6 @@
 import { KnownBranches } from '../branches';
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
 import { buildSources } from './fit';
@@ -286,16 +286,21 @@ export async function processLead(
     (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
   );
   update.people = companyPeople(wanted, contact);
-  // Nobody confirmed at the site: people found at the company whose location no result showed are kept
-  // as candidates pending verification, checked on LinkedIn again weekly (reconfirmSetAside).
+  // Nobody confirmed at the site: people found at the company but not confirmed at this site (no
+  // location shown, or an owner or partner whose profile is in another city) are kept as potential
+  // contacts pending verification, checked on LinkedIn again weekly (reconfirmSetAside).
   if (!contact.name && lead.city) {
     const now = new Date();
     for (const p of update.people) {
-      if (p.source === SOURCE_NAMES.LinkedIn && !p.location) {
-        p.passedAt = now;
-        p.passedReason = 'unverified';
-        p.evidence = [p.evidence, 'location not shown in any result; pending verification'].filter(Boolean).join('; ');
-      }
+      if (p.source !== SOURCE_NAMES.LinkedIn || confirmedAtSite(p, lead.city)) continue;
+      p.passedAt = now;
+      p.passedReason = 'unverified';
+      p.evidence = [
+        p.evidence,
+        `Potential company contact, pending verification: title and current employment need confirmation; ${siteEvidence(p, lead.city)}, not confirmed at the ${lead.city} site`,
+      ]
+        .filter(Boolean)
+        .join('. ');
     }
   }
 
@@ -384,8 +389,8 @@ export async function vetPick(
           ? `${contact.name} left out: ${profile.evidence || "LinkedIn doesn't confirm a current job here"}`
           : profile.employer !== 'here'
           ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
-          : !confirmedAtSite({ location: profile.location }, lead.city)
-            ? `${contact.name} left out: ${profile.location ? `based in ${profile.location}` : 'location not confirmed'}, not at the ${lead.city} site`
+          : !confirmedAtSite({ ...profile, title: profile.title || contact.title }, lead.city)
+            ? `${contact.name} left out: ${siteEvidence({ ...profile, title: profile.title || contact.title }, lead.city)}, not confirmed at the ${lead.city} site`
             : unwanted
               ? `${contact.name} left out: LinkedIn shows their role is ${profile.title}, not one on the ICP lists`
               : '';
@@ -403,6 +408,8 @@ export async function vetPick(
     const found = profile!;
     if (!contact.linkedin) contact.linkedin = found.url;
     if (chosen && found.location && !chosen.location) chosen.location = found.location;
+    if (chosen && found.jobLocation) chosen.jobLocation = found.jobLocation;
+    if (chosen && found.responsibility) chosen.responsibility = found.responsibility;
     if (chosen && found.evidence) chosen.evidence = found.evidence;
     notes.push(`LinkedIn profile found by name: ${found.url}`);
     if (found.title && found.title.toLowerCase() !== contact.title.toLowerCase()) {
@@ -454,6 +461,8 @@ export function companyPeople(ranked: Candidate[], main: { name: string; email: 
       phone: isPrimary ? main.phone : c.source === 'Sales team' ? c.phone : '',
       linkedin: isPrimary ? main.linkedin || c.linkedin : c.linkedin,
       location: c.location ?? '',
+      jobLocation: c.jobLocation ?? '',
+      responsibility: c.responsibility ?? '',
       evidence: c.evidence ?? (c.source === 'Sales team' ? 'Entered by the team' : ''),
       source: SOURCE_NAMES[c.source],
       isPrimary,

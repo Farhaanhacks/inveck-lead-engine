@@ -460,7 +460,7 @@ describe('callback days get the full set', () => {
 describe('P2 flow', () => {
   const icp = { targetTitles: 'Plant Head, Head of Supply Chain', p2Titles: 'Inventory Manager, Warehouse Head', p3Titles: 'Store Manager', avoidTitles: 'HR, Admin, Quality' };
   const person = (id: number, name: string, title: string, extra: Partial<import('@/lib/db/schema').Person> = {}) =>
-    ({ id, leadId: 1, name, title, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, passedReason: '', evidence: '', checkedAt: null as Date | null, location: '', createdAt: new Date(), ...extra });
+    ({ id, leadId: 1, name, title, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, passedReason: '', evidence: '', jobLocation: '', responsibility: '', checkedAt: null as Date | null, location: '', createdAt: new Date(), ...extra });
 
   it('picks the next person by INVECK priority, never HR or someone already tried, preferring an email', async () => {
     const { nextContact } = await import('@/lib/escalate');
@@ -861,7 +861,7 @@ describe('real search results (checked live on five companies)', () => {
   it('reads the role and whether it is current from the snippet', async () => {
     const { snippetRoles } = await import('@/lib/pipeline/employer');
     expect(snippetRoles('Experience. Group Plant Head. CIE Automotive India Ltd. Mar 2025 - Present 1 year 7 months.')).toContainEqual({ role: 'Group Plant Head', company: 'CIE Automotive India Ltd', current: true });
-    expect(snippetRoles('Plant Head. CIE Automotive India Ltd. Nov 2024 - May 2026 1 year 7 months. Bengaluru')).toContainEqual({ role: 'Plant Head', company: 'CIE Automotive India Ltd', current: false });
+    expect(snippetRoles('Plant Head. CIE Automotive India Ltd. Nov 2024 - May 2026 1 year 7 months. Bengaluru')).toContainEqual({ role: 'Plant Head', company: 'CIE Automotive India Ltd', current: false, location: 'Bengaluru' });
   });
 
   it('ranks site and region heads first, drops engineering, sales and CXOs, ignores company words in titles', async () => {
@@ -1132,7 +1132,7 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     ], icp, 'Jaipur');
     expect(ranked.map((r) => r.location)).toEqual(['Jaipur, Rajasthan, India', '', 'Mumbai, Maharashtra, India']);
     const person = (id: number, name: string, title: string, location: string) =>
-      ({ id, leadId: 1, name, title, location, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null, passedReason: '', evidence: '', checkedAt: null, createdAt: new Date() });
+      ({ id, leadId: 1, name, title, location, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null, passedReason: '', evidence: '', jobLocation: '', responsibility: '', checkedAt: null, createdAt: new Date() });
     expect(nextContact([person(1, 'Gurgaon Guy', 'Plant Head', 'Gurugram, Haryana, India'), person(2, 'Jaipur Lady', 'Store Manager', 'Jaipur, Rajasthan, India')], icp, 'Jaipur')?.person.name).toBe('Jaipur Lady');
   });
 

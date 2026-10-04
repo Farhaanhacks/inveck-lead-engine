@@ -62,10 +62,13 @@ type ContactFields = Pick<Lead, 'contactName' | 'contactTitle' | 'contactEmail' 
   Partial<Pick<Lead, 'refetchPending' | 'lastError'>>;
 
 /** Whether there is someone to contact, and how they can be reached. Separate from the fit. */
-type PersonFields = Pick<Person, 'name' | 'isPrimary' | 'passedAt' | 'passedReason' | 'location'>;
+type PersonFields = Pick<Person, 'name' | 'isPrimary' | 'passedAt' | 'passedReason' | 'location'> & Partial<Pick<Person, 'evidence'>>;
 
 /** Why someone listed under People isn't the main contact. */
 function notMainBecause(p: PersonFields, city: string): string {
+  if (p.passedAt && p.passedReason !== 'tried' && p.evidence?.includes('Potential company contact')) {
+    return 'potential company contact; title and current employment need confirmation (checked again weekly)';
+  }
   if (p.passedAt) return p.passedReason === 'tried' ? 'tried, no luck' : 'not confirmed on LinkedIn at this site yet (checked again weekly)';
   if (!p.location) return 'location not confirmed';
   return city ? `based in ${p.location}` : 'not picked';
