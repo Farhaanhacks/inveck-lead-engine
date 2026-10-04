@@ -59,7 +59,7 @@ export function rootDomain(s: string | null | undefined): string {
 
 /** The name people actually search by: "Ash Logistics and Traders Pvt Ltd" → "Ash Logistics and Traders". */
 export function searchName(company: string): string {
-  return company
+  return (company.replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ').trim() || company)
     .replace(/[.,]/g, ' ')
     .replace(/\b(pvt|private|ltd|limited|llp|inc|opc)\b/gi, ' ')
     .replace(/\s+/g, ' ')

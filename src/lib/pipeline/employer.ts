@@ -9,8 +9,11 @@ import { distanceKm, pointOf, SITE_RADIUS_KM } from './places';
 export type Employer = 'here' | 'elsewhere' | 'unknown';
 
 const plain = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+/** "Auto Diecasting Company (ADC)": the name without its bracketed abbreviation or note. */
+const unbracketed = (s: string) => s.replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ').trim() || s;
+
 const words = (s: string) =>
-  plain(s)
+  plain(unbracketed(s))
     .replace(/\b(pvt|private|ltd|limited|llp|inc|india|indian|the|co|company|group|corp|corporation|plc|sa|ag)\b/g, ' ')
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length > 1);
@@ -163,7 +166,12 @@ export function currentEmployer(person: { name: string; title: string; snippet?:
 
   const snippet = person.snippet ?? '';
   const exp = /experience:\s*([^·•|\n]+)/i.exec(snippet);
-  if (exp) say.push(sameFirm(exp[1], company) ? 'here' : 'elsewhere');
+  // "Experience: Euro Cast Engineering" names the employer; "Experience: 18 years of experience in
+  // high pressure diecasting" is a sentence from the About section and says nothing either way.
+  const expText = exp?.[1].trim() ?? '';
+  if (expText && (sameFirm(expText, company) || (!/\d/.test(expText) && !PROSE.test(expText) && expText.split(/\s+/).length <= 8))) {
+    say.push(sameFirm(expText, company) ? 'here' : 'elsewhere');
+  }
   const left = new RegExp(`\\b(ex[- ]|former(ly)?\\b[^.]{0,40})${words(company)[0] ?? '$^'}`, 'i');
   if (left.test(plain(`${person.title} ${snippet}`))) return 'elsewhere';
 

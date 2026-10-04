@@ -443,6 +443,20 @@ describe('finding contacts is separate from the fit', () => {
   });
 });
 
+describe('Auto Diecasting Company (ADC): a CEO found with no location shown', () => {
+  it('is kept as a candidate pending verification, not rejected as working elsewhere', async () => {
+    const hari = { title: 'Hari Viswanathan - CEO, Auto Diecasting Company | LinkedIn', link: 'https://in.linkedin.com/in/hari-viswanathan', snippet: 'Experience: 18 years of experience in high pressure diecasting, with a focus on incorporating cutting-edge technologies for improved production processes.' };
+    const r = await run(await klt({ company: 'Auto Diecasting Company (ADC)', city: 'Coimbatore' }), {
+      research: (user) => kltAnswer(user, { risks: [] }),
+      google: (q) => (q.startsWith('site:linkedin.com/in') ? [hari] : []),
+    });
+    const person = r.people?.find((p) => p.name === 'Hari Viswanathan');
+    expect(person).toMatchObject({ title: 'CEO', passedReason: 'unverified' });
+    expect(person?.evidence).toContain('pending verification');
+    expect(r.otherDecisionMakers).not.toContain('another company');
+  });
+});
+
 // ─── Reassessing, and a person's own call ────────────────────────────────
 
 describe('reassessing companies ruled out before', () => {

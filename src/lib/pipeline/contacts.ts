@@ -67,7 +67,7 @@ export function linkedinQuery(company: string, city: string, icp: Icp): string {
 type LinkedInPerson = Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>;
 
 const firmWords = (s: string) =>
-  s.toLowerCase().replace(/\b(pvt|private|ltd|limited|llp|inc|india|the|co|company|group)\b/g, ' ').split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  (s.replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ').trim() || s).toLowerCase().replace(/\b(pvt|private|ltd|limited|llp|inc|india|the|co|company|group)\b/g, ' ').split(/[^a-z0-9]+/).filter((w) => w.length > 2);
 
 /**
  * The role from a Google result title like "Amit Chhari - Chief of Operations - Allcargo Logistics | LinkedIn":
@@ -84,6 +84,16 @@ export function roleFromLinkedinTitle(parts: string[], company = ''): string {
 
 const JOB_WORD = /\b(head|manager|director|officer|vp|president|chief|gm|dgm|agm|lead|controller|incharge|in-charge|engineer|executive|supervisor|coordinator|planner|analyst|partner|founder|ceo|cfo|coo|md)\b/i;
 
+/** "CEO, Auto Diecasting Company": the role, then the employer; anything else is left as it is. */
+function splitRoleAndFirm(part: string, company: string): string[] {
+  const m = /^([^,]{2,40}),\s+([^,]{3,80})$/.exec(part);
+  if (!m || !JOB_WORD.test(m[1]) || JOB_WORD.test(m[2]) || isPlace(m[2])) return [part];
+  // Only when the second piece is a company ("Head, Operations" is one role).
+  const firm = (company && sameFirm(m[2], company)) || /\b(company|ltd|limited|pvt|llp|inc|industries|enterprises|corporation|group)\b/i.test(m[2]);
+  if (!firm) return [part];
+  return [m[1].trim(), m[2].trim()];
+}
+
 type FoundPerson = LinkedInPerson & { employer: Employer; abroad: boolean };
 
 function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): FoundPerson[] {
@@ -94,7 +104,8 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       // ("Chief of Operations | Logistics & Supply Chain Leader | ..."): its first piece is the job.
       const title = String(r.title || '').replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '');
       const [name, ...rest] = title.split(/\s+[-–—]\s+/);
-      const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean);
+      // "CEO, Auto Diecasting Company" is a role and an employer, as "CEO - Auto Diecasting Company" would be.
+      const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean).flatMap((p) => splitRoleAndFirm(p, company));
       const location = profileLocation(r.subtitle, r.snippet);
       const abroad = basedAbroad(location, r.snippet);
       const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '', location, abroad };

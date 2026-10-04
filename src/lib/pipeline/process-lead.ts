@@ -286,6 +286,18 @@ export async function processLead(
     (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
   );
   update.people = companyPeople(wanted, contact);
+  // Nobody confirmed at the site: people found at the company whose location no result showed are kept
+  // as candidates pending verification, checked on LinkedIn again weekly (reconfirmSetAside).
+  if (!contact.name && lead.city) {
+    const now = new Date();
+    for (const p of update.people) {
+      if (p.source === SOURCE_NAMES.LinkedIn && !p.location) {
+        p.passedAt = now;
+        p.passedReason = 'unverified';
+        p.evidence = [p.evidence, 'location not shown in any result; pending verification'].filter(Boolean).join('; ');
+      }
+    }
+  }
 
   // Never wipe contact details the sales team typed in. A person chosen now gets their own email
   // (or none): never the previous contact's.

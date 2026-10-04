@@ -184,3 +184,35 @@ describe('Eurocast: someone who has left is never confirmed from an old copy of 
     expect(people[0]?.evidence).toContain('LinkedIn (via Google, undated)');
   });
 });
+
+describe('Auto Diecasting Company (ADC): the CEO with a comma-style title and an About-section snippet', () => {
+  const company = 'Auto Diecasting Company (ADC)';
+  const hari = { title: 'Hari Viswanathan - CEO, Auto Diecasting Company | LinkedIn', link: 'https://in.linkedin.com/in/hari-viswanathan', snippet: 'Experience: 18 years of experience in high pressure diecasting, with a focus on incorporating cutting-edge technologies for improved production processes.' };
+
+  it('matches the name without its bracketed abbreviation', () => {
+    expect(sameFirm('Auto Diecasting Company', company)).toBe(true);
+    expect(sameFirm('Auto Diecasting', company)).toBe(true);
+    expect(sameFirm('Auto Die Cast (India)', company)).toBe(false);
+  });
+
+  it('is found at the company, as CEO (the eligible top-of-company fallback)', async () => {
+    const { people } = await searchLinkedIn(services(seen, () => [hari]), 'site:linkedin.com/in "Auto Diecasting Company"', company);
+    expect(people.map((p) => [p.name, p.title])).toEqual([['Hari Viswanathan', 'CEO']]);
+    expect(contactPriority('CEO', DEFAULT_ICPS[0])).toBe(50);
+    // Searched without the bracket.
+    expect(seen.searches.every((q) => !q.includes('(ADC)'))).toBe(true);
+  });
+
+  it('an "Experience:" sentence is not read as an employer; a name still is', async () => {
+    const { currentEmployer } = await import('@/lib/pipeline/employer');
+    expect(currentEmployer({ name: 'X', title: '', snippet: hari.snippet }, company)).toBe('unknown');
+    expect(currentEmployer({ name: 'X', title: '', snippet: 'Experience: Hi Tech Arai' }, company)).toBe('elsewhere');
+    expect(currentEmployer({ name: 'X', title: '', snippet: 'Experience: Auto Diecasting Company' }, company)).toBe('here');
+  });
+
+  it('leaves a one-piece role with a comma alone', async () => {
+    const r = { title: 'Ravi K - Head, Operations | LinkedIn', subtitle: 'Coimbatore, Tamil Nadu, India · Head, Operations · Auto Diecasting Company', link: 'https://in.linkedin.com/in/ravi-k', snippet: '' };
+    const { people } = await searchLinkedIn(services(seen, () => [r]), 'q', company);
+    expect(people.map((p) => p.title)).toEqual(['Head, Operations']);
+  });
+});
