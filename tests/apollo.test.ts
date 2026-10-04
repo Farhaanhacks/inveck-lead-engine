@@ -65,7 +65,7 @@ function services(
   }) as typeof fetch;
   return {
     fetch: fetchFn,
-    keys: { deepseek: '', anthropic: '', serper: 'serper-test', hunter: opts.check ? 'hunter-test' : '', apollo: opts.key ?? KEY, prospeo: '', jina: '' },
+    keys: { deepseek: '', anthropic: '', serper: 'serper-test', apollo: opts.key ?? KEY, prospeo: '', jina: '' },
     settings: settingsSchema.parse(opts.settings ?? {}),
     cache: opts.cache,
   };
@@ -113,7 +113,7 @@ describe('Apollo is asked for emails only', () => {
 
 describe('email priority', () => {
   it("a verified Apollo email outranks an address built from the company's format", async () => {
-    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'verified', domain: 'acmeforgings.in' })), { check: () => 'accept_all' });
+    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'verified', domain: 'acmeforgings.in' })));
     const r = await findEmail(svc, amit, { ...acme, format: proven, lookups: { left: 3 } });
     expect(r).toMatchObject({ email: 'a.kumar@acmeforgings.in', source: 'apollo', verification: 'verified', verifiedBy: 'Apollo', providerStatus: 'verified' });
     // The template address was never built or checked.
@@ -121,17 +121,18 @@ describe('email priority', () => {
   });
 
   it('only infers from the format when no direct source or Apollo has a usable email, and says so', async () => {
-    const svc = services(seen, () => json({ person: null }), { check: () => 'accept_all' });
+    const svc = services(seen, () => json({ person: null }));
     const r = await findEmail(svc, amit, { ...acme, format: proven, lookups: { left: 3 } });
-    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'inferred', verification: 'catch_all' });
-    expect(emailLabel(r)).toMatch(/^inferred from the company's email format: .* · unverified: the company's mail server accepts every address/);
+    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'inferred', verification: 'unverified' });
+    expect(emailLabel(r)).toMatch(/^inferred from the company's email format: .* · unverified$/);
     expect(r.notes.join('\n')).toContain('Apollo: nothing for Amit Kumar: Apollo has no matching person');
   });
 
-  it("an Apollo address on another domain is never used; the person's published address beats an unconfirmed Apollo one", async () => {
-    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'amit@gmail.com', status: 'verified', domain: 'acmeforgings.in' })), { check: () => 'accept_all' });
-    const r = await findEmail(svc, amit, { ...acme, websiteEmails: ['amit@acmeforgings.in'], lookups: { left: 3 } });
-    expect(r).toMatchObject({ email: 'amit@acmeforgings.in', source: 'website', verification: 'catch_all' });
+  it('an Apollo address on another domain is never used', async () => {
+    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'amit@gmail.com', status: 'verified', domain: 'acmeforgings.in' })));
+    const r = await findEmail(svc, amit, { ...acme, format: proven, lookups: { left: 3 } });
+    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'inferred' });
+    expect(r.notes.join('\n')).toContain("Apollo's address is not on the company's domain");
   });
 });
 
@@ -170,26 +171,28 @@ describe('only the same person at the same employer', () => {
   });
 
   it("a wrong-employer match gives no email in the chain; the fallback still runs", async () => {
-    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'amit.k@acmesteel.com', status: 'verified', org: 'Acme Steel', domain: 'acmesteel.com' })), { check: () => 'valid' });
+    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'amit.k@acmesteel.com', status: 'verified', org: 'Acme Steel', domain: 'acmesteel.com' })));
     const r = await findEmail(svc, amit, { ...acme, format: proven, lookups: { left: 3 } });
-    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'inferred', verification: 'verified' });
+    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'inferred', verification: 'unverified' });
     expect(r.notes.join('\n')).toContain('another employer (Acme Steel)');
   });
 });
 
 describe("the team's and verified addresses are kept", () => {
   it('a team-entered email is kept and Apollo is not asked', async () => {
-    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'verified', domain: 'acmeforgings.in' })), { check: () => 'invalid' });
+    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'verified', domain: 'acmeforgings.in' })));
     const r = await findEmail(svc, { ...amit, email: 'amit.k@acme-personal.in', emailSource: 'manual' }, { ...acme, lookups: { left: 3 } });
-    expect(r).toMatchObject({ email: 'amit.k@acme-personal.in', source: 'manual', verification: 'invalid' });
+    expect(r).toMatchObject({ email: 'amit.k@acme-personal.in', source: 'manual', verification: 'unverified' });
     expect(seen.apollo).toHaveLength(0);
   });
 
-  it('a verified published address is used without spending an Apollo lookup', async () => {
-    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'verified', domain: 'acmeforgings.in' })), { check: () => 'valid' });
-    const r = await findEmail(svc, amit, { ...acme, websiteEmails: ['amit.kumar@acmeforgings.in'], lookups: { left: 3 } });
-    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'website', verification: 'verified', verifiedBy: 'mail-server check' });
+  it("the person's own published address is used without spending an Apollo lookup", async () => {
+    const svc = services(seen, () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'verified', domain: 'acmeforgings.in' })));
+    const budget = { left: 3 };
+    const r = await findEmail(svc, amit, { ...acme, websiteEmails: ['amit.kumar@acmeforgings.in'], lookups: budget });
+    expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'website', verification: 'unverified' });
     expect(seen.apollo).toHaveLength(0);
+    expect(budget.left).toBe(3);
   });
 });
 
@@ -202,21 +205,18 @@ describe('unverified Apollo results stay unverified', () => {
     expect(emailLabel(r)).toMatch(/^Apollo \(Apollo status: extrapolated, retrieved \d{4}-\d{2}-\d{2}\) · unverified$/);
   });
 
-  it('goes through the mail-server check: confirmed is verified by the check, a catch-all stays unverified', async () => {
+  it('is never checked anywhere else: no mail-server (Hunter) request is ever made', async () => {
     const reply = () => json(person({ name: 'Amit Kumar', email: 'a.kumar@acmeforgings.in', status: 'unverified', domain: 'acmeforgings.in' }));
-    const valid = await findEmail(services(seen, reply, { check: () => 'valid' }), amit, { ...acme, lookups: { left: 3 } });
-    expect(valid).toMatchObject({ source: 'apollo', verification: 'verified', verifiedBy: 'mail-server check', providerStatus: 'unverified' });
-    const catchAll = await findEmail(services(seen, reply, { check: () => 'accept_all' }), amit, { ...acme, lookups: { left: 3 } });
-    expect(catchAll).toMatchObject({ source: 'apollo', verification: 'catch_all' });
-    expect(emailLabel(catchAll)).not.toContain('verified by');
-    const rejected = await findEmail(services(seen, reply, { check: () => 'invalid' }), amit, { ...acme, lookups: { left: 3 } });
-    expect(rejected.email).not.toBe('a.kumar@acmeforgings.in');
+    const r = await findEmail(services(seen, reply), amit, { ...acme, format: proven, lookups: { left: 3 } });
+    expect(r).toMatchObject({ source: 'apollo', verification: 'unverified', providerStatus: 'unverified' });
+    expect(emailLabel(r)).not.toContain('verified by');
+    expect(seen.checks).toHaveLength(0);
   });
 });
 
 describe('Apollo failures', () => {
   it('records why a lookup failed, separately from "not found", and the chain falls back', async () => {
-    const svc = services(seen, () => json({ error: `Invalid access credentials for ${KEY}` }, 401), { check: () => 'accept_all' });
+    const svc = services(seen, () => json({ error: `Invalid access credentials for ${KEY}` }, 401));
     const r = await findEmail(svc, amit, { ...acme, format: proven, lookups: { left: 3 } });
     expect(r).toMatchObject({ email: 'amit.kumar@acmeforgings.in', source: 'inferred' });
     const notes = r.notes.join('\n');

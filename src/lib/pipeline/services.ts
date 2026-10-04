@@ -1,5 +1,4 @@
 import type { ApiKeys, Settings } from '../settings';
-import { errorMessage } from './text';
 
 /** Results of paid lookups (Apollo), kept so the same person isn't paid for twice. */
 export type EnrichmentCache = {
@@ -76,30 +75,6 @@ export async function newsSearch(svc: Services, q: string, period = 'qdr:y'): Pr
     body: JSON.stringify({ q, gl: 'in', num: 10, tbs: period }),
   });
   return Array.isArray(data.news) ? data.news : [];
-}
-
-/** A Hunter API call. */
-export async function hunter<T = unknown>(svc: Services, path: string, params: Record<string, string>): Promise<T> {
-  if (!svc.keys.hunter) throw new Error('HUNTER_API_KEY is not set');
-  const url = `https://api.hunter.io/v2/${path}?${new URLSearchParams({ ...params, api_key: svc.keys.hunter })}`;
-  const data = await getJson<{ data?: T }>(svc, url);
-  return (data.data ?? {}) as T;
-}
-
-export type HunterCredits = { searchesLeft: number; verificationsLeft: number; resetDate: string; error: string };
-
-/** What's left on the Hunter plan. The account call itself is free. */
-export async function hunterCredits(svc: Services): Promise<HunterCredits> {
-  const left = (q: unknown) => {
-    const o = (q || {}) as { available?: number; used?: number };
-    return Math.max(0, Number(o.available ?? 0) - Number(o.used ?? 0));
-  };
-  try {
-    const d = await hunter<{ requests?: { searches?: unknown; verifications?: unknown }; reset_date?: string }>(svc, 'account', {});
-    return { searchesLeft: left(d.requests?.searches), verificationsLeft: left(d.requests?.verifications), resetDate: d.reset_date || '', error: '' };
-  } catch (e) {
-    return { searchesLeft: 0, verificationsLeft: 0, resetDate: '', error: errorMessage(e) };
-  }
 }
 
 /** Runs `fn` over `items` with at most `limit` running at once, keeping order. */

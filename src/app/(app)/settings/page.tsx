@@ -2,7 +2,6 @@ import { getDb, databaseUrl } from '@/lib/db';
 import { apiKeys, getSettings } from '@/lib/settings';
 import { PageHeader } from '@/components/page-header';
 import { SettingsForm } from './settings-form';
-import { HunterNotice } from '@/components/hunter-notice';
 import { adminPage } from '@/lib/access';
 
 export default async function SettingsPage() {
@@ -17,7 +16,6 @@ export default async function SettingsPage() {
     { name: 'SERPER_API_KEY', ok: !!keys.serper, use: 'Google search: LinkedIn profiles & prospects', needed: true },
     { name: 'PROSPEO_API_KEY', ok: !!keys.prospeo, use: 'Email lookup for chosen contacts, asked first (emails only, never phone numbers)', needed: settings.emailLookupsPerCompany > 0 && !keys.apollo },
     { name: 'APOLLO_API_KEY', ok: !!keys.apollo, use: 'Email lookup when Prospeo has nothing (emails only, never phone numbers)', needed: false },
-    { name: 'HUNTER_API_KEY', ok: !!keys.hunter, use: 'Email verification only (mail-server check); no longer an email source', needed: false },
     { name: 'JINA_API_KEY', ok: !!keys.jina, use: 'Optional: higher limits for reading JavaScript-heavy websites', needed: false },
     { name: 'APP_PASSWORD', ok: !!process.env.APP_PASSWORD, use: 'Team login', needed: true },
     { name: 'CRON_SECRET', ok: !!process.env.CRON_SECRET, use: 'Scheduled runs on Vercel', needed: !!process.env.VERCEL },
@@ -51,9 +49,6 @@ export default async function SettingsPage() {
                 </li>
               ))}
             </ul>
-            <div className="mt-4">
-              <HunterNotice always />
-            </div>
           </section>
           <section className="card p-5 text-sm text-ink-2">
             <h2 className="mb-2 text-sm font-semibold text-ink">Schedule & database</h2>

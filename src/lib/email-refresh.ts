@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Db } from './db';
 import { activities, leads, people, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { askProvider, emailLabel, emailProviders, verifyEmail, type LookupBudget, type ProviderName } from './pipeline/emails';
+import { askProvider, emailLabel, emailProviders, type LookupBudget } from './pipeline/emails';
 import type { Services } from './pipeline/services';
 import { sameName } from './pipeline/contacts';
 import { rootDomain } from './pipeline/text';
@@ -36,7 +36,7 @@ async function logOnce(db: Db, leadId: number, text: string) {
 /**
  * One contact's email, looked at again: an inferred or unconfirmed address is replaced when an email
  * provider (Prospeo, then Apollo) has a verified address for the same person at the same company (the
- * provider's own "verified", or its address confirmed by the mail-server check). An address the team
+ * provider's own "verified"). An address the team
  * typed is never replaced, and a verified one never by anything less: a different verified address
  * from a provider is logged as a conflict for review instead. Nothing here throws; a failed lookup
  * changes nothing.
@@ -81,14 +81,9 @@ export async function refreshEmail(
     asked = true;
     if (r.outcome !== 'found') continue;
 
-    let verifiedBy: ProviderName | 'mail-server check';
-    if (r.status === 'verified') verifiedBy = p.name;
-    else {
-      // Not verified by the provider: only the mail-server check can make it an upgrade.
-      const check = await verifyEmail(svc, r.email);
-      if (check.status !== 'valid') continue;
-      verifiedBy = 'mail-server check';
-    }
+    // Only an address the provider has verified is an upgrade.
+    if (r.status !== 'verified') continue;
+    const verifiedBy = p.name;
     const result = { email: r.email, source: p.source, verification: 'verified' as const, verifiedBy, providerStatus: r.status, retrievedAt: r.retrievedAt };
     await save({
       email: r.email,

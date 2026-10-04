@@ -69,7 +69,7 @@ function services(
   }) as typeof fetch;
   const svc: Services = {
     fetch: fetchFn,
-    keys: { deepseek: '', anthropic: '', serper: 'serper-test', hunter: opts.check ? 'hunter-test' : '', apollo: opts.apollo ? 'apollo-test' : '', prospeo: opts.key ?? KEY, jina: '' },
+    keys: { deepseek: '', anthropic: '', serper: 'serper-test', apollo: opts.apollo ? 'apollo-test' : '', prospeo: opts.key ?? KEY, jina: '' },
     settings: settingsSchema.parse({}),
     cache: opts.cache,
   };

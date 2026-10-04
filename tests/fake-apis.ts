@@ -1,4 +1,4 @@
-// A stand-in for Jina, Serper, Hunter, DeepSeek and Anthropic. It gives deliberately
+// A stand-in for Jina, Serper, Hunter (to prove it is never called), DeepSeek and Anthropic. It gives deliberately
 // messy answers (wrong types, code fences, plain text, API errors) so the tests cover
 // every parsing and fallback path.
 

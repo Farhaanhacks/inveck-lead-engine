@@ -7,7 +7,7 @@ import { domainScore, nameTokens } from './website';
  * Company email formats. Data providers (RocketReach, ZoomInfo, LeadIQ, email-format sites)
  * publish each company's format for search engines, e.g. "The most common Honeywell email
  * format is [first].[last] (ex. jane.doe@honeywell.com) being used 88.4% of the time".
- * Reading those through Google costs one search and no Hunter credits.
+ * Reading those through Google costs one search.
  */
 
 /** Builds the local part of an address from a format like "{first}.{last}"; '' when a needed name part is missing. */

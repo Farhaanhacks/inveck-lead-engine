@@ -45,27 +45,25 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
 
 Emails only: phone numbers are never requested from any provider. In order, most trustworthy first:
 
-1. An address the sales team typed in: always kept, never replaced (checked only to label it).
-2. The person's own address published on the company website, the web or a people-search page,
-   confirmed by the mail-server check.
+1. An address the sales team typed in: always kept, never replaced.
+2. The person's own address published on the company website, the web or a people-search page
+   (no paid lookup is spent then).
 3. **Prospeo**, then **Apollo** when Prospeo has nothing verified, for a contact already
    identified: their LinkedIn profile when known, name and employer. A reply is used only for the
    same person (name, and LinkedIn profile when both have one) at the same employer (domain, or the
    company's name in full) with an address on the company's domain. Prospeo is asked for verified
-   emails only, with mobile numbers off, and charges only when it finds one. A provider's "verified"
-   counts as verified; any other status goes through the mail-server check and otherwise stays
-   labelled unverified.
-4. A published address that couldn't be confirmed (catch-all server), then a provider's unconfirmed one.
-5. Inferred from the company's proven format (published format data, or its people's published
-   addresses), always labelled **inferred**, including on a catch-all domain. Plain guesses are kept
-   only when the mail server confirms them, also labelled inferred.
+   emails only, with mobile numbers off, and charges only when it finds one. Only a provider's own
+   "verified" makes an address verified; anything else stays labelled unverified.
+4. Inferred from the company's proven format (published format data, or its people's published
+   addresses), always labelled **inferred**. Formats are never guessed.
 
 Each address keeps its source, our verdict, the provider's own status and the date it was returned,
-apart from one another. Hunter is no longer a source; its email verifier is the mail-server check.
+apart from one another. There is no separate mail-server check (Hunter is no longer used).
 Paid lookups (Prospeo, Apollo) are spent on the **main contact only**, within **Email lookups per main
 contact** (Settings, default 3, counting requests to either provider; 0 switches both off); someone made
 main contact later (by the team, or by the weekly check) gets a lookup then. The others at a company get
-only free sources: an address published for them, or the company's proven format, labelled inferred. Provider results, including "no match", are cached in the database (90 days for an
+only free sources: an address published for them, or the company's proven format, labelled inferred.
+Provider results, including "no match", are cached in the database (90 days for an
 address, 30 for no match), so a person is never paid for twice; failed lookups are not cached.
 Prospeo requests are spaced a little over a second apart (its free plan allows one a second). After a
 refused key, used-up credits or a long rate limit, that provider isn't asked again in the same run.
@@ -74,7 +72,7 @@ touch the team's addresses, and log a conflict for review when a provider's veri
 from one on file.
 
 Configuration: `PROSPEO_API_KEY` and/or `APOLLO_API_KEY` (server-side environment variables; never
-sent to the browser or logged) and optionally `HUNTER_API_KEY` for the mail-server check.
+sent to the browser or logged).
 
 The one human step is **approval**. A person reads the draft, edits it if needed, approves
 it and marks it as sent. Nothing is ever sent automatically.
@@ -103,7 +101,6 @@ it and marks it as sent. Nothing is ever sent automatically.
    | `SERPER_API_KEY` | yes | serper.dev key for Google / LinkedIn search |
    | `PROSPEO_API_KEY` | yes** | prospeo.io key for email lookup, asked first (emails only) |
    | `APOLLO_API_KEY` | yes** | apollo.io key for email lookup after Prospeo (emails only; needs People Enrichment API access, not on Apollo's free plan) |
-   | `HUNTER_API_KEY` | optional | hunter.io key, used only to verify addresses (mail-server check) |
    | `APP_URL` | optional | Your public URL, if you use a custom domain |
 
    \* You need the key for whichever AI provider is selected in Settings.

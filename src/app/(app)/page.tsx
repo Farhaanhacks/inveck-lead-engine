@@ -12,7 +12,6 @@ import { getRunView, listRuns } from '@/lib/run-view';
 import { RunPanel } from '@/components/run-panel';
 import { PageHeader } from '@/components/page-header';
 import { RunButtons } from '@/components/run-buttons';
-import { HunterNotice } from '@/components/hunter-notice';
 import { adminPage } from '@/lib/access';
 import { listBdas } from '@/lib/users';
 
@@ -84,10 +83,6 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
       <PageHeader title="Dashboard" description="Prospects found, researched and ready for outreach.">
         <RunButtons running={!!running} runId={running?.id} team={team.map((u) => ({ id: u.id, name: u.name }))} />
       </PageHeader>
-
-      <div className="mb-6 empty:hidden">
-        <HunterNotice />
-      </div>
 
       {running && <div className="mb-6">{activity}</div>}
 

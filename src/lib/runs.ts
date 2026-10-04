@@ -7,7 +7,7 @@ import { normQuery } from './pipeline/query-history';
 import { contactFromTeam } from './team-contact';
 export { contactFromTeam };
 import type { Services } from './pipeline/services';
-import { hunterCredits, mapLimit } from './pipeline/services';
+import { mapLimit } from './pipeline/services';
 import { errorMessage, normCompany } from './pipeline/text';
 import { draftDueFollowUps } from './pipeline/follow-ups';
 import { scanRadar } from './pipeline/radar';
@@ -217,18 +217,6 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
 
     if (stats.processed === 0) {
       if (!svc.keys.prospeo && !svc.keys.apollo) await log('No email provider is set up (PROSPEO_API_KEY, APOLLO_API_KEY): emails come only from published addresses and the company\'s format.', 'warn');
-      // Hunter is only the mail-server check now.
-      if (svc.keys.hunter) {
-        const credits = await hunterCredits(svc);
-        if (credits.error) await log(`Couldn't read the email verification credits (Hunter): ${credits.error}`, 'warn');
-        else if (!credits.verificationsLeft) {
-          await log(
-            `Email verification (Hunter) has no checks left${credits.resetDate ? ` (resets ${credits.resetDate})` : ''}. ` +
-              'Until then addresses are saved labelled unverified or inferred, never as verified, unless Apollo verified them.',
-            'warn',
-          );
-        }
-      }
     }
 
     // New plants and warehouses in the news (at most every 12 hours).

@@ -617,7 +617,6 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   if (provider !== current.aiProvider && model === current.aiModel) model = DEFAULT_MODELS[provider] ?? model;
   const parsed = settingsSchema.safeParse({
     leadsPerMorning: str(form, 'leadsPerMorning'),
-    maxEmailGuesses: str(form, 'maxEmailGuesses'),
     emailLookupsPerCompany: str(form, 'emailLookupsPerCompany'),
     useCompanyFormat: form.get('useCompanyFormat') === 'on',
     radarEnabled: form.get('radarEnabled') === 'on',

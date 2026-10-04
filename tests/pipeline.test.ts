@@ -41,7 +41,7 @@ let log: FakeLog;
 function services(overrides: Partial<Settings> = {}): Services {
   return {
     fetch: fakeFetch(log),
-    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', hunter: 'hunter-test', apollo: 'apollo-test', prospeo: '', jina: '' },
+    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', apollo: 'apollo-test', prospeo: '', jina: '' },
     settings: settingsSchema.parse({ dailyLimit: 50, ...overrides }),
   };
 }
@@ -83,10 +83,11 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Tata Motors'].fitReason).toBe('6 plants, SAP');
     expect(L['Tata Motors'].fitEvidence.find((e) => e.id === 'M1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.tatamotors.com/' });
     expect(L['Tata Motors'].contactName).toBe('Sangamnath Digge');
-    // Neither a published address nor Apollo had one: a common format the mail server confirms, labelled inferred.
-    expect(L['Tata Motors'].contactEmail).toBe('sangamnath.digge@tatamotors.com');
-    expect(L['Tata Motors']).toMatchObject({ emailSource: 'inferred', emailVerification: 'verified' });
-    expect(L['Tata Motors'].emailStatus).toBe("inferred from the company's email format: first.last, confirmed by the mail server · verified by mail-server check");
+    // Neither a published address, Apollo nor a proven format had one: no email. Common formats are
+    // no longer guessed (there is no mail-server check to confirm a guess), and no Hunter call is made.
+    expect(L['Tata Motors'].contactEmail).toBe('');
+    expect(L['Tata Motors'].emailStatus).toMatch(/^no email found/);
+    expect(log.calls.some((c) => /hunter\.io/.test(c))).toBe(false);
     expect(L['Tata Motors'].emailBody).toBe('Hi,, body text');
     expect(L['Tata Motors'].linkedinMessage).toBe('Hello');
     expect(L['Tata Motors'].otherDecisionMakers).toContain('Anita Rao | Head Supply Chain | https://in.linkedin.com/in/anita');
@@ -126,9 +127,9 @@ describe('full run with DeepSeek-style messy answers', () => {
     // The sales team's contact is kept.
     expect(L['Motherson'].contactName).toBe('Vijay Agrawal');
     expect(L['Motherson'].contactEmail).toBe('vijay@motherson.com');
-    // Checked only to label it: the team's address is kept as theirs.
-    expect(L['Motherson']).toMatchObject({ emailSource: 'manual', emailVerification: 'catch_all' });
-    expect(L['Motherson'].emailStatus).toMatch(/^entered by the team · unverified: the company's mail server accepts every address/);
+    // The team's address is kept as theirs.
+    expect(L['Motherson']).toMatchObject({ emailSource: 'manual', emailVerification: 'unverified' });
+    expect(L['Motherson'].emailStatus).toBe('entered by the team · unverified');
 
     // Apollo's verified address for the identified contact; draft missing a body → kept, retried later.
     expect(L['No Draft Industries'].contactEmail).toBe('ravi.shah@nodraft.in');
@@ -143,16 +144,12 @@ describe('full run with DeepSeek-style messy answers', () => {
 
     // Email search, cheapest first.
     expect(L['Website Email Co'].contactEmail).toBe('arjun.mehta@websiteemail.in');
-    expect(L['Website Email Co']).toMatchObject({ emailSource: 'website', emailVerification: 'catch_all' });
-    expect(log.verified.filter((e) => e.endsWith('websiteemail.in'))).toEqual(['arjun.mehta@websiteemail.in']);
+    expect(L['Website Email Co']).toMatchObject({ emailSource: 'website', emailVerification: 'unverified' });
+    // No mail-server (Hunter) check is ever made.
+    expect(log.verified).toEqual([]);
 
-    expect(L['Format Guess Co'].contactEmail).toBe('nkapoor@formatguess.in');
-    // Stops at the first valid guess.
-    expect(log.verified.filter((e) => e.endsWith('formatguess.in'))).toEqual([
-      'neha.kapoor@formatguess.in',
-      'neha@formatguess.in',
-      'nkapoor@formatguess.in',
-    ]);
+    // A format nobody published is never guessed.
+    expect(L['Format Guess Co'].contactEmail).toBe('');
 
     // No LinkedIn hits: leadership named only in company records can't be confirmed on LinkedIn, so it is
     // set aside, not used: no main contact (the team finds one); invented names are dropped.
@@ -165,9 +162,9 @@ describe('full run with DeepSeek-style messy answers', () => {
     // Catch-all server, but the company's format is published (RocketReach-style page):
     // the address is saved as "likely", like ZoomInfo's business emails.
     expect(L['Honeywell'].contactEmail).toBe('mayank.singh@honeywell.com');
-    expect(L['Honeywell']).toMatchObject({ emailSource: 'inferred', emailVerification: 'catch_all' });
+    expect(L['Honeywell']).toMatchObject({ emailSource: 'inferred', emailVerification: 'unverified' });
     expect(L['Honeywell'].emailStatus).toBe(
-      "inferred from the company's email format: first.last, 88.4% of honeywell.com emails · unverified: the company's mail server accepts every address, so it can't be checked individually",
+      "inferred from the company's email format: first.last, 88.4% of honeywell.com emails · unverified",
     );
     expect(L['Honeywell'].status).toBe('Awaiting Approval');
     // Buying signals: only real news items, linked to their article.
@@ -180,7 +177,7 @@ describe('full run with DeepSeek-style messy answers', () => {
 
     // Everyone found at the company is kept, best first, with the best free email.
     const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));
-    expect(tataPeople[0]).toMatchObject({ name: 'Sangamnath Digge', isPrimary: true, email: 'sangamnath.digge@tatamotors.com' });
+    expect(tataPeople[0]).toMatchObject({ name: 'Sangamnath Digge', isPrimary: true, email: '' });
     // Paid lookups go to the main contact only: Anita gets no Apollo lookup, and Apollo was asked
     // about the main contact alone.
     const anitaRow = tataPeople.find((p) => p.name === 'Anita Rao');
@@ -197,10 +194,10 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(tata).toMatchObject({ contactName: 'Anita Rao', contactEmail: anita.email });
     expect((await db.select().from(people).where(eq(people.leadId, tata.id))).filter((p) => p.isPrimary).map((p) => p.name)).toEqual(['Anita Rao']);
 
-    // Apollo's unverified ("extrapolated") address, confirmed by the mail-server check: verified by it, not by Apollo.
+    // Apollo's unverified ("extrapolated") address stays unverified: nothing else confirms it.
     expect(L['Finder Co'].contactEmail).toBe('k.rao@findr.in');
-    expect(L['Finder Co']).toMatchObject({ emailSource: 'apollo', emailVerification: 'verified', emailProviderStatus: 'extrapolated' });
-    expect(L['Finder Co'].emailStatus).toMatch(/^Apollo \(Apollo status: extrapolated, retrieved [\d-]+\) · verified by mail-server check$/);
+    expect(L['Finder Co']).toMatchObject({ emailSource: 'apollo', emailVerification: 'unverified', emailProviderStatus: 'extrapolated' });
+    expect(L['Finder Co'].emailStatus).toMatch(/^Apollo \(Apollo status: extrapolated, retrieved [\d-]+\) · unverified$/);
     // Hunter is no longer an email source: no people search, no finder.
     expect(log.calls.some((c) => /hunter\.io\/v2\/(domain-search|email-finder)/.test(c))).toBe(false);
     // Every Apollo request asked for emails only.
@@ -211,12 +208,9 @@ describe('full run with DeepSeek-style messy answers', () => {
       expect(u.searchParams.has('webhook_url')).toBe(false);
     }
 
-    // A catch-all server can't confirm a guess: nothing is saved (no unconfirmed guesses),
-    // and it stops guessing after the first address.
+    // No source had an address and none is guessed: nothing is saved.
     expect(L['Catchall Co'].contactEmail).toBe('');
-    expect(L['Catchall Co'].emailStatus).toBe("no email found: company's mail server can't confirm addresses");
-    expect(L['Catchall Co'].otherDecisionMakers).toContain('No confirmed email');
-    expect(log.verified.filter((e) => e.endsWith('catchall.in'))).toEqual(['amit.joshi@catchall.in']);
+    expect(L['Catchall Co'].emailStatus).toBe('no email found: no email found in any source');
     expect(L['Catchall Co'].status).toBe('Awaiting Approval'); // reachable on LinkedIn
 
     // Prospect search added new companies but skipped duplicates, clients and directories.
@@ -342,7 +336,7 @@ describe('finding emails', () => {
   it('saves nothing unconfirmed when the company-format setting is off', async () => {
     const r = await findEmail(services({ useCompanyFormat: false }), soni, { company: 'John Deere', domain: '', websiteEmails: [] });
     expect(r.email).toBe('');
-    expect(r.reason).toMatch(/^email check unavailable/);
+    expect(r.reason).toBe('no email found in any source');
     expect(r.notes.join('\n')).toContain('Inferred email');
   });
 
