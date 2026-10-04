@@ -25,6 +25,7 @@ import {
   addLeadAsClientAction,
   confirmFitAction,
   makePrimaryAction,
+  markLeftAction,
   markNotFitAction,
   deleteLeadAction,
   reassessFitAction,
@@ -306,18 +307,27 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                   {(p.location || city) && (
                     <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location || 'Location not confirmed'}</div>
                   )}
+                  {p.evidence && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Why: {p.evidence}</div>}
                 </td>
                 <td className="px-2 py-2.5">
                   {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
                 </td>
                 <td className="px-2 py-2.5 text-xs text-ink-2">{p.source}</td>
                 <td className="px-5 py-2.5 text-right">
-                  {(!p.isPrimary || p.passedAt) && (
-                    <form action={makePrimaryAction}>
+                  <div className="flex flex-col items-end gap-1.5">
+                    {(!p.isPrimary || p.passedAt) && (
+                      <form action={makePrimaryAction}>
+                        <input type="hidden" name="id" value={p.leadId} />
+                        <input type="hidden" name="personId" value={p.id} />
+                        <SubmitButton className="btn-secondary h-7 px-2 py-0.5 text-xs" pendingText="…">Make main contact</SubmitButton>
+                      </form>
+                    )}
+                    <form action={markLeftAction}>
+                      <input type="hidden" name="id" value={p.leadId} />
                       <input type="hidden" name="personId" value={p.id} />
-                      <SubmitButton className="btn-secondary h-7 px-2 py-0.5 text-xs" pendingText="…">Make main contact</SubmitButton>
+                      <SubmitButton className="h-7 px-2 py-0.5 text-xs text-muted hover:text-ink" pendingText="…">Left the company</SubmitButton>
                     </form>
-                  )}
+                  </div>
                 </td>
               </tr>
             ))}

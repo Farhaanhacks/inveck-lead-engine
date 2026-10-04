@@ -161,3 +161,26 @@ describe('Mojj Engineering: the owner-director, and a search that failed', () =>
     expect(nbc.detail).toContain('Rohan Katara (tried, no luck)');
   });
 });
+
+describe('Eurocast: someone who has left is never confirmed from an old copy of their profile', () => {
+  const company = 'Eurocast Engineering';
+  const arunStale = { title: 'Gnanaprakasam Arun - Operation head die casting - Euro Cast Engineering', subtitle: 'Coimbatore, Tamil Nadu, India · Operation head die casting · Euro Cast Engineering', link: 'https://in.linkedin.com/in/gnanaprakasam-arun', snippet: 'Experience: Euro Cast Engineering' };
+  const arunEnded = { ...arunStale, snippet: 'Operation head die casting. Euro Cast Engineering. Mar 2013 - Sep 2024' };
+  const arunMoved = { ...arunStale, snippet: 'Plant Manager. Hi Tech Arai. Oct 2024 - Present · Operation head die casting. Euro Cast Engineering. Mar 2013 - Sep 2024' };
+  const sujeesh = { title: 'Sujeesh K - Production Manager - Eurocast Engineering', subtitle: 'Coimbatore, Tamil Nadu, India · Production Manager · Eurocast Engineering', link: 'https://in.linkedin.com/in/sujeesh-k', snippet: '' };
+
+  it('an explicit end date overrides the undated line; a current job elsewhere means elsewhere', async () => {
+    for (const arun of [arunEnded, arunMoved]) {
+      const { people } = await searchLinkedIn(services(seen, () => [arun, sujeesh]), 'site:linkedin.com/in "Eurocast"', company);
+      // The former operations head is left out, so the current production manager comes first.
+      expect(people.map((p) => p.name)).toEqual(['Sujeesh K']);
+      expect(people[0].evidence).toContain('undated');
+    }
+    expect(sameFirm('Euro Cast Engineering', company)).toBe(true);
+  });
+
+  it('with no dates at all, the undated line is shown as undated evidence', async () => {
+    const { people } = await searchLinkedIn(services(seen, () => [arunStale]), 'site:linkedin.com/in "Eurocast"', company);
+    expect(people[0]?.evidence).toContain('LinkedIn (via Google, undated)');
+  });
+});

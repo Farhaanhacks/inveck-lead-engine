@@ -20,7 +20,7 @@ import { getCurrentUser, verifyLogin } from '@/lib/users';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
 import { KnownBranches } from '@/lib/branches';
-import { newContactNamed } from '@/lib/escalate';
+import { escalate, newContactNamed } from '@/lib/escalate';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
@@ -389,6 +389,29 @@ export async function makePrimaryAction(form: FormData) {
     refreshLeadPages(leadId);
     revalidatePath('/today');
   }
+  revalidatePath('/contacts');
+}
+
+/**
+ * The team found that someone no longer works at the company (their LinkedIn shows an end date
+ * Google hadn't picked up). They are removed; if they were the main contact, the next confirmed
+ * person at the company takes over and the email is rewritten for them.
+ */
+export async function markLeftAction(form: FormData) {
+  const leadId = Number(str(form, 'id'));
+  if (!(await mayActOn(leadId))) return;
+  const db = await getDb();
+  const [person] = await db.select().from(people).where(eq(people.id, Number(str(form, 'personId'))));
+  if (!person || person.leadId !== leadId) return;
+  if (person.isPrimary) {
+    const r = await escalate(db, leadId, 'left', new Date(), 'marked by the team');
+    if (r.switched) after(async () => redraftForContact(await getDb(), await liveServices(), leadId));
+  } else {
+    await db.delete(people).where(eq(people.id, person.id));
+    await logActivity(db, leadId, 'note', `${person.name} no longer works at the company (marked by the team); removed from the people to contact.`);
+  }
+  refreshLeadPages(leadId);
+  revalidatePath('/today');
   revalidatePath('/contacts');
 }
 

@@ -368,7 +368,9 @@ export async function vetPick(
       ? `${contact.name} set aside: no LinkedIn profile confirms they work at ${lead.company}`
       : profile.abroad
         ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
-        : profile.employer !== 'here'
+        : profile.employer === 'unknown'
+          ? `${contact.name} left out: ${profile.evidence || "LinkedIn doesn't confirm a current job here"}`
+          : profile.employer !== 'here'
           ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
           : !confirmedAtSite({ location: profile.location }, lead.city)
             ? `${contact.name} left out: ${profile.location ? `based in ${profile.location}` : 'location not confirmed'}, not at the ${lead.city} site`
@@ -389,6 +391,7 @@ export async function vetPick(
     const found = profile!;
     if (!contact.linkedin) contact.linkedin = found.url;
     if (chosen && found.location && !chosen.location) chosen.location = found.location;
+    if (chosen && found.evidence) chosen.evidence = found.evidence;
     notes.push(`LinkedIn profile found by name: ${found.url}`);
     if (found.title && found.title.toLowerCase() !== contact.title.toLowerCase()) {
       notes.push(`Title taken from LinkedIn: "${found.title}"${contact.title ? ` (the other source said "${contact.title}")` : ''}`);
@@ -439,6 +442,7 @@ export function companyPeople(ranked: Candidate[], main: { name: string; email: 
       phone: isPrimary ? main.phone : c.source === 'Sales team' ? c.phone : '',
       linkedin: isPrimary ? main.linkedin || c.linkedin : c.linkedin,
       location: c.location ?? '',
+      evidence: c.evidence ?? (c.source === 'Sales team' ? 'Entered by the team' : ''),
       source: SOURCE_NAMES[c.source],
       isPrimary,
     });

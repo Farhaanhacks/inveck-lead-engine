@@ -322,6 +322,8 @@ export const people = pgTable('people', {
    * Empty on rows from before it was recorded.
    */
   passedReason: text('passed_reason').notNull().default(''),
+  /** What showed they work at the company, and whether it was dated (shown on the lead page). */
+  evidence: text('evidence').notNull().default(''),
   /** When this person was last checked on LinkedIn (still there, current title); null = not yet. */
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */

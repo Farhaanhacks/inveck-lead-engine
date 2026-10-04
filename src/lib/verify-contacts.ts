@@ -111,7 +111,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     const retitle = !!profile?.title && newRole(p.title, profile.title);
     await db
       .update(people)
-      .set({ checkedAt: now, ...(profile?.location ? { location: profile.location } : {}), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
+      .set({ checkedAt: now, ...(profile?.evidence ? { evidence: profile.evidence } : {}), ...(profile?.location ? { location: profile.location } : {}), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
       .where(eq(people.id, p.id));
   }
   if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}${lead.city ? ` ${lead.city}` : ''} (left, or based elsewhere): ${gone.join('; ')}`);
@@ -189,6 +189,12 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
   }
+  if (profile.employer !== 'here') {
+    // Conflicting evidence (the job here has ended, though an undated line still shows it): not confirmed.
+    await moveOn(db, svc, lead, 'unverified', now, profile.evidence || 'LinkedIn does not confirm a current job here');
+    await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
+    return 'not_found';
+  }
   if (!confirmedAtSite({ location: profile.location }, lead.city)) {
     // At this company, but nothing shows they are at this site.
     await moveOn(db, svc, lead, 'unverified', now, 'location not confirmed')
@@ -206,7 +212,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   for (const p of mine) {
     await db
       .update(people)
-      .set({ checkedAt: now, ...(profile.location ? { location: profile.location } : {}), ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
+      .set({ checkedAt: now, ...(profile.evidence ? { evidence: profile.evidence } : {}), ...(profile.location ? { location: profile.location } : {}), ...(p.linkedin !== url ? { linkedin: url } : {}), ...(retitle || !p.title ? { title: retitle ? profile.title : lead.contactTitle || profile.title } : {}) })
       .where(eq(people.id, p.id));
   }
   if (!lead.contactLinkedin) await logActivity(db, lead.id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);

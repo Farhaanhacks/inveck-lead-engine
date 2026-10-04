@@ -23,6 +23,8 @@ export type Candidate = {
   snippet: string;
   /** Where they are based, from their LinkedIn profile ("Pimpri Chinchwad, Maharashtra, India"). */
   location?: string;
+  /** What showed they work here, and whether it was dated ("LinkedIn (via Google, undated): …"). */
+  evidence?: string;
 };
 
 export type ManualContact = { name: string; title: string; email: string; phone: string; linkedin: string };
@@ -121,10 +123,29 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
         const pieces = rest.flatMap((p) => p.split(/\s*\|\s*/)).map((p) => p.trim()).filter(Boolean);
         if (pieces.slice(1).some((p) => sameFirm(p, company))) employer = 'here';
       }
-      if (job) employer = 'here';
-      else if (now) employer = 'here';
-      else if (here.length) employer = 'elsewhere';
-      return { ...person, employer };
+      // Dated jobs in the snippet outrank the undated line under the result: a job here that has ended,
+      // or a current job at another company, means the line is an old copy of the profile.
+      const dated = company ? snippetRoles(person.snippet) : [];
+      const currentElsewhere = dated.find((j) => j.current && !sameFirm(j.company, company));
+      const endedHere = here.length > 0 && !now;
+      let evidence = '';
+      if (now) {
+        employer = 'here';
+        evidence = `LinkedIn (via Google): ${now.role} at ${now.company}, current`;
+      } else if (currentElsewhere) {
+        employer = 'elsewhere';
+        evidence = `LinkedIn (via Google): now ${currentElsewhere.role} at ${currentElsewhere.company}`;
+      } else if (endedHere) {
+        // Conflicting (an undated line may still say here): never confirmed from it.
+        employer = job ? 'unknown' : 'elsewhere';
+        evidence = `LinkedIn (via Google): the job at ${here[0].company} has ended${job ? '; the undated line still shows it, so not confirmed' : ''}`;
+      } else if (job) {
+        employer = 'here';
+        evidence = `LinkedIn (via Google, undated): ${[location, job.role, job.company].filter(Boolean).join(' · ')}`;
+      } else if (employer === 'here') {
+        evidence = `LinkedIn (via Google, undated): ${[person.title, location].filter(Boolean).join(' · ')}`;
+      }
+      return { ...person, employer, evidence };
     })
     // INVECK sells in India: profiles on another country's LinkedIn (pk., ae., uk.) aren't wanted;
     // people based abroad on www. profiles are flagged `abroad`.
@@ -328,7 +349,7 @@ export async function findLinkedinProfile(
   person: string,
   company: string,
   hint: { title?: string; city?: string } = {},
-): Promise<{ url: string; title: string; employer: Employer; abroad: boolean; location: string } | null> {
+): Promise<{ url: string; title: string; employer: Employer; abroad: boolean; location: string; evidence: string } | null> {
   // As written (Google ignores case), without honorifics or initials' dots.
   const words = person.replace(HONORIFIC, '').replace(/[.,]/g, ' ').split(/\s+/).filter(Boolean);
   if (!words.length) return null;
@@ -361,10 +382,12 @@ export async function findLinkedinProfile(
     const pick =
       exact.find((p) => p.employer === 'here') ??
       results.find((p) => p.employer === 'here' && looseName(p.name, person)) ??
-      exact.find((p) => p.employer === 'elsewhere');
+      exact.find((p) => p.employer === 'elsewhere') ??
+      // Found, but the evidence conflicts (the job here has ended): returned so the reason is shown.
+      exact.find((p) => p.employer === 'unknown' && !!p.evidence);
     if (pick) {
       await knowPlaces(svc, [pick.location, hint.city]);
-      return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '' };
+      return { url: pick.linkedin, title: pick.title, employer: pick.employer, abroad: pick.abroad, location: pick.location ?? '', evidence: pick.evidence ?? '' };
     }
   }
   // A search that failed (quota, network) isn't "no profile": the caller checks again later.

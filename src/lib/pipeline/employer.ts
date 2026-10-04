@@ -112,6 +112,8 @@ function namesFirm(text: string, company: string, site: string): boolean {
   // "PKF Sridhar & Santhanam" is another firm in the same network.
   if (b.length === 1 && b[0].length <= 4) return a.every((w) => w === b[0] || VAGUE.has(w));
   if (b.every((w) => a.includes(w))) return true;
+  // The same name spaced differently: "Euro Cast Engineering" is Eurocast Engineering.
+  if (squash(a) === squash(b)) return true;
   if (!site) return false;
   // A shorter form of the company's own name that keeps its brand, when the brand is also its website
   // ("Micron Semiconductor" for Micron Semiconductor Technology India at micron.com). Never a name
