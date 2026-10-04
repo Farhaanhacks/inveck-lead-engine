@@ -84,12 +84,16 @@ export function contactAvailability(l: ContactFields, found: PersonFields[] = []
     if (l.refetchPending && l.lastError?.startsWith('Contacts not searched')) return { label: 'Search failed', tone: 'warning', detail: l.lastError };
     // People were found but none is the main contact: say who, and why not.
     if (found.length && l.status !== 'New' && l.status !== 'Processing') {
-      // Company contacts were found and set aside: say who, and why each isn't the main contact.
+      // Company contacts were found and set aside: name the ones worth a look, count the rest
+      // (each person's reason is on the People list).
       const corporate = found.filter(isCorporateContact);
-      const rest = found.filter((p) => !isCorporateContact(p));
+      const notContacts = found.filter((p) => p.passedReason === 'excluded' && !isCorporateContact(p));
+      const rest = found.filter((p) => !isCorporateContact(p) && p.passedReason !== 'excluded');
+      const names = (list: PersonFields[]) => list.slice(0, 4).map((p) => `${p.name}${p.title ? ` (${p.title})` : ''}`).join('; ') + (list.length > 4 ? `; and ${list.length - 4} more` : '');
       const parts = [
-        corporate.length ? `Corporate contacts for review: ${corporate.map((p) => `${p.name} (${[p.title, p.location].filter(Boolean).join(', ') || 'no title shown'})`).join('; ')}` : '',
-        rest.length ? `${corporate.length ? 'Others: ' : ''}${rest.map((p) => `${p.name} (${notMainBecause(p, l.city)})`).join('; ')}` : '',
+        corporate.length ? `Corporate contacts for review: ${names(corporate)}` : '',
+        rest.length ? `${rest.slice(0, 4).map((p) => `${p.name} (${notMainBecause(p, l.city)})`).join('; ')}${rest.length > 4 ? `; and ${rest.length - 4} more` : ''}` : '',
+        notContacts.length ? `${notContacts.length} other ${notContacts.length === 1 ? 'person' : 'people'} at the company ${notContacts.length === 1 ? "isn't a contact" : "aren't contacts"} for this site (reasons under People)` : '',
       ].filter(Boolean);
       return {
         label: l.city ? `Company contacts found; no ${l.city} contact confirmed` : `${found.length} found, no main contact`,

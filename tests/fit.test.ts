@@ -523,8 +523,12 @@ describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobod
     const { contactAvailability } = await import('@/lib/fit-view');
     const shown = contactAvailability({ ...r, contactName: '', contactTitle: '', contactEmail: '', emailStatus: '', contactLinkedin: '', contactVerifiedAt: null, city: 'Hosur', status: 'Needs Manual Contact', qualified: true } as never, (r.people ?? []) as never);
     expect(shown.label).toBe('Company contacts found; no Hosur contact confirmed');
-    expect(shown.detail).toContain('Corporate contacts for review: Srihari K.R (Chief Executive Officer, India)');
-    expect(shown.detail).toContain('vignesh swaminathan (Deputy Manager:');
+    expect(shown.detail).toContain('Srihari K.R (Chief Executive Officer)');
+    expect(shown.detail).toMatch(/^Corporate contacts for review: /);
+    // Everyone else is counted, not listed: their reasons are under People.
+    expect(shown.detail).toContain("1 other person at the company isn't a contact for this site (reasons under People)");
+    expect(shown.detail).not.toContain('vignesh');
+    expect(shown.detail.length).toBeLessThan(400);
   });
 });
 

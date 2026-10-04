@@ -271,27 +271,10 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
 }
 
 function PeopleCard({ company, city, list }: { company: string; city: string; list: Person[] }) {
-  return (
-    <section className="card overflow-hidden">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
-        <div>
-          <h2 className="text-sm font-semibold">People to contact at {company}</h2>
-          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people a LinkedIn profile confirms at this company now. The main contact&apos;s job must be at this site: the site their title names, else where their current job is, else their profile location.</p>
-        </div>
-        <span className="text-xs text-muted">{list.length} found</span>
-      </div>
-      <div className="relative overflow-x-auto">
-        <table className="w-full min-w-[760px] text-sm">
-          <thead>
-            <tr className="text-left text-xs text-muted">
-              <th className="px-5 py-2 font-medium">Name</th>
-              <th className="px-2 py-2 font-medium">LinkedIn</th>
-              <th className="px-2 py-2 font-medium">Found via</th>
-              <th className="px-5 py-2"><span className="sr-only">Action</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.map((p) => (
+  // People found at the company who aren't contacts for this site are listed apart, folded away.
+  const contacts = list.filter((p) => p.passedReason !== 'excluded');
+  const others = list.filter((p) => p.passedReason === 'excluded');
+  const row = (p: Person) => (
               <tr key={p.id} className="border-t border-line align-top">
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
@@ -346,10 +329,51 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                   </div>
                 </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+  );
+  return (
+    <section className="card overflow-hidden">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 pb-3">
+        <div>
+          <h2 className="text-sm font-semibold">People to contact at {company}</h2>
+          <p className="text-xs text-muted">Best first: plant heads, then other operations heads, then process owners. Only people a LinkedIn profile confirms at this company now. The main contact&apos;s job must be at this site: the site their title names, else where their current job is, else their profile location.</p>
+        </div>
+        <span className="text-xs text-muted">{contacts.length} found</span>
       </div>
+      {contacts.length > 0 && (
+        <div className="relative overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="px-5 py-2 font-medium">Name</th>
+              <th className="px-2 py-2 font-medium">LinkedIn</th>
+              <th className="px-2 py-2 font-medium">Found via</th>
+              <th className="px-5 py-2"><span className="sr-only">Action</span></th>
+            </tr>
+          </thead>
+        <tbody>{contacts.map(row)}</tbody>
+          </table>
+        </div>
+      )}
+      {others.length > 0 && (
+        <details className="border-t border-line">
+          <summary className="cursor-pointer px-5 py-2.5 text-xs text-muted hover:text-ink">
+            {others.length} other {others.length === 1 ? 'person' : 'people'} at {company}, not contacts for this site (another site, or a role not on the ICP lists)
+          </summary>
+          <div className="relative overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="px-5 py-2 font-medium">Name</th>
+              <th className="px-2 py-2 font-medium">LinkedIn</th>
+              <th className="px-2 py-2 font-medium">Found via</th>
+              <th className="px-5 py-2"><span className="sr-only">Action</span></th>
+            </tr>
+          </thead>
+          <tbody>{others.map(row)}</tbody>
+            </table>
+          </div>
+        </details>
+      )}
       <p className="border-t border-line px-5 py-2.5 text-xs text-muted">
         Making someone the main contact rewrites the email for them; the calls and messages on Today go to them from then on.
       </p>

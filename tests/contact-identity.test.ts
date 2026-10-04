@@ -290,5 +290,8 @@ describe('equivalent titles are read the same way', () => {
     expect(contactPriority('Deputy Manager', mfg)).toBe(99);
     expect(noDepartment('Deputy Manager - Production')).toBe(false);
     expect(noDepartment('HR Manager')).toBe(false);
+    // A title that says what they do has a department, whatever it is (EL Forge).
+    for (const t of ['Manager Indirect Taxation', 'AGM - NPD', 'Manager - Metallurgy', 'DY GEN MANAGER MARKETING']) expect(noDepartment(t)).toBe(false);
+    expect(noDepartment('Vice President')).toBe(true);
   });
 });

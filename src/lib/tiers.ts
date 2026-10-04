@@ -115,8 +115,11 @@ function functionsOf(text: string): string[] {
 
 /** "Deputy Manager", "Senior Executive": a level with no department, so the role can't be placed. */
 export function noDepartment(title: string): boolean {
-  const t = tokens(roleOnly(title)).join(' ');
-  return /\b(manager|mgr|executive|officer|head|lead|deputy|assistant|associate|gm|dgm|agm|vp|avp)\b/.test(t) && !functionsOf(t).length && !/\b(hr|admin|quality|finance|accounts|sales|marketing|engineering|maintenance|design|it|projects?|purchase|procurement|stores?|safety|legal)\b/.test(t) && !TOP_ONLY.test(t) && !TOP_EXEC.test(t);
+  // Only level words left once the levels are taken out: "Deputy Manager", "Vice President". Anything
+  // else in the title ("Manager Indirect Taxation", "AGM - NPD") names what they do.
+  const t = tokens(roleOnly(title));
+  const LEVEL = /^(manager|mgr|executive|officer|head|lead|deputy|assistant|asst|associate|gm|dgm|agm|vp|avp|senior|sr|jr|junior|chief|general|principal|team|trainee|additional|addl|joint|dy|asst)$/;
+  return t.length > 0 && t.every((w) => LEVEL.test(w)) && !TOP_ONLY.test(t.join(' ')) && !TOP_EXEC.test(t.join(' '));
 }
 
 /** The person at the top of the company, written without a function: "Director", "Owner", "Founder & CEO". */
