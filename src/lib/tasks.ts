@@ -79,6 +79,12 @@ const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualif
 const HIDDEN_STATUSES = STOPPED_STATUSES.filter((s) => s !== 'Replied' && s !== 'Meeting Booked');
 
 /**
+ * The steps Today shows: those of a lead being worked; promised callbacks always; and for a lead
+ * waiting for a contact, the step to find one. (Used with tasks joined to their lead.)
+ */
+const SHOWN_ON_TODAY = or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES), and(eq(tasks.step, FIND_NEXT_STEP), eq(leads.status, 'Needs Manual Contact')));
+
+/**
  * Puts every owned lead on its owner's Today list. Safe to call repeatedly.
  * - A lead with a decision-maker and no plan yet gets the P1 sequence (first call, WhatsApp, email and
  *   LinkedIn request on the next working day). So does one whose only open step was finding someone,
@@ -145,16 +151,19 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
 
 /** When the next steps are due after today, and for how many companies: shown when nothing is due today. */
 export async function nextDue(db: Db, ownerId: number, today = istDay()): Promise<{ day: string; companies: number } | null> {
+  // The same steps Today will show that day, counted by company: never those of a lead that was
+  // deleted, set aside, rejected or sent to review.
   const [row] = await db
     .select({ day: sql<string>`min(${tasks.dueDate})` })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
-    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), gt(tasks.dueDate, today), notInArray(leads.status, HIDDEN_STATUSES)));
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), gt(tasks.dueDate, today), SHOWN_ON_TODAY));
   if (!row?.day) return null;
   const [n] = await db
     .select({ n: sql<number>`count(distinct ${tasks.leadId})::int` })
     .from(tasks)
-    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), eq(tasks.dueDate, row.day)));
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), eq(tasks.dueDate, row.day), SHOWN_ON_TODAY));
   return { day: row.day, companies: Number(n?.n ?? 0) };
 }
 
@@ -173,9 +182,7 @@ export async function loadTodayTasks(db: Db, ownerId: number, today = istDay()):
         eq(tasks.ownerId, ownerId),
         isNull(tasks.doneAt),
         lte(tasks.dueDate, today),
-        // Steps for a lead being worked; promised callbacks always; and for a lead waiting for a contact,
-        // the step to find one.
-        or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES), and(eq(tasks.step, FIND_NEXT_STEP), eq(leads.status, 'Needs Manual Contact'))),
+        SHOWN_ON_TODAY,
       ),
     );
   return rows

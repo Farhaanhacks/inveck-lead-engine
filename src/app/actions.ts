@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, clients, icps, knownCompanies as ownLeadList, leads, opportunities, people, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { activities, clients, icps, knownCompanies as ownLeadList, leads, opportunities, people, tasks, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { applyStage } from '@/lib/stages';
 import { makePrimary } from '@/lib/people';
@@ -299,6 +299,8 @@ export async function bulkLeadAction(form: FormData) {
     await db.delete(leads).where(inArray(leads.id, ids));
     await db.delete(activities).where(inArray(activities.leadId, ids));
     await db.delete(people).where(inArray(people.leadId, ids));
+    // Their planned calls and messages go too: nothing is due for a company that's gone.
+    await db.delete(tasks).where(inArray(tasks.leadId, ids));
   } else if (action === 'reassess') {
     if (await reassessLeads(db, ids, await actorName())) await researchNow();
   } else if (STATUS_ACTIONS[action]) {
@@ -496,6 +498,7 @@ export async function deleteLeadAction(form: FormData) {
   await db.delete(leads).where(eq(leads.id, id));
   await db.delete(activities).where(eq(activities.leadId, id));
   await db.delete(people).where(eq(people.leadId, id));
+  await db.delete(tasks).where(eq(tasks.leadId, id));
   revalidatePath('/leads');
   redirect('/leads');
 }

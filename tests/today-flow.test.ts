@@ -55,4 +55,17 @@ describe('leads go from the Leads list to Today on their own', () => {
     const [t] = await loadTodayTasks(db, owner, MONDAY);
     expect(t.task.title).toBe("Confirm Srihari K.R is at the Coimbatore site, or find the person to contact");
   });
+
+  it('the "next steps" count is the companies Today will show that day: not deleted, rejected or set-aside leads', async () => {
+    const shown = await addLead({ status: 'Awaiting Approval', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
+    const rejected = await addLead({ company: 'Gone Co', status: 'Awaiting Approval', contactName: 'B', contactLinkedin: 'https://in.linkedin.com/in/b' });
+    const deleted = await addLead({ company: 'Deleted Co', status: 'Awaiting Approval', contactName: 'C', contactLinkedin: 'https://in.linkedin.com/in/c' });
+    await ensureSequences(db, SUNDAY);
+    await db.update(leads).set({ status: 'Rejected' }).where(eq(leads.id, rejected.id));
+    // A lead deleted the old way, leaving its planned steps behind.
+    await db.delete(leads).where(eq(leads.id, deleted.id));
+    const monday = await loadTodayTasks(db, owner, MONDAY);
+    expect(new Set(monday.map((t) => t.lead.id))).toEqual(new Set([shown.id]));
+    expect(await nextDue(db, owner, SUNDAY)).toEqual({ day: MONDAY, companies: 1 });
+  });
 });
