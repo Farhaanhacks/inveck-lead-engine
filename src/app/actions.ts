@@ -19,7 +19,6 @@ import { recordPresence } from '@/lib/attendance';
 import { getCurrentUser, verifyLogin } from '@/lib/users';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
-import { refreshMainEmail } from '@/lib/email-refresh';
 import { KnownBranches } from '@/lib/branches';
 import { newContactNamed } from '@/lib/escalate';
 import { redraftForContact } from '@/lib/pipeline/redraft';
@@ -385,13 +384,7 @@ export async function makePrimaryAction(form: FormData) {
       .set({ contactTier: '', ...(lead?.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
       .where(eq(leads.id, leadId));
     await newContactNamed(db, leadId);
-    after(async () => {
-      const [db2, svc] = await Promise.all([getDb(), liveServices()]);
-      // The main contact is the one person paid email lookups (Prospeo, Apollo) are spent on.
-      const [now] = await db2.select().from(leads).where(eq(leads.id, leadId));
-      if (now) await refreshMainEmail(db2, svc, now, { left: svc.settings.emailLookupsPerCompany }).catch(() => {});
-      await redraftForContact(db2, svc, leadId);
-    });
+    after(async () => redraftForContact(await getDb(), await liveServices(), leadId));
     refreshLeadPages(leadId);
     revalidatePath('/today');
   }
@@ -617,8 +610,6 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   if (provider !== current.aiProvider && model === current.aiModel) model = DEFAULT_MODELS[provider] ?? model;
   const parsed = settingsSchema.safeParse({
     leadsPerMorning: str(form, 'leadsPerMorning'),
-    emailLookupsPerCompany: str(form, 'emailLookupsPerCompany'),
-    useCompanyFormat: form.get('useCompanyFormat') === 'on',
     radarEnabled: form.get('radarEnabled') === 'on',
     prospectsPerRun: str(form, 'prospectsPerRun'),
     prospectDay: str(form, 'prospectDay'),

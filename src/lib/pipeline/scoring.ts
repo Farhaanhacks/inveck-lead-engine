@@ -1,6 +1,7 @@
 import type { LeadStatus } from '../db/schema';
 import type { Contact } from './contacts';
-import type { EmailStatus } from './emails';
+/** How usable the contact's email is: only an address the team typed in counts ('likely'). */
+export type EmailStatus = 'valid' | 'accept_all' | 'likely' | 'invalid' | 'unknown' | 'no email found';
 
 export type Score = {
   finalScore: number;

@@ -1009,7 +1009,6 @@ describe('review fixes', () => {
     const rows = companyPeople(
       [{ id: 'W1', source: 'Web', name: 'Ravi Shah', title: 'Manager', email: '', phone: '', linkedin: '', snippet: '' }],
       { name: 'Ravi Shah', email: '', phone: '', title: 'Head of Supply Chain', linkedin: 'https://in.linkedin.com/in/ravi-shah' },
-      '', [], null, false,
     );
     expect(rows[0]).toMatchObject({ isPrimary: true, title: 'Head of Supply Chain', linkedin: 'https://in.linkedin.com/in/ravi-shah' });
   });
@@ -1290,18 +1289,23 @@ describe('Ultra Drugs: a shared brand word is not the same company', () => {
   });
 });
 
-describe('phone numbers are not collected', () => {
-  it('keeps only a number the sales team gave; found numbers are dropped', async () => {
+describe('phone numbers and emails are not collected', () => {
+  it('keeps only a number or an email the sales team gave; found ones are dropped', async () => {
     const { companyPeople } = await import('@/lib/pipeline/process-lead');
     const rows = companyPeople(
       [
         { id: 'H1', source: 'Email database', name: 'Ravi Shah', title: 'Plant Head', email: 'ravi@x.com', phone: '+91 98765 43210', linkedin: '', snippet: '' },
-        { id: 'M', source: 'Sales team', name: 'Neha Rao', title: 'Supply Chain Manager', email: '', phone: '+91 90000 00000', linkedin: '', snippet: '' },
+        { id: 'M', source: 'Sales team', name: 'Neha Rao', title: 'Supply Chain Manager', email: 'neha@x.com', phone: '+91 90000 00000', linkedin: '', snippet: '' },
+        { id: 'L', source: 'LinkedIn', name: 'Amit Jain', title: 'Plant Manager', email: 'amit@x.com', phone: '', linkedin: 'https://in.linkedin.com/in/amit', snippet: '' },
       ],
-      { name: 'Ravi Shah', email: 'ravi@x.com', phone: '', title: 'Plant Head' },
-      'valid', [], null, false,
+      { name: 'Ravi Shah', email: '', phone: '', title: 'Plant Head' },
     );
-    expect(rows.map((r) => [r.name, r.phone])).toEqual([['Ravi Shah', ''], ['Neha Rao', '+91 90000 00000']]);
+    expect(rows.map((r) => [r.name, r.phone, r.email])).toEqual([
+      ['Ravi Shah', '', ''],
+      ['Neha Rao', '+91 90000 00000', 'neha@x.com'],
+      ['Amit Jain', '', ''],
+    ]);
+    expect(rows[1]).toMatchObject({ emailStatus: 'entered by the team', emailSource: 'manual' });
   });
 });
 

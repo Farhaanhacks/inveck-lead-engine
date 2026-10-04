@@ -1,6 +1,6 @@
 import type { ApiKeys, Settings } from '../settings';
 
-/** Results of paid lookups (Apollo), kept so the same person isn't paid for twice. */
+/** Lookups kept between runs (places on the map, companies' LinkedIn pages), so each is made once. */
 export type EnrichmentCache = {
   get(key: string): Promise<unknown | null>;
   set(key: string, value: unknown): Promise<void>;
@@ -11,7 +11,7 @@ export type Services = {
   fetch: typeof fetch;
   keys: ApiKeys;
   settings: Settings;
-  /** Where Apollo results are kept between runs; without one, nothing is reused across runs. */
+  /** Where lookups are kept between runs; without one, nothing is reused across runs. */
   cache?: EnrichmentCache;
 };
 

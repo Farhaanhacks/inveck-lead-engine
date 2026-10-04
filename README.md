@@ -21,8 +21,7 @@ Everything happens in one run. Nobody needs Airtable or n8n.
    as a fit or marked not a fit from its page or the Leads list; the earlier assessment stays on
    its timeline.
 3. **Contact**: it searches LinkedIn (via Google) and the company's own pages, and the AI picks the best
-   person. It finds the email in a fixed order: the team's own, the person's published address,
-   Prospeo, then Apollo, then the company's email format (see below).
+   person and their LinkedIn profile. Emails and phone numbers aren't looked up (see below).
 4. **Score and draft**: every qualified lead that can be reached gets a personalised
    email draft.
 
@@ -41,38 +40,12 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
   Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no
   role isn't picked automatically (the team can add them by hand).
 
-### How emails are found
+### Emails and phone numbers
 
-Emails only: phone numbers are never requested from any provider. In order, most trustworthy first:
-
-1. An address the sales team typed in: always kept, never replaced.
-2. The person's own address published on the company website, the web or a people-search page
-   (no paid lookup is spent then).
-3. **Prospeo**, then **Apollo** when Prospeo has nothing verified, for a contact already
-   identified: their LinkedIn profile when known, name and employer. A reply is used only for the
-   same person (name, and LinkedIn profile when both have one) at the same employer (domain, or the
-   company's name in full) with an address on the company's domain. Prospeo is asked for verified
-   emails only, with mobile numbers off, and charges only when it finds one. Only a provider's own
-   "verified" makes an address verified; anything else stays labelled unverified.
-4. Inferred from the company's proven format (published format data, or its people's published
-   addresses), always labelled **inferred**. Formats are never guessed.
-
-Each address keeps its source, our verdict, the provider's own status and the date it was returned,
-apart from one another. There is no separate mail-server check (Hunter is no longer used).
-Paid lookups (Prospeo, Apollo) are spent on the **main contact only**, within **Email lookups per main
-contact** (Settings, default 3, counting requests to either provider; 0 switches both off); someone made
-main contact later (by the team, or by the weekly check) gets a lookup then. The others at a company get
-only free sources: an address published for them, or the company's proven format, labelled inferred.
-Provider results, including "no match", are cached in the database (90 days for an
-address, 30 for no match), so a person is never paid for twice; failed lookups are not cached.
-Prospeo requests are spaced a little over a second apart (its free plan allows one a second). After a
-refused key, used-up credits or a long rate limit, that provider isn't asked again in the same run.
-Contact checks upgrade an inferred or unconfirmed address when a provider has a verified one, never
-touch the team's addresses, and log a conflict for review when a provider's verified address differs
-from one on file.
-
-Configuration: `PROSPEO_API_KEY` and/or `APOLLO_API_KEY` (server-side environment variables; never
-sent to the browser or logged).
+Neither is looked up. The app finds the right person and their LinkedIn profile; an email or phone
+number is kept only when the sales team types it in (Edit point of contact), labelled "entered by the
+team". Drafts are still written for every qualified lead, to send from LinkedIn or once the team has
+an address.
 
 The one human step is **approval**. A person reads the draft, edits it if needed, approves
 it and marks it as sent. Nothing is ever sent automatically.
@@ -99,12 +72,9 @@ it and marks it as sent. Nothing is ever sent automatically.
    | `DEEPSEEK_API_KEY` | yes* | DeepSeek key (the default AI) |
    | `ANTHROPIC_API_KEY` | optional* | Only needed if you switch the AI to Claude in Settings |
    | `SERPER_API_KEY` | yes | serper.dev key for Google / LinkedIn search |
-   | `PROSPEO_API_KEY` | yes** | prospeo.io key for email lookup, asked first (emails only) |
-   | `APOLLO_API_KEY` | yes** | apollo.io key for email lookup after Prospeo (emails only; needs People Enrichment API access, not on Apollo's free plan) |
    | `APP_URL` | optional | Your public URL, if you use a custom domain |
 
    \* You need the key for whichever AI provider is selected in Settings.
-   \*\* At least one email provider; with both, Prospeo is asked first.
 4. Redeploy so the variables take effect, then open the site and log in.
 
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new

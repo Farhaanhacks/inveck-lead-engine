@@ -25,16 +25,6 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <Num name="leadsPerMorning" label="Leads handed out each morning" value={s.leadsPerMorning} min={0} max={500} hint="Drawn at random from the researched list by 8:00 am India time on working days and split evenly across the team. 0 stops the draw." />
           <Num name="prospectsPerRun" label="New prospects per search" value={s.prospectsPerRun} min={1} max={50} hint="How many companies the prospect search adds at most." />
-          <Num name="emailLookupsPerCompany" label="Email lookups per main contact (Prospeo, Apollo)" value={s.emailLookupsPerCompany} min={0} max={10} hint="Paid lookups, for the main contact only (others get free sources: a published address, the company's format). Prospeo is asked first, Apollo when Prospeo has nothing. Emails only: phone numbers are never requested. Earlier results are reused at no cost. 0 switches both off." />
-          <label className="flex items-start gap-2 text-sm sm:col-span-2">
-            <input type="checkbox" name="useCompanyFormat" defaultChecked={s.useCompanyFormat} className="mt-1" />
-            <span>
-              Use the company&apos;s known email format when its mail server can&apos;t confirm addresses
-              <span className="block text-xs text-muted">
-                Saves first.last@company.com, labelled inferred, when the company&apos;s format is proven (published email-format data or the company&apos;s own published addresses) and neither a published address nor Apollo gave one. Plain guesses are never saved.
-              </span>
-            </span>
-          </label>
           <label className="flex items-start gap-2 text-sm sm:col-span-2">
             <input type="checkbox" name="radarEnabled" defaultChecked={s.radarEnabled} className="mt-1" />
             <span>

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { asBool, asText, asTextList, domainOf, normCompany, splitName } from '@/lib/pipeline/text';
-import { fillPattern } from '@/lib/pipeline/emails';
 import { scoreLead } from '@/lib/pipeline/scoring';
 import { EMPTY_CONTACT } from '@/lib/pipeline/contacts';
 import { parseJsonObject } from '@/lib/pipeline/ai';
@@ -55,11 +54,6 @@ describe('names, domains and companies', () => {
     expect(normCompany('Haldex India Pvt Ltd')).toBe(normCompany('Haldex'));
     expect(normCompany('Tata Motors Limited')).toBe(normCompany('Tata Motors'));
   });
-  it('fills email patterns', () => {
-    expect(fillPattern('{first}.{last}', 'Ravi', 'Shah')).toBe('ravi.shah');
-    expect(fillPattern('{f}{last}', 'Neha', 'Kapoor')).toBe('nkapoor');
-    expect(fillPattern('{first}.{middle}', 'A', 'B')).toBe('');
-  });
 });
 
 describe('scoring', () => {
@@ -105,18 +99,6 @@ describe('pickOfficialDomain', () => {
   });
 });
 
-describe('email formats and phones', () => {
-  it('uses middle initials and learns a company format from the web', async () => {
-    const { fillPattern, inferPattern, personalEmails } = await import('@/lib/pipeline/emails');
-    expect(fillPattern('{f}{m}.{last}', 'Rabindra', 'Singh', 'p')).toBe('rp.singh');
-    expect(fillPattern('{f}{m}.{last}', 'Anil', 'Kumar')).toBe('');
-    const found = personalEmails(['info@tataautocomp.com', 'A.Kumar@tataautocomp.com', 'sm.patil@tataautocomp.com', 'x@gmail.com', 'r.shah@tataautocomp.com.'], 'tataautocomp.com');
-    expect(found).toEqual(['a.kumar@tataautocomp.com', 'sm.patil@tataautocomp.com', 'r.shah@tataautocomp.com']);
-    expect(inferPattern(found)).toBe('{f}.{last}');
-    expect(inferPattern(['ravi.shah@x.com', 'neha.kapoor@x.com'])).toBe('{first}.{last}');
-  });
-});
-
 describe('readDraft', () => {
   it('reads drafts whatever the fields are called', async () => {
     const { readDraft } = await import('@/lib/pipeline/draft');
@@ -125,60 +107,6 @@ describe('readDraft', () => {
     expect(readDraft({ email: { subject: 'S', body: 'B' }, linkedin: { message: 'L' } })).toEqual({ subject: 'S', body: 'B', linkedin: 'L' });
     expect(readDraft({ emailSubject: 'S', emailContent: 'B', linkedinMessage: 'L' })).toEqual({ subject: 'S', body: 'B', linkedin: 'L' });
     expect(readDraft({ email_subject: 'S' }).body).toBe('');
-  });
-});
-
-describe('company email formats', () => {
-  const r = (title: string, snippet: string) => ({ title, snippet, link: 'https://example.org' });
-
-  it('reads the formats data providers publish', async () => {
-    const { parseEmailFormat } = await import('@/lib/pipeline/email-format');
-    // RocketReach
-    expect(
-      parseEmailFormat('Honeywell', 'honeywell.com', [
-        r('Honeywell Email Format', 'The most common Honeywell email format is [first].[last] (ex. jane.doe@honeywell.com) being used 88.4% of the time. Other common Honeywell email patterns are [first_initial][last] (ex. jdoe@honeywell.com) 5.2%.'),
-      ]),
-    ).toEqual({ pattern: '{first}.{last}', share: 88.4, domain: 'honeywell.com', strong: true });
-    // ZoomInfo-style list
-    expect(
-      parseEmailFormat('Honeywell', '', [r('Honeywell Email Format', 'Honeywell uses 3 email formats: 1. first_last@honeywell.com (4.1%). 2. first.last@honeywell.com (86.2%). 3. flast@honeywell.com (2.3%).')]),
-    ).toMatchObject({ pattern: '{first}.{last}', share: 86.2, domain: 'honeywell.com' });
-    // LeadIQ-style sentence, no percentage
-    expect(
-      parseEmailFormat('Honeywell International', 'honeywell.com', [r('Honeywell email format', "Honeywell's email format typically follows the pattern of FirstName.LastName@honeywell.com.")]),
-    ).toMatchObject({ pattern: '{first}.{last}', domain: 'honeywell.com', strong: true });
-    // A different email domain from the website's
-    expect(
-      parseEmailFormat('John Deere', 'deere.co.in', [r('John Deere Email Format', 'The most common John Deere email format is [last][first] (ex. doejane@johndeere.com) being used 67% of the time.')]),
-    ).toMatchObject({ pattern: '{last}{first}', share: 67, domain: 'johndeere.com' });
-    // Written out in words
-    expect(
-      parseEmailFormat('Metalman Auto', 'metalmanauto.com', [r('Metalman Auto email format', 'Metalman Auto (metalmanauto.com) uses first initial + last name, e.g. jdoe@metalmanauto.com, 71% of the time.')]),
-    ).toMatchObject({ pattern: '{f}{last}', domain: 'metalmanauto.com' });
-  });
-
-  it("never uses another company's format", async () => {
-    const { parseEmailFormat } = await import('@/lib/pipeline/email-format');
-    expect(parseEmailFormat('Honeywell', 'honeywell.com', [r('Honda Email Format', 'first.last@honda.com (90%)')])).toBeNull();
-    // Same first word, different company and domain.
-    expect(parseEmailFormat('Crystal Logistic Cool Chain', 'crystalgroup.in', [r('Crystal email format', 'Crystal uses first.last@crystal.com (91%)')])).toBeNull();
-    expect(parseEmailFormat('Kusshal Loggistics', 'kusshal.in', [r('Top logistics firms in Mumbai', 'A list of warehousing companies')])).toBeNull();
-  });
-
-  it('reads masked addresses on people-search pages', async () => {
-    const { maskedPattern } = await import('@/lib/pipeline/email-format');
-    expect(maskedPattern('m****.s****', 'Mayank', 'Singh')).toBe('{first}.{last}');
-    expect(maskedPattern('m.s****', 'Mayank', 'Singh')).toBe('{f}.{last}');
-    expect(maskedPattern('s****m****', 'Mayank', 'Singh')).toBe('{last}{first}');
-    expect(maskedPattern('m***', 'Mayank', 'Singh')).toBe(''); // could be anything
-    expect(maskedPattern('s****.s****', 'Sunil', 'Shah')).toBe(''); // same initials: unclear
-  });
-
-  it('builds addresses only when the needed name parts exist', async () => {
-    const { fillPattern } = await import('@/lib/pipeline/email-format');
-    expect(fillPattern('{first}.{last}', 'Ashamol', '')).toBe('');
-    expect(fillPattern('{first}', 'Ashamol', '')).toBe('ashamol');
-    expect(fillPattern('{last}{first}', 'Sanjay', 'Soni')).toBe('sonisanjay');
   });
 });
 

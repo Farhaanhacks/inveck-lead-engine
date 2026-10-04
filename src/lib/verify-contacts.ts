@@ -11,7 +11,6 @@ import { learnFirm, recallFirm } from './pipeline/firm-identity';
 import { knowPlaces } from './pipeline/places';
 import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
-import { refreshMainEmail } from './email-refresh';
 import { istDay } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
@@ -151,17 +150,14 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   // confirmed now (a search that failed, a profile updated since).
   if (!lead.contactName) return reconfirmSetAside(db, svc, lead, now);
   if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
-  const emailBudget = { left: svc.settings.emailLookupsPerCompany };
-  // The sales team's own contact is theirs to vouch for (their email too: only a conflict is flagged).
+  // The sales team's own contact is theirs to vouch for.
   if (await contactFromTeam(db, lead)) {
     if (!lead.contactVerifiedAt) await db.update(leads).set({ contactVerifiedAt: now }).where(eq(leads.id, lead.id));
-    await safely(() => refreshMainEmail(db, svc, lead, emailBudget));
     return 'confirmed';
   }
   // Confirmed recently (during research, say): only the others needed it. A contact never confirmed
   // is always checked; being looked at before isn't the same as being confirmed.
   if (lead.contactVerifiedAt && lead.contactVerifiedAt > staleBefore(now)) {
-    await safely(() => refreshMainEmail(db, svc, lead, emailBudget));
     return 'confirmed';
   }
   let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
@@ -214,8 +210,6 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
       .where(eq(people.id, p.id));
   }
   if (!lead.contactLinkedin) await logActivity(db, lead.id, 'contact', `LinkedIn profile found for ${lead.contactName}: ${url}`);
-  // Confirmed at this company and site: an inferred or unconfirmed email may be upgraded from Apollo.
-  await safely(() => refreshMainEmail(db, svc, { ...lead, contactLinkedin: url }, emailBudget));
   if (!retitle) return 'confirmed';
   await logActivity(db, lead.id, 'contact', `Designation updated from LinkedIn: "${profile.title}" (was "${lead.contactTitle || 'blank'}")`);
   if (lead.emailBody) await redraftForContact(db, svc, lead.id);
@@ -265,9 +259,6 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
       .update(leads)
       .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now, ...(lead.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
       .where(eq(leads.id, lead.id));
-    // The new main contact is the one person paid email lookups are spent on.
-    const [now2] = await db.select().from(leads).where(eq(leads.id, lead.id));
-    if (now2) await safely(() => refreshMainEmail(db, svc, now2, { left: svc.settings.emailLookupsPerCompany }));
     if (lead.emailBody) await safely(() => redraftForContact(db, svc, lead.id));
     return 'confirmed';
   }

@@ -64,13 +64,6 @@ export type Research = {
 
 type Log = (msg: string, level?: 'info' | 'warn' | 'error') => Promise<void> | void;
 
-/** Addresses on the company's own domain found in its website text. */
-export function websiteEmails(text: string, domain: string): string[] {
-  if (!domain) return [];
-  const found = (text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).map((e) => e.toLowerCase());
-  return [...new Set(found.filter((e) => e.endsWith('@' + domain) || e.endsWith('.' + domain)))];
-}
-
 const KIND_FOR_AI: Record<Criterion['kind'], string> = {
   requirement: 'must-have',
   preference: 'a plus, never required',

@@ -541,7 +541,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
                 </div>
               ))}
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-                {lead.emailStatus && <span>Email: {lead.emailStatus}</span>}
+                {lead.contactEmail && lead.emailStatus && <span>Email: {lead.emailStatus}</span>}
                 {lead.contactLinkedin && (
                   <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open LinkedIn profile</a>
                 )}

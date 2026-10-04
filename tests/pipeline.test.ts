@@ -8,11 +8,9 @@ import { settingsSchema, type Settings } from '@/lib/settings';
 import { executeRun, startRun } from '@/lib/runs';
 import type { Services } from '@/lib/pipeline/services';
 import { fakeFetch, type FakeLog } from './fake-apis';
-import { findEmail } from '@/lib/pipeline/emails';
 import { applyStage } from '@/lib/stages';
 import { draftDueFollowUps, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
 import { getAnalytics } from '@/lib/analytics';
-import { EMPTY_CONTACT } from '@/lib/pipeline/contacts';
 
 const M = 'Manufacturing';
 const TEST_LEADS = [
@@ -41,7 +39,7 @@ let log: FakeLog;
 function services(overrides: Partial<Settings> = {}): Services {
   return {
     fetch: fakeFetch(log),
-    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', apollo: 'apollo-test', prospeo: '', jina: '' },
+    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', jina: '' },
     settings: settingsSchema.parse({ dailyLimit: 50, ...overrides }),
   };
 }
@@ -83,10 +81,10 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Tata Motors'].fitReason).toBe('6 plants, SAP');
     expect(L['Tata Motors'].fitEvidence.find((e) => e.id === 'M1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.tatamotors.com/' });
     expect(L['Tata Motors'].contactName).toBe('Sangamnath Digge');
-    // Neither a published address, Apollo nor a proven format had one: no email. Common formats are
+    // Emails are never looked up (like phone numbers): nothing for a contact found on LinkedIn.
     // no longer guessed (there is no mail-server check to confirm a guess), and no Hunter call is made.
     expect(L['Tata Motors'].contactEmail).toBe('');
-    expect(L['Tata Motors'].emailStatus).toMatch(/^no email found/);
+    expect(L['Tata Motors'].emailStatus).toBe('');
     expect(log.calls.some((c) => /hunter\.io/.test(c))).toBe(false);
     expect(L['Tata Motors'].emailBody).toBe('Hi,, body text');
     expect(L['Tata Motors'].linkedinMessage).toBe('Hello');
@@ -103,7 +101,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Bajaj Finance'].fitScore).toBe(1);
 
     expect(L['Kirtane & Pandit'].status).toBe('Needs Manual Contact');
-    expect(L['Kirtane & Pandit'].emailStatus).toMatch(/^no email found: /);
+    expect(L['Kirtane & Pandit'].emailStatus).toBe('');
 
     // A segment written differently still names its ICP; finding contacts failing leaves the fit alone.
     expect(L['Mystery Castings'].segment).toBe('Manufacturing');
@@ -129,27 +127,20 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Motherson'].contactEmail).toBe('vijay@motherson.com');
     // The team's address is kept as theirs.
     expect(L['Motherson']).toMatchObject({ emailSource: 'manual', emailVerification: 'unverified' });
-    expect(L['Motherson'].emailStatus).toBe('entered by the team · unverified');
+    expect(L['Motherson'].emailStatus).toBe('entered by the team');
 
-    // Apollo's verified address for the identified contact; draft missing a body → kept, retried later.
-    expect(L['No Draft Industries'].contactEmail).toBe('ravi.shah@nodraft.in');
-    expect(L['No Draft Industries']).toMatchObject({ emailSource: 'apollo', emailVerification: 'verified', emailProviderStatus: 'verified' });
-    expect(L['No Draft Industries'].emailRetrievedAt).toBeInstanceOf(Date);
-    expect(L['No Draft Industries'].emailStatus).toMatch(/^Apollo \(Apollo status: verified, retrieved \d{4}-\d{2}-\d{2}\) · verified by Apollo$/);
-    // Apollo replies carry phone numbers: none is ever stored.
+    // No email or phone number is ever looked up; draft missing a body → kept, retried later.
+    expect(L['No Draft Industries'].contactEmail).toBe('');
     expect(L['No Draft Industries'].contactPhone).toBe('');
     // Drafting failed: the lead keeps its research and contact, and the draft is retried later.
     expect(L['No Draft Industries'].status).toBe('Awaiting Approval');
     expect(L['No Draft Industries'].lastError).toMatch(/^Drafting failed \(retrying automatically\)/);
 
-    // Email search, cheapest first.
-    expect(L['Website Email Co'].contactEmail).toBe('arjun.mehta@websiteemail.in');
-    expect(L['Website Email Co']).toMatchObject({ emailSource: 'website', emailVerification: 'unverified' });
-    // No mail-server (Hunter) check is ever made.
-    expect(log.verified).toEqual([]);
-
-    // A format nobody published is never guessed.
+    // Not even an address published on the website, nor a guessed format; no email service is called.
+    expect(L['Website Email Co'].contactEmail).toBe('');
     expect(L['Format Guess Co'].contactEmail).toBe('');
+    expect(log.verified).toEqual([]);
+    expect(log.apollo ?? []).toEqual([]);
 
     // No LinkedIn hits: leadership named only in company records can't be confirmed on LinkedIn, so it is
     // set aside, not used: no main contact (the team finds one); invented names are dropped.
@@ -159,14 +150,8 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Vidya Girish Pathak');
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Invented Person');
 
-    // Catch-all server, but the company's format is published (RocketReach-style page):
-    // the address is saved as "likely", like ZoomInfo's business emails.
-    expect(L['Honeywell'].contactEmail).toBe('mayank.singh@honeywell.com');
-    expect(L['Honeywell']).toMatchObject({ emailSource: 'inferred', emailVerification: 'unverified' });
-    expect(L['Honeywell'].emailStatus).toBe(
-      "inferred from the company's email format: first.last, 88.4% of honeywell.com emails · unverified",
-    );
-    expect(L['Honeywell'].status).toBe('Awaiting Approval');
+    // The company's email format is published, but no address is built from it.
+    expect(L['Honeywell'].contactEmail).toBe('');
     // Buying signals: only real news items, linked to their article.
     expect(L['Honeywell'].signals).toEqual([
       { headline: 'Opening a new plant in Chakan', date: '3 weeks ago', url: 'https://news.example/hw-pune', source: 'Economic Times', kind: 'new_facility' },
@@ -175,15 +160,10 @@ describe('full run with DeepSeek-style messy answers', () => {
     const hwTimeline = (await db.select().from(activities).where(eq(activities.leadId, L['Honeywell'].id))).map((a) => a.kind);
     expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'contact', 'draft']));
 
-    // Everyone found at the company is kept, best first, with the best free email.
+    // Everyone found at the company is kept, best first, with no email (none is looked up).
     const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));
     expect(tataPeople[0]).toMatchObject({ name: 'Sangamnath Digge', isPrimary: true, email: '' });
-    // Paid lookups go to the main contact only: Anita gets no Apollo lookup, and Apollo was asked
-    // about the main contact alone.
-    const anitaRow = tataPeople.find((p) => p.name === 'Anita Rao');
-    expect(anitaRow).toMatchObject({ source: 'LinkedIn', isPrimary: false });
-    expect(anitaRow?.emailSource).not.toBe('apollo');
-    expect((log.apollo ?? []).some((u) => /anita/i.test(u.search))).toBe(false);
+    expect(tataPeople.find((p) => p.name === 'Anita Rao')).toMatchObject({ source: 'LinkedIn', isPrimary: false, email: '' });
     const ashPeople = await db.select().from(people).where(eq(people.leadId, L['Ash Logistics and Traders Pvt Ltd'].id));
     expect(ashPeople).toEqual([]);
 
@@ -194,23 +174,9 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(tata).toMatchObject({ contactName: 'Anita Rao', contactEmail: anita.email });
     expect((await db.select().from(people).where(eq(people.leadId, tata.id))).filter((p) => p.isPrimary).map((p) => p.name)).toEqual(['Anita Rao']);
 
-    // Apollo's unverified ("extrapolated") address stays unverified: nothing else confirms it.
-    expect(L['Finder Co'].contactEmail).toBe('k.rao@findr.in');
-    expect(L['Finder Co']).toMatchObject({ emailSource: 'apollo', emailVerification: 'unverified', emailProviderStatus: 'extrapolated' });
-    expect(L['Finder Co'].emailStatus).toMatch(/^Apollo \(Apollo status: extrapolated, retrieved [\d-]+\) · unverified$/);
-    // Hunter is no longer an email source: no people search, no finder.
-    expect(log.calls.some((c) => /hunter\.io\/v2\/(domain-search|email-finder)/.test(c))).toBe(false);
-    // Every Apollo request asked for emails only.
-    expect(log.apollo!.length).toBeGreaterThan(0);
-    for (const u of log.apollo!) {
-      expect(u.searchParams.get('reveal_phone_number')).toBe('false');
-      expect(u.searchParams.get('run_waterfall_phone')).toBe('false');
-      expect(u.searchParams.has('webhook_url')).toBe(false);
-    }
-
-    // No source had an address and none is guessed: nothing is saved.
+    expect(L['Finder Co'].contactEmail).toBe('');
+    expect(log.calls.some((c) => /hunter\.io|apollo\.io|prospeo\.io/.test(c))).toBe(false);
     expect(L['Catchall Co'].contactEmail).toBe('');
-    expect(L['Catchall Co'].emailStatus).toBe('no email found: no email found in any source');
     expect(L['Catchall Co'].status).toBe('Awaiting Approval'); // reachable on LinkedIn
 
     // Prospect search added new companies but skipped duplicates, clients and directories.
@@ -319,31 +285,6 @@ describe('follow-ups, stages and analytics', () => {
     expect(nextFollowUpAt(sent, 0)?.toISOString()).toBe('2026-09-04T05:00:00.000Z');
     expect(nextFollowUpAt(sent, 1)?.toISOString()).toBe('2026-09-08T05:00:00.000Z');
     expect(nextFollowUpAt(sent, 2)).toBeNull();
-  });
-});
-
-describe('finding emails', () => {
-  const soni = { ...EMPTY_CONTACT, name: 'Sanjay Soni', title: 'Factory Manager' };
-
-  it('uses a published company format even when the email check is out of credits, labelled inferred', async () => {
-    const r = await findEmail(services(), soni, { company: 'John Deere', domain: '', websiteEmails: [] });
-    expect(r.email).toBe('sonisanjay@johndeere.com');
-    expect(r.status).toBe('likely');
-    expect(r).toMatchObject({ source: 'inferred', verification: 'unverified' });
-    expect(r.detail).toBe('lastfirst, 67% of johndeere.com emails');
-  });
-
-  it('saves nothing unconfirmed when the company-format setting is off', async () => {
-    const r = await findEmail(services({ useCompanyFormat: false }), soni, { company: 'John Deere', domain: '', websiteEmails: [] });
-    expect(r.email).toBe('');
-    expect(r.reason).toBe('no email found in any source');
-    expect(r.notes.join('\n')).toContain('Inferred email');
-  });
-
-  it("uses the person's own address when a people-search page shows it", async () => {
-    const r = await findEmail(services(), { ...EMPTY_CONTACT, name: 'Priya Nair' }, { company: 'Kappa Metals', domain: 'kappametals.com', websiteEmails: [] });
-    expect(r.email).toBe('priya.nair@kappametals.com');
-    expect(r.source).toBe('web');
   });
 });
 

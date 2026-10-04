@@ -209,7 +209,7 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                     ) : (
                       <span className="text-muted">—</span>
                     )}
-                    {l.emailStatus && <div className="text-xs text-muted">{l.emailStatus}</div>}
+                    {l.contactEmail && l.emailStatus && <div className="text-xs text-muted">{l.emailStatus}</div>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     {l.contactLinkedin ? (

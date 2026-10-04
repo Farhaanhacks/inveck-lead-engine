@@ -17,7 +17,7 @@ const BUDGET_MS = (RUN_MAX_DURATION - 90) * 1000;
 
 export async function liveServices(): Promise<Services> {
   const db = await getDb();
-  // Paid lookups (Apollo) are cached in the database, so a person is never paid for twice.
+  // Lookups (places, LinkedIn pages) are cached in the database, so each is made once.
   return { fetch: globalThis.fetch.bind(globalThis), keys: apiKeys(), settings: await getSettings(db), cache: dbEnrichmentCache(db) };
 }
 

@@ -216,7 +216,6 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     }
 
     if (stats.processed === 0) {
-      if (!svc.keys.prospeo && !svc.keys.apollo) await log('No email provider is set up (PROSPEO_API_KEY, APOLLO_API_KEY): emails come only from published addresses and the company\'s format.', 'warn');
     }
 
     // New plants and warehouses in the news (at most every 12 hours).
