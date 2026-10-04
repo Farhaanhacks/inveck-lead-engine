@@ -323,6 +323,12 @@ export function inCity(text: string, city: string): boolean {
 /** States and the country: a location naming only these doesn't say which site someone is at. */
 const REGION_ONLY = /^(india|bharat|maharashtra|gujarat|karnataka|tamil nadu|telangana|andhra pradesh|kerala|goa|rajasthan|madhya pradesh|uttar pradesh|uttarakhand|haryana|punjab|himachal pradesh|jammu and kashmir|jammu & kashmir|bihar|jharkhand|odisha|west bengal|assam|chhattisgarh|north india|south india|east india|west india)$/i;
 
+/** No usable place: empty, or only a state or the country ("India", "Tamil Nadu, India"). */
+export function vagueLocation(location: string | null | undefined): boolean {
+  const place = String(location ?? '').split(',')[0].replace(/\b(greater|area|region|division|district|metropolitan)\b/gi, '').trim();
+  return !place || REGION_ONLY.test(place);
+}
+
 /**
  * Whether someone works at the lead's site: 'here' when their location is the lead's city or its
  * metro area, 'elsewhere' when it names another place, 'unknown' when there is no location, it names

@@ -382,12 +382,8 @@ export async function makePrimaryAction(form: FormData) {
   if (leadId) {
     // A new point of contact: the tier is worked out again, calls count afresh, and the email is rewritten for them.
     const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
-    // Someone to reach again: a lead waiting for a contact goes back to waiting for approval.
-    const reachable = !!lead && (!!lead.contactLinkedin || !!lead.contactEmail);
-    await db
-      .update(leads)
-      .set({ contactTier: '', ...(lead?.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
-      .where(eq(leads.id, leadId));
+    // The tier is worked out again; the status already follows the contact (makePrimary).
+    if (lead) await db.update(leads).set({ contactTier: '' }).where(eq(leads.id, leadId));
     await newContactNamed(db, leadId);
     after(async () => redraftForContact(await getDb(), await liveServices(), leadId));
     refreshLeadPages(leadId);

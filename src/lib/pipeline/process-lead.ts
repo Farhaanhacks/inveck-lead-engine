@@ -1,6 +1,6 @@
 import { KnownBranches } from '../branches';
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, contactStanding, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
 import { buildSources } from './fit';
@@ -10,7 +10,7 @@ import { resolveIcp } from '../icp-match';
 import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
 import { checkCompanyName } from './company-name';
-import { firmAliasesOf } from './employer';
+import { firmAliasesOf, vagueLocation } from './employer';
 import { knowPlaces } from './places';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
@@ -240,7 +240,7 @@ export async function processLead(
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
   const [linkedin, leaders, news] = await Promise.all([
-    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company, lead.city),
+    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company, lead.city, icp),
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
   ]);
@@ -272,17 +272,23 @@ export async function processLead(
         !atOtherSite(c, lead.city) &&
         !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
   );
-  // The best-ranked people whose location the search result didn't show: looked up by name, so
-  // they can be confirmed at the site (or not) instead of being set aside for a missing location.
+  // The best-ranked people the search couldn't place (no location, or only "India" or a state, and no
+  // workplace shown): looked up by name, so they can be confirmed at the site (or not) instead of being
+  // set aside for a missing location. Every place the lookup shows is kept: where they live, where the
+  // job is, and the site their title names.
   const unplaced = rankCandidates(
-    candidates.filter((c) => c.source === 'LinkedIn' && !c.location?.trim() && contactPriority(c.title, icp) < 99),
+    candidates.filter((c) => c.source === 'LinkedIn' && personSite(c, lead.city) === 'unknown' && contactPriority(c.title, icp) < 99),
     icp,
     lead.city,
   ).slice(0, 3);
   for (const c of lead.city ? unplaced : []) {
     try {
       const profile = await findLinkedinProfile(svc, c.name, lead.company, { title: c.title, city: lead.city });
-      if (profile?.employer === 'here' && profile.location) c.location = profile.location;
+      if (profile?.employer !== 'here') continue;
+      if (profile.location && (vagueLocation(c.location) || !vagueLocation(profile.location))) c.location = profile.location;
+      if (profile.jobLocation) c.jobLocation = profile.jobLocation;
+      if (profile.responsibility) c.responsibility = profile.responsibility;
+      if (profile.evidence && !c.evidence?.includes('current')) c.evidence = profile.evidence;
     } catch {
       // Left without a location: not the main contact this time.
     }
@@ -370,6 +376,12 @@ export async function processLead(
   if (contact.name || contact.email) update.contactEmail = contact.email;
   if (contact.phone) update.contactPhone = contact.phone;
   if (contact.linkedin) update.contactLinkedin = contact.linkedin;
+  // Nobody found this time, and the earlier contact wasn't the team's: it doesn't stay on the lead
+  // (its name and LinkedIn would still show as the contact). A lead already in outreach keeps the
+  // person it is in conversation with.
+  if (!contact.name && !manual.name && !searchFailed && (!opts.contactsOnly || BEFORE_OUTREACH.includes(lead.status)) && lead.contactName) {
+    Object.assign(update, { contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactCheckedAt: null } satisfies LeadUpdate);
+  }
   // Checked against LinkedIn during research (found there, or looked up by name). A lookup that
   // failed leaves it unchecked, so the next contact check tries again.
   if (contact.name && !lookupFailed) update.contactCheckedAt = new Date();

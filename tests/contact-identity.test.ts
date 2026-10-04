@@ -295,3 +295,54 @@ describe('equivalent titles are read the same way', () => {
     expect(noDepartment('Vice President')).toBe(true);
   });
 });
+
+describe('search evidence is read in full before deciding (contact pipeline review)', () => {
+  const company = 'Hosur Gears';
+  const mfg = DEFAULT_ICPS[0];
+
+  it('merges the results for one profile: a specific city from one result fills in "India" from another', async () => {
+    const vague = { title: 'Ravi Kumar - Plant Head - Hosur Gears', subtitle: 'India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/ravi-kumar', snippet: '' };
+    const placed = { ...vague, subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://www.linkedin.com/in/ravi-kumar/' };
+    const svc = services(seen, (q) => (q.includes('"Plant Head"') ? [vague] : [placed]));
+    await knowPlaces(svc, ['Hosur']);
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Hosur Gears" "Plant Head"', company, 'Hosur', mfg);
+    expect(people).toHaveLength(1);
+    expect(people[0].location).toBe('Hosur, Tamil Nadu, India');
+  });
+
+  it('a dated current job here outranks an undated line naming another company', async () => {
+    const r = { title: 'Meena S - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', link: 'https://in.linkedin.com/in/meena-s', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present 1 year 9 months. Hosur, Tamil Nadu, India' };
+    const { people } = await searchLinkedIn(services(seen, () => [r]), 'q', company);
+    expect(people.map((p) => [p.name, p.title])).toEqual([['Meena S', 'Plant Head']]);
+    expect(people[0].evidence).toContain('the undated line under the result names Lean Partners');
+    // Without the dated job here, the other company's line still means elsewhere.
+    const old = { ...r, snippet: '' };
+    expect((await searchLinkedIn(services(seen, () => [old]), 'q', company)).people).toEqual([]);
+  });
+
+  it('keeps searching while the only person at the site is not eligible (HR), within a budget of two more searches', async () => {
+    const hr = { title: 'Asha R - HR Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · HR Manager · Hosur Gears', link: 'https://in.linkedin.com/in/asha-r', snippet: '' };
+    const head = { title: 'Vikram P - Operations Head - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Operations Head · Hosur Gears', link: 'https://in.linkedin.com/in/vikram-p', snippet: '' };
+    const svc = services(seen, (q) => (q.endsWith('"Hosur"') ? [head] : [hr]));
+    await knowPlaces(svc, ['Hosur']);
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Hosur Gears" "Plant Head" Hosur', company, 'Hosur', mfg);
+    expect(people.map((p) => p.name).sort()).toEqual(['Asha R', 'Vikram P']);
+    // The first search, the broad one, then the leadership and the city searches: no more.
+    expect(seen.searches.filter((q) => q.startsWith('site:linkedin.com/in')).length).toBe(4);
+  });
+
+  it('a same-name profile at another company does not end the lookup: the one at this company is found', async () => {
+    const { findLinkedinProfile } = await import('@/lib/pipeline/contacts');
+    const namesake = { title: 'Suresh Babu - Plant Head - Other Forge', subtitle: 'Chennai, Tamil Nadu, India · Plant Head · Other Forge', link: 'https://in.linkedin.com/in/suresh-babu-1', snippet: '' };
+    const him = { title: 'Suresh Babu - Plant Head - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/suresh-babu-2', snippet: '' };
+    let n = 0;
+    const svc = services(seen, () => (n++ === 0 ? [namesake] : [him]));
+    const found = await findLinkedinProfile(svc, 'Suresh Babu', company, { title: 'Plant Head', city: 'Hosur' });
+    expect(found).toMatchObject({ employer: 'here', url: 'https://in.linkedin.com/in/suresh-babu-2' });
+    // Only a namesake anywhere: they work elsewhere (after at most two more searches).
+    seen.searches.length = 0;
+    const gone = await findLinkedinProfile(services(seen, () => [namesake]), 'Suresh Babu', company, { title: 'Plant Head', city: 'Hosur' });
+    expect(gone?.employer).toBe('elsewhere');
+    expect(seen.searches.length).toBeLessThanOrEqual(3);
+  });
+});

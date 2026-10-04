@@ -16,6 +16,7 @@ import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
 import type { LeadResult, LeadUpdate } from './pipeline/process-lead';
 import { savePeople } from './people';
+import { reconcileContactStatus } from './contact-status';
 import { assignUnowned } from './assign';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, needsReview: 0, existingClients: 0, errors: 0 };
@@ -265,6 +266,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         const { people: found, ...update } = result;
         await db.update(leads).set({ ...update, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
         if (found) await savePeople(db, lead.id, found);
+        await reconcileContactStatus(db, lead.id);
         await recordOutcome(db, lead.id, update);
         stats.processed++;
         if (update.status === 'Awaiting Approval') stats.drafted++;
@@ -293,6 +295,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           const { people: found, ...update } = result;
           await db.update(leads).set({ ...update, refetchPending: false, refetchClaimedAt: null, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
           if (found) await savePeople(db, lead.id, found);
+          await reconcileContactStatus(db, lead.id);
           await logActivity(
             db,
             lead.id,

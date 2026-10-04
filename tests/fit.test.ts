@@ -47,6 +47,8 @@ type Script = {
   check?: (user: string) => unknown;
   /** Google results by query; anything else returns nothing. Throwing means Google is down. */
   google?: (q: string) => { title: string; link: string; snippet: string }[];
+  /** The AI that suggests the contact can't be reached. */
+  contactAiDown?: boolean;
 };
 
 type Seen = { research: string[]; google: string[]; deepseek: number };
@@ -93,6 +95,8 @@ function scriptedServices(script: Script, seen: Seen): Services {
         seen.research.push(user);
       } else if (system.startsWith('You double-check the evidence')) {
         reply = script.check?.(user) ?? { checks: [...user.matchAll(/^- id ([A-Z]+\d*):/gm)].map((m) => ({ id: m[1], supports: true, why: 'Shows it' })) };
+      } else if (system.startsWith('You pick the best person') && script.contactAiDown) {
+        return new Response('overloaded', { status: 503 });
       } else if (system.startsWith('You pick the best person')) reply = { chosen_id: '', role_match: false, reason: '', other_ids: [], roles_to_find_on_linkedin: [] };
       else if (system.startsWith('You extract the people')) reply = { people: [] };
       else if (system.startsWith('You spot buying signals')) reply = { signals: [] };
@@ -560,6 +564,57 @@ describe('the company name, checked against its own website (Advance Forgings)',
     expect(checkCompanyName('ADVANCED FORGINGS', 'advanceforgings.in', '')).toMatchObject({ status: 'corrected', name: 'ADVANCE FORGINGS' });
     // A brand spelled its own way in its domain is not a typo in the name.
     expect(checkCompanyName('Finder Co', 'findr.in', '').name).toBe('Finder Co');
+  });
+});
+
+describe('contacts: the review of the contact pipeline', () => {
+  const plantHead = (subtitle: string, snippet = '') => ({ title: 'Karthik R - Plant Head - Hosur Gears', subtitle, link: 'https://in.linkedin.com/in/karthik-r', snippet });
+
+  it('"India" is a missing location: looked up by name, and the job\'s own location (Hosur) is kept, not just the home city', async () => {
+    const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
+    const r = await run(lead, {
+      research: (user) => kltAnswer(user, { risks: [] }),
+      google: (q) =>
+        q.includes('"Karthik R"')
+          ? [plantHead('Bengaluru, Karnataka, India · Plant Head · Hosur Gears', 'Plant Head. Hosur Gears. Jan 2020 - Present 4 years. Hosur, Tamil Nadu, India')]
+          : q.startsWith('site:linkedin.com/in')
+            ? [plantHead('India · Plant Head · Hosur Gears')]
+            : [],
+    });
+    expect(r.contactName).toBe('Karthik R');
+    expect(r.people?.find((p) => p.isPrimary)).toMatchObject({ location: 'Bengaluru, Karnataka, India', jobLocation: 'Hosur, Tamil Nadu, India' });
+  });
+
+  it('the AI being down still gives a contact: INVECK\'s ranking picks from the LinkedIn candidates found', async () => {
+    const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
+    const r = await run(lead, {
+      contactAiDown: true,
+      research: (user) => kltAnswer(user, { risks: [] }),
+      google: (q) => (q.startsWith('site:linkedin.com/in') ? [plantHead('Hosur, Tamil Nadu, India · Plant Head · Hosur Gears')] : []),
+    });
+    expect(r.contactName).toBe('Karthik R');
+    expect(r.status).toBe('Awaiting Approval');
+    expect(r.otherDecisionMakers).toContain("Contact picked by INVECK's ranking alone");
+  });
+
+  it('research again that finds nobody clears the earlier (non-team) contact instead of leaving it showing', async () => {
+    const lead = await klt({
+      company: 'Hosur Gears',
+      city: 'Hosur',
+      researchSummary: 'Makes gears.',
+      contactName: 'Old Person',
+      contactTitle: 'Plant Head',
+      contactLinkedin: 'https://in.linkedin.com/in/old-person',
+      status: 'Awaiting Approval',
+    });
+    const r = await run(lead, { research: (user) => kltAnswer(user, { risks: [] }), google: () => [] });
+    expect(r).toMatchObject({ contactName: '', contactTitle: '', contactLinkedin: '', status: 'Needs Manual Contact' });
+  });
+
+  it("research again keeps the team's own contact when nobody is found", async () => {
+    const lead = await klt({ company: 'Hosur Gears', city: 'Hosur', contactName: 'Team Pick', contactTitle: 'Plant Head', contactPhone: '9876543210' });
+    const r = await run(lead, { research: (user) => kltAnswer(user, { risks: [] }), google: () => [] });
+    expect(r.contactName ?? 'Team Pick').toBe('Team Pick');
   });
 });
 

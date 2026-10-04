@@ -3,6 +3,7 @@ import type { Db } from './db';
 import { leads, people, tasks } from './db/schema';
 import { logActivity } from './activity';
 import { newContactNamed } from './escalate';
+import { reconcileContactStatus } from './contact-status';
 
 export type ContactEdit = { contactName: string; contactTitle: string; contactPhone: string; contactEmail: string; contactLinkedin: string };
 
@@ -76,6 +77,8 @@ export async function saveContactEdit(db: Db, id: number, input: ContactEdit, op
     // The contact was cleared: nobody is the main contact any more.
     await db.update(people).set({ isPrimary: false }).where(eq(people.id, primary.id));
   }
+  // The status follows the contact: someone the team named makes the lead ready; nobody, waiting again.
+  await reconcileContactStatus(db, id);
   // Someone new: their own count of unanswered calls, and a fresh plan if the lead was waiting for them.
   if (newPerson && v.contactName) await newContactNamed(db, id);
   if (changed.length) {

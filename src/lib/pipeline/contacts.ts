@@ -5,7 +5,7 @@ import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
 import type { Services } from './services';
 import { googleSearch } from './services';
-import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, placeNamedIn, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
+import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, placeNamedIn, vagueLocation, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
 import { knowPlaces } from './places';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
@@ -100,6 +100,39 @@ function splitRoleAndFirm(part: string, company: string): string[] {
 
 type FoundPerson = LinkedInPerson & { employer: Employer; abroad: boolean };
 
+/** How strong the employment evidence in a result is: a dated job beats an undated line, which beats nothing. */
+function evidenceStrength(p: FoundPerson): number {
+  if (!p.evidence) return 0;
+  if (/undated/.test(p.evidence)) return 1;
+  return 2;
+}
+
+/**
+ * The same profile often comes back from several searches, each result showing a different part of it
+ * (one the city, another the dated job). They are merged: the employer from the strongest evidence,
+ * and every place any of them shows (a specific city over "India").
+ */
+export function mergeSameProfile<T extends FoundPerson>(list: T[]): T[] {
+  const byKey = new Map<string, T>();
+  const keyOf = (p: T) => p.linkedin.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '').replace(/\/+$/, '');
+  for (const p of list) {
+    const key = keyOf(p);
+    const had = byKey.get(key);
+    if (!had) {
+      byKey.set(key, { ...p });
+      continue;
+    }
+    const [best, other] = evidenceStrength(p) > evidenceStrength(had) ? [{ ...p }, had] : [had, p];
+    if (vagueLocation(best.location) && !vagueLocation(other.location)) best.location = other.location;
+    if (!best.jobLocation && other.jobLocation) best.jobLocation = other.jobLocation;
+    if (!best.responsibility && other.responsibility) best.responsibility = other.responsibility;
+    if (!best.title && other.title) best.title = other.title;
+    best.abroad = best.abroad && other.abroad;
+    byKey.set(key, best);
+  }
+  return [...byKey.values()];
+}
+
 function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): FoundPerson[] {
   return results
     .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
@@ -117,18 +150,24 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       if (person.title && (!JOB_WORD.test(person.title) || (company && sameFirm(person.title, company) && !JOB_WORD.test(roleOnly(person.title))))) person.title = '';
       // Google's line under the result ("Mumbai · Head of Unit · Balmer Lawrie & Co. Ltd.") is the
       // profile's current job: it decides where they work now, whatever the About text says.
-      const job = company ? subtitleJob(r.subtitle) : null;
+      const subtitleJobAny = company ? subtitleJob(r.subtitle) : null;
+      // The snippet often holds the job and its dates ("Group Plant Head. CIE Automotive India Ltd. Mar
+      // 2025 - Present"): a current job here gives the role; jobs here that have all ended mean they left.
+      // All of it is read before deciding: a dated current job here outranks an undated line naming
+      // another company (people hold two roles, and Google's line can be an old copy).
+      const here = company ? snippetRoles(person.snippet).filter((j) => sameFirm(j.company, company)) : [];
+      const now = here.find((j) => j.current);
+      const elsewhereLine = !!subtitleJobAny && !sameFirm(subtitleJobAny.company, company);
+      if (elsewhereLine && !now) {
+        return { ...person, title: cleanTitle(roleOnly(subtitleJobAny!.role)), employer: 'elsewhere' as const, evidence: `LinkedIn (via Google, undated): ${cleanTitle(subtitleJobAny!.role)} at ${subtitleJobAny!.company}` };
+      }
+      const job = elsewhereLine ? null : subtitleJobAny;
       if (job) {
-        if (!sameFirm(job.company, company)) return { ...person, title: cleanTitle(roleOnly(job.role)), employer: 'elsewhere' as const };
         // The profile's position here is the job itself; the headline may be a phrase around it
         // ("Working as Director Operation ...").
         if (!person.title || JOB_WORD.test(job.role)) person.title = job.role;
       }
-      // The snippet often holds the job and its dates ("Group Plant Head. CIE Automotive India Ltd. Mar
-      // 2025 - Present"): a current job here gives the role; jobs here that have all ended mean they left.
-      const here = company ? snippetRoles(person.snippet).filter((j) => sameFirm(j.company, company)) : [];
-      const now = here.find((j) => j.current);
-      if (now && !isPlace(now.role) && (!person.title || !JOB_WORD.test(person.title) || sameFirm(person.title, company))) person.title = now.role;
+      if (now && !isPlace(now.role) && (elsewhereLine || !person.title || !JOB_WORD.test(person.title) || sameFirm(person.title, company))) person.title = now.role;
       // Keep just the role: "Plant Head at TRACK COMPONENTS ..." is saved as "Plant Head".
       person.title = cleanTitle(roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, ''));
       let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
@@ -146,7 +185,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       let evidence = '';
       if (now) {
         employer = 'here';
-        evidence = `LinkedIn (via Google): ${cleanTitle(now.role)} at ${now.company}, current`;
+        evidence = `LinkedIn (via Google): ${cleanTitle(now.role)} at ${now.company}, current${elsewhereLine ? ` (the undated line under the result names ${subtitleJobAny!.company})` : ''}`;
       } else if (currentElsewhere) {
         employer = 'elsewhere';
         evidence = `LinkedIn (via Google): now ${currentElsewhere.role} at ${currentElsewhere.company}`;
@@ -195,7 +234,7 @@ function firmQuery(company: string): string {
  * Public LinkedIn profiles via Google. Runs the targeted query (company + roles + city) and a
  * broad one (company + any senior role), since small companies rarely match the targeted one.
  */
-export async function searchLinkedIn(svc: Services, query: string, company = '', city = ''): Promise<{ people: LinkedInPerson[]; error: string }> {
+export async function searchLinkedIn(svc: Services, query: string, company = '', city = '', icp?: RankIcp): Promise<{ people: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const queries = [query];
   // The broad search looks for the people who run operations, not the top of the company.
@@ -204,36 +243,34 @@ export async function searchLinkedIn(svc: Services, query: string, company = '',
   // The broad search's first page was full: the next ten often hold the people at the site we want.
   const broad = settled[1];
   if (queries[1] && broad?.status === 'fulfilled' && broad.value.length >= 10) settled.push(...(await Promise.allSettled([googleSearch(svc, queries[1], 2)])));
-  const people: LinkedInPerson[] = [];
-  const seen = new Set<string>();
-  for (const s of settled) {
-    if (s.status !== 'fulfilled') continue;
-    for (const p of toLinkedInPeople(s.value, company)) {
-      // Found by searching the company's name, so former employees turn up too: keep only people
-      // whose profile shows they work there now.
-      if (company && p.employer !== 'here') continue;
-      // Based outside India ("Detroit Metropolitan Area"): not a contact for an Indian site.
-      if (p.abroad) continue;
-      const key = p.linkedin.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '');
-      if (seen.has(key)) continue;
-      seen.add(key);
-      people.push(p);
-    }
-  }
-  // Where each of them is, so their distance from the site can be told.
-  // The searches look for the people who run the site. When nobody at the company was found, or nobody
-  // at this site, its leadership is looked for too (owners, partners, the CEO, directors, the
-  // president): one more search, only then. They are corporate contacts, kept for the team to review.
+  // Every result for a profile is read together before deciding (see mergeSameProfile).
+  const found = mergeSameProfile(settled.flatMap((s) => (s.status === 'fulfilled' ? toLinkedInPeople(s.value, company) : [])));
+  // Found by searching the company's name, so former employees turn up too: keep only people whose
+  // profile shows they work there now; and nobody based outside India ("Detroit Metropolitan Area").
+  const people: LinkedInPerson[] = found.filter((p) => (!company || p.employer === 'here') && !p.abroad);
+  // The searches look for the people who run the site. Until someone eligible at this site is found
+  // (on the ICP's lists, not just anyone who works there), more is searched, within a small budget:
+  // the company's leadership (owners, partners, the CEO, directors, the president), kept as corporate
+  // contacts for review; then everyone at the company in the site's city.
+  const eligibleAtSite = () =>
+    people.some((p) => (!city.trim() || personSite(p, city) === 'here') && (!icp || contactPriority(p.title, icp) < 99));
+  const firm = firmQuery(company);
+  const town = city.split(',')[0].trim();
+  const more = [
+    `site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR director OR proprietor OR CEO OR "chief executive" OR president)`,
+    town ? `site:linkedin.com/in ${firm} "${town}"` : '',
+  ].filter(Boolean);
   await knowPlaces(svc, [city, ...people.flatMap((p) => [p.location, p.jobLocation, p.responsibility])]);
-  const noneAtSite = !people.length || (!!city.trim() && !people.some((p) => personSite(p, city) === 'here'));
-  if (name && noneAtSite && !settled.some((s) => s.status === 'rejected')) {
+  for (const q of more) {
+    if (!name || eligibleAtSite() || settled.some((s) => s.status === 'rejected')) break;
     try {
-      for (const p of toLinkedInPeople(await googleSearch(svc, `site:linkedin.com/in ${firmQuery(company)} (owner OR founder OR "managing partner" OR partner OR "managing director" OR director OR proprietor OR CEO OR "chief executive" OR president)`), company)) {
-        if (p.employer !== 'here' || p.abroad || people.some((q) => q.linkedin === p.linkedin)) continue;
-        people.push(p);
-      }
+      const extra = toLinkedInPeople(await googleSearch(svc, q), company);
+      const merged = mergeSameProfile([...(people as FoundPerson[]), ...extra]).filter((p) => (!company || p.employer === 'here') && !p.abroad);
+      people.splice(0, people.length, ...merged);
+      await knowPlaces(svc, people.flatMap((p) => [p.location, p.jobLocation, p.responsibility]));
     } catch {
       // Nothing more found this time.
+      break;
     }
   }
   await knowPlaces(svc, people.flatMap((p) => [p.location, p.jobLocation, p.responsibility]));
@@ -403,36 +440,44 @@ export async function findLinkedinProfile(
     city && `site:linkedin.com/in "${firstLast || full}" ${short || firm} ${city}`,
   ].filter((q, i, all): q is string => !!q && all.indexOf(q) === i);
 
+  const profileOf = async (pick: FoundPerson) => {
+    await knowPlaces(svc, [pick.location, pick.jobLocation, pick.responsibility, hint.city]);
+    return {
+      url: pick.linkedin,
+      title: pick.title,
+      employer: pick.employer,
+      abroad: pick.abroad,
+      location: pick.location ?? '',
+      jobLocation: pick.jobLocation ?? '',
+      responsibility: pick.responsibility ?? '',
+      evidence: pick.evidence ?? '',
+    };
+  };
   let failure: unknown = null;
+  // Every result so far, merged per profile: one result may show the city, another the dated job.
+  const seenSoFar: FoundPerson[] = [];
+  // A same-name profile at another company may be someone else with that name: the remaining searches
+  // still run (two more at most) looking for one at this company before concluding they work elsewhere.
+  let other: FoundPerson | undefined;
+  let afterOther = 0;
   for (const q of queries) {
-    let results;
+    if (other && afterOther >= 2) break;
+    if (other) afterOther++;
+    let results: FoundPerson[];
     try {
-      results = toLinkedInPeople(await googleSearch(svc, q), company);
+      results = mergeSameProfile([...seenSoFar, ...toLinkedInPeople(await googleSearch(svc, q), company)]);
     } catch (e) {
       failure = e;
       continue;
     }
+    seenSoFar.splice(0, seenSoFar.length, ...results);
     const exact = results.filter((p) => sameName(p.name, person));
-    const pick =
-      exact.find((p) => p.employer === 'here') ??
-      results.find((p) => p.employer === 'here' && looseName(p.name, person)) ??
-      exact.find((p) => p.employer === 'elsewhere') ??
-      // Found, but the evidence conflicts (the job here has ended): returned so the reason is shown.
-      exact.find((p) => p.employer === 'unknown' && !!p.evidence);
-    if (pick) {
-      await knowPlaces(svc, [pick.location, pick.jobLocation, pick.responsibility, hint.city]);
-      return {
-        url: pick.linkedin,
-        title: pick.title,
-        employer: pick.employer,
-        abroad: pick.abroad,
-        location: pick.location ?? '',
-        jobLocation: pick.jobLocation ?? '',
-        responsibility: pick.responsibility ?? '',
-        evidence: pick.evidence ?? '',
-      };
-    }
+    const here = exact.find((p) => p.employer === 'here') ?? results.find((p) => p.employer === 'here' && looseName(p.name, person));
+    // Found, but the evidence conflicts (the job here has ended): kept so the reason is shown.
+    other ??= exact.find((p) => p.employer === 'elsewhere') ?? exact.find((p) => p.employer === 'unknown' && !!p.evidence);
+    if (here) return await profileOf(here);
   }
+  if (other) return await profileOf(other);
   // A search that failed (quota, network) isn't "no profile": the caller checks again later.
   if (failure) throw new Error('LinkedIn search failed: ' + errorMessage(failure));
   return null;
@@ -633,11 +678,11 @@ export async function pickContact(
   if (!candidates.length) return { contact: { ...EMPTY_CONTACT }, notes: [], error: '', ranked: [] };
 
   const result = await askJson(svc, CONTACT_PROMPT, userText, schema);
-  if (result.error !== undefined) {
-    const manual = byId.get('M');
-    return { contact: manual ? toContact(manual, false, 'Supplied by the sales team') : { ...EMPTY_CONTACT }, notes: [], error: result.error, ranked: candidates };
-  }
-  const d = result.data;
+  // The AI only suggests; the choice is INVECK's ranking over the people who pass the checks. When the
+  // AI can't be reached, the ranking still picks from the LinkedIn candidates already found (people
+  // named only in records need the AI's vetting or a LinkedIn check, so they wait for it).
+  const aiError = result.error !== undefined ? result.error : '';
+  const d: Record<string, unknown> = result.error !== undefined ? { chosen_id: '', other_ids: [], reason: '', roles_to_find_on_linkedin: [] } : result.data;
   const aiChosen = byId.get(asText(d.chosen_id));
   // Only people who passed the hard checks are ranked, so ranking never brings back someone excluded:
   // a role on the ICP's lists, an employer confirmed (a LinkedIn profile showing this company, or a
@@ -672,5 +717,6 @@ export async function pickContact(
   const notes: string[] = [];
   if (others.length) notes.push('Other decision-makers:\n' + others.join('\n'));
   if (rolesToFind.length) notes.push('Still to find on LinkedIn: ' + rolesToFind.join(', '));
-  return { contact, notes, error: '', ranked };
+  if (aiError) notes.push(`Contact picked by INVECK's ranking alone (the AI could not be reached: ${aiError})`);
+  return { contact, notes, error: aiError, ranked };
 }

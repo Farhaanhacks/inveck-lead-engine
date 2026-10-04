@@ -2,13 +2,16 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
+import { reconcileContactStatus } from './contact-status';
+import { vagueLocation } from './pipeline/employer';
 import { atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName, siteEvidence } from './pipeline/contacts';
 
 /** The places a profile shows, kept apart: where they live, where the job is, the site their title names. */
 function placeFields(profile: { location: string; jobLocation: string; responsibility: string } | null | undefined) {
   if (!profile) return {};
   return {
-    ...(profile.location ? { location: profile.location } : {}),
+    // "India" says nothing new: a specific place already on file is never replaced by it.
+    ...(profile.location && !vagueLocation(profile.location) ? { location: profile.location } : {}),
     ...(profile.jobLocation ? { jobLocation: profile.jobLocation } : {}),
     ...(profile.responsibility ? { responsibility: profile.responsibility } : {}),
   };
@@ -145,6 +148,13 @@ async function dropFormerEmployees(db: Db, lead: Lead): Promise<number> {
  * rewrites the email for them. Runs on its own; nobody has to press anything.
  */
 export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new Date(), opts: { mainOnly?: boolean } = {}): Promise<CheckResult> {
+  const result = await checkLeadContacts(db, svc, lead, now, opts);
+  // Whatever the check found, the lead's status follows its contact.
+  await reconcileContactStatus(db, lead.id);
+  return result;
+}
+
+async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, opts: { mainOnly?: boolean }): Promise<CheckResult> {
   await learnFirm(svc, lead.company, lead.website);
   await knowPlaces(svc, [lead.city]);
   // Without any search: drop people whose stored title already shows another employer, and move off a

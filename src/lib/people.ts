@@ -2,6 +2,7 @@ import { and, eq, ne } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, people, type NewPerson } from './db/schema';
 import { logActivity } from './activity';
+import { reconcileContactStatus } from './contact-status';
 
 /** Replaces what research found at a lead's company; people the sales team added stay. */
 export async function savePeople(db: Db, leadId: number, found: Omit<NewPerson, 'leadId'>[]): Promise<void> {
@@ -35,6 +36,8 @@ export async function makePrimary(db: Db, personId: number, opts: { byTeam?: boo
       updatedAt: new Date(),
     })
     .where(eq(leads.id, p.leadId));
+  // Someone confirmed here now: a lead that was waiting for a contact is ready for approval.
+  await reconcileContactStatus(db, p.leadId);
   await logActivity(db, p.leadId, 'contact', `Main contact changed to ${[p.name, p.title].filter(Boolean).join(', ')}${opts.byTeam ? ' (chosen by the team)' : ''}${opts.why ? `: ${opts.why}.` : ''}`);
   return p.leadId;
 }
