@@ -1,5 +1,5 @@
 import type { Icp } from '../db/schema';
-import { companyWide, contactPriority, roleOnly, tierOf } from '../tiers';
+import { cleanTitle, companyWide, contactPriority, noDepartment, roleOnly, tierOf } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
@@ -119,7 +119,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       // profile's current job: it decides where they work now, whatever the About text says.
       const job = company ? subtitleJob(r.subtitle) : null;
       if (job) {
-        if (!sameFirm(job.company, company)) return { ...person, title: roleOnly(job.role), employer: 'elsewhere' as const };
+        if (!sameFirm(job.company, company)) return { ...person, title: cleanTitle(roleOnly(job.role)), employer: 'elsewhere' as const };
         // The profile's position here is the job itself; the headline may be a phrase around it
         // ("Working as Director Operation ...").
         if (!person.title || JOB_WORD.test(job.role)) person.title = job.role;
@@ -130,7 +130,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       const now = here.find((j) => j.current);
       if (now && !isPlace(now.role) && (!person.title || !JOB_WORD.test(person.title) || sameFirm(person.title, company))) person.title = now.role;
       // Keep just the role: "Plant Head at TRACK COMPONENTS ..." is saved as "Plant Head".
-      person.title = roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, '').trim();
+      person.title = cleanTitle(roleOnly(person.title).replace(/\s*(\.\.\.|…)\s*$/, '').replace(/[\s,|-]+$/, ''));
       let employer: Employer = nameIsTheCompany(person.name, company) ? 'elsewhere' : currentEmployer({ ...person, titleParts: parts }, company);
       // A headline "Head of Supply Chain | NBC Bearings | CKA Birla Group": a piece naming the company
       // (and none naming another as current) means they work there.
@@ -146,7 +146,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       let evidence = '';
       if (now) {
         employer = 'here';
-        evidence = `LinkedIn (via Google): ${now.role} at ${now.company}, current`;
+        evidence = `LinkedIn (via Google): ${cleanTitle(now.role)} at ${now.company}, current`;
       } else if (currentElsewhere) {
         employer = 'elsewhere';
         evidence = `LinkedIn (via Google): now ${currentElsewhere.role} at ${currentElsewhere.company}`;
@@ -156,7 +156,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
         evidence = `LinkedIn (via Google): the job at ${here[0].company} has ended${job ? '; the undated line still shows it, so not confirmed' : ''}`;
       } else if (job) {
         employer = 'here';
-        evidence = `LinkedIn (via Google, undated): ${[location, job.role, job.company].filter(Boolean).join(' · ')}`;
+        evidence = `LinkedIn (via Google, undated): ${[location, cleanTitle(job.role), job.company].filter(Boolean).join(' · ')}`;
       } else if (employer === 'here') {
         evidence = `LinkedIn (via Google, undated): ${[person.title, location].filter(Boolean).join(' · ')}`;
       }
@@ -195,7 +195,7 @@ function firmQuery(company: string): string {
  * Public LinkedIn profiles via Google. Runs the targeted query (company + roles + city) and a
  * broad one (company + any senior role), since small companies rarely match the targeted one.
  */
-export async function searchLinkedIn(svc: Services, query: string, company = ''): Promise<{ people: LinkedInPerson[]; error: string }> {
+export async function searchLinkedIn(svc: Services, query: string, company = '', city = ''): Promise<{ people: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const queries = [query];
   // The broad search looks for the people who run operations, not the top of the company.
@@ -221,11 +221,14 @@ export async function searchLinkedIn(svc: Services, query: string, company = '')
     }
   }
   // Where each of them is, so their distance from the site can be told.
-  // Small firms often have nobody below the owner on LinkedIn: when no one at the company was found,
-  // its owners, partners and directors are looked for (one more search, only then).
-  if (name && !people.length && !settled.some((s) => s.status === 'rejected')) {
+  // The searches look for the people who run the site. When nobody at the company was found, or nobody
+  // at this site, its leadership is looked for too (owners, partners, the CEO, directors, the
+  // president): one more search, only then. They are corporate contacts, kept for the team to review.
+  await knowPlaces(svc, [city, ...people.flatMap((p) => [p.location, p.jobLocation, p.responsibility])]);
+  const noneAtSite = !people.length || (!!city.trim() && !people.some((p) => personSite(p, city) === 'here'));
+  if (name && noneAtSite && !settled.some((s) => s.status === 'rejected')) {
     try {
-      for (const p of toLinkedInPeople(await googleSearch(svc, `site:linkedin.com/in ${firmQuery(company)} (owner OR founder OR "managing partner" OR partner OR "managing director" OR director OR proprietor OR CEO)`), company)) {
+      for (const p of toLinkedInPeople(await googleSearch(svc, `site:linkedin.com/in ${firmQuery(company)} (owner OR founder OR "managing partner" OR partner OR "managing director" OR director OR proprietor OR CEO OR "chief executive" OR president)`), company)) {
         if (p.employer !== 'here' || p.abroad || people.some((q) => q.linkedin === p.linkedin)) continue;
         people.push(p);
       }
@@ -491,6 +494,35 @@ export function atOtherSite(c: Placed & { title: string }, city: string): boolea
  */
 export function confirmedAtSite(c: Placed, city: string): boolean {
   return !city.trim() || personSite(c, city) === 'here';
+}
+
+/**
+ * Where someone found at the company stands for this lead, and why: confirmed at the site; a corporate
+ * contact (the top of the company, whose role covers every site) for the team to review; staff at
+ * another site; a role not on the ICP's lists; or not placed yet. A corporate contact based in another
+ * city is never taken for a contact at this site.
+ */
+export type Standing = 'site' | 'corporate' | 'other_site' | 'off_list' | 'unplaced';
+
+export function contactStanding(p: Placed & { title: string }, icp: RankIcp, city: string): { standing: Standing; reason: string } {
+  const title = p.title.trim();
+  const where = siteEvidence(p, city);
+  const site = personSite(p, city);
+  const corporate = companyWide(title) && contactPriority(title, icp) < 99;
+  if (!corporate && contactPriority(title, icp) >= 99) {
+    const role = !title
+      ? 'no title shown'
+      : noDepartment(title)
+        ? `${title}: the title doesn't say which department, so it can't be placed on the ICP lists`
+        : `${title}: not a role on the ICP lists`;
+    return { standing: 'off_list', reason: `${role}${city && site === 'elsewhere' ? `; ${where}, not the ${city} site` : ''}` };
+  }
+  if (!city.trim() || site === 'here') return { standing: 'site', reason: city ? `At the ${city} site (${where})` : 'At the company' };
+  if (corporate) {
+    return { standing: 'corporate', reason: `Corporate contact (${title}, a company-wide role), for review; ${where}; not a ${city} site contact unless confirmed there` };
+  }
+  if (site === 'elsewhere') return { standing: 'other_site', reason: `${where}, not the ${city} site` };
+  return { standing: 'unplaced', reason: `${where}; not confirmed at the ${city} site` };
 }
 
 export function rankCandidates<T extends { title: string; snippet?: string; location?: string | null; phone?: string; email?: string }>(list: T[], icp: RankIcp, city = ''): T[] {

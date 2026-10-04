@@ -5,7 +5,7 @@ import { distanceKm, forgetPlaces, knowPlaces, placeKey, pointOf } from '@/lib/p
 import { learnFirm, linkedinPageName, recallFirm } from '@/lib/pipeline/firm-identity';
 import { firmAliasesOf, sameFirm, siteOf } from '@/lib/pipeline/employer';
 import { atOtherSite, confirmedAtSite, linkedinQuery, personSite, searchLinkedIn } from '@/lib/pipeline/contacts';
-import { contactPriority, tierOf } from '@/lib/tiers';
+import { cleanTitle, companyWide, contactPriority, noDepartment, tierOf } from '@/lib/tiers';
 import { DEFAULT_ICPS } from '@/lib/db/seed';
 
 /** Where Google Maps puts these places (a town comes back with no business type). */
@@ -158,7 +158,7 @@ describe('Mojj Engineering: the owner-director, and a search that failed', () =>
       { name: 'Rohan Katara', isPrimary: false, passedAt: new Date(), passedReason: 'tried', location: 'India' },
     ];
     const nbc = contactAvailability({ ...base, city: 'Jaipur', status: 'Awaiting Approval' }, listed);
-    expect(nbc.label).toBe('2 found, no main contact');
+    expect(nbc.label).toBe('Company contacts found; no Jaipur contact confirmed');
     expect(nbc.detail).toContain('Govind Gopalia (not confirmed on LinkedIn at this site yet');
     expect(nbc.detail).toContain('Rohan Katara (tried, no luck)');
   });
@@ -266,5 +266,26 @@ describe('Alumina India Casting: the managing partner, and where her job is', ()
     expect(confirmedAtSite(found, 'Coimbatore')).toBe(false);
     // A plant manager based in Chennai is still at another site.
     expect(atOtherSite({ ...found, title: 'Plant Manager' }, 'Coimbatore')).toBe(true);
+  });
+});
+
+describe('equivalent titles are read the same way', () => {
+  const mfg = DEFAULT_ICPS[0];
+  it('Chief Executive Officer is the CEO; formatting left by Google is ignored; combined top titles are the top', () => {
+    expect(contactPriority('Chief Executive Officer', mfg)).toBe(contactPriority('CEO', mfg));
+    expect(contactPriority('CEO', mfg)).toBe(50);
+    expect(cleanTitle('EXECUTIVE DIRECTORSINCE 1999.')).toBe('EXECUTIVE DIRECTOR');
+    expect(contactPriority('EXECUTIVE DIRECTORSINCE 1999.', mfg)).toBe(contactPriority('Executive Director', mfg));
+    expect(contactPriority('President & Chief Technical Officer', mfg)).toBe(50);
+    expect(contactPriority('Chief Operating Officer', mfg)).toBe(contactPriority('COO', mfg));
+    for (const t of ['Chief Executive Officer', 'EXECUTIVE DIRECTOR', 'President & Chief Technical Officer', 'Managing Partner']) expect(companyWide(t)).toBe(true);
+    for (const t of ['Deputy Manager', 'Plant Head', 'Vice President Operations']) expect(companyWide(t)).toBe(false);
+  });
+
+  it('a level with no department is named as such, not as a wrong role', () => {
+    expect(noDepartment('Deputy Manager')).toBe(true);
+    expect(contactPriority('Deputy Manager', mfg)).toBe(99);
+    expect(noDepartment('Deputy Manager - Production')).toBe(false);
+    expect(noDepartment('HR Manager')).toBe(false);
   });
 });

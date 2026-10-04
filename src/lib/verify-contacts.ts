@@ -267,7 +267,7 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
     if (!profile || profile.abroad || profile.employer !== 'here' || !confirmedAtSite({ ...profile, title: profile.title || p.title }, lead.city)) continue;
     await db
       .update(people)
-      .set({ passedAt: null, passedReason: '', linkedin: p.linkedin || profile.url, ...(profile.title ? { title: profile.title } : {}) })
+      .set({ passedAt: null, passedReason: '', whyNot: '', linkedin: p.linkedin || profile.url, ...(profile.title ? { title: profile.title } : {}) })
       .where(eq(people.id, p.id));
     await makePrimary(db, p.id, { why: 'LinkedIn now confirms them at this company and site' });
     const reachable = !!(p.linkedin || profile.url) || !!p.email;

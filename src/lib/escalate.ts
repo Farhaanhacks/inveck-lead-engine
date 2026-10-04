@@ -77,7 +77,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
       // Someone not confirmed is set aside, not deleted: no longer the main contact, and checked on
       // LinkedIn again later (reconfirmSetAside), when they may be picked again.
       if (why === 'unverified') {
-        await db.update(people).set({ passedAt: now, passedReason: 'unverified', isPrimary: false }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
+        await db.update(people).set({ passedAt: now, passedReason: 'unverified', whyNot: reason, isPrimary: false }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
       }
       // Nobody to send the draft to: the team finds someone first.
       const waiting = lead.status === 'Awaiting Approval' || lead.status === 'Approved';
@@ -106,7 +106,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   }
 
   // The person moved past isn't tried again automatically.
-  await db.update(people).set({ passedAt: now, passedReason: why === 'unverified' ? 'unverified' : 'tried' }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
+  await db.update(people).set({ passedAt: now, passedReason: why === 'unverified' ? 'unverified' : 'tried', whyNot: reason }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
   await makePrimary(db, next.person.id);
   const tier = next.tier === '' || next.tier === 'Avoid' ? '' : next.tier;
   await db.update(leads).set({ contactTier: tier, contactSince: now }).where(eq(leads.id, leadId));

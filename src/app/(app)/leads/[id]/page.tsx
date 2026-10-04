@@ -18,7 +18,7 @@ import { assignOwnerAction } from '../../../team-actions';
 import { tidyContacts } from '@/lib/verify-contacts';
 import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
-import { contactAvailability, contactGeography, evidenceLabel, evidenceSource, evidenceTone, fitAssessment, riskAssessment, TONE_CLASS, type Assessment } from '@/lib/fit-view';
+import { contactAvailability, contactGeography, evidenceLabel, evidenceSource, evidenceTone, fitAssessment, isCorporateContact, riskAssessment, TONE_CLASS, type Assessment } from '@/lib/fit-view';
 import { KIND_LABEL } from '@/lib/pipeline/fit';
 import { REASSESSABLE } from '@/lib/reassess';
 import {
@@ -299,7 +299,13 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                     {p.isPrimary && !p.passedAt && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
                     {p.passedAt && (
                       <span className="ml-2 text-xs font-normal text-muted">
-                        {p.passedReason === 'unverified' || (p.passedReason === '' && p.isPrimary) ? 'not confirmed on LinkedIn yet, checked again weekly' : 'tried, no luck'}
+                        {isCorporateContact(p)
+                          ? 'corporate contact, for review'
+                          : p.passedReason === 'excluded'
+                            ? 'not a contact for this site'
+                            : p.passedReason === 'unverified' || (p.passedReason === '' && p.isPrimary)
+                              ? 'not confirmed on LinkedIn yet, checked again weekly'
+                              : 'tried, no luck'}
                       </span>
                     )}
                   </div>
@@ -309,7 +315,8 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                   )}
                   {p.jobLocation && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.jobLocation}>Job here: {p.jobLocation}</div>}
                   {p.responsibility && <div className="max-w-[16rem] truncate text-xs text-muted">Responsible for: {p.responsibility}</div>}
-                  {p.evidence && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Why: {p.evidence}</div>}
+                  {p.evidence && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Evidence: {p.evidence}</div>}
+                  {p.passedAt && p.whyNot && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Not the main contact: {p.whyNot}</div>}
                 </td>
                 <td className="px-2 py-2.5">
                   {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
@@ -369,10 +376,15 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   ]);
   const segments = segmentRows.map((s) => s.segment);
   const icp = icpFor(lead.segment, segmentRows);
-  // Main contact first, then everyone else best first; people already tried go last.
-  // Only people on the ICP's P1/P2/P3 lists (and the main contact): INVECK doesn't want anyone else.
-  const team = found.filter((p) => p.isPrimary || contactPriority(p.title, icp ?? undefined) < 99).sort(
-    (a, b) => Number(b.isPrimary) - Number(a.isPrimary) || Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
+  // Main contact first, then everyone else best first; people set aside after them, and people found
+  // at the company who aren't contacts for this site last (shown with the reason, never contacted).
+  const team = found.filter((p) => p.isPrimary || p.passedReason === 'excluded' || contactPriority(p.title, icp ?? undefined) < 99).sort(
+    (a, b) =>
+      Number(b.isPrimary) - Number(a.isPrimary) ||
+      Number(!!a.passedAt) - Number(!!b.passedAt) ||
+      Number(a.passedReason === 'excluded') - Number(b.passedReason === 'excluded') ||
+      Number(isCorporateContact(b)) - Number(isCorporateContact(a)) ||
+      candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
   );
   const inSequence = lead.status === 'Contacted';
 

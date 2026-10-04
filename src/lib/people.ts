@@ -15,7 +15,7 @@ export async function makePrimary(db: Db, personId: number, opts: { byTeam?: boo
   if (!p) return null;
   await db.update(people).set({ isPrimary: false }).where(eq(people.leadId, p.leadId));
   // Chosen now: no longer set aside or passed over.
-  await db.update(people).set({ isPrimary: true, passedAt: null, passedReason: '' }).where(eq(people.id, p.id));
+  await db.update(people).set({ isPrimary: true, passedAt: null, passedReason: '', whyNot: '' }).where(eq(people.id, p.id));
   await db
     .update(leads)
     .set({

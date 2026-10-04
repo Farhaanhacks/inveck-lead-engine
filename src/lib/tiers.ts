@@ -12,6 +12,9 @@ const ALIASES: [RegExp, string][] = [
   [/\bassistant general manager\b|\ba\.?g\.?m\b/g, 'agm'],
   [/\bgeneral manager\b|\bg\.?m\b/g, 'gm'],
   [/\bchief operating officer\b|\bc\.?o\.?o\b/g, 'coo'],
+  // "Chief Executive Officer" is the CEO; "Chief Technical Officer" the CTO.
+  [/\bchief executive officer\b|\bc\.?e\.?o\b/g, 'ceo'],
+  [/\bchief (?:technical|technology) officer\b|\bc\.?t\.?o\b/g, 'cto'],
   // "Chief of Operations" is the Operations Head.
   [/\bchief of\b/g, 'head of'],
   // "Sr. Manager SCM" is a Supply Chain Manager.
@@ -30,8 +33,20 @@ const ALIASES: [RegExp, string][] = [
 ];
 const FILLER = new Set(['of', 'the', 'and', 'for', 'at', 'in', 'a', 'an', 'senior', 'sr', 'jr']);
 
+/**
+ * A title as written on a profile, without what Google's copy glues onto it: "EXECUTIVE DIRECTORSINCE
+ * 1999." is the Executive Director.
+ */
+export function cleanTitle(title: string): string {
+  return String(title ?? '')
+    .replace(/\s*since\s*(?:[A-Za-z]{3,9}\.?\s*)?\d{4}\b\.?/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.,;:|-]+$/, '')
+    .trim();
+}
+
 function tokens(text: string): string[] {
-  let s = text.toLowerCase().replace(/[–—]/g, '-');
+  let s = cleanTitle(text).toLowerCase().replace(/[–—]/g, '-');
   for (const [re, to] of ALIASES) s = s.replace(re, to);
   return s.split(/[^a-z0-9]+/).filter((w) => w && !FILLER.has(w));
 }
@@ -97,8 +112,14 @@ function functionsOf(text: string): string[] {
   return FUNCTIONS.filter(([, re]) => re.test(text)).map(([f]) => f);
 }
 
+/** "Deputy Manager", "Senior Executive": a level with no department, so the role can't be placed. */
+export function noDepartment(title: string): boolean {
+  const t = tokens(roleOnly(title)).join(' ');
+  return /\b(manager|mgr|executive|officer|head|lead|deputy|assistant|associate|gm|dgm|agm|vp|avp)\b/.test(t) && !functionsOf(t).length && !/\b(hr|admin|quality|finance|accounts|sales|marketing|engineering|maintenance|design|it|projects?|purchase|procurement|stores?|safety|legal)\b/.test(t) && !TOP_ONLY.test(t) && !TOP_EXEC.test(t);
+}
+
 /** The person at the top of the company, written without a function: "Director", "Owner", "Founder & CEO". */
-const TOP_ONLY = /^(?:(?:managing|whole ?time|executive|joint managing)?\s*director|(?:managing|founding|joint managing)?\s*partner|owner|founder|co-?founder|proprietor|promoter|chairman|chairperson|ceo|md|president)(?:\s+(?:and|cum)?\s*(?:managing|whole ?time|executive|founding)?\s*(?:director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|ceo|md))*$/;
+const TOP_ONLY = /^(?:(?:managing|whole ?time|executive|joint managing)?\s*director|(?:managing|founding|joint managing)?\s*partner|owner|founder|co-?founder|proprietor|promoter|chairman|chairperson|ceo|coo|md|president)(?:\s+(?:and|cum)?\s*(?:managing|whole ?time|executive|founding)?\s*(?:director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|ceo|md|president|coo|cfo|cto))*$/;
 
 function tierByFunction(t: string[], icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles'>): Tier {
   const title = t.join(' ');

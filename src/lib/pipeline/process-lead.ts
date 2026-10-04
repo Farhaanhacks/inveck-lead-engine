@@ -1,6 +1,6 @@
 import { KnownBranches } from '../branches';
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, contactStanding, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
 import { buildSources } from './fit';
@@ -209,7 +209,7 @@ export async function processLead(
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
   const [linkedin, leaders, news] = await Promise.all([
-    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company),
+    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company, lead.city),
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
   ]);
@@ -286,23 +286,51 @@ export async function processLead(
     (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
   );
   update.people = companyPeople(wanted, contact);
-  // Nobody confirmed at the site: people found at the company but not confirmed at this site (no
-  // location shown, or an owner or partner whose profile is in another city) are kept as potential
-  // contacts pending verification, checked on LinkedIn again weekly (reconfirmSetAside).
+  const now = new Date();
+  // Nobody confirmed at the site: people found at the company but not confirmed at this site are kept
+  // as potential contacts pending verification, checked on LinkedIn again weekly (reconfirmSetAside):
+  // corporate contacts (owner, partner, CEO, director) for the team to review, and people whose location
+  // no result showed. A corporate contact based in another city is never taken for a site contact.
   if (!contact.name && lead.city) {
-    const now = new Date();
     for (const p of update.people) {
       if (p.source !== SOURCE_NAMES.LinkedIn || confirmedAtSite(p, lead.city)) continue;
+      const { standing, reason } = contactStanding({ ...p, title: p.title ?? '' }, icp, lead.city);
       p.passedAt = now;
       p.passedReason = 'unverified';
-      p.evidence = [
-        p.evidence,
-        `Potential company contact, pending verification: title and current employment need confirmation; ${siteEvidence(p, lead.city)}, not confirmed at the ${lead.city} site`,
-      ]
-        .filter(Boolean)
-        .join('. ');
+      p.whyNot =
+        standing === 'corporate'
+          ? reason
+          : `Potential company contact, pending verification: title and current employment need confirmation; ${siteEvidence(p, lead.city)}, not confirmed at the ${lead.city} site`;
     }
   }
+  // Everyone else LinkedIn shows working at the company now is kept too, set aside with the reason they
+  // aren't a contact for this site (another site, a role not on the lists, the top of the company while
+  // others are found), so "no contact" is never left unexplained. They are never contacted or checked
+  // automatically; the team can still make one of them the main contact.
+  const extras = linkedin.people
+    .filter((p) => !update.people!.some((q) => sameName(q.name, p.name)))
+    .map((p) => {
+      const branchContact = otherBranches.find((t) => sameName(t.contactName, p.name));
+      const { standing, reason } = contactStanding(p, icp, lead.city);
+      const why = branchContact
+        ? `The main contact for another ${branchContact.company} lead`
+        : standing === 'site' || (standing === 'corporate' && anyoneBelowTop)
+          ? `Top of the company (${p.title}): approached only when nobody else on the ICP lists is found`
+          : reason;
+      return { person: { ...p, id: '', source: 'LinkedIn' as const, email: '', phone: '' }, corporate: standing === 'corporate', why };
+    })
+    .sort((a, b) => Number(b.corporate) - Number(a.corporate));
+  const setAside = companyPeople(
+    extras.map((x) => x.person),
+    { name: '', email: '', phone: '' },
+  );
+  for (const p of setAside) {
+    const why = extras.find((x) => x.person.name === p.name)?.why ?? '';
+    p.passedAt = now;
+    p.passedReason = 'excluded';
+    p.whyNot = why;
+  }
+  update.people.push(...setAside);
 
   // Never wipe contact details the sales team typed in. A person chosen now gets their own email
   // (or none): never the previous contact's.

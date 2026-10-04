@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { leads, people } from '@/lib/db/schema';
 import { toCsv } from '@/lib/csv';
@@ -15,7 +15,7 @@ export async function GET() {
     .select({ p: people, company: leads.company, website: leads.website, status: leads.status })
     .from(people)
     .innerJoin(leads, eq(people.leadId, leads.id))
-    .where(owner === null ? undefined : eq(leads.ownerId, owner))
+    .where(and(ne(people.passedReason, 'excluded'), owner === null ? undefined : eq(leads.ownerId, owner)))
     .orderBy(asc(leads.company), asc(people.id));
   const csv = toCsv([
     ['Name', 'Title', 'Company', 'Website', 'Phone', 'LinkedIn', 'Found via', 'Main contact', 'Lead status'],

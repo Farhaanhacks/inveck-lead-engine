@@ -62,11 +62,15 @@ type ContactFields = Pick<Lead, 'contactName' | 'contactTitle' | 'contactEmail' 
   Partial<Pick<Lead, 'refetchPending' | 'lastError'>>;
 
 /** Whether there is someone to contact, and how they can be reached. Separate from the fit. */
-type PersonFields = Pick<Person, 'name' | 'isPrimary' | 'passedAt' | 'passedReason' | 'location'> & Partial<Pick<Person, 'evidence'>>;
+type PersonFields = Pick<Person, 'name' | 'isPrimary' | 'passedAt' | 'passedReason' | 'location'> & Partial<Pick<Person, 'title' | 'whyNot'>>;
+
+/** A corporate contact (owner, partner, CEO, director) set aside for the team to review. */
+export const isCorporateContact = (p: Partial<Pick<Person, 'whyNot' | 'passedReason'>>) => p.passedReason !== 'tried' && !!p.whyNot?.startsWith('Corporate contact');
 
 /** Why someone listed under People isn't the main contact. */
 function notMainBecause(p: PersonFields, city: string): string {
-  if (p.passedAt && p.passedReason !== 'tried' && p.evidence?.includes('Potential company contact')) {
+  if (p.passedAt && p.passedReason === 'excluded') return p.whyNot || 'not a contact for this site';
+  if (p.passedAt && p.passedReason !== 'tried' && p.whyNot?.startsWith('Potential company contact')) {
     return 'potential company contact; title and current employment need confirmation (checked again weekly)';
   }
   if (p.passedAt) return p.passedReason === 'tried' ? 'tried, no luck' : 'not confirmed on LinkedIn at this site yet (checked again weekly)';
@@ -80,11 +84,17 @@ export function contactAvailability(l: ContactFields, found: PersonFields[] = []
     if (l.refetchPending && l.lastError?.startsWith('Contacts not searched')) return { label: 'Search failed', tone: 'warning', detail: l.lastError };
     // People were found but none is the main contact: say who, and why not.
     if (found.length && l.status !== 'New' && l.status !== 'Processing') {
-      const who = found.map((p) => `${p.name} (${notMainBecause(p, l.city)})`).join('; ');
+      // Company contacts were found and set aside: say who, and why each isn't the main contact.
+      const corporate = found.filter(isCorporateContact);
+      const rest = found.filter((p) => !isCorporateContact(p));
+      const parts = [
+        corporate.length ? `Corporate contacts for review: ${corporate.map((p) => `${p.name} (${[p.title, p.location].filter(Boolean).join(', ') || 'no title shown'})`).join('; ')}` : '',
+        rest.length ? `${corporate.length ? 'Others: ' : ''}${rest.map((p) => `${p.name} (${notMainBecause(p, l.city)})`).join('; ')}` : '',
+      ].filter(Boolean);
       return {
-        label: `${found.length} found, no main contact`,
+        label: l.city ? `Company contacts found; no ${l.city} contact confirmed` : `${found.length} found, no main contact`,
         tone: 'warning',
-        detail: `${who}. Use "Make main contact" to choose one now.`,
+        detail: `${parts.join('. ')}. Use "Make main contact" to choose one now.`,
       };
     }
     const detail =

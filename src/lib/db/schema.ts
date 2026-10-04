@@ -318,12 +318,19 @@ export const people = pgTable('people', {
   passedAt: timestamp('passed_at', { withTimezone: true }),
   /**
    * Why they were moved past: 'tried' (no answer, not the right person: not tried again
-   * automatically) or 'unverified' (LinkedIn couldn't confirm them at this site: checked again later).
+   * automatically), 'unverified' (LinkedIn couldn't confirm them at this site: checked again later) or
+   * 'excluded' (found at the company, not a contact for this site; see whyNot).
    * Empty on rows from before it was recorded.
    */
   passedReason: text('passed_reason').notNull().default(''),
   /** What showed they work at the company, and whether it was dated (shown on the lead page). */
   evidence: text('evidence').notNull().default(''),
+  /**
+   * Why they aren't the main contact, when set aside: a corporate contact for review, staff at another
+   * site, a role not on the ICP lists, not confirmed at the site. passedReason 'excluded' marks someone
+   * found at the company who is not a contact for this site (never contacted or checked automatically).
+   */
+  whyNot: text('why_not').notNull().default(''),
   /** When this person was last checked on LinkedIn (still there, current title); null = not yet. */
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */

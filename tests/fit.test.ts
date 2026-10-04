@@ -62,6 +62,12 @@ function scriptedServices(script: Script, seen: Seen): Services {
     if (url.host === 'google.serper.dev') {
       const { q } = JSON.parse(String(init.body));
       if (url.pathname === '/news') return json({ news: [] });
+      // Google Maps: the towns these tests use.
+      if (url.pathname === '/maps') {
+        const towns: Record<string, { latitude: number; longitude: number }> = { hosur: { latitude: 12.74, longitude: 77.83 }, chennai: { latitude: 13.08, longitude: 80.27 }, coimbatore: { latitude: 11.02, longitude: 76.96 } };
+        const hit = Object.entries(towns).find(([k]) => String(q).toLowerCase().startsWith(k))?.[1];
+        return json({ places: hit ? [{ title: 'x', ...hit }] : [] });
+      }
       seen.google.push(q);
       try {
         return json({ organic: script.google?.(q) ?? [] });
@@ -452,7 +458,7 @@ describe('Auto Diecasting Company (ADC): a CEO found with no location shown', ()
     });
     const person = r.people?.find((p) => p.name === 'Hari Viswanathan');
     expect(person).toMatchObject({ title: 'CEO', passedReason: 'unverified' });
-    expect(person?.evidence).toContain('pending verification');
+    expect(person?.whyNot).toContain('Corporate contact (CEO, a company-wide role), for review; no location shown');
     expect(r.otherDecisionMakers).not.toContain('another company');
   });
 });
@@ -466,7 +472,8 @@ describe('Alumina India Casting: the managing partner of a small firm', () => {
     expect(r.contactName ?? '').toBe('');
     const person = r.people?.find((p) => p.name === 'Nandini Easwaran');
     expect(person).toMatchObject({ title: 'Managing Partner', location: 'Chennai, Tamil Nadu, India', passedReason: 'unverified' });
-    expect(person?.evidence).toContain('Potential company contact, pending verification: title and current employment need confirmation');
+    expect(person?.whyNot).toContain('Corporate contact (Managing Partner, a company-wide role), for review');
+    expect(person?.whyNot).toContain('not a Coimbatore site contact unless confirmed there');
   });
 
   it('with her current job shown in Coimbatore, becomes the main contact', async () => {
@@ -474,6 +481,44 @@ describe('Alumina India Casting: the managing partner of a small firm', () => {
     const r = await run(await lead(), { research: (user) => kltAnswer(user, { risks: [] }), google: (q) => (q.startsWith('site:linkedin.com/in') ? [withJob] : []) });
     expect(r.contactName).toBe('Nandini Easwaran');
     expect(r.people?.find((p) => p.isPrimary)).toMatchObject({ jobLocation: 'Coimbatore, Tamil Nadu, India', location: 'Chennai, Tamil Nadu, India' });
+  });
+});
+
+describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobody is the main contact', () => {
+  const results = [
+    { title: 'Srihari K.R - Chief Executive Officer at El Forge Ltd.', subtitle: 'India · Chief Executive Officer · El Forge Ltd.', link: 'https://in.linkedin.com/in/srihari-kr', snippet: 'Experienced Chief Operating Officer with a demonstrated history of working in the steel forgings industry. Skilled in Business Planning, Operations Management, ...' },
+    { title: 'NIRMAL KUMAR DEBNATH - EXECUTIVE DIRECTOR at ...', subtitle: 'Chennai, Tamil Nadu, India · EXECUTIVE DIRECTORSINCE 1999. · EL FORGE LTD.', link: 'https://in.linkedin.com/in/nirmal-debnath', snippet: 'Experience · EXECUTIVE DIRECTORSINCE 1999. EL FORGE LTD. Nov 1992 - Present 33 years 11 months · GENERAL MANAGER(QA). KELTRON,TRIVANDRUM. Apr 1980 - Oct 1992 12 ...' },
+    { title: 'vignesh swaminathan - Deputy Manager @ EL FORGE ...', subtitle: 'Chennai, Tamil Nadu, India · Deputy Manager · El Forge Ltd.', link: 'https://in.linkedin.com/in/vignesh-swaminathan', snippet: 'Deputy Manager. El Forge Ltd. Jun 2024 - Present 2 years 4 months · Head of Production. ASIAAN METALS & ALUMINIUM CASTING PRIVATE LIMITED. Feb 2024 - May 2024 4 ...' },
+    { title: 'RAMACHANDRAN TK - el forge ltd', subtitle: 'Chennai, Tamil Nadu, India · President & Chief Technical Officer · EL FORGE LTD', link: 'https://in.linkedin.com/in/ramachandran-tk', snippet: 'President & Chief Technical Officer at EL FORGE LTD · Experience: EL FORGE LTD · Location: Chennai · 1 connection on LinkedIn.' },
+  ];
+
+  it('keeps all four with the reason each is not the Hosur contact, and searches for the leadership', async () => {
+    const r = await run(await klt({ company: 'EL Forge Limited', city: 'Hosur' }), {
+      research: (user) => kltAnswer(user, { risks: [] }),
+      google: (q) => (q.startsWith('site:linkedin.com/in') ? results : []),
+    });
+    // A Chennai profile never becomes the Hosur plant contact on its own.
+    expect(r.contactName ?? '').toBe('');
+    const by = Object.fromEntries((r.people ?? []).map((p) => [p.name, p]));
+    expect(Object.keys(by).sort()).toEqual(['NIRMAL KUMAR DEBNATH', 'RAMACHANDRAN TK', 'Srihari K.R', 'vignesh swaminathan']);
+    for (const name of ['Srihari K.R', 'NIRMAL KUMAR DEBNATH', 'RAMACHANDRAN TK']) {
+      expect(by[name]).toMatchObject({ passedReason: 'unverified' });
+      expect(by[name].whyNot).toMatch(/^Corporate contact \(.+, a company-wide role\), for review/);
+    }
+    expect(by['Srihari K.R'].title).toBe('Chief Executive Officer');
+    expect(by['NIRMAL KUMAR DEBNATH'].title).toBe('EXECUTIVE DIRECTOR');
+    expect(by['RAMACHANDRAN TK'].title).toBe('President & Chief Technical Officer');
+    expect(by['vignesh swaminathan']).toMatchObject({ passedReason: 'excluded', title: 'Deputy Manager' });
+    expect(by['vignesh swaminathan'].whyNot).toContain("the title doesn't say which department");
+    expect(by['vignesh swaminathan'].whyNot).toContain('Chennai, Tamil Nadu, India, not the Hosur site');
+    // The search also asked for the company's leadership, as nobody was found at Hosur.
+    expect(seen.google.some((q) => q.includes('"chief executive"'))).toBe(true);
+
+    const { contactAvailability } = await import('@/lib/fit-view');
+    const shown = contactAvailability({ ...r, contactName: '', contactTitle: '', contactEmail: '', emailStatus: '', contactLinkedin: '', contactVerifiedAt: null, city: 'Hosur', status: 'Needs Manual Contact', qualified: true } as never, (r.people ?? []) as never);
+    expect(shown.label).toBe('Company contacts found; no Hosur contact confirmed');
+    expect(shown.detail).toContain('Corporate contacts for review: Srihari K.R (Chief Executive Officer, India)');
+    expect(shown.detail).toContain('vignesh swaminathan (Deputy Manager:');
   });
 });
 

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { tidyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
@@ -22,7 +22,8 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   const promoted = await tidyContacts(db);
   if (promoted.length) after(async () => { const d = await getDb(); const svc = await liveServices(); for (const id of promoted) await redraftForContact(d, svc, id); });
 
-  const filters: SQL[] = [];
+  // Decision-makers only: not people found at a company who aren't a contact for its site.
+  const filters: SQL[] = [ne(people.passedReason, 'excluded')];
   const owner = ownerScope((await getCurrentUser())!);
   if (owner !== null) filters.push(eq(leads.ownerId, owner));
   if (q) filters.push(or(ilike(people.name, `%${q}%`), ilike(people.title, `%${q}%`), ilike(leads.company, `%${q}%`))!);
