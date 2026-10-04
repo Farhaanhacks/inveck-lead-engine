@@ -20,6 +20,7 @@ const ALIASES: [RegExp, string][] = [
   // "Sr. Manager SCM" is a Supply Chain Manager.
   [/\bscm\b|\bs\.c\.m\b/g, 'supply chain'],
   [/\bchief financial officer\b|\bc\.?f\.?o\b/g, 'cfo'],
+  [/\bc\.?m\.?d\b/g, 'chairman md'],
   [/\bmanaging director\b|\bm\.?d\b/g, 'md'],
   [/\bhuman resources?\b|\bh\.?r\b/g, 'hr'],
   [/\bquality assurance\b|\bq\.?a\b/g, 'quality'],

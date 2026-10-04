@@ -278,6 +278,9 @@ describe('equivalent titles are read the same way', () => {
     expect(contactPriority('EXECUTIVE DIRECTORSINCE 1999.', mfg)).toBe(contactPriority('Executive Director', mfg));
     expect(contactPriority('President & Chief Technical Officer', mfg)).toBe(50);
     expect(contactPriority('Chief Operating Officer', mfg)).toBe(contactPriority('COO', mfg));
+    // CMD is the Chairman and Managing Director (Viscon Rubber).
+    expect(contactPriority('CMD', mfg)).toBe(50);
+    expect(companyWide('CMD')).toBe(true);
     for (const t of ['Chief Executive Officer', 'EXECUTIVE DIRECTOR', 'President & Chief Technical Officer', 'Managing Partner']) expect(companyWide(t)).toBe(true);
     for (const t of ['Deputy Manager', 'Plant Head', 'Vice President Operations']) expect(companyWide(t)).toBe(false);
   });

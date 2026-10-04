@@ -311,7 +311,7 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                   </div>
                   <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>
                   {(p.location || city) && (
-                    <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location ? `Profile: ${p.location}` : 'Location not confirmed'}</div>
+                    <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location ? `Profile: ${p.location}` : 'Profile location not shown'}</div>
                   )}
                   {p.jobLocation && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.jobLocation}>Job here: {p.jobLocation}</div>}
                   {p.responsibility && <div className="max-w-[16rem] truncate text-xs text-muted">Responsible for: {p.responsibility}</div>}
@@ -334,7 +334,14 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                     <form action={markLeftAction}>
                       <input type="hidden" name="id" value={p.leadId} />
                       <input type="hidden" name="personId" value={p.id} />
-                      <SubmitButton className="h-7 px-2 py-0.5 text-xs text-muted hover:text-ink" pendingText="…">Left the company</SubmitButton>
+                      <SubmitButton
+                        className="btn-secondary h-7 px-2 py-0.5 text-xs"
+                        pendingText="…"
+                        title="Use only if you know this person no longer works here: they are removed from this lead"
+                        confirmText={`Mark ${p.name} as no longer working at ${company}? They will be removed from this lead${p.isPrimary ? ' and the next confirmed person becomes the main contact' : ''}.`}
+                      >
+                        Mark as left
+                      </SubmitButton>
                     </form>
                   </div>
                 </td>
