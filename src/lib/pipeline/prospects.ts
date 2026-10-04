@@ -139,6 +139,13 @@ export async function findProspects(
   ].filter(Boolean);
   const segmentNames = icps.map((i) => i.segment);
   const want = svc.settings.prospectsPerRun;
+  // Every active ICP gets its share of the run, in code, not only by asking the AI: most clients are
+  // in one segment, so client lookalikes alone would make every new lead that segment.
+  const share = Math.ceil(want / Math.max(1, segmentNames.length));
+  const bySegment = (seg: string) => prospects.filter((p) => p.segment === seg).length;
+  const shortOf = () => segmentNames.filter((seg) => bySegment(seg) < share);
+  /** Companies over their segment's share, used only if the other segments can't fill the run. */
+  const heldBack: (Prospect & { record: { searchId: number | null; row: Parameters<ProspectHistory['recordResults']>[1][number] } })[] = [];
   // Everything searched before (recent runs) and in this run: no query that repeats any of them is run.
   const earlier = history.searches.map((s) => s.query);
   const tried: string[] = [];
@@ -153,9 +160,13 @@ export async function findProspects(
       ...tried.map((q) => `- ${q} (this run)`),
       ...history.searches.slice(0, 150).map((s) => `- ${s.query}${s.added ? '' : s.fresh ? ' (found little new)' : ' (exhausted: found nothing new)'}`),
     ];
-    const text = past.length
+    const needed = shortOf();
+    const balance = segmentNames.length > 1
+      ? `\n\n## Segments to search this time\nWrite at least 2 queries for each of these segments: ${(needed.length ? needed : segmentNames).join(', ')}. Lookalikes of a client belong to the client's own segment; for a segment with no similar client, search for companies matching that ICP directly.`
+      : '';
+    const text = (past.length
       ? `${planText}\n\n## Searches already run (do not repeat them or reword them; search elsewhere)\n${past.join('\n')}`
-      : planText;
+      : planText) + balance;
     const plan = await askJson(svc, PROSPECT_QUERIES_PROMPT, text, querySchema);
     if (plan.error !== undefined) {
       lastError = 'Planning searches failed: ' + plan.error;
@@ -175,12 +186,23 @@ export async function findProspects(
       .filter((q) => q.query && normQuery(q.query));
     // Repeats are dropped here, whatever the AI was told: the same words reworded, or an earlier
     // query with a word or two added.
-    const queries: Query[] = [];
+    const fresh: Query[] = [];
     const repeats: string[] = [];
     for (const q of proposed) {
-      if (tooSimilar(q.query, [...earlier, ...tried, ...queries.map((x) => x.query)])) repeats.push(q.query);
-      else if (queries.length < PER_ROUND) queries.push(q);
+      if (tooSimilar(q.query, [...earlier, ...tried, ...fresh.map((x) => x.query)])) repeats.push(q.query);
+      else fresh.push({ ...q, segment: canonicalSegment(q.segment, segmentNames) });
     }
+    // Taken in turn from each segment, those furthest short of their share first.
+    const order = [...segmentNames].sort((a, b) => bySegment(a) - bySegment(b));
+    const queue = new Map(order.map((seg) => [seg, fresh.filter((q) => q.segment === seg)]));
+    const queries: Query[] = [];
+    while (queries.length < PER_ROUND && [...queue.values()].some((l) => l.length)) {
+      for (const seg of order) {
+        const next = queue.get(seg)?.shift();
+        if (next && queries.length < PER_ROUND) queries.push(next);
+      }
+    }
+    for (const q of fresh) if (queries.length < PER_ROUND && !queries.includes(q) && !segmentNames.includes(q.segment)) queries.push(q);
     if (repeats.length) await log(`Skipped ${repeats.length} search${repeats.length === 1 ? '' : 'es'} already run before: ${repeats.map((q) => `"${q}"`).join(', ')}`);
     if (!queries.length) {
       lastError = 'The AI only suggested searches already run before';
@@ -284,26 +306,42 @@ export async function findProspects(
         continue;
       }
       if (prospects.length >= want) continue;
+      const segment = canonicalSegment(asText(c.segment), segmentNames);
       branches.add(company, domain, city);
       knownList.push(`${company} (${city || 'any location'})`);
-      await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, city, outcome: 'added' }]);
-      addedBySearch.set(searchId, (addedBySearch.get(searchId) ?? 0) + 1);
+      const record = { searchId, row: { url: from?.link ?? '', domain, title: from?.title ?? '', company, city, outcome: 'added' as const } };
       const lookalike = asText(c.lookalike_of);
       const why = asText(c.why);
-      prospects.push({
+      const prospect = {
         company,
         website: domain,
         city,
         // The ICP's own spelling; a segment no ICP has stays as given, so research flags it for review
         // instead of checking the company against some other ICP.
-        segment: canonicalSegment(asText(c.segment), segmentNames),
+        segment,
         source: (lookalike ? `Lookalike of ${lookalike}` : 'Found by prospect search') + (why ? `: ${why}` : ''),
-      });
+      };
+      // A segment at its share waits while another is still short (used at the end if they can't fill).
+      // Recorded as found only once used: one held back and never used can be found again another day.
+      if (segmentNames.includes(segment) && bySegment(segment) >= share && shortOf().length) {
+        heldBack.push({ ...prospect, record });
+      } else {
+        prospects.push(prospect);
+        await history.recordResults(record.searchId, [record.row]);
+        addedBySearch.set(record.searchId, (addedBySearch.get(record.searchId) ?? 0) + 1);
+      }
     }
     for (const [searchId, count] of addedBySearch) await history.recordAdded(searchId, count);
     if (prospects.length < want && rounds < MAX_ROUNDS) await log(`Round ${rounds}: ${prospects.length - before} new companies; searching further`, 'info');
   }
 
+  // The other segments couldn't fill the run: the companies held back fill it.
+  for (const { record, ...p } of heldBack) {
+    if (prospects.length >= want) break;
+    prospects.push(p);
+    await history.recordResults(record.searchId, [record.row]);
+    await history.recordAdded(record.searchId, 1);
+  }
   // Nothing came back from Google at all, or every step failed: that's a failure, not "no new prospects".
   if (!searchesOk) throw new Error(searchError ? `Google search (Serper) failed on every query: ${searchError}` : lastError || 'Google returned no results. Check SERPER_API_KEY.');
   if (!prospects.length && lastError) throw new Error(lastError);
