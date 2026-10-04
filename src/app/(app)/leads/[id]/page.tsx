@@ -411,6 +411,11 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
             )}
           </p>
           {lead.source && <p className="mt-1 text-xs text-muted">Source: {lead.source}</p>}
+          {lead.nameAsFound && lead.nameAsFound !== lead.company && (
+            <p className="mt-1 text-xs text-muted">
+              Name corrected from &ldquo;{lead.nameAsFound}&rdquo;{lead.nameEvidence ? `: ${lead.nameEvidence}` : ''}
+            </p>
+          )}
           {bdas.length > 0 && me && !canReassign(me, lead) && (
             <p className="mt-2 text-xs text-muted">Owner: {bdas.find((b) => b.id === lead.ownerId)?.name ?? 'someone else'}. Only they or an administrator can hand this lead over.</p>
           )}

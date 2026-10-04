@@ -273,6 +273,8 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS job_location TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS responsibility TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE people ADD COLUMN IF NOT EXISTS why_not TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS name_as_found TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS name_evidence TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS research_attempts INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_verified_at TIMESTAMPTZ`,
   // The LinkedIn search got broader: everyone it couldn't find before is searched again, once.

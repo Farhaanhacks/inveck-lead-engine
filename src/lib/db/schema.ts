@@ -35,6 +35,13 @@ export type Signal = { headline: string; date: string; url: string; source: stri
 export const leads = pgTable('leads', {
   id: serial('id').primaryKey(),
   company: text('company').notNull(),
+  /**
+   * The name as first found (by prospecting or a CSV), kept when research corrects it to the official
+   * name its website shows ("Advanced Forgings" for Advance Forgings): searched as an alias, never written.
+   */
+  nameAsFound: text('name_as_found').notNull().default(''),
+  /** What the company name was checked against: its website, its domain, or the team ('' = not checked yet). */
+  nameEvidence: text('name_evidence').notNull().default(''),
   website: text('website').notNull().default(''),
   city: text('city').notNull().default(''),
   segment: text('segment').notNull().default(''),

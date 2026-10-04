@@ -230,13 +230,17 @@ export async function updateLeadAction(form: FormData) {
   // Nothing is saved from a form with no company name or an email that isn't one.
   if (!company || !contact) return;
   const db = await getDb();
-  const [before] = await db.select({ emailBody: leads.emailBody }).from(leads).where(eq(leads.id, id));
+  const [before] = await db.select({ emailBody: leads.emailBody, company: leads.company, nameAsFound: leads.nameAsFound, fitDecision: leads.fitDecision }).from(leads).where(eq(leads.id, id));
   if (!before) return;
   const emailBody = String(form.get('emailBody') ?? '');
   await db
     .update(leads)
     .set({
       company,
+      // A name the team typed in is theirs: research keeps it (the earlier one is kept as an alias).
+      ...(company !== before.company ? { nameEvidence: 'set by the team', nameAsFound: before.nameAsFound || before.company } : {}),
+      // Saved unchanged while the name was in question: the team confirms it.
+      ...(company === before.company && before.fitDecision.includes("company name isn't confirmed") ? { nameEvidence: 'set by the team' } : {}),
       website: domainOf(str(form, 'website')),
       city: str(form, 'city'),
       segment: str(form, 'segment'),

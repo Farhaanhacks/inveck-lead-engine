@@ -52,7 +52,13 @@ type Script = {
 type Seen = { research: string[]; google: string[]; deepseek: number };
 
 function scriptedServices(script: Script, seen: Seen): Services {
-  const sites: Record<string, string> = { 'kltauto.example': KLT_SITE, 'acmestockware.example': SOFTWARE_SITE, 'rathiforge.example': FORGE_SITE };
+  const sites: Record<string, string> = {
+    'kltauto.example': KLT_SITE,
+    'acmestockware.example': SOFTWARE_SITE,
+    'rathiforge.example': FORGE_SITE,
+    'advanceforgings.in': `<html><head><title>Advance Forgings | Closed die forgings</title></head><body><h1>Advance Forgings Pvt. Ltd.</h1><p>Advance Forgings Pvt. Ltd. makes closed-die steel forgings and machined components for automotive and engineering customers at its plants, with forging presses, machining lines and a tool room.</p><p>Our manufacturing facilities hold raw steel, dies, WIP forgings and finished stampings across several locations.</p></body></html>`,
+    'smithforge.example': `<html><head><title>Home</title></head><body><h1>Welcome</h1><p>We make closed-die steel forgings and machined components for automotive and engineering customers at our plants, with forging presses, machining lines and a tool room.</p><p>Our manufacturing facilities hold raw steel, dies, WIP forgings and finished stampings across several locations, served from one site.</p></body></html>`,
+  };
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
   const fetchFn = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(String(input));
@@ -519,6 +525,33 @@ describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobod
     expect(shown.label).toBe('Company contacts found; no Hosur contact confirmed');
     expect(shown.detail).toContain('Corporate contacts for review: Srihari K.R (Chief Executive Officer, India)');
     expect(shown.detail).toContain('vignesh swaminathan (Deputy Manager:');
+  });
+});
+
+describe('the company name, checked against its own website (Advance Forgings)', () => {
+  it('corrects a name a letter off the one its website and domain show, before searching or drafting', async () => {
+    const lead = await addLead({ company: 'Advanced Forgings Pvt. Ltd.', website: 'advanceforgings.in', city: 'Pune' });
+    const r = await run(lead, { research: (user) => fitAnswer(user) });
+    expect(r).toMatchObject({ company: 'Advance Forgings Pvt. Ltd.', nameAsFound: 'Advanced Forgings Pvt. Ltd.' });
+    expect(r.nameEvidence).toContain('its website names it "Advance Forgings Pvt. Ltd."');
+    // Nothing was searched under the wrong name.
+    expect(seen.google.filter((q) => /Advanced Forgings/i.test(q))).toEqual([]);
+    expect(seen.research.every((u) => !u.includes('Advanced Forgings'))).toBe(true);
+  });
+
+  it('a name a letter off its domain, with nothing on the website to settle it, goes to review before research', async () => {
+    const lead = await addLead({ company: 'Smithe Forge', website: 'smithforge.example', city: 'Pune' });
+    const r = await run(lead, { research: (user) => fitAnswer(user) });
+    expect(r).toMatchObject({ status: 'Needs Review', fitStatus: 'review' });
+    expect(r.fitDecision).toContain("the company name isn't confirmed");
+    expect(seen.research).toEqual([]);
+  });
+
+  it('a name its website shows is confirmed; a domain unlike the name is normal', async () => {
+    const { checkCompanyName } = await import('@/lib/pipeline/company-name');
+    expect(checkCompanyName('Advance Forgings Pvt Ltd', 'advanceforgings.in', 'Title: Advance Forgings').status).toBe('confirmed');
+    expect(checkCompanyName('Lumax Auto Technologies', 'lumaxworld.in', 'Title: Lumax World').status).toBe('unchecked');
+    expect(checkCompanyName('Advanced Forgings Pvt. Ltd.', 'advanceforgings.in', 'Title: Home')).toMatchObject({ status: 'mismatch' });
   });
 });
 

@@ -9,6 +9,8 @@ import { contactPriority, icpFor } from '../tiers';
 import { resolveIcp } from '../icp-match';
 import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
+import { checkCompanyName } from './company-name';
+import { firmAliasesOf } from './employer';
 import { knowPlaces } from './places';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
@@ -137,6 +139,35 @@ export async function processLead(
   }
   // The other names its staff use: its website name ("Lumax World") and its LinkedIn page's name
   // ("Micron Technology"); and where the site is, to tell who works there.
+  // The name, checked against the company's own website before it is searched for, matched against
+  // profiles or written into outreach: a name a letter or two off what the site and domain show is
+  // corrected (the first one kept as nameAsFound); one that can't be settled goes to review. A name the
+  // team typed in, or a lead whose fit a person confirmed, is left as it is.
+  if (lead.nameEvidence !== 'set by the team' && lead.fitOverride !== 'qualified' && site.text) {
+    await learnFirm(svc, lead.company, website);
+    const check = checkCompanyName(lead.company, rootDomain(website), site.text, firmAliasesOf(lead.company));
+    if (check.status === 'corrected') {
+      await log(`${lead.company}: name corrected to "${check.name}": ${check.evidence}`, 'warn');
+      Object.assign(corrected, { company: check.name, nameAsFound: lead.nameAsFound || lead.company, nameEvidence: check.evidence } satisfies LeadUpdate);
+      lead = { ...lead, company: check.name };
+      // The right name may be a client's, or on INVECK's own list.
+      const client = matchClient({ company: lead.company, website }, ctx.clients);
+      if (client) return { ...corrected, status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
+      if (!opts.contactsOnly && ctx.ownLeads?.has(lead.company, website, lead.city)) return { ...corrected, status: 'Rejected', fitReason: OWN_LEAD_REASON, lastError: '' };
+    } else if (check.status === 'mismatch') {
+      await log(`${lead.company}: needs review: company name not confirmed: ${check.evidence}`, 'warn');
+      return {
+        ...corrected,
+        status: 'Needs Review',
+        fitStatus: 'review',
+        fitDecision: `Needs review: the company name isn't confirmed: ${check.evidence}. Correct the name under Company (or confirm it by saving it), then Reassess fit.`,
+        finalScore: null,
+        lastError: '',
+      };
+    } else if (check.status === 'confirmed') {
+      corrected.nameEvidence = check.evidence;
+    }
+  }
   await learnFirm(svc, lead.company, website);
   await knowPlaces(svc, [lead.city]);
   if (site.via === 'google') await log(`${lead.company}: website blocks automated reading; researched from Google's index of its pages`);
