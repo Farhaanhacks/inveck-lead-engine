@@ -35,6 +35,17 @@ export const TRACKER_FIELDS = {
 } as const;
 export type TrackerField = keyof typeof TRACKER_FIELDS | 'remark' | 'callRemark';
 
+/**
+ * A contact number as typed on the tracker: spaces tidied; digits, spaces and + - ( ) / , . only, at
+ * least 6 digits (several numbers may be listed). '' clears it; null when it isn't a number.
+ */
+export function cleanPhone(value: string): string | null {
+  const phone = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!phone) return '';
+  if (phone.length > 40 || !/^[0-9+\-()/, .]+$/.test(phone) || phone.replace(/\D/g, '').length < 6) return null;
+  return phone;
+}
+
 export function validTrackerValue(field: TrackerField, value: string): boolean {
   if (field === 'remark' || field === 'callRemark') return value.length <= 1000;
   return value === '' || (TRACKER_FIELDS[field] as readonly string[]).includes(value);

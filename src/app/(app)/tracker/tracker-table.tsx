@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
-import { updateTrackerFieldAction } from '../../team-actions';
+import { updateTrackerFieldAction, updateTrackerPhoneAction } from '../../team-actions';
 import { AddLeadRow } from './add-lead';
 
 export type TrackerViewRow = {
@@ -72,6 +72,42 @@ function Remark({ id, value, label, field = 'remark', placeholder = 'Add a remar
   );
 }
 
+/** The Contact Number cell: typed in place, saved on leaving the cell (or Enter). */
+function Phone({ id, value, label }: { id: number; value: string; label: string }) {
+  const [saved, setSaved] = useState(value);
+  const [error, setError] = useState(false);
+  return (
+    <input
+      type="tel"
+      inputMode="tel"
+      aria-label={label}
+      defaultValue={value}
+      placeholder="Add a number"
+      title={error ? 'Numbers only (digits, spaces, + - ( ) /), at least 6 digits' : undefined}
+      onBlur={async (e) => {
+        const input = e.currentTarget;
+        const next = input.value.trim();
+        if (next === saved) return;
+        const r = await updateTrackerPhoneAction(id, next);
+        if (r.ok) {
+          setSaved(r.value ?? next);
+          input.value = r.value ?? next;
+          setError(false);
+        } else setError(true);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          e.currentTarget.value = saved;
+          setError(false);
+          e.currentTarget.blur();
+        }
+      }}
+      className={`${CELL} min-w-[9rem] ${error ? 'border-critical-ink' : ''}`}
+    />
+  );
+}
+
 export function TrackerTable({
   rows,
   options,
@@ -137,7 +173,7 @@ export function TrackerTable({
                   label={`${r.cells.company}: point of contact`}
                 />
               </td>
-              <td className={`${td} whitespace-nowrap`}>{r.cells.phone}</td>
+              <td className={`${td} p-1`}><Phone id={r.id} value={r.cells.phone} label={`${r.cells.company}: contact number`} /></td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callStatus}</td>
               <td className={`${td} p-1`}><Choice id={r.id} field="callFeedback" value={r.callFeedback} options={options.callFeedback} label={`${r.cells.company}: call outcome`} /></td>
               <td className={`${td} p-1`}><Remark id={r.id} field="callRemark" value={r.cells.callRemark} placeholder="Add a call remark" label={`${r.cells.company}: call remark`} /></td>

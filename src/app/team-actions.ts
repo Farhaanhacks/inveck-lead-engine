@@ -14,7 +14,8 @@ import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
-import { CALL_FEEDBACK, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
+import { reconcileContactStatus } from '@/lib/contact-status';
+import { CALL_FEEDBACK, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
 import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay } from '@/lib/tasks';
@@ -346,6 +347,37 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
   return { ok: true };
+}
+
+/**
+ * The Contact Number cell on the tracker. Only the number changes: the contact's (and their People
+ * row's) when the lead has a contact, else the company's own number. It doesn't confirm the contact.
+ * Digits, spaces and + - ( ) / , only; empty clears it.
+ */
+export async function updateTrackerPhoneAction(id: number, value: string): Promise<{ ok: boolean; value?: string }> {
+  const phone = cleanPhone(value);
+  if (phone === null) return { ok: false };
+  if (!(await mayActOn(id))) return { ok: false };
+  const db = await getDb();
+  const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!lead) return { ok: false };
+  const now = new Date();
+  if (lead.contactName) {
+    if (phone === lead.contactPhone) return { ok: true, value: phone };
+    await db.update(leads).set({ contactPhone: phone, updatedAt: now }).where(eq(leads.id, id));
+    await db.update(people).set({ phone }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+    await logActivity(db, id, 'contact', phone ? `Number for ${lead.contactName} set to ${phone} (tracker)` : `Number for ${lead.contactName} removed (tracker)`);
+    // A number makes the contact reachable: a lead waiting for one may now be ready.
+    await reconcileContactStatus(db, id);
+  } else {
+    if (phone === lead.companyPhone) return { ok: true, value: phone };
+    await db.update(leads).set({ companyPhone: phone, updatedAt: now }).where(eq(leads.id, id));
+    await logActivity(db, id, 'note', phone ? `Company number set to ${phone} (tracker)` : 'Company number removed (tracker)');
+  }
+  revalidatePath('/tracker');
+  revalidatePath('/today');
+  revalidatePath(`/leads/${id}`);
+  return { ok: true, value: phone };
 }
 
 /** Corrects the point of contact from Today: name, designation, number, email, LinkedIn. */
