@@ -300,6 +300,12 @@ export const people = pgTable('people', {
   isPrimary: boolean('is_primary').notNull().default(false),
   /** When the P2 flow moved on from this person (no answer, not the right person): not tried again automatically. */
   passedAt: timestamp('passed_at', { withTimezone: true }),
+  /**
+   * Why they were moved past: 'tried' (no answer, not the right person: not tried again
+   * automatically) or 'unverified' (LinkedIn couldn't confirm them at this site: checked again later).
+   * Empty on rows from before it was recorded.
+   */
+  passedReason: text('passed_reason').notNull().default(''),
   /** When this person was last checked on LinkedIn (still there, current title); null = not yet. */
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */

@@ -300,8 +300,12 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
                     {p.name}
-                    {p.isPrimary && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
-                    {p.passedAt && <span className="ml-2 text-xs font-normal text-muted">tried, no luck</span>}
+                    {p.isPrimary && !p.passedAt && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
+                    {p.passedAt && (
+                      <span className="ml-2 text-xs font-normal text-muted">
+                        {p.passedReason === 'unverified' || (p.passedReason === '' && p.isPrimary) ? 'not confirmed on LinkedIn yet, checked again weekly' : 'tried, no luck'}
+                      </span>
+                    )}
                   </div>
                   <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>
                   {(p.location || city) && (
@@ -317,7 +321,7 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                 </td>
                 <td className="px-2 py-2.5 text-xs text-ink-2">{p.source}</td>
                 <td className="px-5 py-2.5 text-right">
-                  {!p.isPrimary && (
+                  {(!p.isPrimary || p.passedAt) && (
                     <form action={makePrimaryAction}>
                       <input type="hidden" name="personId" value={p.id} />
                       <SubmitButton className="btn-secondary h-7 px-2 py-0.5 text-xs" pendingText="…">Make main contact</SubmitButton>

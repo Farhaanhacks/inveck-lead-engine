@@ -146,11 +146,14 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   // main contact who has left.
   await dropFormerEmployees(db, lead);
   if (lead.contactName && currentEmployer({ name: lead.contactName, title: lead.contactTitle }, lead.company) === 'elsewhere') {
-    await escalate(db, lead.id, 'left', now, lead.contactTitle);
+    await moveOn(db, svc, lead, 'left', now, lead.contactTitle)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
   }
-  if (!lead.contactName || !svc.keys.serper) return 'skipped';
+  if (!svc.keys.serper) return 'skipped';
+  // No point of contact: someone set aside earlier because LinkedIn couldn't confirm them may be
+  // confirmed now (a search that failed, a profile updated since).
+  if (!lead.contactName) return reconfirmSetAside(db, svc, lead, now);
   if (!opts.mainOnly) await checkOthers(db, svc, lead, now);
   const emailBudget = { left: svc.settings.emailLookupsPerCompany };
   // The sales team's own contact is theirs to vouch for (their email too: only a conflict is flagged).
@@ -174,29 +177,29 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   }
   if (!profile) {
     // No profile confirms they work here: set aside (kept, retryable), not "fine for a month".
-    await escalate(db, lead.id, 'unverified', now, 'no LinkedIn profile found');
+    await moveOn(db, svc, lead, 'unverified', now, 'no LinkedIn profile found')
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
   if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ title: profile.title || lead.contactTitle, location: profile.location }, lead.city)) {
-    await escalate(db, lead.id, 'other_site', now, profile.location);
+    await moveOn(db, svc, lead, 'other_site', now, profile.location)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
   }
   if (profile?.abroad) {
-    await escalate(db, lead.id, 'abroad', now, profile.location);
+    await moveOn(db, svc, lead, 'abroad', now, profile.location)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
   }
   if (profile?.employer === 'elsewhere') {
-    await escalate(db, lead.id, 'left', now, profile.title);
+    await moveOn(db, svc, lead, 'left', now, profile.title)
     // The next person gets checked on the next pass.
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
   }
   if (!confirmedAtSite({ location: profile.location }, lead.city)) {
     // At this company, but nothing shows they are at this site.
-    await escalate(db, lead.id, 'unverified', now, 'location not confirmed');
+    await moveOn(db, svc, lead, 'unverified', now, 'location not confirmed')
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
@@ -223,6 +226,55 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
   return 'corrected';
 }
 
+/** The P2 flow, then the draft rewritten when the point of contact changed or there is none now. */
+async function moveOn(db: Db, svc: Services, lead: Lead, why: Parameters<typeof escalate>[2], now: Date, detail = '') {
+  const result = await escalate(db, lead.id, why, now, detail);
+  if (lead.emailBody && (result.switched || result.cleared)) await safely(() => redraftForContact(db, svc, lead.id));
+  return result;
+}
+
+/** People set aside because LinkedIn couldn't confirm them (rows from before the reason was kept: the set-aside main contact). */
+const setAside = (p: Person) => !!p.passedAt && (p.passedReason === 'unverified' || (p.passedReason === '' && p.isPrimary));
+const RECHECK_DAYS = 7;
+
+/**
+ * A lead with no point of contact: the best of the people set aside as unconfirmed are looked up on
+ * LinkedIn again (each at most once a week). One confirmed at this company and site becomes the main
+ * contact again, the lead goes back to waiting for approval when they can be reached, and the draft
+ * is rewritten for them.
+ */
+async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): Promise<CheckResult> {
+  const icp = icpFor(lead.segment, await db.select().from(icps));
+  const due = new Date(now.getTime() - RECHECK_DAYS * 86_400_000);
+  const aside = (await db.select().from(people).where(eq(people.leadId, lead.id))).filter(
+    (p) => setAside(p) && (!p.checkedAt || p.checkedAt < due) && (!icp || contactPriority(p.title, icp) < 99),
+  );
+  if (!aside.length) return 'skipped';
+  for (const p of rankCandidates(aside, icp, lead.city).slice(0, 2)) {
+    let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
+    try {
+      profile = await findLinkedinProfile(svc, p.name, lead.company, { title: p.title, city: lead.city });
+    } catch {
+      return 'skipped';
+    }
+    await db.update(people).set({ checkedAt: now, isPrimary: false, ...(profile?.location ? { location: profile.location } : {}) }).where(eq(people.id, p.id));
+    if (!profile || profile.abroad || profile.employer !== 'here' || !confirmedAtSite({ location: profile.location }, lead.city)) continue;
+    await db
+      .update(people)
+      .set({ passedAt: null, passedReason: '', linkedin: p.linkedin || profile.url, ...(profile.title ? { title: profile.title } : {}) })
+      .where(eq(people.id, p.id));
+    await makePrimary(db, p.id, { why: 'LinkedIn now confirms them at this company and site' });
+    const reachable = !!(p.linkedin || profile.url) || !!p.email;
+    await db
+      .update(leads)
+      .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now, ...(lead.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
+      .where(eq(leads.id, lead.id));
+    if (lead.emailBody) await safely(() => redraftForContact(db, svc, lead.id));
+    return 'confirmed';
+  }
+  return 'not_found';
+}
+
 /**
  * Checks the contacts not checked yet (or not for a month), the given person's first when `ownerId`
  * is set, a few at a time. Called before the morning draw, when someone opens Today, and after research.
@@ -246,21 +298,43 @@ export async function verifyContacts(
     .from(leads)
     .where(
       and(
-        ne(leads.contactName, ''),
         inArray(leads.status, [...LIVE]),
         opts.dueToday ? onToday : undefined,
         or(
-          isNull(leads.contactCheckedAt),
-          lt(leads.contactCheckedAt, stale),
-          // or the main contact isn't confirmed yet, or not for a month
-          isNull(leads.contactVerifiedAt),
-          lt(leads.contactVerifiedAt, stale),
-          // or someone else at the company hasn't been checked yet
-          exists(
-            db
-              .select({ one: sql`1` })
-              .from(people)
-              .where(and(eq(people.leadId, leads.id), eq(people.isPrimary, false), isNull(people.checkedAt), isNull(people.passedAt))),
+          // No point of contact, and someone set aside as unconfirmed is due another look.
+          and(
+            eq(leads.contactName, ''),
+            exists(
+              db
+                .select({ one: sql`1` })
+                .from(people)
+                .where(
+                  and(
+                    eq(people.leadId, leads.id),
+                    isNotNull(people.passedAt),
+                    or(eq(people.passedReason, 'unverified'), and(eq(people.passedReason, ''), eq(people.isPrimary, true))),
+                    or(isNull(people.checkedAt), lt(people.checkedAt, new Date(Date.now() - RECHECK_DAYS * 86_400_000))),
+                  ),
+                ),
+            ),
+          ),
+          // A point of contact not checked yet, or not for a month
+          and(
+            ne(leads.contactName, ''),
+            or(
+              isNull(leads.contactCheckedAt),
+              lt(leads.contactCheckedAt, stale),
+              // or the main contact isn't confirmed yet, or not for a month
+              isNull(leads.contactVerifiedAt),
+              lt(leads.contactVerifiedAt, stale),
+              // or someone else at the company hasn't been checked yet
+              exists(
+                db
+                  .select({ one: sql`1` })
+                  .from(people)
+                  .where(and(eq(people.leadId, leads.id), eq(people.isPrimary, false), isNull(people.checkedAt), isNull(people.passedAt))),
+              ),
+            ),
           ),
         ),
         opts.ownerId ? eq(leads.ownerId, opts.ownerId) : undefined,

@@ -460,7 +460,7 @@ describe('callback days get the full set', () => {
 describe('P2 flow', () => {
   const icp = { targetTitles: 'Plant Head, Head of Supply Chain', p2Titles: 'Inventory Manager, Warehouse Head', p3Titles: 'Store Manager', avoidTitles: 'HR, Admin, Quality' };
   const person = (id: number, name: string, title: string, extra: Partial<import('@/lib/db/schema').Person> = {}) =>
-    ({ id, leadId: 1, name, title, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, checkedAt: null as Date | null, location: '', createdAt: new Date(), ...extra });
+    ({ id, leadId: 1, name, title, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null as Date | null, passedReason: '', checkedAt: null as Date | null, location: '', createdAt: new Date(), ...extra });
 
   it('picks the next person by INVECK priority, never HR or someone already tried, preferring an email', async () => {
     const { nextContact } = await import('@/lib/escalate');
@@ -1133,7 +1133,7 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     ], icp, 'Jaipur');
     expect(ranked.map((r) => r.location)).toEqual(['Jaipur, Rajasthan, India', '', 'Mumbai, Maharashtra, India']);
     const person = (id: number, name: string, title: string, location: string) =>
-      ({ id, leadId: 1, name, title, location, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null, checkedAt: null, createdAt: new Date() });
+      ({ id, leadId: 1, name, title, location, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null, passedReason: '', checkedAt: null, createdAt: new Date() });
     expect(nextContact([person(1, 'Gurgaon Guy', 'Plant Head', 'Gurugram, Haryana, India'), person(2, 'Jaipur Lady', 'Store Manager', 'Jaipur, Rajasthan, India')], icp, 'Jaipur')?.person.name).toBe('Jaipur Lady');
   });
 
@@ -1158,6 +1158,58 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     await db.insert(people).values([{ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true }, { leadId: l.id, name: 'Hardik Gaur', title: 'Supply Chain Manager' }]);
     await verifyContact(db, svc, l);
     expect((await db.select().from(people).where(eq(people.leadId, l.id))).map((p) => p.name)).toEqual(['Rohan Katara']);
+  });
+});
+
+describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
+  const map: Record<string, [number, number]> = { jaipur: [26.9124, 75.7873] };
+  const govind = [{ title: 'Govind Gopalia - Head of Procurement - NBC Bearings', subtitle: 'Jaipur, Rajasthan, India · Head of Procurement · NBC Bearings', link: 'https://in.linkedin.com/in/govindgopalia', snippet: '' }];
+  const services = async (found: boolean) => {
+    const { settingsSchema } = await import('@/lib/settings');
+    const fetch = (async (u: string, init?: RequestInit) => {
+      const body = String(init?.body);
+      if (String(u).endsWith('/maps')) {
+        const at = Object.entries(map).find(([k]) => body.toLowerCase().includes(k))?.[1];
+        return new Response(JSON.stringify({ places: at ? [{ title: 'x', latitude: at[0], longitude: at[1] }] : [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ organic: found && body.includes('Govind') ? govind : [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof globalThis.fetch;
+    return { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+  };
+
+  it('is no longer shown as the main contact, the lead waits for a contact, and nothing addresses the old one', async () => {
+    const db = await getDb();
+    const { verifyContact } = await import('@/lib/verify-contacts');
+    const { people } = await import('@/lib/db/schema');
+    const [l] = await db.insert(leads).values(lead('NBC Bearings', { city: 'Jaipur', status: 'Awaiting Approval', contactName: 'Govind Gopalia', contactTitle: 'Head Sourcing & Procurement', contactEmail: '', contactVerifiedAt: null })).returning();
+    await db.insert(people).values({ leadId: l.id, name: 'Govind Gopalia', title: 'Head Sourcing & Procurement', isPrimary: true });
+    expect(await verifyContact(db, await services(false), l)).toBe('not_found');
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ contactName: '', status: 'Needs Manual Contact' });
+    expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0]).toMatchObject({ isPrimary: false, passedReason: 'unverified' });
+  });
+
+  it('is checked again and made the main contact once LinkedIn confirms them at the site (also rows set aside before the reason was kept)', async () => {
+    const db = await getDb();
+    const { verifyContacts } = await import('@/lib/verify-contacts');
+    const { people } = await import('@/lib/db/schema');
+    // As the lead page showed it: no contact on the lead, the set-aside person still flagged main contact.
+    const [l] = await db.insert(leads).values(lead('NBC Bearings', { segment: 'Manufacturing', city: 'Jaipur', status: 'Needs Manual Contact', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null, emailBody: 'Hello Rohan,' })).returning();
+    await db.insert(people).values([
+      { leadId: l.id, name: 'Govind Gopalia', title: 'Head Sourcing & Procurement', isPrimary: true, passedAt: new Date(), linkedin: 'https://in.linkedin.com/in/govindgopalia' },
+      { leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', passedAt: new Date(), passedReason: 'tried' },
+    ]);
+    const svc = await services(true);
+    // Picked up by the regular contact check, though the lead has no contact.
+    const tally = await verifyContacts(db, svc);
+    expect(tally.confirmed, JSON.stringify(tally)).toBeGreaterThanOrEqual(1);
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ contactName: 'Govind Gopalia', contactTitle: 'Head of Procurement', status: 'Awaiting Approval' });
+    expect(after.contactVerifiedAt).not.toBeNull();
+    const rows = await db.select().from(people).where(eq(people.leadId, l.id));
+    expect(rows.find((p) => p.name === 'Govind Gopalia')).toMatchObject({ isPrimary: true, passedAt: null });
+    // Someone the team already tried by phone is not tried again.
+    expect(rows.find((p) => p.name === 'Rohan Katara')).toMatchObject({ isPrimary: false, passedReason: 'tried' });
   });
 });
 

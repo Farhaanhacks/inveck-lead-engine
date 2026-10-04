@@ -38,7 +38,8 @@ export async function restartSequence(db: Db, leadId: number, ownerId: number, n
   await db.insert(tasks).values(planSequence(istDay(now)).map((t) => ({ ...t, leadId, ownerId })));
 }
 
-export type Escalation = { switched: true; name: string; tier: Tier } | { switched: false };
+/** `cleared`: the lead has no point of contact any more (nobody else to switch to). */
+export type Escalation = { switched: true; name: string; tier: Tier } | { switched: false; cleared?: boolean };
 
 /**
  * The P2 flow. After MAX_CALL_ATTEMPTS unanswered calls to the point of contact, or a call where
@@ -73,13 +74,22 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
 
   if (!next) {
     if (why === 'left' || why === 'abroad' || why === 'other_site' || why === 'unverified') {
-      // Someone not confirmed is set aside, not deleted: they can be confirmed and picked again later.
-      if (why === 'unverified') await db.update(people).set({ passedAt: now }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
-      await db.update(leads).set({ contactVerifiedAt: null, contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, updatedAt: now }).where(eq(leads.id, leadId));
+      // Someone not confirmed is set aside, not deleted: no longer the main contact, and checked on
+      // LinkedIn again later (reconfirmSetAside), when they may be picked again.
+      if (why === 'unverified') {
+        await db.update(people).set({ passedAt: now, passedReason: 'unverified', isPrimary: false }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
+      }
+      // Nobody to send the draft to: the team finds someone first.
+      const waiting = lead.status === 'Awaiting Approval' || lead.status === 'Approved';
+      await db
+        .update(leads)
+        .set({ contactVerifiedAt: null, contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, ...(waiting ? { status: 'Needs Manual Contact' as const } : {}), updatedAt: now })
+        .where(eq(leads.id, leadId));
     }
+    const cleared = why === 'left' || why === 'abroad' || why === 'other_site' || why === 'unverified';
     if (!lead.ownerId) {
       await logActivity(db, leadId, 'note', `${reason}. Nobody else on the ICP's P1/P2/P3 lists found at ${lead.company} yet.`);
-      return { switched: false };
+      return cleared ? { switched: false, cleared } : { switched: false };
     }
     await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), eq(tasks.priority, false)));
     await db.insert(tasks).values({
@@ -92,11 +102,11 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
       slot: 'day',
     });
     await logActivity(db, leadId, 'note', `${reason}. Nobody else found at ${lead.company} yet: find a P2 contact (ask at reception, LinkedIn, ContactOut) and add them under Edit point of contact.`);
-    return { switched: false };
+    return cleared ? { switched: false, cleared } : { switched: false };
   }
 
   // The person moved past isn't tried again automatically.
-  await db.update(people).set({ passedAt: now }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
+  await db.update(people).set({ passedAt: now, passedReason: why === 'unverified' ? 'unverified' : 'tried' }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
   await makePrimary(db, next.person.id);
   const tier = next.tier === '' || next.tier === 'Avoid' ? '' : next.tier;
   await db.update(leads).set({ contactTier: tier, contactSince: now }).where(eq(leads.id, leadId));
