@@ -5,11 +5,11 @@ import { logActivity } from './activity';
 import { makePrimary } from './people';
 import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
 import { personSite, rankCandidates } from './pipeline/contacts';
-import { istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
+import { FIND_NEXT_STEP, istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
+export { FIND_NEXT_STEP };
 
 /** Call outcomes where nobody useful picked up. */
 const UNANSWERED = ['no_answer', 'busy', 'wrong_number'];
-export const FIND_NEXT_STEP = 'Find the next person';
 
 /** Unanswered calls to the current point of contact (since they took over). */
 export async function unansweredCalls(db: Db, lead: Pick<Lead, 'id' | 'contactSince'>): Promise<number> {

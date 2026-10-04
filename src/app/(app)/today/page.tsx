@@ -22,6 +22,7 @@ import {
   istDay,
   loadDoneToday,
   loadTodayTasks,
+  nextDue,
   unattendedInbound,
   UNATTENDED_AFTER_HOURS,
   type TodayTask,
@@ -440,13 +441,14 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const own = me.id === viewId;
 
   const day = istDay();
-  const [items, counts, progress, attendance, unattended, demos] = await Promise.all([
+  const [items, counts, progress, attendance, unattended, demos, upcoming] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
     companyProgress(db, viewId, day),
     getAttendance(db, viewId, day),
     unattendedInbound(db, viewId),
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
+    nextDue(db, viewId, day),
   ]);
   // Filter: a search by company or person.
   const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
@@ -684,7 +686,15 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
       {!items.length && !startHere && (
         <div className="card p-8 text-center text-sm text-muted">
-          Nothing due. New companies the engine researches appear here with their calls, WhatsApp messages and emails.
+          {upcoming ? (
+            <>
+              Nothing due today{[0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay()) ? ' (it\u2019s the weekend)' : ''}. The next steps are on{' '}
+              <span className="font-medium text-ink">{formatDate(new Date(`${upcoming.day}T12:00:00+05:30`))}</span>, for {upcoming.companies}{' '}
+              {upcoming.companies === 1 ? 'company' : 'companies'}: they appear here that morning.
+            </>
+          ) : (
+            'Nothing due. New companies the engine researches appear here with their calls, WhatsApp messages and emails.'
+          )}
           <div className="mt-3"><Link href="/leads" className="btn-secondary">See your leads</Link></div>
         </div>
       )}

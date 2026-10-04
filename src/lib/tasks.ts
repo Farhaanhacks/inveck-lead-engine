@@ -1,8 +1,10 @@
-import { and, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql } from 'drizzle-orm';
+import { and, eq, exists, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { activities, companyDays, leads, tasks, type Lead, type Task, type TaskKind } from './db/schema';
 
 export const DAILY_LINKEDIN_LIMIT = 50;
+/** The step that asks the team for a person to contact (nobody confirmed at the company's site yet). */
+export const FIND_NEXT_STEP = 'Find the next person';
 /** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
 export const MAX_CALL_ATTEMPTS = 5;
 /** Calls each person should attempt in a day. */
@@ -76,8 +78,23 @@ const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualif
  */
 const HIDDEN_STATUSES = STOPPED_STATUSES.filter((s) => s !== 'Replied' && s !== 'Meeting Booked');
 
-/** Plans the P1 sequence for every owned lead with a decision-maker that has none yet. Safe to call repeatedly. */
+/**
+ * Puts every owned lead on its owner's Today list. Safe to call repeatedly.
+ * - A lead with a decision-maker and no plan yet gets the P1 sequence (first call, WhatsApp, email and
+ *   LinkedIn request on the next working day). So does one whose only open step was finding someone,
+ *   now that someone is named (that step is closed).
+ * - A lead waiting for a contact (Needs Manual Contact) with nothing planned gets a step to find one:
+ *   nobody confirmed at the site yet, or the named person still to be confirmed there.
+ */
 export async function ensureSequences(db: Db, today = istDay()): Promise<number> {
+  const openFind = db
+    .select({ one: sql`1` })
+    .from(tasks)
+    .where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt), eq(tasks.step, FIND_NEXT_STEP)));
+  const openOther = db
+    .select({ one: sql`1` })
+    .from(tasks)
+    .where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt), ne(tasks.step, FIND_NEXT_STEP)));
   const waiting = await db
     .select({ id: leads.id, ownerId: leads.ownerId })
     .from(leads)
@@ -86,13 +103,59 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
         isNotNull(leads.ownerId),
         inArray(leads.status, [...WORKING_STATUSES]),
         ne(leads.contactName, ''),
-        notExists(db.select({ one: sql`1` }).from(tasks).where(eq(tasks.leadId, leads.id))),
+        or(notExists(db.select({ one: sql`1` }).from(tasks).where(eq(tasks.leadId, leads.id))), and(exists(openFind), notExists(openOther))),
       ),
     )
     .limit(500);
+  if (waiting.length) {
+    await db
+      .update(tasks)
+      .set({ doneAt: new Date(), outcome: 'closed' })
+      .where(and(inArray(tasks.leadId, waiting.map((l) => l.id)), isNull(tasks.doneAt), eq(tasks.step, FIND_NEXT_STEP)));
+  }
   const rows = waiting.flatMap((l) => planSequence(today).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
   for (let i = 0; i < rows.length; i += 500) await db.insert(tasks).values(rows.slice(i, i + 500));
-  return waiting.length;
+
+  const finding = await db
+    .select({ id: leads.id, ownerId: leads.ownerId, contactName: leads.contactName, city: leads.city })
+    .from(leads)
+    .where(
+      and(
+        isNotNull(leads.ownerId),
+        eq(leads.status, 'Needs Manual Contact'),
+        notExists(db.select({ one: sql`1` }).from(tasks).where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt)))),
+      ),
+    )
+    .limit(500);
+  const due = firstWorkingDay(today);
+  const find = finding.map((l) => ({
+    leadId: l.id,
+    ownerId: l.ownerId!,
+    kind: 'call' as const,
+    step: FIND_NEXT_STEP,
+    title: l.contactName
+      ? `Confirm ${l.contactName} is at the ${l.city || 'company\'s'} site, or find the person to contact`
+      : 'Find the person to contact (plant head, else a P2 process owner)',
+    dueDate: due,
+    slot: 'day' as const,
+  }));
+  for (let i = 0; i < find.length; i += 500) await db.insert(tasks).values(find.slice(i, i + 500));
+  return waiting.length + finding.length;
+}
+
+/** When the next steps are due after today, and for how many companies: shown when nothing is due today. */
+export async function nextDue(db: Db, ownerId: number, today = istDay()): Promise<{ day: string; companies: number } | null> {
+  const [row] = await db
+    .select({ day: sql<string>`min(${tasks.dueDate})` })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), gt(tasks.dueDate, today), notInArray(leads.status, HIDDEN_STATUSES)));
+  if (!row?.day) return null;
+  const [n] = await db
+    .select({ n: sql<number>`count(distinct ${tasks.leadId})::int` })
+    .from(tasks)
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), eq(tasks.dueDate, row.day)));
+  return { day: row.day, companies: Number(n?.n ?? 0) };
 }
 
 export type TodayTask = { task: Task; lead: Lead; overdue: boolean };
@@ -110,7 +173,9 @@ export async function loadTodayTasks(db: Db, ownerId: number, today = istDay()):
         eq(tasks.ownerId, ownerId),
         isNull(tasks.doneAt),
         lte(tasks.dueDate, today),
-        or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES)),
+        // Steps for a lead being worked; promised callbacks always; and for a lead waiting for a contact,
+        // the step to find one.
+        or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES), and(eq(tasks.step, FIND_NEXT_STEP), eq(leads.status, 'Needs Manual Contact'))),
       ),
     );
   return rows
