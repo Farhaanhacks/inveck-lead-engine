@@ -321,7 +321,7 @@ export function inCity(text: string, city: string): boolean {
 }
 
 /** States and the country: a location naming only these doesn't say which site someone is at. */
-const REGION_ONLY = /^(india|bharat|maharashtra|gujarat|karnataka|tamil nadu|telangana|andhra pradesh|kerala|goa|rajasthan|madhya pradesh|uttar pradesh|uttarakhand|haryana|punjab|himachal pradesh|jammu and kashmir|jammu & kashmir|bihar|jharkhand|odisha|west bengal|assam|chhattisgarh|north india|south india|east india|west india)$/i;
+const REGION_ONLY = /^(india|bharat|maharashtra|maharastra|gujarat|gujrat|tamilnadu|karnatka|telengana|orissa|karnataka|tamil nadu|telangana|andhra pradesh|kerala|goa|rajasthan|madhya pradesh|uttar pradesh|uttarakhand|haryana|punjab|himachal pradesh|jammu and kashmir|jammu & kashmir|bihar|jharkhand|odisha|west bengal|assam|chhattisgarh|north india|south india|east india|west india)$/i;
 
 /** No usable place: empty, or only a state or the country ("India", "Tamil Nadu, India"). */
 export function vagueLocation(location: string | null | undefined): boolean {

@@ -1,3 +1,4 @@
+import { vagueLocation } from './pipeline/employer';
 import { domainOf } from './pipeline/text';
 
 /** Old and new names of the same city. */
@@ -71,7 +72,8 @@ export class KnownBranches {
     const domain = domainOf(website);
     if (names.some((n) => this.clientNames.has(n)) || (domain && this.clientDomains.has(domain))) return 'client';
     const same = this.leads.filter((l) => l.keys.some((k) => names.includes(k)) || (domain && domainOf(l.website) === domain));
-    return same.some((l) => !city.trim() || !l.city.trim() || sameCity(l.city, city)) ? 'lead' : '';
+    // A list entry with no city, or only a state or the country ("Gujarat", "India"), covers every site.
+    return same.some((l) => !city.trim() || vagueLocation(l.city) || sameCity(l.city, city)) ? 'lead' : '';
   }
 
   add(company: string, website: string, city: string) {
