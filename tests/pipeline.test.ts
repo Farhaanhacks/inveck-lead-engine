@@ -622,10 +622,11 @@ describe('prospect search remembers what it searched and saw', () => {
     const logs: string[] = [];
     const second = await findProspects(svc, activeIcps, [], [], async (m) => { logs.push(m); }, await prospectHistory(db, 2));
     expect(second.map((p) => p.company)).toEqual(['Ludhiana Forge']);
-    // The reworded repeat was never searched; the known company never reached the AI.
+    // The reworded repeat was never searched; the company is remembered at its location (the AI is told,
+    // and it isn't added again there; its plant in another city would still be new).
     expect(searched.some((q) => /pune/i.test(q))).toBe(false);
     expect(logs.join(' ')).toContain('Skipped 1 search already run before');
-    expect(pickTexts.join(' ')).not.toContain('puneauto.in');
+    expect(pickTexts.join(' ')).toContain('Pune Auto Parts (Pune)');
 
     const rows = await db.select().from(prospectSearches).orderBy(prospectSearches.id);
     expect(rows.map((r) => [r.query, r.runId, r.status, r.addedCount])).toEqual([
@@ -634,7 +635,8 @@ describe('prospect search remembers what it searched and saw', () => {
     ]);
     const results = await db.select().from(prospectResults);
     expect(results.filter((r) => r.outcome === 'added').map((r) => r.company).sort()).toEqual(['Ludhiana Forge', 'Pune Auto Parts']);
-    expect(results.some((r) => r.outcome === 'known' && r.domain === 'puneauto.in' && r.runId === 2)).toBe(true);
+    // Picked again in the second run, at the same location: recorded as a duplicate, not added.
+    expect(results.some((r) => r.outcome === 'duplicate' && r.company === 'Pune Auto Parts' && r.city === 'Pune' && r.runId === 2)).toBe(true);
   });
 });
 

@@ -98,7 +98,7 @@ export default async function TargetsPage({ searchParams }: PageProps<'/targets'
     db.select().from(icps).orderBy(asc(icps.id)),
     db.select().from(clients).orderBy(asc(clients.id)),
     db.select({ knownCount: sql<number>`count(*)::int` }).from(knownCompanies),
-    db.select({ company: knownCompanies.company }).from(knownCompanies).orderBy(asc(knownCompanies.id)).limit(8),
+    db.select({ company: knownCompanies.company, location: knownCompanies.location }).from(knownCompanies).orderBy(asc(knownCompanies.id)).limit(8),
   ]);
 
   return (
@@ -143,9 +143,9 @@ export default async function TargetsPage({ searchParams }: PageProps<'/targets'
 
       <h2 id="own-leads" className="mt-10 mb-1 scroll-mt-6 text-sm font-semibold">Leads INVECK already has</h2>
       <p className="mb-3 text-sm text-ink-2">
-        Companies already in the team&apos;s own lead lists. The prospect search and the new facility radar never offer them again.
+        Companies already in the team&apos;s own lead lists, each at its location. The prospect search and the new facility radar never offer the same company at the same location again; its plant or branch in another city is still a new lead. A company without a location is skipped everywhere.
       </p>
-      <KnownCompanies count={knownCount} sample={knownSample.map((k) => k.company)} />
+      <KnownCompanies count={knownCount} sample={knownSample.map((k) => (k.location ? `${k.company} (${k.location})` : k.company))} />
     </>
   );
 }

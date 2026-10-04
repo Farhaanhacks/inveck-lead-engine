@@ -1399,17 +1399,32 @@ describe('emails are not kept anywhere', () => {
 });
 
 describe("INVECK's own lead list", () => {
-  it('imports a CSV of companies by Company and Website columns, skipping ones already on the list', async () => {
+  it('imports company and location; the same company at another location is a separate entry', async () => {
     const db = await getDb();
     const { importKnownCompanies, listKnownCompanies } = await import('@/lib/known-companies');
     const { parseCsv } = await import('@/lib/csv');
-    const r1 = await importKnownCompanies(db, parseCsv('Sr No,Company Name,Website,Owner\n1,Mojj Engineering Systems Ltd,mojjpune.com,Puja\n2,RR Kabel,https://www.rrkabel.com/,Anchal\n3,,x.com,Puja\n'));
-    expect(r1).toEqual({ added: 2, skipped: 0 });
-    const r2 = await importKnownCompanies(db, parseCsv('Company,Website\nMOJJ ENGINEERING SYSTEMS LIMITED,\nNBC Bearings,rrkabel.com\nNBC Bearings,nbcbearings.com\n'));
-    expect(r2.added).toBe(1);
+    // As in INVECK's sheet: Company Name, Company Location (often blank).
+    const r1 = await importKnownCompanies(db, parseCsv('Company Name,Company Location\nSwastik Pipe Limited,New Delhi\nUKB Electronics Limited,\nSunwoda Electronic India Pvt Ltd,\n'));
+    expect(r1).toEqual({ added: 3, skipped: 0 });
+    const r2 = await importKnownCompanies(db, parseCsv('Company Name,Company Location\nSWASTIK PIPE LTD,"New Delhi, Delhi"\nSwastik Pipe Limited,Mumbai\nUKB Electronics Limited,\n'));
+    expect(r2).toEqual({ added: 1, skipped: 2 });
     const list = await listKnownCompanies(db);
-    expect(list.map((k) => k.company)).toEqual(expect.arrayContaining(['Mojj Engineering Systems Ltd', 'RR Kabel', 'NBC Bearings']));
-    expect(list.find((k) => k.company === 'RR Kabel')?.website).toBe('rrkabel.com');
+    expect(list.filter((k) => /swastik/i.test(k.company)).map((k) => k.city)).toEqual(['New Delhi', 'Mumbai']);
+  });
+
+  it('the prospect search skips a company at a location on the list, but not its plant elsewhere', async () => {
+    const { KnownBranches } = await import('@/lib/branches');
+    const known = new KnownBranches(
+      [
+        { company: 'Swastik Pipe Limited', website: '', city: 'New Delhi' },
+        { company: 'UKB Electronics Limited', website: '', city: '' },
+      ],
+      [],
+    );
+    expect(known.has('Swastik Pipe Ltd', '', 'New Delhi')).toBe('lead');
+    expect(known.has('Swastik Pipe Ltd', '', 'Mumbai')).toBe('');
+    // No location given: the company is skipped wherever its plant is.
+    expect(known.has('UKB Electronics', '', 'Pune')).toBe('lead');
   });
 
   it('clears the current leads once before handover, keeping logins, ICPs, clients and the own-lead list', async () => {

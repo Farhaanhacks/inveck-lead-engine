@@ -165,13 +165,15 @@ export const clients = pgTable('clients', {
 export type Client = typeof clients.$inferSelect;
 
 /**
- * Companies INVECK already has in its own lead lists (uploaded from a CSV): never offered again by the
- * prospect search or the new facility radar.
+ * Companies INVECK already has in its own lead lists (uploaded from a CSV), by location: the prospect
+ * search and the new facility radar never offer that company at that location again (another plant
+ * elsewhere is a new lead). Without a location, the company is skipped everywhere.
  */
 export const knownCompanies = pgTable('known_companies', {
   id: serial('id').primaryKey(),
   company: text('company').notNull(),
   website: text('website').notNull().default(''),
+  location: text('location').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type KnownCompany = typeof knownCompanies.$inferSelect;
@@ -256,6 +258,8 @@ export const prospectResults = pgTable('prospect_results', {
   title: text('title').notNull().default(''),
   company: text('company').notNull().default(''),
   normCompany: text('norm_company').notNull().default(''),
+  /** The location of a company picked (added or duplicate): the same company elsewhere is a new branch. */
+  city: text('city').notNull().default(''),
   outcome: text('outcome').$type<'known' | 'result' | 'added' | 'duplicate'>().notNull(),
   seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
 });

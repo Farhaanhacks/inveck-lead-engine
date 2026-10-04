@@ -100,14 +100,13 @@ export async function prospectHistory(db: Db, runId: number | null): Promise<Pro
       .orderBy(desc(prospectSearches.searchedAt))
       .limit(400),
     db
-      .select({ name: prospectResults.normCompany, domain: prospectResults.domain })
+      .select({ company: prospectResults.company, domain: prospectResults.domain, city: prospectResults.city })
       .from(prospectResults)
       .where(and(inArray(prospectResults.outcome, ['added', 'duplicate']), gte(prospectResults.seenAt, since(SEEN_MEMORY_DAYS)))),
   ]);
   return {
     searches,
-    seenNames: seen.map((r) => r.name).filter(Boolean),
-    seenDomains: seen.map((r) => r.domain).filter(Boolean),
+    seenBranches: seen.filter((r) => r.company || r.domain).map((r) => ({ company: r.company, website: r.domain, city: r.city })),
     async recordSearch(s) {
       const [row] = await db
         .insert(prospectSearches)
@@ -118,7 +117,7 @@ export async function prospectHistory(db: Db, runId: number | null): Promise<Pro
     async recordResults(searchId, rows) {
       if (!rows.length) return;
       await db.insert(prospectResults).values(
-        rows.map((r) => ({ searchId, runId, url: r.url, domain: r.domain, title: r.title.slice(0, 500), company: r.company ?? '', normCompany: normCompany(r.company ?? ''), outcome: r.outcome })),
+        rows.map((r) => ({ searchId, runId, url: r.url, domain: r.domain, title: r.title.slice(0, 500), company: r.company ?? '', normCompany: normCompany(r.company ?? ''), city: r.city ?? '', outcome: r.outcome })),
       );
     },
     async recordAdded(searchId, count) {
@@ -195,7 +194,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       await log('Finding new prospects');
       try {
         // Every lead, and the companies in INVECK's own lead lists: never offered again.
-        const known = [...(await db.select({ company: leads.company, website: leads.website }).from(leads)), ...(await listKnownCompanies(db))];
+        const known = [...(await db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads)), ...(await listKnownCompanies(db))];
         const found = await findProspects(svc, activeIcps, clientList, known, (m, l) => log(m, l), await prospectHistory(db, runId));
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });

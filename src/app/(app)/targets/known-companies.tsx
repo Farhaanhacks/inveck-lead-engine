@@ -19,7 +19,7 @@ export function KnownCompanies({ count, sample }: { count: number; sample: strin
   };
 
   const clear = () => {
-    if (!window.confirm(`Remove all ${count} companies from this list? The prospect search could then find them again.`)) return;
+    if (!window.confirm(`Remove all ${count} entries from this list? The prospect search could then find them again.`)) return;
     startTransition(async () => {
       await clearKnownCompaniesAction();
       setNotice({ text: 'List emptied.', ok: true });
@@ -30,7 +30,7 @@ export function KnownCompanies({ count, sample }: { count: number; sample: strin
     <div className="card p-5">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm">
-          <span className="font-semibold tabular-nums">{count}</span> {count === 1 ? 'company' : 'companies'} on the list
+          <span className="font-semibold tabular-nums">{count}</span> {count === 1 ? 'entry' : 'entries'} on the list
         </span>
         <span className={`text-xs ${notice?.ok === false ? 'text-critical-ink' : 'text-muted'}`} role="status">
           {pending && !notice ? 'Working…' : notice?.text}
@@ -56,7 +56,7 @@ export function KnownCompanies({ count, sample }: { count: number; sample: strin
         </div>
       </div>
       <p className="mt-2 text-xs text-muted">
-        A CSV with a Company column (Website optional, other columns ignored). Uploading again adds to the list; companies already on it are skipped.
+        A CSV with a Company Name column, and Company Location and Website when you have them (other columns are ignored). Uploading again adds to the list; the same company at the same location is skipped.
       </p>
       {sample.length > 0 && <p className="mt-2 truncate text-xs text-ink-2" title={sample.join(', ')}>Includes {sample.join(', ')}{count > sample.length ? '…' : ''}</p>}
     </div>

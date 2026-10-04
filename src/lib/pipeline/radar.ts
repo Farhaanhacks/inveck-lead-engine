@@ -102,11 +102,11 @@ export async function scanRadar(
   const [leadRows, clientRows, ownLeads, earlier] = await Promise.all([
     db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads),
     db.select({ company: clients.company, website: clients.website }).from(clients),
-    // Companies in INVECK's own lead lists: skipped like clients, whatever the branch.
-    db.select({ company: knownCompanies.company, website: knownCompanies.website }).from(knownCompanies),
+    // Companies in INVECK's own lead lists, at their location (like leads: another plant is new).
+    db.select({ company: knownCompanies.company, website: knownCompanies.website, city: knownCompanies.location }).from(knownCompanies),
     db.select({ company: opportunities.company, location: opportunities.location, url: opportunities.url }).from(opportunities).orderBy(desc(opportunities.id)).limit(2000),
   ]);
-  const known = new KnownBranches([...leadRows, ...earlier.map((e) => ({ company: e.company, website: '', city: e.location }))], [...clientRows, ...ownLeads]);
+  const known = new KnownBranches([...leadRows, ...ownLeads, ...earlier.map((e) => ({ company: e.company, website: '', city: e.location }))], clientRows);
   const knownUrls = new Set(earlier.map((e) => e.url));
 
   const rows: (typeof opportunities.$inferInsert)[] = [];

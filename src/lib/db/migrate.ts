@@ -109,6 +109,7 @@ export const SCHEMA_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS prospect_results_domain_idx ON prospect_results (domain)`,
   `CREATE INDEX IF NOT EXISTS prospect_results_company_idx ON prospect_results (norm_company)`,
+  `ALTER TABLE prospect_results ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT ''`,
   // Added after the first release.
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_phone TEXT NOT NULL DEFAULT ''`,
   // Unconfirmed guessed emails were briefly saved; they're not trusted, so clear them.
@@ -471,6 +472,7 @@ export const SCHEMA_STATEMENTS = [
     website TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  `ALTER TABLE known_companies ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT ''`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

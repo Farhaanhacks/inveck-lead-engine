@@ -1,3 +1,4 @@
+import { KnownBranches } from '../branches';
 import type { Client, Icp } from '../db/schema';
 import { askJson } from './ai';
 import { PROSPECT_EXTRACT_PROMPT, PROSPECT_QUERIES_PROMPT } from './prompts';
@@ -74,18 +75,16 @@ export type PastSearch = { query: string; fresh: number; added: number };
 export type ProspectHistory = {
   /** Recent searches, newest first. */
   searches: PastSearch[];
-  /** Companies earlier searches already turned up (picked before, added or not), by name and domain. */
-  seenNames: string[];
-  seenDomains: string[];
+  /** Companies earlier searches already picked (added or not), by branch: the same company elsewhere is new. */
+  seenBranches: { company: string; website: string; city: string }[];
   recordSearch(s: { query: string; segment: string; status: 'ok' | 'failed'; resultsCount: number; freshCount: number; error?: string }): Promise<number | null>;
-  recordResults(searchId: number | null, rows: { url: string; domain: string; title: string; company?: string; outcome: 'known' | 'result' | 'added' | 'duplicate' }[]): Promise<void>;
+  recordResults(searchId: number | null, rows: { url: string; domain: string; title: string; company?: string; city?: string; outcome: 'known' | 'result' | 'added' | 'duplicate' }[]): Promise<void>;
   recordAdded(searchId: number | null, count: number): Promise<void>;
 };
 
 const NO_HISTORY: ProspectHistory = {
   searches: [],
-  seenNames: [],
-  seenDomains: [],
+  seenBranches: [],
   recordSearch: async () => null,
   recordResults: async () => {},
   recordAdded: async () => {},
@@ -112,7 +111,8 @@ export async function findProspects(
   svc: Services,
   icps: Icp[],
   clients: Client[],
-  known: { company: string; website: string }[],
+  /** Leads and INVECK's own lead list, by branch: the same company at another location is a new lead. */
+  known: { company: string; website: string; city?: string }[],
   log: (msg: string, level?: 'info' | 'warn' | 'error') => Promise<void>,
   history: ProspectHistory = NO_HISTORY,
 ): Promise<Prospect[]> {
@@ -128,9 +128,15 @@ export async function findProspects(
       : '(none listed)',
   ].join('\n');
 
-  const seenNames = new Set([...known.map((k) => normCompany(k.company)), ...clients.map((c) => normCompany(c.company)), ...history.seenNames].filter(Boolean));
-  const seenDomains = new Set([...known.map((k) => domainOf(k.website)), ...clients.map((c) => domainOf(c.website)), ...history.seenDomains].filter(Boolean));
-  const knownList = [...known.map((k) => k.company), ...clients.map((c) => c.company)].filter(Boolean);
+  // Clients are known everywhere. Leads (and INVECK's own lead list) are known at their location: the
+  // same company's plant elsewhere is a new lead, so results about it aren't hidden.
+  const seenNames = new Set(clients.map((c) => normCompany(c.company)).filter(Boolean));
+  const seenDomains = new Set(clients.map((c) => domainOf(c.website)).filter(Boolean));
+  const branches = new KnownBranches([...known.map((k) => ({ company: k.company, website: k.website, city: k.city ?? '' })), ...history.seenBranches], clients);
+  const knownList = [
+    ...[...known, ...history.seenBranches].filter((k) => k.company).map((k) => `${k.company} (${k.city?.trim() || 'any location'})`),
+    ...clients.map((c) => `${c.company} (client, any location)`),
+  ].filter(Boolean);
   const segmentNames = icps.map((i) => i.segment);
   const want = svc.settings.prospectsPerRun;
   // Everything searched before (recent runs) and in this run: no query that repeats any of them is run.
@@ -242,7 +248,7 @@ export async function findProspects(
     const pickText = [
       `ICP segments: ${icps.map((i) => i.segment).join(', ')}`,
       '',
-      '## Already on the list (skip these)',
+      '## Already on the list at these locations (skip the same company at the same location; its plant or branch at another location is new)',
       knownList.length ? knownList.slice(-400).join(', ') : '(none)',
       '',
       '## Search results',
@@ -272,22 +278,22 @@ export async function findProspects(
       const from = results.find((r) => domain && domainOf(r.link || '') === domain) ?? results.find((r) => `${r.title} ${r.snippet}`.toLowerCase().includes(company.toLowerCase()));
       const searchId = from?.searchId ?? null;
       const name = normCompany(company);
-      if (seenNames.has(name) || (domain && seenDomains.has(domain))) {
-        await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, outcome: 'duplicate' }]);
+      const city = asText(c.city);
+      if (seenNames.has(name) || (domain && seenDomains.has(domain)) || branches.has(company, domain, city)) {
+        await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, city, outcome: 'duplicate' }]);
         continue;
       }
       if (prospects.length >= want) continue;
-      seenNames.add(name);
-      knownList.push(company);
-      if (domain) seenDomains.add(domain);
-      await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, outcome: 'added' }]);
+      branches.add(company, domain, city);
+      knownList.push(`${company} (${city || 'any location'})`);
+      await history.recordResults(searchId, [{ url: from?.link ?? '', domain, title: from?.title ?? '', company, city, outcome: 'added' }]);
       addedBySearch.set(searchId, (addedBySearch.get(searchId) ?? 0) + 1);
       const lookalike = asText(c.lookalike_of);
       const why = asText(c.why);
       prospects.push({
         company,
         website: domain,
-        city: asText(c.city),
+        city,
         // The ICP's own spelling; a segment no ICP has stays as given, so research flags it for review
         // instead of checking the company against some other ICP.
         segment: canonicalSegment(asText(c.segment), segmentNames),
