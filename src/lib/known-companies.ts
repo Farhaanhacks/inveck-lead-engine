@@ -16,6 +16,8 @@ const LOCATION = /^(company location|location|city|plant|plant location|site|sit
 /**
  * Rows from INVECK's lead list: a header row with a Company column, and Website and Location columns
  * when there are; without recognised headers, the first three columns are read in that order.
+ * A row with a location but no company name is another plant of the company above it (a merged
+ * company cell exports its name on the first row only); a blank row ends that.
  */
 export function rowsToKnown(rows: string[][]): { company: string; website: string; location: string }[] {
   if (!rows.length) return [];
@@ -24,9 +26,20 @@ export function rowsToKnown(rows: string[][]): { company: string; website: strin
   const company = col(COMPANY);
   const body = company >= 0 ? rows.slice(1) : rows;
   const [c, w, l] = company >= 0 ? [company, col(WEBSITE), col(LOCATION)] : [0, 1, 2];
-  return body
-    .map((r) => ({ company: clean(r[c]), website: domainOf(clean(w >= 0 ? r[w] : '')), location: clean(l >= 0 ? r[l] : '') }))
-    .filter((k) => k.company);
+  const out: { company: string; website: string; location: string }[] = [];
+  let above: { company: string; website: string } | null = null;
+  for (const r of body) {
+    const row = { company: clean(r[c]), website: domainOf(clean(w >= 0 ? r[w] : '')), location: clean(l >= 0 ? r[l] : '') };
+    if (row.company) {
+      above = { company: row.company, website: row.website };
+      out.push(row);
+    } else if (row.location && above) {
+      out.push({ ...above, location: row.location });
+    } else if (!r.some((cell) => String(cell ?? '').trim())) {
+      above = null;
+    }
+  }
+  return out;
 }
 
 /**

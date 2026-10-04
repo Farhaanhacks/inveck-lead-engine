@@ -585,7 +585,9 @@ export async function importKnownCompaniesAction(form: FormData) {
   if ((bytes[0] === 0x50 && bytes[1] === 0x4b) || (bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
     return { ok: false, message: 'That’s an Excel file. In Excel choose File → Save As → CSV (UTF-8), then upload the CSV.' };
   }
-  const rows = parseCsv((await file.text()).slice(0, 5_000_000));
+  // Blank rows kept: in the team's sheet a blank row ends a company's list of plants (merged cells).
+  const text = (await file.text()).slice(0, 5_000_000);
+  const rows = parseCsv(text, undefined, { keepBlank: true });
   if (rows.length < 2) return { ok: false, message: 'Nothing to import: the file needs a header row and at least one company.' };
   const result = await importKnownCompanies(await getDb(), rows);
   revalidatePath('/targets');

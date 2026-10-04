@@ -1412,6 +1412,17 @@ describe("INVECK's own lead list", () => {
     expect(list.filter((k) => /swastik/i.test(k.company)).map((k) => k.city)).toEqual(['New Delhi', 'Mumbai']);
   });
 
+  it('reads a location row without a company name as another plant of the company above (merged cells)', async () => {
+    const { rowsToKnown } = await import('@/lib/known-companies');
+    const { parseCsv } = await import('@/lib/csv');
+    const rows = rowsToKnown(parseCsv('Company Name ,Company Location \n Sterlite Technologies Limited,"Pune, Maharashtra"\n,"Bangalore, Karnataka"\nBSA Corporation,\n,\n,Lucknow\n', undefined, { keepBlank: true }));
+    expect(rows).toEqual([
+      { company: 'Sterlite Technologies Limited', website: '', location: 'Pune, Maharashtra' },
+      { company: 'Sterlite Technologies Limited', website: '', location: 'Bangalore, Karnataka' },
+      { company: 'BSA Corporation', website: '', location: '' },
+    ]);
+  });
+
   it('the prospect search skips a company at a location on the list, but not its plant elsewhere', async () => {
     const { KnownBranches } = await import('@/lib/branches');
     const known = new KnownBranches(

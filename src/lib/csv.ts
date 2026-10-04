@@ -23,8 +23,8 @@ export function detectDelimiter(text: string): string {
   return best;
 }
 
-/** Rows of trimmed cells; empty rows are dropped. */
-export function parseCsv(text: string, delimiter = detectDelimiter(text)): string[][] {
+/** Rows of trimmed cells; empty rows are dropped unless `keepBlank` (where a blank row means something). */
+export function parseCsv(text: string, delimiter = detectDelimiter(text), { keepBlank = false }: { keepBlank?: boolean } = {}): string[][] {
   const src = text.replace(/^﻿/, '');
   const rows: string[][] = [];
   let row: string[] = [];
@@ -56,7 +56,8 @@ export function parseCsv(text: string, delimiter = detectDelimiter(text)): strin
     row.push(field);
     rows.push(row);
   }
-  return rows.map((r) => r.map((c) => c.trim())).filter((r) => r.some(Boolean));
+  const trimmed = rows.map((r) => r.map((c) => c.trim()));
+  return keepBlank ? trimmed : trimmed.filter((r) => r.some(Boolean));
 }
 
 /**
