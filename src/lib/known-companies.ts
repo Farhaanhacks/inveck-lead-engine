@@ -1,7 +1,8 @@
-import { asc } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from './db';
-import { knownCompanies } from './db/schema';
-import { sameCity } from './branches';
+import { knownCompanies, leads } from './db/schema';
+import { logActivity } from './activity';
+import { KnownBranches, sameCity } from './branches';
 import { domainOf, normCompany } from './pipeline/text';
 
 export type KnownImport = { added: number; skipped: number };
@@ -74,4 +75,22 @@ export async function listKnownCompanies(db: Db) {
 export function describeKnownImport(r: KnownImport): string {
   const added = `Added ${r.added} ${r.added === 1 ? 'entry' : 'entries'}`;
   return r.skipped ? `${added}; ${r.skipped} already on the list (same company and location).` : `${added}.`;
+}
+
+/** Not contacted yet: a lead in these stages that is on INVECK's own list is set aside. */
+const NOT_CONTACTED = ['New', 'Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score', 'Needs Review', 'Disqualified', 'Error'] as const;
+
+/**
+ * Leads the app found that turn out to be on INVECK's own lead list (same company at the same location,
+ * or listed without a location): set aside as Rejected with the reason, unless outreach has started.
+ */
+export async function setAsideOwnLeads(db: Db, reason: string): Promise<string[]> {
+  const own = new KnownBranches(await listKnownCompanies(db), []);
+  const open = await db.select({ id: leads.id, company: leads.company, website: leads.website, city: leads.city }).from(leads).where(inArray(leads.status, [...NOT_CONTACTED]));
+  const hits = open.filter((l) => own.has(l.company, l.website, l.city));
+  for (const l of hits) {
+    await db.update(leads).set({ status: 'Rejected', fitReason: reason, updatedAt: new Date() }).where(eq(leads.id, l.id));
+    await logActivity(db, l.id, 'note', `Set aside: ${reason}.`);
+  }
+  return hits.map((l) => l.company);
 }

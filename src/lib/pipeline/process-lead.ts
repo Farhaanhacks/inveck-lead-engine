@@ -1,3 +1,4 @@
+import { KnownBranches } from '../branches';
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
 import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
@@ -65,10 +66,13 @@ const BEFORE_OUTREACH = ['Awaiting Approval', 'Approved', 'Needs Manual Contact'
  * Researches a lead and finds its contacts. With `contactsOnly` (contacts reset), the company research
  * already on the lead is kept and only the people are found again; a lead past outreach keeps its stage.
  */
+/** Why a lead from INVECK's own lead list is set aside. */
+export const OWN_LEAD_REASON = "Already in INVECK's own lead list (Leads INVECK already has, on ICPs & clients)";
+
 export async function processLead(
   svc: Services,
   lead: Lead,
-  ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[] },
+  ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[]; ownLeads?: KnownBranches },
   log: Log,
   opts: { contactsOnly?: boolean; teamContact?: boolean } = {},
 ): Promise<LeadResult> {
@@ -76,6 +80,12 @@ export async function processLead(
   if (client) {
     await log(`${lead.company}: already a client (${client.company}), skipped`);
     return { status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
+  }
+
+  // Already in INVECK's own lead list at this location: the team has it, so it isn't researched here.
+  if (!opts.contactsOnly && ctx.ownLeads?.has(lead.company, lead.website, lead.city)) {
+    await log(`${lead.company}${lead.city ? ` (${lead.city})` : ''}: already in INVECK's own lead list, skipped`);
+    return { status: 'Rejected', fitReason: OWN_LEAD_REASON, lastError: '' };
   }
 
   // A person ruled the company out: that call stands until someone asks for the fit to be reassessed.

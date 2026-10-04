@@ -27,7 +27,8 @@ import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib
 import { domainOf } from '@/lib/pipeline/text';
 import { CLIENT_FIELDS, describeImport, importClients, markClientLeads, rowsToClients, type ClientField } from '@/lib/clients';
 import { parseCsv } from '@/lib/csv';
-import { describeKnownImport, importKnownCompanies } from '@/lib/known-companies';
+import { describeKnownImport, importKnownCompanies, setAsideOwnLeads } from '@/lib/known-companies';
+import { OWN_LEAD_REASON } from '@/lib/pipeline/process-lead';
 import { canonicalSegment, normSegment } from '@/lib/icp-match';
 import { confirmFit, markNotFit, reassessLeads, recordAssessments } from '@/lib/reassess';
 import { cleanContact, contactFields, saveContactEdit } from '@/lib/contact-edit';
@@ -589,9 +590,15 @@ export async function importKnownCompaniesAction(form: FormData) {
   const text = (await file.text()).slice(0, 5_000_000);
   const rows = parseCsv(text, undefined, { keepBlank: true });
   if (rows.length < 2) return { ok: false, message: 'Nothing to import: the file needs a header row and at least one company.' };
-  const result = await importKnownCompanies(await getDb(), rows);
+  const db = await getDb();
+  const result = await importKnownCompanies(db, rows);
+  // Leads already found that turn out to be theirs (not contacted yet) are set aside.
+  const setAside = await setAsideOwnLeads(db, OWN_LEAD_REASON);
   revalidatePath('/targets');
-  return { ok: true, message: describeKnownImport(result) };
+  revalidatePath('/leads');
+  revalidatePath('/');
+  const also = setAside.length ? ` ${setAside.length} lead${setAside.length === 1 ? '' : 's'} already found ${setAside.length === 1 ? 'is' : 'are'} on it and set aside: ${setAside.slice(0, 5).join(', ')}${setAside.length > 5 ? '…' : ''}.` : '';
+  return { ok: true, message: describeKnownImport(result) + also };
 }
 
 /** Empties the list of companies from INVECK's own lead lists. */

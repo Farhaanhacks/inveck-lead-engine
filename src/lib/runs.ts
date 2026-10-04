@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { listKnownCompanies } from './known-companies';
+import { KnownBranches } from './branches';
 import { clients, icps, leads, prospectResults, prospectSearches, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
 import { findProspects, type ProspectHistory } from './pipeline/prospects';
@@ -187,6 +188,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       // Every lead's main contact, so two branches of one company don't get the same person.
       db.select({ leadId: leads.id, company: leads.company, website: leads.website, contactName: leads.contactName }).from(leads).where(ne(leads.contactName, '')),
     ]);
+    // INVECK's own lead list, by branch: a lead on it is set aside, not researched.
+    const ownLeads = new KnownBranches(await listKnownCompanies(db), []);
     const activeIcps = allIcps.filter((i) => i.active);
     if (!activeIcps.length) throw new Error('No active ICP. Turn on at least one ICP.');
 
@@ -254,7 +257,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       await mapLimit(batch, CONCURRENCY, async (lead) => {
         let result: LeadResult;
         try {
-          result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { teamContact: await contactFromTeam(db, lead) });
+          result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken, ownLeads }, (m, l) => log(m, l, lead.id), { teamContact: await contactFromTeam(db, lead) });
         } catch (e) {
           result = { status: 'Error' as const, lastError: errorMessage(e) };
           await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);

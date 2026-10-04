@@ -20,7 +20,7 @@ export function sameCity(a: string, b: string): boolean {
   return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
 }
 
-const LEGAL = /\b(pvt|private|ltd|limited|llp|inc|india|the|and|co|company|group|corporation|corp)\b/g;
+const LEGAL = /\b(pvt|private|ltd|limited|llp|inc|india|the|and|of|co|company|companies|group|corporation|corp)\b/g;
 const key = (s: string) =>
   s
     .toLowerCase()

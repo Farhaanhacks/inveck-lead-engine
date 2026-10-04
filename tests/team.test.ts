@@ -1452,6 +1452,8 @@ describe("INVECK's own lead list", () => {
     expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Chakan')).toBe('');
     expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Taloja')).toBe('');
     expect(sheet.has('Pernod Ricard', '', 'Gurugram')).toBe('lead');
+    // "Wadhokar Group Of Company" on their sheet is "Wadhokar Group" in a search result.
+    expect(new KnownBranches([{ company: 'Wadhokar Group Of Company', website: '', city: '' }], []).has('Wadhokar Group', '', 'Pune')).toBe('lead');
     expect(known.has('Swastik Pipes Ltd', '', 'New Delhi')).toBe('lead');
     expect(known.has('Swastik Industries', '', 'New Delhi')).toBe('');
   });
@@ -1475,5 +1477,28 @@ describe("INVECK's own lead list", () => {
     await db.insert(leads).values(lead('New Lead Co'));
     for (const s of SCHEMA_STATEMENTS.filter((s) => s.includes('clearLeadsV2'))) await db.execute(sql.raw(s));
     expect((await db.select().from(leads)).map((l) => l.company)).toEqual(['New Lead Co']);
+  });
+});
+
+describe('a lead the app found that is on INVECK\'s own list', () => {
+  it('is set aside when the list is uploaded (not contacted yet), and skipped at research', async () => {
+    const db = await getDb();
+    const { importKnownCompanies, setAsideOwnLeads, listKnownCompanies } = await import('@/lib/known-companies');
+    const { processLead, OWN_LEAD_REASON } = await import('@/lib/pipeline/process-lead');
+    const { KnownBranches } = await import('@/lib/branches');
+    const { parseCsv } = await import('@/lib/csv');
+    const { settingsSchema } = await import('@/lib/settings');
+    const [found] = await db.insert(leads).values(lead('Wadhokar Group', { city: 'Pune', status: 'Awaiting Approval' })).returning();
+    const [contacted] = await db.insert(leads).values(lead('Swastik Pipes Ltd', { city: 'New Delhi', status: 'Contacted' })).returning();
+    await importKnownCompanies(db, parseCsv('Company Name,Company Location\nWadhokar Group Of Company,\nSwastik Pipe Limited,New Delhi\n'));
+    expect(await setAsideOwnLeads(db, OWN_LEAD_REASON)).toEqual(['Wadhokar Group']);
+    expect((await db.select().from(leads).where(eq(leads.id, found.id)))[0]).toMatchObject({ status: 'Rejected', fitReason: OWN_LEAD_REASON });
+    // Outreach already started: left alone.
+    expect((await db.select().from(leads).where(eq(leads.id, contacted.id)))[0].status).toBe('Contacted');
+    // A new one waiting for research is skipped before any research is spent.
+    const [fresh] = await db.insert(leads).values(lead('Swastik Pipe Ltd', { city: 'New Delhi', status: 'New', researchSummary: '' })).returning();
+    const svc = { fetch: (async () => { throw new Error('no research expected'); }) as unknown as typeof fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    const r = await processLead(svc, fresh, { icps: [], clients: [], ownLeads: new KnownBranches(await listKnownCompanies(db), []) }, async () => {});
+    expect(r).toMatchObject({ status: 'Rejected', fitReason: OWN_LEAD_REASON });
   });
 });
