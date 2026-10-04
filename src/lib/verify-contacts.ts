@@ -11,7 +11,7 @@ import { learnFirm, recallFirm } from './pipeline/firm-identity';
 import { knowPlaces } from './pipeline/places';
 import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
-import { refreshMainEmail, refreshPersonEmail } from './email-refresh';
+import { refreshMainEmail } from './email-refresh';
 import { istDay } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
@@ -90,8 +90,6 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
   const icp = icpFor(lead.segment, icpRows);
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
-  // Email providers for the best-ranked others confirmed now (the main contact has its own lookup).
-  const emailBudget = { left: Math.max(0, svc.settings.emailLookupsPerCompany - 1) };
   for (const p of next) {
     // A failed search leaves them unchecked, so the next pass tries again.
     let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
@@ -116,8 +114,6 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
       .update(people)
       .set({ checkedAt: now, ...(profile?.location ? { location: profile.location } : {}), ...(profile && !p.linkedin ? { linkedin: profile.url } : {}), ...(retitle ? { title: profile!.title } : {}) })
       .where(eq(people.id, p.id));
-    // Confirmed at the company: an inferred or unconfirmed email may be upgraded (never a team's or verified one).
-    await safely(() => refreshPersonEmail(db, svc, lead, { ...p, linkedin: p.linkedin || profile!.url }, emailBudget));
   }
   if (gone.length) await logActivity(db, lead.id, 'note', `Removed ${gone.length === 1 ? 'someone who no longer works' : 'people who no longer work'} at ${lead.company}${lead.city ? ` ${lead.city}` : ''} (left, or based elsewhere): ${gone.join('; ')}`);
 }
@@ -269,6 +265,9 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
       .update(leads)
       .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now, ...(lead.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
       .where(eq(leads.id, lead.id));
+    // The new main contact is the one person paid email lookups are spent on.
+    const [now2] = await db.select().from(leads).where(eq(leads.id, lead.id));
+    if (now2) await safely(() => refreshMainEmail(db, svc, now2, { left: svc.settings.emailLookupsPerCompany }));
     if (lead.emailBody) await safely(() => redraftForContact(db, svc, lead.id));
     return 'confirmed';
   }

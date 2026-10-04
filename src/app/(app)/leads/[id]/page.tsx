@@ -148,13 +148,13 @@ function SourceLink({ url }: { url: string }) {
  * The four separate judgements on a lead: whether the company fits the ICP (with the evidence for
  * each criterion), commercial risk, whether there's someone to contact, and whether they're at this site.
  */
-function AssessmentCard({ lead, primary, canAct }: { lead: Lead; primary?: Person; canAct: boolean }) {
+function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary?: Person; listed: Person[]; canAct: boolean }) {
   const fit = fitAssessment(lead);
   const risk = riskAssessment(lead);
   const items: [string, Assessment, string][] = [
     ['Company fit', fit ?? { label: 'Not researched yet', tone: 'neutral', detail: '' }, lead.fitScore != null ? `ICP fit ${lead.fitScore}/10` : ''],
     ['Commercial risk', risk, ''],
-    ['Contact availability', contactAvailability(lead), ''],
+    ['Contact availability', contactAvailability(lead, listed), ''],
     ['Contact geography', contactGeography(lead, primary), ''],
   ];
   const reviewable = canAct && (REASSESSABLE as readonly string[]).includes(lead.status);
@@ -454,7 +454,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
 
       {lead.status !== 'New' && lead.status !== 'Processing' && lead.status !== 'Existing Client' && (
         <div className="mb-6">
-          <AssessmentCard lead={lead} primary={found.find((p) => p.isPrimary)} canAct={!!me && (me.role === 'admin' || lead.ownerId === me.id)} />
+          <AssessmentCard lead={lead} primary={found.find((p) => p.isPrimary && !p.passedAt)} listed={team} canAct={!!me && (me.role === 'admin' || lead.ownerId === me.id)} />
         </div>
       )}
 

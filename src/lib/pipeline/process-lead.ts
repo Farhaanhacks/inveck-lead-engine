@@ -279,8 +279,7 @@ export async function processLead(
     signals: news.signals.length ? news.signals : lead.signals,
     signalsCheckedAt: new Date(),
   };
-  // Everyone else at the company: the best-ranked few go through the same chain (the providers included,
-  // within the company's budget); the rest get what is free (a published address, the format).
+  // Everyone else at the company gets what is free (a published address, the company's format).
   let format: EmailFormatUsed | null = email.format ?? null;
   const needFormat = picked.ranked.some((c) => !c.email && c.name !== contact.name);
   if (!format && needFormat && domain && svc.settings.useCompanyFormat) {
@@ -294,20 +293,9 @@ export async function processLead(
   const wanted = picked.ranked.filter(
     (c) => sameName(c.name, contact.name) || (contactPriority(c.title, icp) < 99 && (!anyoneBelowTop || contactPriority(c.title, icp) < 50)),
   );
-  const others = new Map<string, EmailResult>();
-  if (lookups) {
-    for (const c of wanted) {
-      if (lookups.left <= 0) break;
-      if (sameName(c.name, contact.name) || c.email || (c.source !== 'LinkedIn' && c.source !== 'Sales team')) continue;
-      const r = await findEmail(
-        svc,
-        { ...EMPTY_CONTACT, name: c.name, title: c.title, linkedin: c.linkedin },
-        { company: lead.company, domain, websiteEmails: published, webEmails: allEmails, lookups, format, thorough: false },
-      );
-      if (r.email) others.set(personKey(c.name), r);
-    }
-  }
-  update.people = companyPeople(wanted, contact, update.emailStatus ?? '', [...published, ...allEmails], format, svc.settings.useCompanyFormat, { main: email, others });
+  // Paid email lookups (Prospeo, Apollo) are spent on the main contact only: the others get what is
+  // free (a published address, the company's format). Someone made main contact later gets a lookup then.
+  update.people = companyPeople(wanted, contact, update.emailStatus ?? '', [...published, ...allEmails], format, svc.settings.useCompanyFormat, { main: email, others: new Map() });
 
   // Never wipe contact details the sales team typed in. A person chosen now gets their own email
   // (or none): never the previous contact's.
@@ -437,11 +425,9 @@ export function emailFields(r: Pick<EmailResult, 'email' | 'source' | 'verificat
   };
 }
 
-const personKey = (name: string) => name.toLowerCase().replace(/[^a-z]/g, '');
-
 /**
  * The company's people, best first, each with the best email we have: the main contact's from the
- * full chain, the best-ranked others' from the same chain (`found`), and for the rest what is free:
+ * full chain (`found.main`; paid lookups are spent on the main contact only), and for the others what is free:
  * the sales team's own, a published address, or one inferred from the company's proven format (both
  * labelled unverified, never checked).
  */

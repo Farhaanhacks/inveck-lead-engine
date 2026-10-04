@@ -181,8 +181,12 @@ describe('full run with DeepSeek-style messy answers', () => {
     // Everyone found at the company is kept, best first, with the best free email.
     const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));
     expect(tataPeople[0]).toMatchObject({ name: 'Sangamnath Digge', isPrimary: true, email: 'sangamnath.digge@tatamotors.com' });
-    // Others the pipeline selected go through the same chain: Anita's address comes from Apollo, verified.
-    expect(tataPeople.find((p) => p.name === 'Anita Rao')).toMatchObject({ email: 'anita.rao@tatamotors.com', emailSource: 'apollo', emailVerification: 'verified', source: 'LinkedIn', isPrimary: false });
+    // Paid lookups go to the main contact only: Anita gets no Apollo lookup, and Apollo was asked
+    // about the main contact alone.
+    const anitaRow = tataPeople.find((p) => p.name === 'Anita Rao');
+    expect(anitaRow).toMatchObject({ source: 'LinkedIn', isPrimary: false });
+    expect(anitaRow?.emailSource).not.toBe('apollo');
+    expect((log.apollo ?? []).some((u) => /anita/i.test(u.search))).toBe(false);
     const ashPeople = await db.select().from(people).where(eq(people.leadId, L['Ash Logistics and Traders Pvt Ltd'].id));
     expect(ashPeople).toEqual([]);
 
@@ -190,7 +194,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     const anita = tataPeople.find((p) => p.name === 'Anita Rao')!;
     await makePrimary(db, anita.id);
     const [tata] = await db.select().from(leads).where(eq(leads.id, L['Tata Motors'].id));
-    expect(tata).toMatchObject({ contactName: 'Anita Rao', contactEmail: 'anita.rao@tatamotors.com' });
+    expect(tata).toMatchObject({ contactName: 'Anita Rao', contactEmail: anita.email });
     expect((await db.select().from(people).where(eq(people.leadId, tata.id))).filter((p) => p.isPrimary).map((p) => p.name)).toEqual(['Anita Rao']);
 
     // Apollo's unverified ("extrapolated") address, confirmed by the mail-server check: verified by it, not by Apollo.

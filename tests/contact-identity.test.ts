@@ -150,5 +150,14 @@ describe('Mojj Engineering: the owner-director, and a search that failed', () =>
     const base = { contactName: '', contactTitle: '', contactEmail: '', emailStatus: '', contactLinkedin: '', contactVerifiedAt: null, city: 'Pune', status: 'Needs Manual Contact' as const, qualified: true };
     expect(contactAvailability({ ...base, refetchPending: true, lastError: 'Contacts not searched: the LinkedIn search failed (Not enough credits). Searched again automatically on a later run.' })).toMatchObject({ label: 'Search failed' });
     expect(contactAvailability(base).detail).toContain('Nobody on the ICP lists');
+    // People listed but none the main contact (NBC Bearings): named, with the reason for each.
+    const listed = [
+      { name: 'Govind Gopalia', isPrimary: true, passedAt: new Date(), passedReason: '', location: 'Jaipur, Rajasthan, India' },
+      { name: 'Rohan Katara', isPrimary: false, passedAt: new Date(), passedReason: 'tried', location: 'India' },
+    ];
+    const nbc = contactAvailability({ ...base, city: 'Jaipur', status: 'Awaiting Approval' }, listed);
+    expect(nbc.label).toBe('2 found, no main contact');
+    expect(nbc.detail).toContain('Govind Gopalia (not confirmed on LinkedIn at this site yet');
+    expect(nbc.detail).toContain('Rohan Katara (tried, no luck)');
   });
 });

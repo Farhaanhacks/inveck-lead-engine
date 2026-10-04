@@ -62,9 +62,10 @@ Emails only: phone numbers are never requested from any provider. In order, most
 
 Each address keeps its source, our verdict, the provider's own status and the date it was returned,
 apart from one another. Hunter is no longer a source; its email verifier is the mail-server check.
-The best-ranked others at a company go through the same chain, within **Email lookups per company**
-(Settings, default 3, counting paid requests to either provider; the main contact first; 0 switches
-both off). Provider results, including "no match", are cached in the database (90 days for an
+Paid lookups (Prospeo, Apollo) are spent on the **main contact only**, within **Email lookups per main
+contact** (Settings, default 3, counting requests to either provider; 0 switches both off); someone made
+main contact later (by the team, or by the weekly check) gets a lookup then. The others at a company get
+only free sources: an address published for them, or the company's proven format, labelled inferred. Provider results, including "no match", are cached in the database (90 days for an
 address, 30 for no match), so a person is never paid for twice; failed lookups are not cached.
 Prospeo requests are spaced a little over a second apart (its free plan allows one a second). After a
 refused key, used-up credits or a long rate limit, that provider isn't asked again in the same run.

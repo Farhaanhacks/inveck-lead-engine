@@ -1,4 +1,4 @@
-import type { Lead } from './db/schema';
+import type { Lead, Person } from './db/schema';
 import type { FitEvidence } from './pipeline/fit';
 
 /** How a lead's four assessments read on screen: a short label, its tone, and a line of detail. */
@@ -62,10 +62,28 @@ type ContactFields = Pick<Lead, 'contactName' | 'contactTitle' | 'contactEmail' 
   Partial<Pick<Lead, 'refetchPending' | 'lastError'>>;
 
 /** Whether there is someone to contact, and how they can be reached. Separate from the fit. */
-export function contactAvailability(l: ContactFields): Assessment {
+type PersonFields = Pick<Person, 'name' | 'isPrimary' | 'passedAt' | 'passedReason' | 'location'>;
+
+/** Why someone listed under People isn't the main contact. */
+function notMainBecause(p: PersonFields, city: string): string {
+  if (p.passedAt) return p.passedReason === 'tried' ? 'tried, no luck' : 'not confirmed on LinkedIn at this site yet (checked again weekly)';
+  if (!p.location) return 'location not confirmed';
+  return city ? `based in ${p.location}` : 'not picked';
+}
+
+export function contactAvailability(l: ContactFields, found: PersonFields[] = []): Assessment {
   if (!l.contactName) {
     // The search itself failed: nobody was looked for, so "nobody found" would be wrong.
     if (l.refetchPending && l.lastError?.startsWith('Contacts not searched')) return { label: 'Search failed', tone: 'warning', detail: l.lastError };
+    // People were found but none is the main contact: say who, and why not.
+    if (found.length && l.status !== 'New' && l.status !== 'Processing') {
+      const who = found.map((p) => `${p.name} (${notMainBecause(p, l.city)})`).join('; ');
+      return {
+        label: `${found.length} found, no main contact`,
+        tone: 'warning',
+        detail: `${who}. Use "Make main contact" to choose one now.`,
+      };
+    }
     const detail =
       l.status === 'Needs Review' || l.status === 'Disqualified' || l.qualified === false
         ? 'Contacts are searched once the company is a confirmed fit.'

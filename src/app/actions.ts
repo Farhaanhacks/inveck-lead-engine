@@ -19,6 +19,7 @@ import { recordPresence } from '@/lib/attendance';
 import { getCurrentUser, verifyLogin } from '@/lib/users';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
+import { refreshMainEmail } from '@/lib/email-refresh';
 import { KnownBranches } from '@/lib/branches';
 import { newContactNamed } from '@/lib/escalate';
 import { redraftForContact } from '@/lib/pipeline/redraft';
@@ -376,9 +377,21 @@ export async function makePrimaryAction(form: FormData) {
   const leadId = await makePrimary(db, Number(str(form, 'personId')), { byTeam: true });
   if (leadId) {
     // A new point of contact: the tier is worked out again, calls count afresh, and the email is rewritten for them.
-    await db.update(leads).set({ contactTier: '' }).where(eq(leads.id, leadId));
+    const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
+    // Someone to reach again: a lead waiting for a contact goes back to waiting for approval.
+    const reachable = !!lead && (!!lead.contactLinkedin || !!lead.contactEmail);
+    await db
+      .update(leads)
+      .set({ contactTier: '', ...(lead?.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
+      .where(eq(leads.id, leadId));
     await newContactNamed(db, leadId);
-    after(async () => redraftForContact(await getDb(), await liveServices(), leadId));
+    after(async () => {
+      const [db2, svc] = await Promise.all([getDb(), liveServices()]);
+      // The main contact is the one person paid email lookups (Prospeo, Apollo) are spent on.
+      const [now] = await db2.select().from(leads).where(eq(leads.id, leadId));
+      if (now) await refreshMainEmail(db2, svc, now, { left: svc.settings.emailLookupsPerCompany }).catch(() => {});
+      await redraftForContact(db2, svc, leadId);
+    });
     refreshLeadPages(leadId);
     revalidatePath('/today');
   }
