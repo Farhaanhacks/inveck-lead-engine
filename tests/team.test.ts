@@ -1436,6 +1436,24 @@ describe("INVECK's own lead list", () => {
     expect(known.has('Swastik Pipe Ltd', '', 'Mumbai')).toBe('');
     // No location given: the company is skipped wherever its plant is.
     expect(known.has('UKB Electronics', '', 'Pune')).toBe('lead');
+    // Spelling differences in their sheet still match: brackets, former names, plurals, city names.
+    const sheet = new KnownBranches(
+      [
+        { company: 'OPG Mobility (Formerly known as Okaya EV)', website: '', city: '' },
+        { company: 'Deepak Fertilisers and Petrochemicals Corporation Limited (DFPCL)', website: '', city: 'Pune, Maharashtra' },
+        { company: 'Pernod Ricard India', website: '', city: 'Gurgaon' },
+      ],
+      [],
+    );
+    expect(sheet.has('Okaya EV', '', 'Neemrana')).toBe('lead');
+    expect(sheet.has('OPG Mobility', '', 'Faridabad')).toBe('lead');
+    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Pune')).toBe('lead');
+    // Another town is another plant, even in the same metro.
+    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Chakan')).toBe('');
+    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Taloja')).toBe('');
+    expect(sheet.has('Pernod Ricard', '', 'Gurugram')).toBe('lead');
+    expect(known.has('Swastik Pipes Ltd', '', 'New Delhi')).toBe('lead');
+    expect(known.has('Swastik Industries', '', 'New Delhi')).toBe('');
   });
 
   it('clears the current leads once before handover, keeping logins, ICPs, clients and the own-lead list', async () => {
