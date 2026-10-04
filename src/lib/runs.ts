@@ -310,8 +310,11 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           );
           refetched++;
         } catch (e) {
-          // Not retried in a loop: the lead keeps the contacts it had, and the next contact check covers it.
-          await db.update(leads).set({ refetchPending: false, refetchClaimedAt: null }).where(eq(leads.id, lead.id));
+          // Not retried in a loop: the lead keeps the contacts it had. A failed search (out of credits,
+          // say) stays waiting and is tried again on a later run (the claim holds it for 15 minutes);
+          // anything else is left to the next contact check.
+          const searchDown = /LinkedIn search failed/.test(errorMessage(e)) && !lead.contactName;
+          await db.update(leads).set(searchDown ? { lastError: `Contacts not searched: ${errorMessage(e).slice(0, 160)}. Searched again automatically on a later run.` } : { refetchPending: false, refetchClaimedAt: null }).where(eq(leads.id, lead.id));
           await log(`${lead.company}: finding contacts again failed, kept the contacts it had: ${errorMessage(e)}`, 'error', lead.id);
         }
       });

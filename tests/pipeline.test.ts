@@ -596,6 +596,22 @@ describe('finding contacts again while search is down', () => {
   });
 });
 
+describe('a company with no contact while search is down', () => {
+  it('says the search failed and keeps it waiting for a later run, without retrying in a loop', async () => {
+    const [l] = await db
+      .insert(leads)
+      .values({ company: 'Mojj Engineering Systems Limited', website: 'mojjpune.com', city: 'Pune', segment: 'Manufacturing', status: 'Needs Manual Contact', qualified: true, fitScore: 8, researchSummary: 'Mojj makes process equipment.', refetchPending: true })
+      .returning();
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    const svc = { ...services(), keys: { ...services().keys, serper: 'wrong-key' } };
+    expect(await executeRun(db, run.id, svc, Number.POSITIVE_INFINITY)).toBe('done');
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.refetchPending).toBe(true);
+    expect(after.lastError).toMatch(/^Contacts not searched: .*Searched again automatically on a later run\.$/);
+    expect(after.contactName).toBe('');
+  });
+});
+
 describe('stopping a run that is finding contacts again', () => {
   it('stops, and drops the rest of the queue so it does not start again by itself', async () => {
     const rows = await db

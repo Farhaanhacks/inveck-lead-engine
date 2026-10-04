@@ -58,11 +58,14 @@ export function riskAssessment(l: Pick<Lead, 'riskFlags' | 'fitStatus'>): Assess
   return { label: l.fitStatus ? 'None found' : 'Not checked', tone: 'neutral', detail: '' };
 }
 
-type ContactFields = Pick<Lead, 'contactName' | 'contactTitle' | 'contactEmail' | 'emailStatus' | 'contactLinkedin' | 'contactVerifiedAt' | 'city' | 'status' | 'qualified'>;
+type ContactFields = Pick<Lead, 'contactName' | 'contactTitle' | 'contactEmail' | 'emailStatus' | 'contactLinkedin' | 'contactVerifiedAt' | 'city' | 'status' | 'qualified'> &
+  Partial<Pick<Lead, 'refetchPending' | 'lastError'>>;
 
 /** Whether there is someone to contact, and how they can be reached. Separate from the fit. */
 export function contactAvailability(l: ContactFields): Assessment {
   if (!l.contactName) {
+    // The search itself failed: nobody was looked for, so "nobody found" would be wrong.
+    if (l.refetchPending && l.lastError?.startsWith('Contacts not searched')) return { label: 'Search failed', tone: 'warning', detail: l.lastError };
     const detail =
       l.status === 'Needs Review' || l.status === 'Disqualified' || l.qualified === false
         ? 'Contacts are searched once the company is a confirmed fit.'

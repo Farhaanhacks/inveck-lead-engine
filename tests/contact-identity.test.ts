@@ -131,3 +131,24 @@ describe('roles read by function and seniority', () => {
     expect(contactPriority('Plant Head', mfg)).toBeLessThan(contactPriority('Manufacturing Manager', mfg));
   });
 });
+
+describe('Mojj Engineering: the owner-director, and a search that failed', () => {
+  it("ranks a bare Director or Owner as the company's top (last resort), never a functional director outside the lists", () => {
+    const mfg = DEFAULT_ICPS[0];
+    for (const t of ['Director', 'Owner', 'Founder & CEO', 'Executive Director']) expect(contactPriority(t, mfg)).toBe(50);
+    for (const t of ['Director - Marketing', 'Director Projects', 'Technical Director', 'Board Member']) expect(contactPriority(t, mfg)).toBe(99);
+    expect(contactPriority('Plant Head', mfg)).toBeLessThan(contactPriority('Director', mfg));
+  });
+
+  it('reads "Ltd" and "Limited" as the same company', () => {
+    expect(sameFirm('Mojj Engineering Systems Ltd', 'Mojj Engineering Systems Limited')).toBe(true);
+    expect(sameFirm('MOJJ Engineering Systems Ltd.', 'Mojj Engineering Systems Limited')).toBe(true);
+  });
+
+  it('shows a failed search as failed, not as "nobody found"', async () => {
+    const { contactAvailability } = await import('@/lib/fit-view');
+    const base = { contactName: '', contactTitle: '', contactEmail: '', emailStatus: '', contactLinkedin: '', contactVerifiedAt: null, city: 'Pune', status: 'Needs Manual Contact' as const, qualified: true };
+    expect(contactAvailability({ ...base, refetchPending: true, lastError: 'Contacts not searched: the LinkedIn search failed (Not enough credits). Searched again automatically on a later run.' })).toMatchObject({ label: 'Search failed' });
+    expect(contactAvailability(base).detail).toContain('Nobody on the ICP lists');
+  });
+});

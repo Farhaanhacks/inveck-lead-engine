@@ -82,9 +82,16 @@ function functionsOf(text: string): string[] {
   return FUNCTIONS.filter(([, re]) => re.test(text)).map(([f]) => f);
 }
 
+/** The person at the top of the company, written without a function: "Director", "Owner", "Founder & CEO". */
+const TOP_ONLY = /^(?:(?:managing|whole ?time|executive|joint managing)?\s*director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|chairperson|ceo|md|president)(?:\s+(?:and|cum)?\s*(?:managing|whole ?time|executive)?\s*(?:director|owner|founder|co-?founder|proprietor|promoter|partner|chairman|ceo|md))*$/;
+
 function tierByFunction(t: string[], icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles'>): Tier {
   const title = t.join(' ');
-  const wanted = new Set(functionsOf(tokens([icp.targetTitles, icp.p2Titles, icp.p3Titles].join(' ')).join(' ')));
+  const lists = tokens([icp.targetTitles, icp.p2Titles, icp.p3Titles].join(', ')).join(' ');
+  // A small company's owner-director is its decision-maker: wanted where the lists name the top
+  // (Managing Director), and ranked last (contactPriority), for when nobody else is found.
+  if (TOP_ONLY.test(title) && /\b(md|ceo|owner|founder|director|proprietor)\b/.test(lists)) return 'P1';
+  const wanted = new Set(functionsOf(lists));
   if (!functionsOf(title).some((f) => wanted.has(f))) return '';
   if (HEAD_LEVEL.test(title)) return 'P1';
   if (MANAGER_LEVEL.test(title)) return 'P2';

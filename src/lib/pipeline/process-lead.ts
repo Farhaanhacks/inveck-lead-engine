@@ -1,5 +1,5 @@
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { belongsTo, emailLabel, findEmail, searchWebEmails, emailProviders, type LookupBudget, type EmailFormatUsed, type EmailResult } from './emails';
 import { fillPattern, lookupEmailFormat, patternLabel } from './email-format';
@@ -208,7 +208,13 @@ export async function processLead(
     findSignals(svc, lead.company),
   ]);
   if (news.signals.length) await log(`${lead.company}: buying signal: ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
-  if (linkedin.error) notes.push('LinkedIn search error: ' + linkedin.error);
+  if (linkedin.error) {
+    notes.push('LinkedIn search error: ' + linkedin.error);
+    await log(`${lead.company}: LinkedIn search failed: ${linkedin.error}${/credit/i.test(linkedin.error) ? ' (Google search, SERPER_API_KEY, is out of credits)' : ''}`, 'error');
+  }
+  // The search failed and found nobody: "nobody found" would be wrong, so contacts are searched
+  // again on a later run (research and draft kept).
+  const searchFailed = !!linkedin.error && !linkedin.people.length;
   // Finding contacts again must not replace good ones with nothing because the search is down.
   if (opts.contactsOnly && linkedin.error && !linkedin.people.length) throw new Error('LinkedIn search failed: ' + linkedin.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
@@ -229,6 +235,21 @@ export async function processLead(
         !atOtherSite(c, lead.city) &&
         !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
   );
+  // The best-ranked people whose location the search result didn't show: looked up by name, so
+  // they can be confirmed at the site (or not) instead of being set aside for a missing location.
+  const unplaced = rankCandidates(
+    candidates.filter((c) => c.source === 'LinkedIn' && !c.location?.trim() && contactPriority(c.title, icp) < 99),
+    icp,
+    lead.city,
+  ).slice(0, 3);
+  for (const c of lead.city ? unplaced : []) {
+    try {
+      const profile = await findLinkedinProfile(svc, c.name, lead.company, { title: c.title, city: lead.city });
+      if (profile?.employer === 'here' && profile.location) c.location = profile.location;
+    } catch {
+      // Left without a location: not the main contact this time.
+    }
+  }
   const published = websiteEmails(siteText, domain);
   const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
   const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes, icp);
@@ -300,6 +321,11 @@ export async function processLead(
   if (contact.name && !lookupFailed) update.contactCheckedAt = new Date();
   // Confirmed at this company and site, or not (the morning draw holds back an unconfirmed contact).
   update.contactVerifiedAt = contact.name && vetted.verified ? new Date() : null;
+
+  if (searchFailed && !contact.name) {
+    update.refetchPending = true;
+    update.lastError = `Contacts not searched: the LinkedIn search failed (${linkedin.error.slice(0, 120)}). Searched again automatically on a later run.`;
+  }
 
   // Contacts reset on a lead already in outreach: new people, same stage, no new first email.
   if (opts.contactsOnly && !BEFORE_OUTREACH.includes(lead.status)) {
