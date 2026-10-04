@@ -24,8 +24,8 @@ export const settingsSchema = z.object({
   radarEnabled: z.boolean().default(true),
   /** Most new companies the prospect search adds per run. */
   prospectsPerRun: z.coerce.number().int().min(1).max(50).default(15),
-  /** On scheduled runs, also search for new prospects on this weekday (0 = Sunday … 6 = Saturday, -1 = never). */
-  prospectDay: z.coerce.number().int().min(-1).max(6).default(1),
+  /** On scheduled runs, also search for new prospects on this weekday (0 = Sunday … 6 = Saturday, 7 = every weekday Monday to Friday, -1 = never). */
+  prospectDay: z.coerce.number().int().min(-1).max(7).default(1),
   aiProvider: z.enum(['deepseek', 'anthropic']).default('deepseek'),
   aiModel: z.string().trim().min(1).default('deepseek-chat'),
   aiEffort: z.enum(['low', 'medium', 'high']).default('medium'),

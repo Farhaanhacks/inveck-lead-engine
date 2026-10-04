@@ -1397,3 +1397,39 @@ describe('emails are not kept anywhere', () => {
     expect(TRACKER_HEADERS.some((h) => /email id/i.test(h))).toBe(false);
   });
 });
+
+describe("INVECK's own lead list", () => {
+  it('imports a CSV of companies by Company and Website columns, skipping ones already on the list', async () => {
+    const db = await getDb();
+    const { importKnownCompanies, listKnownCompanies } = await import('@/lib/known-companies');
+    const { parseCsv } = await import('@/lib/csv');
+    const r1 = await importKnownCompanies(db, parseCsv('Sr No,Company Name,Website,Owner\n1,Mojj Engineering Systems Ltd,mojjpune.com,Puja\n2,RR Kabel,https://www.rrkabel.com/,Anchal\n3,,x.com,Puja\n'));
+    expect(r1).toEqual({ added: 2, skipped: 0 });
+    const r2 = await importKnownCompanies(db, parseCsv('Company,Website\nMOJJ ENGINEERING SYSTEMS LIMITED,\nNBC Bearings,rrkabel.com\nNBC Bearings,nbcbearings.com\n'));
+    expect(r2.added).toBe(1);
+    const list = await listKnownCompanies(db);
+    expect(list.map((k) => k.company)).toEqual(expect.arrayContaining(['Mojj Engineering Systems Ltd', 'RR Kabel', 'NBC Bearings']));
+    expect(list.find((k) => k.company === 'RR Kabel')?.website).toBe('rrkabel.com');
+  });
+
+  it('clears the current leads once before handover, keeping logins, ICPs, clients and the own-lead list', async () => {
+    const db = await getDb();
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const { clients, knownCompanies, settings } = await import('@/lib/db/schema');
+    const { sql } = await import('drizzle-orm');
+    // Simulate a database from before the clear: leads, a client, an own-lead entry, no marker yet.
+    await db.delete(settings).where(eq(settings.key, 'clearLeadsV2'));
+    await db.insert(leads).values(lead('Old Lead Co'));
+    await db.insert(clients).values({ company: 'Kept Client' });
+    await db.insert(knownCompanies).values({ company: 'Kept Own Lead' });
+    for (const s of SCHEMA_STATEMENTS.filter((s) => s.includes('clearLeadsV2'))) await db.execute(sql.raw(s));
+    expect(await db.select().from(leads)).toEqual([]);
+    expect((await db.select().from(clients)).some((c) => c.company === 'Kept Client')).toBe(true);
+    expect((await db.select().from(knownCompanies)).some((k) => k.company === 'Kept Own Lead')).toBe(true);
+    expect((await db.select().from(users)).length).toBeGreaterThan(0);
+    // Runs once: new leads after it are never cleared again.
+    await db.insert(leads).values(lead('New Lead Co'));
+    for (const s of SCHEMA_STATEMENTS.filter((s) => s.includes('clearLeadsV2'))) await db.execute(sql.raw(s));
+    expect((await db.select().from(leads)).map((l) => l.company)).toEqual(['New Lead Co']);
+  });
+});

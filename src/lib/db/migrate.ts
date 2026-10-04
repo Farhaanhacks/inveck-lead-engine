@@ -465,4 +465,25 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE people SET email = '', email_status = '', email_source = '', email_verification = '', email_provider_status = '', email_retrieved_at = NULL
     WHERE email <> '' OR email_status <> '' OR email_source <> '' OR email_retrieved_at IS NOT NULL`,
   `DELETE FROM enrichment_cache WHERE key LIKE 'apollo:%' OR key LIKE 'prospeo:%'`,
+  `CREATE TABLE IF NOT EXISTS known_companies (
+    id SERIAL PRIMARY KEY,
+    company TEXT NOT NULL,
+    website TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
+  // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
+  // clients list and the list of INVECK's own leads stay. Runs once, then never again.
+  `DELETE FROM people WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM tasks WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM company_days WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM activities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM run_events WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM runs WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM opportunities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM prospect_results WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM prospect_searches WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM leads WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `DELETE FROM settings WHERE key = 'rrNext' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
+  `INSERT INTO settings (key, value) VALUES ('clearLeadsV2', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
 ];

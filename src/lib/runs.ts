@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { Db } from './db';
+import { listKnownCompanies } from './known-companies';
 import { clients, icps, leads, prospectResults, prospectSearches, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
 import { findProspects, type ProspectHistory } from './pipeline/prospects';
@@ -193,7 +194,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     if (run.findProspects && !run.prospectsDone) {
       await log('Finding new prospects');
       try {
-        const known = await db.select({ company: leads.company, website: leads.website }).from(leads);
+        // Every lead, and the companies in INVECK's own lead lists: never offered again.
+        const known = [...(await db.select({ company: leads.company, website: leads.website }).from(leads)), ...(await listKnownCompanies(db))];
         const found = await findProspects(svc, activeIcps, clientList, known, (m, l) => log(m, l), await prospectHistory(db, runId));
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });

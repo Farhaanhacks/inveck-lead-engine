@@ -38,6 +38,7 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
             <label htmlFor="prospectDay" className="label">Prospect search on scheduled runs</label>
             <select id="prospectDay" name="prospectDay" defaultValue={s.prospectDay} className="field">
               <option value={-1}>Never (manual only)</option>
+              <option value={7}>Every weekday (Monday to Friday)</option>
               {DAYS.map((d, i) => (
                 <option key={d} value={i}>Every {d}</option>
               ))}

@@ -1,10 +1,11 @@
-import { asc } from 'drizzle-orm';
+import { asc, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { clients, icps, type Icp } from '@/lib/db/schema';
+import { clients, icps, knownCompanies, type Icp } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
 import { deleteIcpAction, saveIcpAction } from '../../actions';
 import { ClientsGrid } from './clients-grid';
+import { KnownCompanies } from './known-companies';
 import { adminPage } from '@/lib/access';
 import { icpCriteria, KIND_LABEL } from '@/lib/pipeline/fit';
 
@@ -93,9 +94,11 @@ export default async function TargetsPage({ searchParams }: PageProps<'/targets'
   const sp = await searchParams;
   const icpError = typeof sp.icpError === 'string' ? sp.icpError.slice(0, 300) : '';
   const db = await getDb();
-  const [icpList, clientList] = await Promise.all([
+  const [icpList, clientList, [{ knownCount }], knownSample] = await Promise.all([
     db.select().from(icps).orderBy(asc(icps.id)),
     db.select().from(clients).orderBy(asc(clients.id)),
+    db.select({ knownCount: sql<number>`count(*)::int` }).from(knownCompanies),
+    db.select({ company: knownCompanies.company }).from(knownCompanies).orderBy(asc(knownCompanies.id)).limit(8),
   ]);
 
   return (
@@ -137,6 +140,12 @@ export default async function TargetsPage({ searchParams }: PageProps<'/targets'
         Clients are never researched or contacted, and the prospect search finds companies like them. Leads marked Won are added here automatically.
       </p>
       <ClientsGrid clients={clientList} />
+
+      <h2 id="own-leads" className="mt-10 mb-1 scroll-mt-6 text-sm font-semibold">Leads INVECK already has</h2>
+      <p className="mb-3 text-sm text-ink-2">
+        Companies already in the team&apos;s own lead lists. The prospect search and the new facility radar never offer them again.
+      </p>
+      <KnownCompanies count={knownCount} sample={knownSample.map((k) => k.company)} />
     </>
   );
 }

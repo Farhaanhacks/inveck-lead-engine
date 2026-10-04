@@ -164,6 +164,18 @@ export const clients = pgTable('clients', {
 });
 export type Client = typeof clients.$inferSelect;
 
+/**
+ * Companies INVECK already has in its own lead lists (uploaded from a CSV): never offered again by the
+ * prospect search or the new facility radar.
+ */
+export const knownCompanies = pgTable('known_companies', {
+  id: serial('id').primaryKey(),
+  company: text('company').notNull(),
+  website: text('website').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type KnownCompany = typeof knownCompanies.$inferSelect;
+
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: jsonb('value').notNull(),

@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, clients, icps, leads, opportunities, people, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { activities, clients, icps, knownCompanies as ownLeadList, leads, opportunities, people, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { applyStage } from '@/lib/stages';
 import { makePrimary } from '@/lib/people';
@@ -27,6 +27,7 @@ import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib
 import { domainOf } from '@/lib/pipeline/text';
 import { CLIENT_FIELDS, describeImport, importClients, markClientLeads, rowsToClients, type ClientField } from '@/lib/clients';
 import { parseCsv } from '@/lib/csv';
+import { describeKnownImport, importKnownCompanies } from '@/lib/known-companies';
 import { canonicalSegment, normSegment } from '@/lib/icp-match';
 import { confirmFit, markNotFit, reassessLeads, recordAssessments } from '@/lib/reassess';
 import { cleanContact, contactFields, saveContactEdit } from '@/lib/contact-edit';
@@ -572,6 +573,30 @@ export async function importClientsFileAction(form: FormData) {
     return { ok: false, message: 'That’s an Excel file. In Excel choose File → Save As → CSV (UTF-8), then upload the CSV.' };
   }
   return importClientsTextAction(await file.text());
+}
+
+/** A CSV of the companies already in INVECK's own lead lists: the prospect search and radar skip them. */
+export async function importKnownCompaniesAction(form: FormData) {
+  await requireAdmin();
+  const file = form.get('file');
+  if (!(file instanceof File) || !file.size) return { ok: false, message: 'Choose a CSV file.' };
+  if (file.size > 5_000_000) return { ok: false, message: 'That file is over 5 MB. Split it into smaller files.' };
+  const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  if ((bytes[0] === 0x50 && bytes[1] === 0x4b) || (bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
+    return { ok: false, message: 'That’s an Excel file. In Excel choose File → Save As → CSV (UTF-8), then upload the CSV.' };
+  }
+  const rows = parseCsv((await file.text()).slice(0, 5_000_000));
+  if (rows.length < 2) return { ok: false, message: 'Nothing to import: the file needs a header row and at least one company.' };
+  const result = await importKnownCompanies(await getDb(), rows);
+  revalidatePath('/targets');
+  return { ok: true, message: describeKnownImport(result) };
+}
+
+/** Empties the list of companies from INVECK's own lead lists. */
+export async function clearKnownCompaniesAction() {
+  await requireAdmin();
+  await (await getDb()).delete(ownLeadList);
+  revalidatePath('/targets');
 }
 
 /** One cell edited in the client grid. */

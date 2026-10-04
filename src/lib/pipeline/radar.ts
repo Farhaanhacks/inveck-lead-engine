@@ -1,6 +1,6 @@
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../db';
-import { clients, icps, leads, opportunities, settings, type Icp } from '../db/schema';
+import { clients, icps, knownCompanies, leads, opportunities, settings, type Icp } from '../db/schema';
 import { logActivity } from '../activity';
 import { askJson } from './ai';
 import { RADAR_PROMPT } from './prompts';
@@ -99,12 +99,14 @@ export async function scanRadar(
 
   // Skip what we already know: clients, the same branch already a lead, and earlier openings at the same
   // place. A new plant or warehouse of a company that's already a lead elsewhere is a new branch lead.
-  const [leadRows, clientRows, earlier] = await Promise.all([
+  const [leadRows, clientRows, ownLeads, earlier] = await Promise.all([
     db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads),
     db.select({ company: clients.company, website: clients.website }).from(clients),
+    // Companies in INVECK's own lead lists: skipped like clients, whatever the branch.
+    db.select({ company: knownCompanies.company, website: knownCompanies.website }).from(knownCompanies),
     db.select({ company: opportunities.company, location: opportunities.location, url: opportunities.url }).from(opportunities).orderBy(desc(opportunities.id)).limit(2000),
   ]);
-  const known = new KnownBranches([...leadRows, ...earlier.map((e) => ({ company: e.company, website: '', city: e.location }))], clientRows);
+  const known = new KnownBranches([...leadRows, ...earlier.map((e) => ({ company: e.company, website: '', city: e.location }))], [...clientRows, ...ownLeads]);
   const knownUrls = new Set(earlier.map((e) => e.url));
 
   const rows: (typeof opportunities.$inferInsert)[] = [];

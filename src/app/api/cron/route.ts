@@ -9,7 +9,7 @@ export const maxDuration = 300;
 
 /**
  * The scheduled run (see vercel.json). Researches new leads every time, and also looks
- * for new prospects on the weekday chosen in Settings. Vercel sends CRON_SECRET as a
+ * for new prospects on the weekday chosen in Settings (or every weekday). Vercel sends CRON_SECRET as a
  * bearer token.
  */
 export async function GET(request: Request) {
@@ -20,7 +20,9 @@ export async function GET(request: Request) {
   const settings = await getSettings(db);
   // The schedule runs on India time; work out today's weekday there.
   const weekdayIst = new Date(Date.now() + 5.5 * 3600 * 1000).getUTCDay();
-  const { run, created } = await startRun(db, { findProspects: settings.prospectDay === weekdayIst, trigger: 'schedule' });
+  // 7 = every weekday: the schedule itself only runs Monday to Friday.
+  const findProspects = settings.prospectDay === 7 ? weekdayIst >= 1 && weekdayIst <= 5 : settings.prospectDay === weekdayIst;
+  const { run, created } = await startRun(db, { findProspects, trigger: 'schedule' });
   if (created) {
     const origin = new URL(request.url).origin;
     after(() => driveRun(run.id, origin));
