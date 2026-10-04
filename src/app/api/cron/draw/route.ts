@@ -4,6 +4,7 @@ import { getDraw, runDailyDraw } from '@/lib/draw';
 import { liveServices } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
+import { ensureSequences } from '@/lib/tasks';
 
 export const maxDuration = 300;
 
@@ -22,7 +23,9 @@ export async function GET(request: Request) {
   for (const id of promoted) await redraftForContact(db, svc, id);
   const checked = await verifyContacts(db, svc, { limit: 200 });
   const drawn = await runDailyDraw(db);
+  // Every owned lead's steps on its owner's Today now, not only once someone opens the page.
+  const planned = await ensureSequences(db);
   // Qualified leads missing an email or LinkedIn draft (none written yet, or the AI dropped one).
   const drafted = await fillMissingDrafts(db, svc, { limit: 15 });
-  return Response.json({ promoted: promoted.length, checked, drafted, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
+  return Response.json({ promoted: promoted.length, checked, drafted, planned, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
 }
