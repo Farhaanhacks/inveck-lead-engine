@@ -12,7 +12,7 @@ function Message({ state }: { state?: { ok: boolean; message: string } }) {
   );
 }
 
-export function AddLeadForms({ segments, team }: { segments: string[]; team: { id: number; name: string }[] }) {
+export function AddLeadForms({ segments, allSegments, team }: { segments: string[]; allSegments: string[]; team: { id: number; name: string }[] }) {
   const [one, addOne] = useActionState(addLeadAction, undefined);
   const [many, addMany] = useActionState(addLeadsBulkAction, undefined);
   const [sheet, addSheet] = useActionState(importContactSheetAction, undefined);
@@ -131,9 +131,9 @@ export function AddLeadForms({ segments, team }: { segments: string[]; team: { i
           </div>
           <div>
             <label htmlFor="sheet-segment" className="label">Segment *</label>
-            <select id="sheet-segment" name="segment" required defaultValue={segments.find((s) => /\bca\b|chartered/i.test(s)) ?? ''} className="field">
+            <select id="sheet-segment" name="segment" required defaultValue={allSegments.find((s) => /\bca\b|chartered/i.test(s)) ?? ''} className="field">
               <option value="" disabled>Choose an ICP</option>
-              {segments.map((s) => (
+              {allSegments.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>

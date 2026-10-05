@@ -622,8 +622,11 @@ describe('contacts: the review of the contact pipeline', () => {
     await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: null, known: new KnownBranches([], []), by: 'Puja' });
     const [lead] = await db.select().from(leads).where(eq(leads.company, 'ALPHA & CO'));
     // The AI would call it not a fit: the team's call stands.
-    const r = await run(lead, { research: (user) => kltAnswer(user, { qualified: false, fit_score: 2 }), google: () => [] });
+    // CA Firms switched off for the prospect search: the team's list is still worked under it.
+    const off = (await allIcps()).map((i) => (i.segment === 'CA Firms' ? { ...i, active: false } : i));
+    const r = await run(lead, { research: (user) => kltAnswer(user, { qualified: false, fit_score: 2 }), google: () => [] }, off);
     expect(r.status).toBe('Awaiting Approval');
+    expect(r.segment ?? 'CA Firms').toBe('CA Firms');
     expect(r.contactName ?? lead.contactName).toBe('Ravi Kumar');
     const names = (await db.select().from(people).where(eq(people.leadId, lead.id))).map((p) => p.name);
     expect(names).toContain('Meena Iyer');
