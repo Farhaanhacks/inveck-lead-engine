@@ -1,3 +1,4 @@
+import { bestEffort } from '@/lib/best-effort';
 import Link from 'next/link';
 import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
@@ -409,10 +410,11 @@ type TabKey = (typeof TABS)[number]['key'];
 export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const me = (await getCurrentUser())!;
   const db = await getDb();
-  await assignUnowned(db);
-  await runDailyDraw(db);
-  await startRefetchIfWaiting();
-  await ensureSequences(db);
+  // Housekeeping before the list is drawn; none of it can stop the page from showing.
+  await bestEffort('assigning inbound leads', () => assignUnowned(db), 0);
+  await bestEffort('the morning draw', () => runDailyDraw(db), null);
+  await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
+  await bestEffort('planning Today steps', () => ensureSequences(db), 0);
 
   const team = await listBdas(db);
   const sp = await searchParams;
@@ -420,15 +422,21 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const viewId = me.role === 'admin' ? (team.find((b) => b.id === asked)?.id ?? team[0]?.id ?? 0) : me.id;
   // The right person on every card before it's drawn (a plant head over someone off the lists, nobody
   // who has left); anything not yet checked on LinkedIn is checked right after the page is sent.
-  const switched = viewId ? await tidyContacts(db, { ownerId: viewId }) : [];
+  const switched = viewId ? await bestEffort('tidying contacts', () => tidyContacts(db, { ownerId: viewId }), [] as number[]) : [];
   // Main contacts due today that were never checked on LinkedIn are checked before the cards are drawn
   // (a few seconds at most; whatever's left carries on after the page is sent).
   if (viewId) {
-    const svc = await liveServices();
-    await Promise.race([
-      verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10 }),
-      new Promise((resolve) => setTimeout(resolve, 8000)),
-    ]);
+    await bestEffort(
+      "checking today's contacts on LinkedIn",
+      async () => {
+        const svc = await liveServices();
+        await Promise.race([
+          verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10 }),
+          new Promise((resolve) => setTimeout(resolve, 8000)),
+        ]);
+      },
+      undefined,
+    );
   }
   after(async () => {
     const d = await getDb();
