@@ -20,6 +20,20 @@ export async function GET() {
     const [row] = (await db.execute(sql`select count(*)::int as n from leads`)) as unknown as { n: number }[];
     return Response.json({ ok: true, database: 'reachable', leads: row?.n ?? null, ms: Date.now() - started });
   } catch (e) {
-    return Response.json({ ok: false, databaseConfigured: configured, error: safe(e), ms: Date.now() - started }, { status: 503 });
+    // The database's own reason is on the wrapped error (drizzle's "Failed query" hides it).
+    const cause = (e as { cause?: { message?: string; code?: string; severity?: string; detail?: string; hint?: string } })?.cause;
+    return Response.json(
+      {
+        ok: false,
+        reason: cause ? safe(cause) : safe(e),
+        code: cause?.code ?? '',
+        detail: cause?.detail ? safe(cause.detail) : '',
+        hint: cause?.hint ? safe(cause.hint) : '',
+        databaseConfigured: configured,
+        failedStep: safe(e).slice(0, 80),
+        ms: Date.now() - started,
+      },
+      { status: 503 },
+    );
   }
 }
