@@ -85,8 +85,10 @@ export async function processLead(
     return { status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
   }
 
-  // Already in INVECK's own lead list at this location: the team has it, so it isn't researched here.
-  if (!opts.contactsOnly && ctx.ownLeads?.has(lead.company, lead.website, lead.city)) {
+  // Already in INVECK's own lead list: the team has it, so it isn't researched here. A list the team
+  // imported themselves is theirs to work (often the same companies), so it is never set aside.
+  const imported = lead.source === IMPORTED_SOURCE;
+  if (!opts.contactsOnly && !imported && ctx.ownLeads?.has(lead.company, lead.website, lead.city)) {
     await log(`${lead.company}${lead.city ? ` (${lead.city})` : ''}: already in INVECK's own lead list, skipped`);
     return { status: 'Rejected', fitReason: OWN_LEAD_REASON, lastError: '' };
   }
@@ -159,7 +161,7 @@ export async function processLead(
       // The right name may be a client's, or on INVECK's own list.
       const client = matchClient({ company: lead.company, website }, ctx.clients);
       if (client) return { ...corrected, status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
-      if (!opts.contactsOnly && ctx.ownLeads?.has(lead.company, website, lead.city)) return { ...corrected, status: 'Rejected', fitReason: OWN_LEAD_REASON, lastError: '' };
+      if (!opts.contactsOnly && !imported && ctx.ownLeads?.has(lead.company, website, lead.city)) return { ...corrected, status: 'Rejected', fitReason: OWN_LEAD_REASON, lastError: '' };
     } else if (check.status === 'mismatch') {
       await log(`${lead.company}: needs review: company name not confirmed: ${check.evidence}`, 'warn');
       return {

@@ -1,3 +1,4 @@
+import { IMPORTED_SOURCE } from './contact-import';
 import { asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { knownCompanies, leads } from './db/schema';
@@ -104,8 +105,9 @@ const NOT_CONTACTED = ['New', 'Awaiting Approval', 'Approved', 'Needs Manual Con
  */
 export async function setAsideOwnLeads(db: Db, reason: string): Promise<string[]> {
   const own = new KnownBranches(await listKnownCompanies(db), []);
-  const open = await db.select({ id: leads.id, company: leads.company, website: leads.website, city: leads.city }).from(leads).where(inArray(leads.status, [...NOT_CONTACTED]));
-  const hits = open.filter((l) => own.has(l.company, l.website, l.city));
+  const open = await db.select({ id: leads.id, company: leads.company, website: leads.website, city: leads.city, source: leads.source }).from(leads).where(inArray(leads.status, [...NOT_CONTACTED]));
+  // A list the team imported themselves stays: they chose to work it.
+  const hits = open.filter((l) => l.source !== IMPORTED_SOURCE && own.has(l.company, l.website, l.city));
   for (const l of hits) {
     await db.update(leads).set({ status: 'Rejected', fitReason: reason, updatedAt: new Date() }).where(eq(leads.id, l.id));
     await logActivity(db, l.id, 'note', `Set aside: ${reason}.`);

@@ -641,6 +641,24 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(['Disqualified', 'Needs Review']).toContain(notFit.status);
   });
 
+  it("a firm the team imported is researched even when it is on INVECK's own lead list", async () => {
+    const { importContactSheet, parseContactSheet } = await import('@/lib/contact-import');
+    const { KnownBranches } = await import('@/lib/branches');
+    const { rows } = parseContactSheet([
+      ['Firm', 'Phone', 'Matched partner / proprietor', 'Role', 'LinkedIn 1'],
+      ['GAMMA & CO', '9800000004', '1. Anil G', 'Partner', 'https://in.linkedin.com/in/anil-g'],
+    ]);
+    await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: null, known: new KnownBranches([], []), by: 'Puja' });
+    const [lead] = await db.select().from(leads).where(eq(leads.company, 'GAMMA & CO'));
+    const own = new KnownBranches([{ company: 'Gamma & Co', website: '', city: '' }], []);
+    const r = await processLead(scriptedServices({ research: (user) => kltAnswer(user, { risks: [] }), google: () => [] }, seen), lead, { icps: await allIcps(), clients: [], ownLeads: own }, () => {});
+    expect(r.status).not.toBe('Rejected');
+    // A company the search found that is on the list is still set aside.
+    const found = await addLead({ company: 'Gamma & Co', segment: 'CA Firms', source: 'Found by prospect search' });
+    const f = await processLead(scriptedServices({ research: (user) => kltAnswer(user, { risks: [] }), google: () => [] }, seen), found, { icps: await allIcps(), clients: [], ownLeads: own }, () => {});
+    expect(f.status).toBe('Rejected');
+  });
+
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
     const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
     const results = [
