@@ -46,7 +46,9 @@ describe('leads go from the Leads list to Today on their own', () => {
     const open = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
     expect(open.some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
     expect(open.map((t) => t.kind)).toContain('call');
-    expect((await loadTodayTasks(db, owner, MONDAY)).some((t) => t.lead.id === l.id && t.task.kind === 'call')).toBe(true);
+    // Saving plans from the real day, so look on the day the first call is due.
+    const firstCall = open.filter((t) => t.kind === 'call').map((t) => t.dueDate).sort()[0];
+    expect((await loadTodayTasks(db, owner, firstCall)).some((t) => t.lead.id === l.id && t.task.kind === 'call')).toBe(true);
   });
 
   it('a named contact not yet confirmed at the site: the step asks to confirm them, or find someone', async () => {

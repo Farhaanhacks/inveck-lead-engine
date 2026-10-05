@@ -1,6 +1,6 @@
 import { KnownBranches } from '../branches';
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, confirmedAtSite, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, canBeMain, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
 import { buildSources } from './fit';
@@ -269,7 +269,7 @@ export async function processLead(
       c.source === 'Sales team' ||
       (currentEmployer(c, lead.company) !== 'elsewhere' &&
         // Based at another of the company's sites (unless their role covers the whole company).
-        !atOtherSite(c, lead.city) &&
+        !atOtherSite(c, lead.city, icp) &&
         !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
   );
   // The best-ranked people the search couldn't place (no location, or only "India" or a state, and no
@@ -330,7 +330,7 @@ export async function processLead(
   // no result showed. A corporate contact based in another city is never taken for a site contact.
   if (!contact.name && lead.city) {
     for (const p of update.people) {
-      if (p.source !== SOURCE_NAMES.LinkedIn || confirmedAtSite(p, lead.city)) continue;
+      if (p.source !== SOURCE_NAMES.LinkedIn || canBeMain({ ...p, title: p.title ?? '' }, lead.city, icp)) continue;
       const { standing, reason } = contactStanding({ ...p, title: p.title ?? '' }, icp, lead.city);
       p.passedAt = now;
       p.passedReason = 'unverified';
@@ -471,7 +471,7 @@ export async function vetPick(
           ? `${contact.name} left out: ${profile.evidence || "LinkedIn doesn't confirm a current job here"}`
           : profile.employer !== 'here'
           ? `${contact.name} left out: LinkedIn shows them at another company now${profile.title ? ` (${profile.title})` : ''}`
-          : !confirmedAtSite({ ...profile, title: profile.title || contact.title }, lead.city)
+          : !canBeMain({ ...profile, title: profile.title || contact.title }, lead.city, icp)
             ? `${contact.name} left out: ${siteEvidence({ ...profile, title: profile.title || contact.title }, lead.city)}, not confirmed at the ${lead.city} site`
             : unwanted
               ? `${contact.name} left out: LinkedIn shows their role is ${profile.title}, not one on the ICP lists`

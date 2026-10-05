@@ -221,7 +221,7 @@ describe('talk tracks', () => {
 });
 
 describe('contact priority (P1/P2/P3)', async () => {
-  const { tierOf } = await import('@/lib/tiers');
+  const { tierOf, contactPriority } = await import('@/lib/tiers');
   const { DEFAULT_ICPS } = await import('@/lib/db/seed');
   const [man, log] = DEFAULT_ICPS;
   it('ranks manufacturing titles however they are written', () => {
@@ -229,7 +229,11 @@ describe('contact priority (P1/P2/P3)', async () => {
     expect(tierOf('Vice President - Operations', man)).toBe('P1');
     expect(tierOf('Assistant Vice President, Operations', man)).toBe('P1');
     expect(tierOf('Head of Supply Chain', man)).toBe('P1');
-    expect(tierOf('Managing Director', man)).toBe('P1');
+    // The head of the company is never P1: kept only as the last resort.
+    expect(tierOf('Managing Director', man)).toBe('Top');
+    expect(tierOf('CEO', man)).toBe('Top');
+    expect(tierOf('Chief Executive Officer', man)).toBe('Top');
+    expect(contactPriority('Managing Director', man)).toBe(50);
     expect(tierOf('Inventory Manager', man)).toBe('P2');
     expect(tierOf('Deputy General Manager - Purchase', man)).toBe('P2');
     expect(tierOf('Stores Manager', man)).toBe('P3');
@@ -701,9 +705,10 @@ describe('who to contact first', () => {
       { leadId: klt.id, name: 'Asha Menon', title: 'Plant Head', source: 'LinkedIn', location: 'Chennai, Tamil Nadu, India' },
       { leadId: other.id, name: 'Rohit Patil', title: 'Plant Head', source: 'LinkedIn', location: 'Pune, Maharashtra, India' },
     ]);
-    expect(await promoteBetterContacts(db)).toEqual([other.id]);
+    // A P1 at another site (Asha, Plant Head in Chennai) comes before a P2 or P3 at this one.
+    expect((await promoteBetterContacts(db)).sort()).toEqual([klt.id, other.id].sort());
     const rows = Object.fromEntries((await db.select().from(leads)).map((l) => [l.company, l]));
-    expect(rows['KLT Automotive'].contactName).toBe('');
+    expect(rows['KLT Automotive'].contactName).toBe('Asha Menon');
     expect(rows['Rane Pune'].contactName).toBe('Rohit Patil');
     // One timeline entry for the change, with the reason.
     const notes = (await db.select().from(activities).where(eq(activities.leadId, other.id))).map((a) => a.text);
@@ -1134,10 +1139,11 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
       { title: 'Supply Chain Manager', location: '' },
       { title: 'Supply Chain Manager', location: 'Jaipur, Rajasthan, India' },
     ], icp, 'Jaipur');
-    expect(ranked.map((r) => r.location)).toEqual(['Jaipur, Rajasthan, India', '', 'Mumbai, Maharashtra, India']);
+    // P1 first wherever they are; within a tier, this site first.
+    expect(ranked.map((r) => r.location)).toEqual(['Mumbai, Maharashtra, India', 'Jaipur, Rajasthan, India', '']);
     const person = (id: number, name: string, title: string, location: string) =>
       ({ id, leadId: 1, name, title, location, email: '', emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null as Date | null, phone: '', linkedin: '', source: '', isPrimary: false, passedAt: null, passedReason: '', evidence: '', jobLocation: '', responsibility: '', whyNot: '', checkedAt: null, createdAt: new Date() });
-    expect(nextContact([person(1, 'Gurgaon Guy', 'Plant Head', 'Gurugram, Haryana, India'), person(2, 'Jaipur Lady', 'Store Manager', 'Jaipur, Rajasthan, India')], icp, 'Jaipur')?.person.name).toBe('Jaipur Lady');
+    expect(nextContact([person(1, 'Gurgaon Guy', 'Plant Head', 'Gurugram, Haryana, India'), person(2, 'Jaipur Lady', 'Store Manager', 'Jaipur, Rajasthan, India')], icp, 'Jaipur')?.person.name).toBe('Gurgaon Guy');
   });
 
   it('a recheck removes a saved contact based at another site', async () => {

@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm';
 import type { Db } from './db';
-import { leads, people } from './db/schema';
-import { confirmedAtSite } from './pipeline/contacts';
+import { icps, leads, people } from './db/schema';
+import { canBeMain } from './pipeline/contacts';
+import { icpFor } from './tiers';
 
 /** Before outreach, waiting on a contact or on approval: the statuses a contact change can move between. */
 const WAITING_FOR_CONTACT = 'Needs Manual Contact' as const;
@@ -31,11 +32,12 @@ export async function reconcileContactStatus(db: Db, leadId: number): Promise<st
   let confirmed = !!lead.contactVerifiedAt;
   if (!confirmed) {
     const [primary] = await db.select().from(people).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
+    const icp = icpFor(lead.segment, await db.select().from(icps));
     confirmed =
       !!primary &&
       !primary.passedAt &&
       primary.name.toLowerCase() === name.toLowerCase() &&
-      (primary.source === 'Sales team' || primary.source === 'Added by the team' || (!!primary.checkedAt && confirmedAtSite(primary, lead.city)));
+      (primary.source === 'Sales team' || primary.source === 'Added by the team' || (!!primary.checkedAt && canBeMain(primary, lead.city, icp)));
   }
   if (!confirmed) return null;
   await db.update(leads).set({ status: 'Awaiting Approval', updatedAt: new Date() }).where(eq(leads.id, leadId));

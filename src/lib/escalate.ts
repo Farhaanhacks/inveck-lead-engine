@@ -27,7 +27,8 @@ export async function unansweredCalls(db: Db, lead: Pick<Lead, 'id' | 'contactSi
  */
 export function nextContact(candidates: Person[], icp: Parameters<typeof tierOf>[1], city = ''): { person: Person; tier: Tier } | null {
   // Never someone known to be at another of the company's sites (company-wide roles aside).
-  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99 && personSite(p, city) !== 'elsewhere');
+  // At this site, or a P1 at another site (a P1 elsewhere before a P2 here).
+  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99 && (personSite(p, city) !== 'elsewhere' || tierOf(p.title, icp) === 'P1'));
   const person = rankCandidates(listed, icp, city)[0];
   return person ? { person, tier: tierOf(person.title, icp) } : null;
 }
@@ -113,7 +114,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   // The person moved past isn't tried again automatically.
   await db.update(people).set({ passedAt: now, passedReason: why === 'unverified' ? 'unverified' : 'tried', whyNot: reason }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
   await makePrimary(db, next.person.id);
-  const tier = next.tier === '' || next.tier === 'Avoid' ? '' : next.tier;
+  const tier = next.tier === '' || next.tier === 'Avoid' || next.tier === 'Top' ? '' : next.tier;
   await db.update(leads).set({ contactTier: tier, contactSince: now }).where(eq(leads.id, leadId));
   if (lead.ownerId) await restartSequence(db, leadId, lead.ownerId, now);
   await logActivity(db, leadId, 'note', `${reason}. Switched to ${tier ? `${tier} ` : ''}${next.person.name}${next.person.title ? `, ${next.person.title}` : ''}${lead.ownerId ? ', with a fresh plan from today' : ''}.`);

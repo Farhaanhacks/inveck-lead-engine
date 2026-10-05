@@ -604,9 +604,9 @@ describe('contacts: the review of the contact pipeline', () => {
       { title: 'Meena S - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', link: 'https://in.linkedin.com/in/meena-s', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present. Hosur, Tamil Nadu, India' },
     ];
     const r = await run(lead, { contactAiDown: true, research: (user) => kltAnswer(user, { risks: [] }), google: (q) => (q.startsWith('site:linkedin.com/in') ? results : []) });
-    // HR (role), Chennai (site), left in 2022 (employer), two current jobs (unverified): nobody is the main contact.
-    expect(r.contactName ?? '').toBe('');
-    expect(r.status).toBe('Needs Manual Contact');
+    // HR (role), left in 2022 (employer), two current jobs (unverified) are ruled out; the plant head
+    // at another site (Chennai) is a P1, which comes before anyone lower at this site.
+    expect(r.contactName).toBe('Vikram P');
     const meena = r.people?.find((p) => p.name === 'Meena S');
     expect(meena).toMatchObject({ isPrimary: false, passedReason: 'unverified' });
     expect(meena?.whyNot).toContain('needs verification');

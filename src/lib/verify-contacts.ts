@@ -4,7 +4,7 @@ import { activities, icps, leads, people, tasks, type Lead, type Person } from '
 import { logActivity } from './activity';
 import { reconcileContactStatus } from './contact-status';
 import { vagueLocation } from './pipeline/employer';
-import { atOtherSite, candidateRank, confirmedAtSite, findLinkedinProfile, rankCandidates, sameName, siteEvidence } from './pipeline/contacts';
+import { atOtherSite, canBeMain, candidateRank, findLinkedinProfile, rankCandidates, sameName, siteEvidence } from './pipeline/contacts';
 
 /** The places a profile shows, kept apart: where they live, where the job is, the site their title names. */
 function placeFields(profile: { location: string; jobLocation: string; responsibility: string } | null | undefined) {
@@ -111,7 +111,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     } catch {
       continue;
     }
-    const otherSite = !!profile && atOtherSite({ ...profile!, title: profile!.title || p.title }, lead.city);
+    const otherSite = !!profile && atOtherSite({ ...profile!, title: profile!.title || p.title }, lead.city, icp);
     if (profile?.employer === 'elsewhere' || profile?.abroad || otherSite) {
       await db.delete(people).where(eq(people.id, p.id));
       gone.push(`${p.name}${profile!.abroad || otherSite ? ` (based in ${profile!.location || 'another country'})` : profile!.title ? ` (now ${profile!.title})` : ''}`);
@@ -156,6 +156,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
 }
 
 async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, opts: { mainOnly?: boolean }): Promise<CheckResult> {
+  const icp = icpFor(lead.segment, await db.select().from(icps));
   await learnFirm(svc, lead.company, lead.website);
   await knowPlaces(svc, [lead.city]);
   // Without any search: drop people whose stored title already shows another employer, and move off a
@@ -194,7 +195,7 @@ async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, o
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
-  if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ ...profile, title: profile.title || lead.contactTitle }, lead.city)) {
+  if (profile && !profile.abroad && profile.employer !== 'elsewhere' && atOtherSite({ ...profile, title: profile.title || lead.contactTitle }, lead.city, icp)) {
     await moveOn(db, svc, lead, 'other_site', now, profile.location)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'left';
@@ -216,7 +217,7 @@ async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, o
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
     return 'not_found';
   }
-  if (!confirmedAtSite({ ...profile, title: profile.title || lead.contactTitle }, lead.city)) {
+  if (!canBeMain({ ...profile, title: profile.title || lead.contactTitle }, lead.city, icp)) {
     // At this company, but nothing shows they are at this site.
     await moveOn(db, svc, lead, 'unverified', now, `${siteEvidence({ ...profile, title: profile.title || lead.contactTitle }, lead.city)}, not confirmed at the ${lead.city} site`)
     await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, lead.id));
@@ -275,7 +276,7 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
       return 'skipped';
     }
     await db.update(people).set({ checkedAt: now, isPrimary: false, ...placeFields(profile) }).where(eq(people.id, p.id));
-    if (!profile || profile.abroad || profile.employer !== 'here' || !confirmedAtSite({ ...profile, title: profile.title || p.title }, lead.city)) continue;
+    if (!profile || profile.abroad || profile.employer !== 'here' || !canBeMain({ ...profile, title: profile.title || p.title }, lead.city, icp)) continue;
     await db
       .update(people)
       .set({ passedAt: null, passedReason: '', whyNot: '', linkedin: p.linkedin || profile.url, ...(profile.title ? { title: profile.title } : {}) })
@@ -458,7 +459,7 @@ export async function promoteBetterContacts(db: Db, scope: Scope = {}): Promise<
     // Like research's own pick, the main contact has to be confirmed at this site: someone whose LinkedIn
     // location isn't known, or is another city, is never promoted (the team finds someone instead).
     const others = list.filter(
-      (p) => !p.isPrimary && !p.passedAt && p.name.toLowerCase() !== lead.contactName.toLowerCase() && contactPriority(p.title, icp) < 99 && confirmedAtSite(p, lead.city),
+      (p) => !p.isPrimary && !p.passedAt && p.name.toLowerCase() !== lead.contactName.toLowerCase() && contactPriority(p.title, icp) < 99 && canBeMain(p, lead.city, icp),
     );
     const best = rankCandidates(others, icp, lead.city)[0];
     if (!best) continue;

@@ -1,7 +1,8 @@
 import type { Icp } from './db/schema';
 import { normSegment } from './icp-match';
 
-export type Tier = 'P1' | 'P2' | 'P3' | 'Avoid' | '';
+/** 'Top': the head of the company (MD, CEO, chairman, founder, owner): a last-resort contact, not P1. */
+export type Tier = 'P1' | 'P2' | 'P3' | 'Top' | 'Avoid' | '';
 
 // Titles are written many ways: "VP - Operations", "Vice President Operations", "Head, Supply Chain".
 const ALIASES: [RegExp, string][] = [
@@ -74,9 +75,17 @@ export function isDirector(title: string): boolean {
   return /\b(director|directors|wtd)\b/i.test(t);
 }
 
+/** MD, CEO, chairman, founder, owner, proprietor, promoter, president: the head of the company. */
+export function isTopOfCompany(title: string): boolean {
+  const t = tokens(roleOnly(title)).join(' ');
+  return !/\bvice\b/.test(t) && /\b(md|ceo|chief executive|chairman|chairperson|founder|co-?founder|owner|proprietor|promoter|president)\b/.test(t);
+}
+
 export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): Tier {
   if (!title || !icp) return '';
   if (isDirector(title)) return 'Avoid';
+  // The head of the company is never P1 (INVECK's instruction): kept only as the last resort.
+  if (isTopOfCompany(title)) return 'Top';
   // Only the role, not the company after it: "Manager at Allcargo Logistics" is a manager, not a logistics manager.
   const t = tokens(roleOnly(title));
   // HR, admin and quality people are never a priority, even with a senior title ("GM - HR").
@@ -139,9 +148,8 @@ const TOP_ONLY = /^(?:(?:managing|whole ?time|executive|joint managing)?\s*direc
 function tierByFunction(t: string[], icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles'>): Tier {
   const title = t.join(' ');
   const lists = tokens([icp.targetTitles, icp.p2Titles, icp.p3Titles].join(', ')).join(' ');
-  // A small company's owner-director is its decision-maker: wanted where the lists name the top
-  // (Managing Director), and ranked last (contactPriority), for when nobody else is found.
-  if (TOP_ONLY.test(title) && /\b(md|ceo|owner|founder|director|proprietor)\b/.test(lists)) return 'P1';
+  // The head of the company (owner, MD, CEO): never P1, kept only as the last resort.
+  if (TOP_ONLY.test(title)) return 'Top';
   const wanted = new Set(functionsOf(lists));
   if (!functionsOf(title).some((f) => wanted.has(f))) return '';
   if (HEAD_LEVEL.test(title)) return 'P1';
@@ -154,6 +162,7 @@ export const TIER_LABEL: Record<Tier, string> = {
   P1: 'P1 decision-maker',
   P2: 'P2 process owner',
   P3: 'P3 process level',
+  Top: 'Head of the company (last resort)',
   Avoid: 'Not a priority',
   '': '',
 };
@@ -175,6 +184,8 @@ const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logi
 export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): number {
   const tier = tierOf(title, icp);
   if (tier === 'Avoid' || tier === '') return 99;
+  // The head of the company: the last resort, never ahead of anyone on the lists.
+  if (tier === 'Top') return 50;
   // Functions that have nothing to do with stock or assets, whatever their rank ("GM - Marketing").
   if (/\b(marketing|sales|business development|legal|secretarial|investor|public relations|human resources|talent|commercial|customer service|engineering|maintenance|projects?|safety|design|r&d|research|it|sap|erp|information technology|software)\b/i.test(roleOnly(title))) return 99;
   const t = tokens(roleOnly(title)).join(' ');

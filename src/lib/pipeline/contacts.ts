@@ -529,10 +529,15 @@ export function atBranch(c: Placed & { title: string }, city: string): boolean {
 /** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */
 type RankIcp = Parameters<typeof contactPriority>[1];
 
+/** P1 first, then P2, P3, and the head of the company last: the tier decides before the location. */
+const TIER_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, Top: 3 };
+
 export function candidateRank(c: Placed & { title: string; phone?: string; email?: string }, icp: RankIcp, city = ''): number {
-  // At this site first; someone with a company-wide role based elsewhere in India after everyone else.
+  // The tier first (a P1 at another site comes before a P2 at this one); within a tier, someone at this
+  // site before someone elsewhere in India.
+  const tier = TIER_ORDER[tierOf(c.title, icp)] ?? 4;
   const elsewhere = personSite(c, city) === 'elsewhere';
-  return contactPriority(c.title, icp) - (atBranch(c, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.email ? 0.1 : 0);
+  return tier * 100 + contactPriority(c.title, icp) - (atBranch(c, city) ? 6 : 0) + (elsewhere ? 4 : 0) - (c.email ? 0.1 : 0);
 }
 
 /**
@@ -541,8 +546,19 @@ export function candidateRank(c: Placed & { title: string; phone?: string; email
  * site: kept, though only made the main contact once confirmed at this one. Abroad is never kept
  * (see basedAbroad). True when they should be left out.
  */
-export function atOtherSite(c: Placed & { title: string }, city: string): boolean {
+export function atOtherSite(c: Placed & { title: string }, city: string, icp?: RankIcp): boolean {
+  // A P1 at another site is still a contact (ranked after P1s at this site, before P2s here).
+  if (icp && tierOf(c.title, icp) === 'P1') return false;
   return personSite(c, city) === 'elsewhere' && !companyWide(c.title);
+}
+
+/**
+ * Can be the main contact for this site: at this site, or a P1 at another of the company's Indian
+ * sites (a P1 elsewhere comes before a P2 here; P2 and P3 must be at this site).
+ */
+export function canBeMain(c: Placed & { title?: string }, city: string, icp?: RankIcp): boolean {
+  if (confirmedAtSite(c, city)) return true;
+  return !!icp && !!c.title && tierOf(c.title, icp) === 'P1' && personSite(c, city) === 'elsewhere';
 }
 
 /**
@@ -704,10 +720,10 @@ export async function pickContact(
   // heads, then hands-on heads, then process owners. The sales team's own contact always stays.
   const vetted = new Set([asText(d.chosen_id), ...asTextList(d.other_ids).map((x) => x.trim())]);
   const passed = candidates.filter(
-    (c) => c.source === 'Sales team' || (contactPriority(c.title, icp) < 99 && (c.source === 'LinkedIn' || vetted.has(c.id)) && !atOtherSite(c, lead.city)),
+    (c) => c.source === 'Sales team' || (contactPriority(c.title, icp) < 99 && (c.source === 'LinkedIn' || vetted.has(c.id)) && !atOtherSite(c, lead.city, icp)),
   );
-  // The main contact: confirmed at this site, and no contradictory current job on their profile.
-  const mainPool = passed.filter((c) => c.source !== 'LinkedIn' || (confirmedAtSite(c, lead.city) && !c.conflict));
+  // The main contact: at this site (or a P1 at another site), and no contradictory current job on their profile.
+  const mainPool = passed.filter((c) => c.source !== 'LinkedIn' || (canBeMain(c, lead.city, icp) && !c.conflict));
   const manualPick = candidates.find((c) => c.source === 'Sales team');
   let chosen: Candidate | undefined = manualPick ?? rankCandidates(mainPool, icp, lead.city)[0];
   if (!manualPick && aiChosen && chosen && aiChosen !== chosen && mainPool.includes(aiChosen) && candidateRank(aiChosen, icp, lead.city) <= candidateRank(chosen, icp, lead.city)) chosen = aiChosen;

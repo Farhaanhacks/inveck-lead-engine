@@ -42,7 +42,7 @@ export const DEFAULT_ICPS = [
       'Manufactures physical goods, or holds significant physical inventory or fixed assets to verify; ERP or WMS in use is a plus (SAP, Oracle, Microsoft Dynamics, Tally)',
     dealBreakers:
       'No physical inventory (pure software, services, consulting, trading on paper); a single small shop; companies that sell inventory or audit software themselves',
-    targetTitles: 'Plant Head, Head of Supply Chain, VP Supply Chain, Supply Chain Head, Operations Head, Manufacturing Head, VP Operations, AVP Operations, Managing Director',
+    targetTitles: 'Plant Head, Head of Supply Chain, VP Supply Chain, Supply Chain Head, Operations Head, Manufacturing Head, VP Operations, AVP Operations',
     p2Titles: 'Inventory Manager, Warehouse Head, Procurement Head, Procurement Manager, Supply Chain Manager, General Manager, DGM, Senior Manager Inventory',
     p3Titles: 'Store Head, Store Manager, Logistics Manager',
     avoidTitles: 'HR, Human Resources, Admin, Administration, Quality Assurance, QA, Quality',
@@ -123,6 +123,21 @@ export async function upgradeManufacturingIndustriesV3(db: Db) {
   const key = 'icpManufacturingIndustriesV3';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
   await db.update(icps).set({ industries: MANUFACTURING_INDUSTRIES }).where(eq(icps.segment, MANUFACTURING));
+  await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
+}
+
+/** The MD and CEO aren't P1 (INVECK's instruction): taken off every ICP's P1 list in the database, once. */
+export async function removeTopFromP1(db: Db) {
+  const key = 'icpNoMdCeoInP1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  for (const icp of await db.select().from(icps)) {
+    const kept = icp.targetTitles
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t && !/^(managing director|md|ceo|chief executive officer)$/i.test(t));
+    const next = kept.join(', ');
+    if (next !== icp.targetTitles) await db.update(icps).set({ targetTitles: next }).where(eq(icps.id, icp.id));
+  }
   await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
 }
 

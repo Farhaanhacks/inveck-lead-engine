@@ -274,9 +274,8 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
 }
 
 function PeopleCard({ company, city, list, tierFor }: { company: string; city: string; list: Person[]; tierFor: (title: string) => Tier }) {
-  // People found at the company who aren't contacts for this site are listed apart, folded away.
+  // People found at the company who aren't contacts for this site aren't shown.
   const contacts = list.filter((p) => p.passedReason !== 'excluded');
-  const others = list.filter((p) => p.passedReason === 'excluded');
   const row = (p: Person) => (
               <tr key={p.id} className="border-t border-line align-top">
                 <td className="px-5 py-2.5">
@@ -357,26 +356,6 @@ function PeopleCard({ company, city, list, tierFor }: { company: string; city: s
         <tbody>{contacts.map(row)}</tbody>
           </table>
         </div>
-      )}
-      {others.length > 0 && (
-        <details className="border-t border-line">
-          <summary className="cursor-pointer px-5 py-2.5 text-xs text-muted hover:text-ink">
-            {others.length} other {others.length === 1 ? 'person' : 'people'} at {company}, not contacts for this site (another site, or a role not on the ICP lists)
-          </summary>
-          <div className="relative overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
-          <thead>
-            <tr className="text-left text-xs text-muted">
-              <th className="px-5 py-2 font-medium">Name</th>
-              <th className="px-2 py-2 font-medium">LinkedIn</th>
-              <th className="px-2 py-2 font-medium">Found via</th>
-              <th className="px-5 py-2"><span className="sr-only">Action</span></th>
-            </tr>
-          </thead>
-          <tbody>{others.map(row)}</tbody>
-            </table>
-          </div>
-        </details>
       )}
       <p className="border-t border-line px-5 py-2.5 text-xs text-muted">
         Making someone the main contact rewrites the email for them; the calls and messages on Today go to them from then on.
