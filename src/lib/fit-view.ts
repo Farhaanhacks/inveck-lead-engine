@@ -121,7 +121,8 @@ export function contactAvailability(l: ContactFields, found: PersonFields[] = []
 export function contactGeography(l: ContactFields, primary?: { location: string; source: string }): Assessment {
   if (!l.contactName) return { label: 'No contact', tone: 'neutral', detail: '' };
   const where = primary?.location ? `Based in ${primary.location}` : '';
-  if (primary?.source === 'Sales team') return { label: 'Entered by the sales team', tone: 'good', detail: where };
+  // A contact the team entered: where they are, when known.
+  if (primary?.source === 'Sales team') return { label: where || 'Contact on file', tone: 'good', detail: '' };
   if (l.contactVerifiedAt) {
     return { label: l.city ? `Confirmed at the ${l.city} site` : 'Confirmed at the company', tone: 'good', detail: where ? `${where} (LinkedIn)` : 'LinkedIn profile at this company' };
   }
