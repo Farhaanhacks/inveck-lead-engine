@@ -244,8 +244,11 @@ describe('contact priority (P1/P2/P3)', async () => {
     expect(tierOf('Store Head', log)).toBe('P3');
   });
   it('covers every industry on the team list', () => {
-    for (const word of ['forging', 'cables', 'aerospace', 'pharmaceuticals', 'packaging', 'ceramics', 'medical devices', 'renewable', 'furniture', 'food processing', 'rubber', 'paints', 'petrochemicals'])
+    // INVECK's manufacturing focus: the core and the strong adjacent sectors.
+    for (const word of ['bearing', 'auto components', 'forging', 'foundries', 'heavy engineering', 'machine tools', 'precision engineering', 'defence', 'aerospace', 'railway', 'construction equipment', 'mining equipment', 'material handling', 'power equipment', 'pumps and valves', 'gearboxes', 'drivetrain', 'tractors', 'earthmoving', 'industrial automation', 'robotics', 'cnc', 'textile machinery', 'steel plant equipment', 'cement plant equipment', 'process equipment'])
       expect(man.industries.toLowerCase()).toContain(word);
+    // No longer the focus.
+    for (const word of ['pharmaceuticals', 'fmcg', 'furniture']) expect(man.industries.toLowerCase()).not.toContain(word);
   });
 });
 

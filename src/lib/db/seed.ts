@@ -5,21 +5,28 @@ import { icps, leads, settings } from './schema';
 export const MANUFACTURING = 'Manufacturing';
 export const LOGISTICS = '3PL & Logistics';
 
-/** The industries INVECK's team targets, from their list. */
+/** The industries INVECK's team targets in manufacturing, from their list: the core, then strong adjacent sectors. */
 export const MANUFACTURING_INDUSTRIES = [
-  'Automotive and auto components (automobile, motor vehicle, transportation equipment)',
-  'Engineering and heavy machinery, industrial manufacturing, forging',
-  'Steel and metal, wire and cables',
-  'Electrical and electronics',
-  'Chemicals, paints and coatings, oil and gas / petrochemicals',
-  'Pharmaceuticals and medical devices',
-  'FMCG / consumer goods, personal care, food processing',
-  'Textiles and garments',
-  'Plastics and polymers, rubber',
-  'Paper, pulp and packaging',
-  'Cement and construction materials, glass and ceramics',
-  'Furniture and wood products',
-  'Aerospace, renewable energy equipment',
+  'Core: Bearing manufacturers',
+  'Automotive / auto components',
+  'Forging and forgers',
+  'Foundries',
+  'Engineering, heavy engineering, heavy industries',
+  'Industrial machinery, machinery manufacturers, machine tools, industrial equipment',
+  'Mechanical engineering, precision engineering',
+  'Industrial manufacturing',
+  'Strong adjacent sectors: Defence manufacturing',
+  'Aerospace components',
+  'Railways / railway components',
+  'Construction equipment, mining equipment, earthmoving equipment',
+  'Material handling equipment',
+  'Power equipment, electrical machinery',
+  'Pumps and valves',
+  'Motors and gearboxes, transmission components, drivetrain components',
+  'Tractors and agricultural equipment',
+  'Industrial automation, robotics, CNC machinery',
+  'Textile machinery',
+  'Steel plant equipment, cement plant equipment, process equipment',
 ].join('; ');
 
 export const DEFAULT_ICPS = [
@@ -106,6 +113,17 @@ export async function upgradeIcpsV2(db: Db) {
     await db.update(leads).set({ segment: LOGISTICS_HINT.test(`${l.company} ${l.summary.slice(0, 600)}`) ? LOGISTICS : MANUFACTURING }).where(eq(leads.id, l.id));
   }
   await db.insert(settings).values({ key: 'icpV2', value: true }).onConflictDoNothing();
+}
+
+/**
+ * INVECK's manufacturing focus (engineering, auto components, forgings, castings, machinery and the
+ * sectors next to them) on the Manufacturing ICP already in the database: once.
+ */
+export async function upgradeManufacturingIndustriesV3(db: Db) {
+  const key = 'icpManufacturingIndustriesV3';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  await db.update(icps).set({ industries: MANUFACTURING_INDUSTRIES }).where(eq(icps.segment, MANUFACTURING));
+  await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
 }
 
 const LOGISTICS_HINT = /\b(3pl|logistics|warehous\w*|cold chain|freight|express|courier|supply chain solutions|fulfil+ment|distribution)\b/i;
