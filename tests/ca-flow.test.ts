@@ -174,3 +174,40 @@ describe('importing a researched list with its points of contact', () => {
     );
   });
 });
+
+describe('more than one number for a contact', () => {
+  it('helpers: add without duplicates, drop the first, put it back', async () => {
+    const { addPhone, dropFirstPhone, putPhoneBack, splitPhones } = await import('@/lib/phones');
+    expect(addPhone('', '98450 12345')).toBe('98450 12345');
+    expect(addPhone('98450 12345', '080 2222 3333')).toBe('98450 12345, 080 2222 3333');
+    expect(addPhone('98450 12345', '+91 9845012345')).toBe('98450 12345');
+    expect(splitPhones('98450 12345, 080 2222 3333 / 9900011122')).toEqual(['98450 12345', '080 2222 3333', '9900011122']);
+    expect(dropFirstPhone('98450 12345, 080 2222 3333')).toEqual({ removed: '98450 12345', rest: '080 2222 3333' });
+    expect(putPhoneBack('080 2222 3333', '98450 12345')).toBe('98450 12345, 080 2222 3333');
+    const { whatsappLink } = await import('@/lib/talk');
+    expect(whatsappLink('98450 12345, 080 2222 3333', 'hi')).toContain('wa.me/919845012345');
+  });
+
+  it('Today saves a second number; a wrong number removes only the one dialled and the next is called today', async () => {
+    const { saveFoundDetailAction, completeTaskAction, undoTaskAction } = await import('@/app/team-actions');
+    const l = await caLead({ company: 'Gear Works', segment: 'Manufacturing', contactPhone: '' });
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactPhone', value: '98450 12345' }));
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactPhone', value: '080 2222 3333' }));
+    const phone = async () => (await db.select().from(leads).where(eq(leads.id, l.id)))[0].contactPhone;
+    expect(await phone()).toBe('98450 12345, 080 2222 3333');
+
+    await ensureSequences(db, today());
+    await db.update(tasks).set({ dueDate: today() }).where(eq(tasks.leadId, l.id));
+    const call = (await open(l.id)).find((t) => t.kind === 'call')!;
+    await completeTaskAction(form({ id: call.id, outcome: 'wrong_number' }));
+    expect(await phone()).toBe('080 2222 3333');
+    const next = (await open(l.id)).find((t) => t.kind === 'call' && t.title === 'Call the next number');
+    expect(next?.dueDate).toBe(today());
+    // Not "Wrong number" on the tracker while a number is left to try.
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].callFeedback).toBe('');
+
+    await undoTaskAction(form({ id: call.id }));
+    expect(await phone()).toBe('98450 12345, 080 2222 3333');
+    expect((await open(l.id)).some((t) => t.title === 'Call the next number')).toBe(false);
+  });
+});

@@ -42,7 +42,7 @@ export type TrackerField = keyof typeof TRACKER_FIELDS | 'remark' | 'callRemark'
 export function cleanPhone(value: string): string | null {
   const phone = String(value ?? '').trim().replace(/\s+/g, ' ');
   if (!phone) return '';
-  if (phone.length > 40 || !/^[0-9+\-()/, .]+$/.test(phone) || phone.replace(/\D/g, '').length < 6) return null;
+  if (phone.length > 120 || !/^[0-9+\-()/,; .]+$/.test(phone) || phone.replace(/\D/g, '').length < 6) return null;
   return phone;
 }
 

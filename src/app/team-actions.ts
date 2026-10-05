@@ -17,6 +17,7 @@ import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { CALL_FEEDBACK, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
+import { addPhone, dropFirstPhone, putPhoneBack } from '@/lib/phones';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
 import { CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay, planCaFallback } from '@/lib/tasks';
 
@@ -68,10 +69,12 @@ export async function completeTaskAction(form: FormData) {
   // A wrong number is taken off the lead (and kept on the task, so Undo can put it back).
   const [lead] = await db.select({ phone: leads.contactPhone, segment: leads.segment }).from(leads).where(eq(leads.id, task.leadId));
   const ca = isCaSegment(lead?.segment ?? '');
-  const wrong = task.kind === 'call' && outcome === 'wrong_number' && !!lead?.phone;
+  // With several numbers, the first is the one dialled: only that one goes; the next is tried after.
+  const dropped = dropFirstPhone(lead?.phone ?? '');
+  const wrong = task.kind === 'call' && outcome === 'wrong_number' && !!dropped.removed;
   await db
     .update(tasks)
-    .set({ doneAt: now, outcome, note: wrong ? `${WRONG_PREFIX}${lead!.phone}` : note || task.note })
+    .set({ doneAt: now, outcome, note: wrong ? `${WRONG_PREFIX}${dropped.removed}` : note || task.note })
     .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
   if (!task.priority) await catchUp(db, task, now);
   // Keep the tracker's outcome columns in step with what was logged.
@@ -81,7 +84,8 @@ export async function completeTaskAction(form: FormData) {
       .set({ callRemark: note, ...((CALL_FEEDBACK as readonly string[]).includes(feedback) ? { callFeedback: feedback } : {}) })
       .where(eq(leads.id, task.leadId));
   }
-  if (task.kind === 'call' && outcome === 'wrong_number') await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
+  // Wrong number only once no number is left to try.
+  if (task.kind === 'call' && outcome === 'wrong_number' && !dropped.rest) await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
   // No number found: nothing to call or WhatsApp today, so today's WhatsApp is ticked off with the call
   // (Undo brings it back). Later rounds stay, for when a number turns up.
   if (task.kind === 'call' && outcome === 'no_contact') {
@@ -98,8 +102,16 @@ export async function completeTaskAction(form: FormData) {
   }
   if (ca) await caNextSteps(db, task, outcome, now);
   if (wrong) {
-    await db.update(leads).set({ contactPhone: '' }).where(eq(leads.id, task.leadId));
-    await logActivity(db, task.leadId, 'note', `Number ${lead!.phone} marked wrong and removed. Find the right one with ContactOut.`);
+    await db.update(leads).set({ contactPhone: dropped.rest }).where(eq(leads.id, task.leadId));
+    await db.update(people).set({ phone: dropped.rest }).where(and(eq(people.leadId, task.leadId), eq(people.isPrimary, true)));
+    await logActivity(
+      db,
+      task.leadId,
+      'note',
+      dropped.rest
+        ? `Number ${dropped.removed} marked wrong and removed. Next number to try: ${dropped.rest.split(',')[0]}.`
+        : `Number ${dropped.removed} marked wrong and removed. Find the right one with ContactOut.`,
+    );
   }
 
   const what =
@@ -120,6 +132,19 @@ export async function completeTaskAction(form: FormData) {
     if (l && (await unansweredCalls(db, l)) >= MAX_CALL_ATTEMPTS) escalated = await escalate(db, task.leadId, 'no_answer', now);
     // A CA firm is called once when its LinkedIn request isn't accepted; no call-again days.
     else if (outcome !== 'wrong_number' && !ca) await remindToCallAgain(db, task);
+    // A wrong number with another one saved: call that one today.
+    else if (wrong && dropped.rest) {
+      await db.insert(tasks).values({
+        leadId: task.leadId,
+        ownerId: task.ownerId,
+        kind: 'call',
+        step: 'Call again',
+        title: 'Call the next number',
+        dueDate: istDay(),
+        slot: 'day',
+        note: `${RETRY_NOTE}${task.id}`,
+      });
+    }
   }
 
   if (task.kind === 'call' && outcome === 'connected') {
@@ -313,7 +338,8 @@ export async function resetTodayLogAction(form: FormData) {
   const wrong = await db.select({ leadId: tasks.leadId, note: tasks.note }).from(tasks).where(and(eq(tasks.ownerId, id), eq(tasks.outcome, 'wrong_number')));
   for (const w of wrong) {
     if (w.note.startsWith(WRONG_PREFIX)) {
-      await db.update(leads).set({ contactPhone: w.note.slice(WRONG_PREFIX.length) }).where(and(eq(leads.id, w.leadId), eq(leads.contactPhone, '')));
+      const [l] = await db.select({ phone: leads.contactPhone }).from(leads).where(eq(leads.id, w.leadId));
+      await db.update(leads).set({ contactPhone: putPhoneBack(l?.phone ?? '', w.note.slice(WRONG_PREFIX.length)) }).where(eq(leads.id, w.leadId));
     }
   }
   // Stages that test clicks moved go back, latest first.
@@ -349,9 +375,12 @@ export async function undoTaskAction(form: FormData) {
     .where(eq(tasks.id, id));
   if (wasWrong) {
     const phone = task.note.slice(WRONG_PREFIX.length);
-    await db.update(leads).set({ contactPhone: phone }).where(and(eq(leads.id, task.leadId), eq(leads.contactPhone, '')));
+    const [l] = await db.select({ phone: leads.contactPhone }).from(leads).where(eq(leads.id, task.leadId));
+    const back = putPhoneBack(l?.phone ?? '', phone);
+    await db.update(leads).set({ contactPhone: back }).where(eq(leads.id, task.leadId));
+    await db.update(people).set({ phone: back }).where(and(eq(people.leadId, task.leadId), eq(people.isPrimary, true)));
   }
-  if (task.kind === 'call' && (task.outcome === 'no_answer' || task.outcome === 'busy')) {
+  if (task.kind === 'call' && (task.outcome === 'no_answer' || task.outcome === 'busy' || task.outcome === 'wrong_number')) {
     await db.delete(tasks).where(and(eq(tasks.note, `${RETRY_NOTE}${task.id}`), isNull(tasks.doneAt)));
     // and the WhatsApp and email planned alongside it
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, 'Call again'), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
@@ -466,9 +495,13 @@ export async function saveFoundDetailAction(form: FormData) {
   if (field === 'contactLinkedin' && !/^https?:\/\//i.test(value)) value = `https://${value}`;
   if (!value) return;
   const db = await getDb();
-  await db.update(leads).set({ [field]: value, updatedAt: new Date() }).where(eq(leads.id, id));
+  const [lead] = await db.select({ phone: leads.contactPhone }).from(leads).where(eq(leads.id, id));
+  if (!lead) return;
+  // A number is added to the ones already saved (a contact can have several); a LinkedIn replaces.
+  const saved = field === 'contactPhone' ? addPhone(lead.phone, value) : value;
+  await db.update(leads).set({ [field]: saved, updatedAt: new Date() }).where(eq(leads.id, id));
   const personField = { contactPhone: 'phone', contactLinkedin: 'linkedin' } as const;
-  await db.update(people).set({ [personField[field]]: value }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+  await db.update(people).set({ [personField[field]]: saved }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
   await logActivity(db, id, 'contact', `Point of contact's ${QUICK_FIELDS[field]} added by the team: ${value}`);
   revalidatePath('/today');
   revalidatePath('/tracker');

@@ -42,6 +42,7 @@ import { CopyButton } from '@/components/copy-button';
 import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
+import { PhoneLinks } from '@/components/phone-links';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
@@ -80,9 +81,7 @@ function Reach({ lead }: { lead: Lead }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       {/* Only a number the team found and saved: phone numbers aren't collected automatically. */}
-      {lead.contactPhone && (
-        <a href={`tel:${lead.contactPhone.replace(/[^\d+]/g, '')}`} className="font-medium text-accent hover:underline">{lead.contactPhone}</a>
-      )}
+      <PhoneLinks value={lead.contactPhone} className="font-medium text-accent hover:underline" />
       {lead.contactLinkedin && <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn profile</a>}
     </div>
   );
@@ -205,8 +204,14 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
               ))}
           </div>
         )}
-        {!readOnly && askPhone && !finding && !lead.contactPhone && (
-          <FoundDetail leadId={lead.id} field="contactPhone" label="Found the number? Save it" placeholder="+91 98xxx xxxxx" type="tel" />
+        {!readOnly && askPhone && !finding && (
+          <FoundDetail
+            leadId={lead.id}
+            field="contactPhone"
+            label={lead.contactPhone ? 'Another number? Add it' : 'Found the number? Save it'}
+            placeholder="+91 98xxx xxxxx"
+            type="tel"
+          />
         )}
         {!readOnly && task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && !lead.contactLinkedin && (
           <FoundDetail
@@ -395,7 +400,7 @@ function CompanyCard({
                     <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                       <span className="font-medium text-ink">{p.name}</span>
                       {p.title && <span className="text-muted">{p.title}</span>}
-                      {p.phone && <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{p.phone}</a>}
+                      <PhoneLinks value={p.phone} />
                       {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}
                       {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
                       {!p.linkedin && !p.phone && !p.email && <span className="text-muted">no details yet</span>}

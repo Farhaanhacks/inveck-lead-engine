@@ -28,7 +28,7 @@ export function cleanContact(input: ContactEdit): ContactEdit | null {
   const v = {
     contactName: input.contactName.trim().slice(0, 200),
     contactTitle: input.contactTitle.trim().slice(0, 200),
-    contactPhone: input.contactPhone.trim().slice(0, 40),
+    contactPhone: input.contactPhone.trim().slice(0, 120),
     contactEmail: input.contactEmail.trim().slice(0, 200).toLowerCase(),
     contactLinkedin: input.contactLinkedin.trim().slice(0, 300),
   };

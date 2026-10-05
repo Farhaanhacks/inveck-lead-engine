@@ -1,4 +1,5 @@
 import { AddPointOfContact } from '@/components/add-point-of-contact';
+import { PhoneLinks } from '@/components/phone-links';
 import { BackLink } from '@/components/nav-history';
 import Link from 'next/link';
 import { after } from 'next/server';
@@ -303,7 +304,7 @@ function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; 
                   {p.jobLocation && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.jobLocation}>Job here: {p.jobLocation}</div>}
                   {(p.phone || p.email) && (
                     <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs">
-                      {p.phone && <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{p.phone}</a>}
+                      <PhoneLinks value={p.phone} />
                       {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}
                     </div>
                   )}
