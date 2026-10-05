@@ -7,6 +7,7 @@ import { buildSources } from './fit';
 import { scoreLead } from './scoring';
 import { contactPriority, icpFor } from '../tiers';
 import { resolveIcp } from '../icp-match';
+import { IMPORTED_SOURCE } from '../contact-import';
 import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
 import { checkCompanyName } from './company-name';
@@ -103,9 +104,10 @@ export async function processLead(
     const own = icpFor(lead.segment, ctx.icps);
     if (!own) throw new Error(`segment "${lead.segment}" matches no ICP, so there are no contact lists to search with`);
     icp = own;
-  } else if (lead.fitOverride === 'qualified' && icpFor(lead.segment, ctx.icps)) {
-    // The team confirmed the fit (a researched list, or Confirm fit): its own ICP gives the contact
-    // lists and the email, even when that ICP is switched off for the prospect search.
+  } else if ((lead.fitOverride === 'qualified' || lead.source === IMPORTED_SOURCE) && icpFor(lead.segment, ctx.icps)) {
+    // The team confirmed the fit (Confirm fit), or imported the company under this ICP: its own ICP
+    // judges the fit (an import is scored like any other company) and gives the contact lists and the
+    // email, even when that ICP is switched off for the prospect search.
     icp = icpFor(lead.segment, ctx.icps)!;
   } else {
     const match = resolveIcp(lead.segment, ctx.icps);

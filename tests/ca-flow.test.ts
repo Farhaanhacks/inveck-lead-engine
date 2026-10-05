@@ -142,7 +142,7 @@ describe('importing a researched list with its points of contact', () => {
     const r = await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: me.id, known, by: 'Puja' });
     expect(r).toEqual({ added: 2, skipped: [] });
     const [alpha] = await db.select().from(leads).where(eq(leads.company, 'ALPHA & CO'));
-    expect(alpha).toMatchObject({ contactName: 'Ravi Kumar', contactPhone: '9800000002', contactEmail: 'alpha@example.com', fitOverride: 'qualified', ownerId: me.id });
+    expect(alpha).toMatchObject({ contactName: 'Ravi Kumar', contactPhone: '9800000002', contactEmail: 'alpha@example.com', fitOverride: '', ownerId: me.id });
     expect(alpha.contactVerifiedAt).not.toBeNull();
     const alphaPeople = await db.select().from(people).where(eq(people.leadId, alpha.id));
     expect(alphaPeople.map((p) => [p.name, p.isPrimary, p.linkedin]).sort()).toEqual(

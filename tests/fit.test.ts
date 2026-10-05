@@ -611,25 +611,34 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(t.status).toBe('Disqualified');
   });
 
-  it('a firm imported with its partners keeps them through research: the main contact stays, the fit stays confirmed', async () => {
+  it('a firm imported with its partners is scored for real against its ICP, even switched off; its partners stay', async () => {
     const { importContactSheet, parseContactSheet } = await import('@/lib/contact-import');
     const { KnownBranches } = await import('@/lib/branches');
     const { people } = await import('@/lib/db/schema');
     const { rows } = parseContactSheet([
       ['Firm', 'Phone', 'Email', 'Matched partner / proprietor', 'Role', 'LinkedIn 1', 'LinkedIn 2'],
       ['ALPHA & CO', '9800000002', 'alpha@example.com', '1. Ravi Kumar\n2. Meena Iyer', 'Partner', 'https://in.linkedin.com/in/ravi-k', 'https://in.linkedin.com/in/meena-i'],
+      ['BETA & CO', '9800000003', 'beta@example.com', '1. Suresh B', 'Partner', 'https://in.linkedin.com/in/suresh-b', ''],
     ]);
     await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: null, known: new KnownBranches([], []), by: 'Puja' });
-    const [lead] = await db.select().from(leads).where(eq(leads.company, 'ALPHA & CO'));
-    // The AI would call it not a fit: the team's call stands.
-    // CA Firms switched off for the prospect search: the team's list is still worked under it.
+    const [alpha] = await db.select().from(leads).where(eq(leads.company, 'ALPHA & CO'));
+    const [beta] = await db.select().from(leads).where(eq(leads.company, 'BETA & CO'));
+    expect(alpha.fitOverride).toBe('');
+    // CA Firms switched off for the prospect search: imports are still judged against it.
     const off = (await allIcps()).map((i) => (i.segment === 'CA Firms' ? { ...i, active: false } : i));
-    const r = await run(lead, { research: (user) => kltAnswer(user, { qualified: false, fit_score: 2 }), google: () => [] }, off);
-    expect(r.status).toBe('Awaiting Approval');
-    expect(r.segment ?? 'CA Firms').toBe('CA Firms');
-    expect(r.contactName ?? lead.contactName).toBe('Ravi Kumar');
-    const names = (await db.select().from(people).where(eq(people.leadId, lead.id))).map((p) => p.name);
-    expect(names).toContain('Meena Iyer');
+    const fits = await run(alpha, { research: (user) => kltAnswer(user, { risks: [] }), google: () => [] }, off);
+    expect(fits.status).toBe('Awaiting Approval');
+    expect(fits.assessedIcp).toBe('CA Firms');
+    expect(fits.fitScore).toEqual(expect.any(Number));
+    expect(fits.contactName ?? alpha.contactName).toBe('Ravi Kumar');
+    expect((await db.select().from(people).where(eq(people.leadId, alpha.id))).map((p) => p.name)).toContain('Meena Iyer');
+    // The AI's evidence says not a fit: never waved through to the team.
+    const notFit = await run(
+      beta,
+      { research: (user) => kltAnswer(user, { qualified: false, fit_score: 2 }, { M1: ['not_met', ...cite(user, 'KLT is the leading authority when it comes to chassis manufacturing for several OEMs in India as well as overseas')] }), google: () => [] },
+      off,
+    );
+    expect(['Disqualified', 'Needs Review']).toContain(notFit.status);
   });
 
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {

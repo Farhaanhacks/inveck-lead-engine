@@ -120,7 +120,7 @@ export function AddLeadForms({ segments, allSegments, team }: { segments: string
           <p className="mt-1 text-xs text-muted">
             A list the team already researched, such as CA firms with their partners. Columns: <code>Firm</code> (or Company), <code>Phone</code>, <code>Email</code>, the names
             (<code>Matched partner / proprietor</code> or Contact name, one per line), <code>Role</code>, <code>LinkedIn 1</code>, <code>LinkedIn 2</code>…; City and Website if you have them.
-            The first person is the main contact; everyone else, and any extra numbers and emails, are kept as more points of contact. The fit counts as confirmed: research only writes the email.
+            The first person is the main contact; everyone else, and any extra numbers and emails, are kept as more points of contact. Research scores each company against the segment&apos;s ICP, with its evidence, and writes the email.
             Companies already a lead or a client are skipped. From Excel: File → Save As → CSV (UTF-8).
           </p>
         </div>

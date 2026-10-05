@@ -5,6 +5,9 @@ import type { KnownBranches } from './branches';
 import { domainOf } from './pipeline/text';
 import { cleanPhone } from './tracker';
 
+/** Where an imported company came from: research checks its fit against the ICP chosen on import. */
+export const IMPORTED_SOURCE = 'Imported list (researched by the team)';
+
 /** One company from a list the team researched: its numbers, email and the people with their LinkedIn. */
 export type ContactRow = {
   company: string;
@@ -77,9 +80,9 @@ function normLinkedin(v: string): string {
 /**
  * Adds the companies as leads with every point of contact. The first person is the main contact
  * (with the company's first number and email), confirmed by the team; the others, and any further
- * numbers or emails, are kept as more points of contact. The fit counts as confirmed (the team
- * researched these firms), so research only writes the email and finds anyone else. A company
- * already a lead or a client is skipped.
+ * numbers or emails, are kept as more points of contact. Research scores each company against the
+ * chosen ICP like any other (its own evidence and score) and writes the email. A company already a
+ * lead or a client is skipped.
  */
 export async function importContactSheet(
   db: Db,
@@ -103,13 +106,8 @@ export async function importContactSheet(
         website: row.website,
         city: row.city,
         segment: opts.segment,
-        source: `Imported list (researched by the team)`,
+        source: IMPORTED_SOURCE,
         ownerId: opts.ownerId,
-        // The team already checked these firms: research writes the email, it doesn't judge the fit again.
-        fitOverride: 'qualified',
-        fitStatus: 'qualified',
-        qualified: true,
-        fitDecision: `Confirmed as a fit by ${opts.by}: on the team's researched list`,
         nameEvidence: 'set by the team',
         contactName: main.name,
         contactTitle: main.title,
