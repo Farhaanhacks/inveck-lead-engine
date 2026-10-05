@@ -211,3 +211,17 @@ describe('more than one number for a contact', () => {
     expect((await open(l.id)).some((t) => t.title === 'Call the next number')).toBe(false);
   });
 });
+
+describe('daily counts for the people who work CA firms', () => {
+  it('CA firms count on their own card; the companies card counts the rest', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { worksCaFirms, DAILY_COMPANY_TARGET, DAILY_CA_TARGET } = await import('@/lib/tasks');
+    expect([DAILY_COMPANY_TARGET, DAILY_CA_TARGET]).toEqual([40, 20]);
+    expect(['Puja', 'Anchal', 'Parimal', 'Anuradha'].map(worksCaFirms)).toEqual([true, true, false, false]);
+    const l = await caLead();
+    const first = await start(l.id);
+    await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
+    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 1, total: 1 });
+    expect(await companyProgress(db, me.id, today(), { ca: false })).toEqual({ done: 0, total: 0 });
+  });
+});

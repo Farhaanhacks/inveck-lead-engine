@@ -10,7 +10,12 @@ export const MAX_CALL_ATTEMPTS = 5;
 /** Calls each person should attempt in a day. */
 export const DAILY_CALL_TARGET = 25;
 /** Companies each person should complete in a day (every step done). */
-export const DAILY_COMPANY_TARGET = 25;
+export const DAILY_COMPANY_TARGET = 40;
+/** CA firms reached in a day, for the people who work CA firms (CA_TEAM). */
+export const DAILY_CA_TARGET = 20;
+/** Who works CA firms, by first name: they get their own daily CA count, apart from the companies. */
+const CA_TEAM = ['puja', 'anchal', 'aanchal'];
+export const worksCaFirms = (name: string) => CA_TEAM.includes(name.trim().split(/\s+/)[0]?.toLowerCase() ?? '');
 export const DAILY_CA_CONNECTED_CALLS = 10;
 /** Inbound leads nobody has touched after this long are flagged. */
 export const UNATTENDED_AFTER_HOURS = 2;
@@ -318,11 +323,15 @@ export async function markCompanyDay(db: Db, leadId: number, ownerId: number, da
 }
 
 /** How many companies on a person's list for the day are fully done. */
-export async function companyProgress(db: Db, ownerId: number, day = istDay()): Promise<{ done: number; total: number }> {
-  const [finished, open] = await Promise.all([
-    db.select({ leadId: companyDays.leadId }).from(companyDays).where(and(eq(companyDays.ownerId, ownerId), eq(companyDays.day, day))),
+export async function companyProgress(db: Db, ownerId: number, day = istDay(), opts: { ca?: boolean } = {}): Promise<{ done: number; total: number }> {
+  const [allFinished, allOpen] = await Promise.all([
+    db.select({ leadId: companyDays.leadId, segment: leads.segment }).from(companyDays).innerJoin(leads, eq(companyDays.leadId, leads.id)).where(and(eq(companyDays.ownerId, ownerId), eq(companyDays.day, day))),
     loadTodayTasks(db, ownerId, day),
   ]);
+  // Only CA firms (ca: true), only the other companies (ca: false), or everything.
+  const keep = (segment: string) => opts.ca === undefined || isCaSegment(segment) === opts.ca;
+  const finished = allFinished.filter((f) => keep(f.segment));
+  const open = allOpen.filter((o) => keep(o.lead.segment));
   // A CA firm only waiting for its LinkedIn request to be accepted has nothing to do today: it counts
   // only if something was done for it today.
   const still = new Set(open.filter((o) => o.task.step !== CA_WAITING_STEP).map((o) => o.lead.id));

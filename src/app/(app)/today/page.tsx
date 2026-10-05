@@ -17,7 +17,9 @@ import { getAttendance } from '@/lib/attendance';
 import {
   companyProgress,
   DAILY_CALL_TARGET,
+  DAILY_CA_TARGET,
   DAILY_COMPANY_TARGET,
+  worksCaFirms,
   DAILY_LINKEDIN_LIMIT,
   dayCounts,
   CA_FALLBACK_STEP,
@@ -482,10 +484,13 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const own = me.id === viewId;
 
   const day = istDay();
-  const [items, counts, progress, attendance, unattended, demos, upcoming] = await Promise.all([
+  const caTeam = !!viewing && worksCaFirms(viewing.name);
+  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
-    companyProgress(db, viewId, day),
+    // Someone who works CA firms has them counted apart from the other companies.
+    companyProgress(db, viewId, day, caTeam ? { ca: false } : {}),
+    caTeam ? companyProgress(db, viewId, day, { ca: true }) : Promise.resolve(null),
     getAttendance(db, viewId, day),
     unattendedInbound(db, viewId),
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
@@ -598,8 +603,9 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         ) : null}
       </section>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className={`mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 ${caProgress ? 'xl:grid-cols-7' : 'xl:grid-cols-6'}`}>
         <Counter label="Companies done today" done={progress.done} goal={DAILY_COMPANY_TARGET} />
+        {caProgress && <Counter label="CA reach-outs today" done={caProgress.done} goal={DAILY_CA_TARGET} />}
         <Counter label="Calls attempted" done={counts.callAttempts} goal={DAILY_CALL_TARGET} />
         <Counter label="Connected calls" done={counts.connectedCalls} />
         <Counter label="WhatsApp sent" done={counts.whatsappSent} />
