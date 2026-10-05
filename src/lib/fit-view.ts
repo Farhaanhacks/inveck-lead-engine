@@ -16,7 +16,7 @@ type FitFields = Pick<Lead, 'fitStatus' | 'fitOverride' | 'fitDecision' | 'fitRe
 /** Company fit against the ICP, or null for a company not researched yet. */
 export function fitAssessment(l: FitFields): Assessment | null {
   if (l.fitStatus === 'qualified') {
-    return { label: l.fitOverride === 'qualified' ? 'Fit, confirmed by the team' : 'Qualified', tone: 'good', detail: l.fitDecision };
+    return { label: l.fitOverride === 'qualified' ? 'Fit' : 'Qualified', tone: 'good', detail: l.fitDecision };
   }
   if (l.fitStatus === 'not_fit') return { label: l.fitOverride === 'not_fit' ? 'Not a fit, decided by the team' : 'Not a fit', tone: 'neutral', detail: l.fitDecision };
   if (l.fitStatus === 'review') return { label: 'Needs review', tone: 'warning', detail: l.fitDecision };
