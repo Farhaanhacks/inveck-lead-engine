@@ -940,6 +940,22 @@ describe('Godamwale: Google\'s current-job line decides, supply chain managers f
   });
 });
 
+describe('BESCO Limited: another company with the same first word is not this one', () => {
+  it('drops Kevin Noble of Besco Water Treatment (Michigan), keeps BESCO staff', async () => {
+    const { sameFirm, basedAbroad } = await import('@/lib/pipeline/employer');
+    expect(sameFirm('; Deionization Plant Operations Manager at Besco Water Treatment', 'BESCO Limited')).toBe(false);
+    expect(sameFirm('Besco Water Treatment', 'BESCO Limited')).toBe(false);
+    expect(sameFirm('BESCO limited(Foundry Division)', 'BESCO Limited')).toBe(true);
+    expect(sameFirm('Purchase Manager at Besco Limited', 'BESCO Limited')).toBe(true);
+    expect(sameFirm('BESCO Ltd', 'BESCO Limited')).toBe(true);
+    // The registered name in full is still the company.
+    expect(sameFirm('Godamwale Trading & Logistics Pvt. Ltd.', 'Godamwale')).toBe(true);
+    // No location line, but LinkedIn serves the profile from the US.
+    expect(basedAbroad('', '', 'https://us.linkedin.com/in/kevin-noble')).toBe(true);
+    expect(basedAbroad('', '', 'https://in.linkedin.com/in/ajay')).toBe(false);
+  });
+});
+
 describe('Rheinmetall Pune: people based abroad are not contacts', () => {
   it('drops Detroit and Arkansas profiles, keeps the Pune plant operations head on top', async () => {
     const { searchLinkedIn, rankCandidates } = await import('@/lib/pipeline/contacts');

@@ -114,6 +114,16 @@ function namesFirm(text: string, company: string, site: string): boolean {
   // A name that comes down to one short word ("PKF" India, "Ucal"): exactly that, nothing added.
   // "PKF Sridhar & Santhanam" is another firm in the same network.
   if (b.length === 1 && b[0].length <= 4) return a.every((w) => w === b[0] || VAGUE.has(w));
+  // A one-word name ("BESCO" Limited) followed by words that make another company's name ("Besco
+  // Water Treatment", in Michigan) is not this company. Fine: the name alone or with words staff add
+  // or drop ("BESCO Ltd (Foundry Division)"), or the Indian registered name in full ("Godamwale
+  // Trading & Logistics Pvt Ltd").
+  if (b.length === 1 && a.includes(b[0])) {
+    const LEGAL_WORD = /^(pvt|private|ltd|limited|llp|inc|india|indian|co|company|corp|corporation)$/;
+    const next = [...plain(unbracketed(text)).matchAll(new RegExp(`\\b${b[0]}\\b(?:[^a-z0-9]+([a-z0-9]+))?`, 'g'))].map((m) => m[1] ?? '');
+    const plainUse = next.some((w) => !w || VAGUE.has(w) || LEGAL_WORD.test(w) || w.length <= 1);
+    if (!plainUse && !/\b(pvt|private|ltd|limited|llp)\b/i.test(unbracketed(text))) return false;
+  }
   if (b.every((w) => a.includes(w))) return true;
   // The same name spaced differently: "Euro Cast Engineering" is Eurocast Engineering.
   if (squash(a) === squash(b)) return true;
@@ -298,7 +308,10 @@ export function basedAbroad(location: string, snippet = '', profileUrl = ''): bo
     if (profileUrl && host !== 'in') return true;
     return false;
   }
-  // No location line: only an obviously foreign place in the snippet, with no Indian one.
+  // No location line: a profile LinkedIn serves from another country (us.linkedin.com, uk.linkedin.com)...
+  const host = /^https?:\/\/([a-z]{2,3})\.linkedin\.com\//i.exec(profileUrl)?.[1]?.toLowerCase() ?? '';
+  if (host && host !== 'in' && host !== 'www') return true;
+  // ...or an obviously foreign place in the snippet, with no Indian one.
   return (FOREIGN_COUNTRY.test(snippet) || /metropolitan area/i.test(snippet)) && !INDIA_PLACES.test(snippet);
 }
 
