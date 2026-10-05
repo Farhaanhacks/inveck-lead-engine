@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
@@ -75,8 +75,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
       .select()
       .from(leads)
       .where(whereWithStatus)
-      // Best ICP fit first, whatever became of the company; companies not assessed yet last.
-      .orderBy(sql`${leads.fitScore} desc nulls last`, sql`${leads.finalScore} desc nulls last`, desc(leads.updatedAt))
+      // A to Z by company (then city, for two sites of one company), so the list never reshuffles as leads are worked.
+      .orderBy(sql`lower(${leads.company})`, sql`lower(${leads.city})`, leads.id)
       .limit(PAGE_SIZE)
       .offset((page - 1) * PAGE_SIZE),
     db.select({ status: leads.status, n: sql<number>`count(*)::int` }).from(leads).where(where).groupBy(leads.status),
