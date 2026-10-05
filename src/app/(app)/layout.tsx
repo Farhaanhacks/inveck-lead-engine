@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { Nav } from '@/components/nav';
+import { NavHistory } from '@/components/nav-history';
 import { Logo } from '@/components/logo';
 import { AppShell } from '@/components/app-shell';
 import { SIDEBAR_COOKIE } from '@/components/sidebar-cookie';
@@ -50,6 +51,7 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
           You are still on the starting password. <Link href="/account" className="font-medium underline">Change it now</Link>.
         </div>
       )}
+      <NavHistory />
       {children}
     </AppShell>
   );

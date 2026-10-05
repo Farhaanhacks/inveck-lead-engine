@@ -1,3 +1,4 @@
+import { BackLink } from '@/components/nav-history';
 import Link from 'next/link';
 import { after } from 'next/server';
 import { contactPriority, icpFor } from '@/lib/tiers';
@@ -424,7 +425,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   return (
     <>
       <div className="mb-2 text-sm">
-        <Link href="/leads" className="inline-flex items-center gap-1 text-ink-2 hover:text-ink"><svg aria-hidden width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5" /></svg>Leads</Link>
+        <BackLink />
       </div>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
