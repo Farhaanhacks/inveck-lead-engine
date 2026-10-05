@@ -68,6 +68,34 @@ export function planSequence(startDay: string): PlannedTask[] {
   return plan;
 }
 
+/** CA firms: their own Today flow (see planCaSequence). */
+export const CA_SEGMENT = /\b(ca|chartered|audit|accountant)/i;
+export const isCaSegment = (segment: string) => CA_SEGMENT.test(segment);
+/** A CA firm's LinkedIn request is out: this step waits for it to be accepted (not a to-do for the day). */
+export const CA_WAITING_STEP = 'Request accepted?';
+/** A CA firm whose request wasn't accepted (or that has no LinkedIn): reached by call, WhatsApp and email. */
+export const CA_FALLBACK_STEP = 'Not accepted on LinkedIn';
+/** Marks the steps a CA firm's LinkedIn request (or skipping it) set up, so Undo can take them away. */
+export const CA_AFTER_NOTE = 'ca-after:';
+
+/**
+ * A CA firm starts with only a LinkedIn connection request. Once it is sent, Today shows "Request
+ * accepted" until someone clicks it; not accepted by the next working day, the firm gets a call, a
+ * WhatsApp and an email that day (see planCaFallback). Accepted, or all three done: the firm is done.
+ */
+export function planCaSequence(startDay: string): PlannedTask[] {
+  return [{ kind: 'linkedin', step: 'Day 1', title: 'Send the LinkedIn connection request', dueDate: firstWorkingDay(startDay), slot: 'day' }];
+}
+
+/** After a CA firm's request: the waiting step (from today) and, if it isn't accepted, the call, WhatsApp and email on `fallbackDay`. */
+export function planCaFallback(today: string, fallbackDay: string, waiting: boolean): PlannedTask[] {
+  const plan: PlannedTask[] = waiting ? [{ kind: 'linkedin', step: CA_WAITING_STEP, title: 'Waiting for the LinkedIn request to be accepted', dueDate: today, slot: 'day' }] : [];
+  for (const [kind, label] of [['call', 'call'], ['whatsapp', 'WhatsApp'], ['email', 'email']] as const) {
+    plan.push({ kind, step: CA_FALLBACK_STEP, title: `${CA_FALLBACK_STEP}: ${label}`, dueDate: fallbackDay, slot: 'day' });
+  }
+  return plan;
+}
+
 /** Statuses where the lead is being worked on, so outreach tasks make sense. */
 export const WORKING_STATUSES = ['Awaiting Approval', 'Approved', 'Contacted'] as const;
 /** Once a lead is here, open sequence tasks stop showing (promised callbacks still do). */
@@ -102,7 +130,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
     .from(tasks)
     .where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt), ne(tasks.step, FIND_NEXT_STEP)));
   const waiting = await db
-    .select({ id: leads.id, ownerId: leads.ownerId })
+    .select({ id: leads.id, ownerId: leads.ownerId, segment: leads.segment })
     .from(leads)
     .where(
       and(
@@ -119,7 +147,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
       .set({ doneAt: new Date(), outcome: 'closed' })
       .where(and(inArray(tasks.leadId, waiting.map((l) => l.id)), isNull(tasks.doneAt), eq(tasks.step, FIND_NEXT_STEP)));
   }
-  const rows = waiting.flatMap((l) => planSequence(today).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
+  const rows = waiting.flatMap((l) => (isCaSegment(l.segment) ? planCaSequence(today) : planSequence(today)).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
   for (let i = 0; i < rows.length; i += 500) await db.insert(tasks).values(rows.slice(i, i + 500));
 
   const finding = await db
@@ -198,8 +226,6 @@ export async function loadTodayTasks(db: Db, ownerId: number, today = istDay()):
 
 export type DayCounts = { connectedCalls: number; caConnectedCalls: number; callAttempts: number; linkedinSent: number; whatsappSent: number; emailsDone: number };
 
-const CA_SEGMENT = /\b(ca|chartered|audit|accountant)/i;
-
 /** What a person got done on an Indian day. A connected call is a conversation, not an attempt. */
 export async function dayCounts(db: Db, ownerId: number, day = istDay()): Promise<DayCounts> {
   const { start, end } = istDayBounds(day);
@@ -264,7 +290,7 @@ async function openStepsFor(db: Db, leadId: number, day: string): Promise<number
     .select({ id: tasks.id })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
-    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES))));
+    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), ne(tasks.step, CA_WAITING_STEP), or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES))));
   return rows.length;
 }
 
@@ -297,8 +323,10 @@ export async function companyProgress(db: Db, ownerId: number, day = istDay()): 
     db.select({ leadId: companyDays.leadId }).from(companyDays).where(and(eq(companyDays.ownerId, ownerId), eq(companyDays.day, day))),
     loadTodayTasks(db, ownerId, day),
   ]);
-  const all = new Set([...finished.map((f) => f.leadId), ...open.map((o) => o.lead.id)]);
-  const still = new Set(open.map((o) => o.lead.id));
+  // A CA firm only waiting for its LinkedIn request to be accepted has nothing to do today: it counts
+  // only if something was done for it today.
+  const still = new Set(open.filter((o) => o.task.step !== CA_WAITING_STEP).map((o) => o.lead.id));
+  const all = new Set([...finished.map((f) => f.leadId), ...still]);
   return { done: [...all].filter((id) => !still.has(id)).length, total: all.size };
 }
 

@@ -611,6 +611,24 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(t.status).toBe('Disqualified');
   });
 
+  it('a firm imported with its partners keeps them through research: the main contact stays, the fit stays confirmed', async () => {
+    const { importContactSheet, parseContactSheet } = await import('@/lib/contact-import');
+    const { KnownBranches } = await import('@/lib/branches');
+    const { people } = await import('@/lib/db/schema');
+    const { rows } = parseContactSheet([
+      ['Firm', 'Phone', 'Email', 'Matched partner / proprietor', 'Role', 'LinkedIn 1', 'LinkedIn 2'],
+      ['ALPHA & CO', '9800000002', 'alpha@example.com', '1. Ravi Kumar\n2. Meena Iyer', 'Partner', 'https://in.linkedin.com/in/ravi-k', 'https://in.linkedin.com/in/meena-i'],
+    ]);
+    await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: null, known: new KnownBranches([], []), by: 'Puja' });
+    const [lead] = await db.select().from(leads).where(eq(leads.company, 'ALPHA & CO'));
+    // The AI would call it not a fit: the team's call stands.
+    const r = await run(lead, { research: (user) => kltAnswer(user, { qualified: false, fit_score: 2 }), google: () => [] });
+    expect(r.status).toBe('Awaiting Approval');
+    expect(r.contactName ?? lead.contactName).toBe('Ravi Kumar');
+    const names = (await db.select().from(people).where(eq(people.leadId, lead.id))).map((p) => p.name);
+    expect(names).toContain('Meena Iyer');
+  });
+
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
     const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
     const results = [

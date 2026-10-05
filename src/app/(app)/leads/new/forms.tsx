@@ -1,6 +1,6 @@
 'use client';
 import { useActionState } from 'react';
-import { addLeadAction, addLeadsBulkAction } from '../../../actions';
+import { addLeadAction, addLeadsBulkAction, importContactSheetAction } from '../../../actions';
 import { SubmitButton } from '@/components/submit-button';
 
 function Message({ state }: { state?: { ok: boolean; message: string } }) {
@@ -12,9 +12,10 @@ function Message({ state }: { state?: { ok: boolean; message: string } }) {
   );
 }
 
-export function AddLeadForms({ segments }: { segments: string[] }) {
+export function AddLeadForms({ segments, team }: { segments: string[]; team: { id: number; name: string }[] }) {
   const [one, addOne] = useActionState(addLeadAction, undefined);
   const [many, addMany] = useActionState(addLeadsBulkAction, undefined);
+  const [sheet, addSheet] = useActionState(importContactSheetAction, undefined);
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -111,6 +112,46 @@ export function AddLeadForms({ segments }: { segments: string[] }) {
         <div className="flex items-center gap-3">
           <SubmitButton pendingText="Adding…">Add companies</SubmitButton>
           <Message state={many} />
+        </div>
+      </form>
+      <form action={addSheet} className="card space-y-4 p-5 lg:col-span-2">
+        <div>
+          <h2 className="text-sm font-semibold">Companies with their contacts (CSV)</h2>
+          <p className="mt-1 text-xs text-muted">
+            A list the team already researched, such as CA firms with their partners. Columns: <code>Firm</code> (or Company), <code>Phone</code>, <code>Email</code>, the names
+            (<code>Matched partner / proprietor</code> or Contact name, one per line), <code>Role</code>, <code>LinkedIn 1</code>, <code>LinkedIn 2</code>…; City and Website if you have them.
+            The first person is the main contact; everyone else, and any extra numbers and emails, are kept as more points of contact. The fit counts as confirmed: research only writes the email.
+            Companies already a lead or a client are skipped. From Excel: File → Save As → CSV (UTF-8).
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label htmlFor="sheet-file" className="label">CSV file *</label>
+            <input id="sheet-file" name="file" type="file" accept=".csv,text/csv" required className="field" />
+          </div>
+          <div>
+            <label htmlFor="sheet-segment" className="label">Segment *</label>
+            <select id="sheet-segment" name="segment" required defaultValue={segments.find((s) => /\bca\b|chartered/i.test(s)) ?? ''} className="field">
+              <option value="" disabled>Choose an ICP</option>
+              {segments.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="sheet-assign" className="label">Who works them</label>
+            <select id="sheet-assign" name="assign" defaultValue="split" className="field">
+              <option value="split">Share out between the team now</option>
+              <option value="draw">The morning draw</option>
+              {team.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <SubmitButton pendingText="Importing…">Import companies</SubmitButton>
+          <Message state={sheet} />
         </div>
       </form>
     </div>

@@ -16,7 +16,9 @@ import { findSignals } from '@/lib/pipeline/signals';
 import { appPassword, createSession, SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/auth';
 import { assignUnowned } from '@/lib/assign';
 import { recordPresence } from '@/lib/attendance';
-import { getCurrentUser, verifyLogin } from '@/lib/users';
+import { getCurrentUser, listBdas, requireUser, verifyLogin } from '@/lib/users';
+import { importContactSheet, parseContactSheet } from '@/lib/contact-import';
+import { cleanPhone } from '@/lib/tracker';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
 import { KnownBranches } from '@/lib/branches';
@@ -220,6 +222,80 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
         ? ` Segment ${unmatched.map((s) => `"${s || 'none'}"`).join(', ')} matches no active ICP: those companies wait in Needs Review until a segment is chosen.`
         : ''),
   };
+}
+
+/**
+ * A CSV of companies with their points of contact (the team's researched list: firm, phone, email,
+ * partners and their LinkedIn profiles). Each becomes a lead with every point of contact; the owner is
+ * the morning draw's, everyone in turn now, or one person.
+ */
+export async function importContactSheetAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
+  const me = await requireUser();
+  const file = form.get('file');
+  if (!(file instanceof File) || !file.size) return { ok: false, message: 'Choose a CSV file.' };
+  if (file.size > 5_000_000) return { ok: false, message: 'That file is over 5 MB. Split it into smaller files.' };
+  const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  if ((bytes[0] === 0x50 && bytes[1] === 0x4b) || (bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
+    return { ok: false, message: 'That’s an Excel file. In Excel choose File → Save As → CSV (UTF-8), then upload the CSV.' };
+  }
+  const segment = await matchSegment(str(form, 'segment'));
+  if (!segment) return { ok: false, message: 'Choose the segment these companies belong to.' };
+  const parsed = parseContactSheet(parseCsv(await file.text()));
+  if (parsed.error) return { ok: false, message: parsed.error };
+  const db = await getDb();
+  const team = await listBdas(db);
+  const assign = str(form, 'assign');
+  // A team member's own import is theirs unless they choose otherwise.
+  const one = Number(assign) || (assign === '' && me.role === 'bda' ? me.id : 0);
+  const known = await knownCompanies();
+  let turn = 0;
+  let added = 0;
+  const skipped: string[] = [];
+  for (const row of parsed.rows) {
+    const ownerId = one ? (team.some((b) => b.id === one) || one === me.id ? one : null) : assign === 'split' && team.length ? team[turn % team.length].id : null;
+    const r = await importContactSheet(db, [row], { segment, ownerId, known, by: me.name });
+    added += r.added;
+    skipped.push(...r.skipped);
+    if (r.added) turn++;
+  }
+  if (added) {
+    await researchNow();
+    revalidatePath('/today');
+  }
+  revalidatePath('/leads');
+  revalidatePath('/tracker');
+  revalidatePath('/');
+  const who = one ? `for ${team.find((b) => b.id === one)?.name ?? me.name}` : assign === 'split' ? 'shared out between the team' : 'for the morning draw';
+  return {
+    ok: added > 0,
+    message:
+      `Added ${added} ${added === 1 ? 'company' : 'companies'} with their points of contact, ${who}.` +
+      (skipped.length ? ` Skipped ${skipped.length} already a lead or a client: ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? '…' : ''}.` : '') +
+      (added ? ' Their emails are being written now; they show on Today once ready.' : ''),
+  };
+}
+
+/** Another point of contact at the company: someone else, another number, another email or LinkedIn. */
+export async function addPointOfContactAction(form: FormData) {
+  const leadId = Number(str(form, 'id'));
+  if (!(await mayActOn(leadId))) return;
+  const name = str(form, 'name').slice(0, 200);
+  const phone = cleanPhone(str(form, 'phone'));
+  const email = str(form, 'email').slice(0, 200);
+  const linkedinRaw = str(form, 'linkedin').slice(0, 500);
+  const linkedin = linkedinRaw && !/^https?:\/\//i.test(linkedinRaw) ? `https://${linkedinRaw.replace(/^\/+/, '')}` : linkedinRaw;
+  if (phone === null) return;
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+  if (linkedin && !/linkedin\.com\//i.test(linkedin)) return;
+  if (!name && !phone && !email && !linkedin) return;
+  const db = await getDb();
+  const [lead] = await db.select({ id: leads.id }).from(leads).where(eq(leads.id, leadId));
+  if (!lead) return;
+  const label = name || (phone ? 'Other number' : email ? 'Other email' : 'LinkedIn profile');
+  await db.insert(people).values({ leadId, name: label, title: str(form, 'title').slice(0, 200), phone, email, linkedin, source: 'Added by the team', evidence: 'Added by the team' });
+  await logActivity(db, leadId, 'note', `Point of contact added by ${await actorName()}: ${[label, phone, email, linkedin].filter(Boolean).join(' · ')}`);
+  refreshLeadPages(leadId);
+  revalidatePath('/today');
 }
 
 export async function updateLeadAction(form: FormData) {

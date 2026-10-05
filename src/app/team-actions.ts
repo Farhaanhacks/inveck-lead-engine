@@ -6,7 +6,7 @@ import { escalate, unansweredCalls, type Escalation } from '@/lib/escalate';
 import { contactFields, saveContactEdit } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
-import { and, eq, gt, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, tasks, users, type LeadStatus, type TaskKind } from '@/lib/db/schema';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
@@ -18,14 +18,14 @@ import { reconcileContactStatus } from '@/lib/contact-status';
 import { CALL_FEEDBACK, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
-import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay } from '@/lib/tasks';
+import { CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay, planCaFallback } from '@/lib/tasks';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
 const OUTCOMES: Record<TaskKind, string[]> = {
   call: ['connected', 'no_answer', 'busy', 'wrong_number', 'no_contact', 'skipped'],
   whatsapp: ['sent', 'skipped'],
-  linkedin: ['sent', 'skipped'],
+  linkedin: ['sent', 'skipped', 'accepted'],
   email: ['done', 'skipped'],
 };
 
@@ -56,6 +56,8 @@ export async function completeTaskAction(form: FormData) {
   // Only the owner logs their own work, so the daily numbers are always theirs.
   if (task.ownerId !== user.id) return;
   if (!OUTCOMES[task.kind].includes(outcome)) return;
+  // A CA firm's waiting step is only ever marked accepted; "accepted" fits nothing else.
+  if ((task.step === CA_WAITING_STEP) !== (outcome === 'accepted')) return;
   const feedback = str(form, 'feedback');
   if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return;
   if (task.kind === 'linkedin' && outcome === 'sent') {
@@ -64,7 +66,8 @@ export async function completeTaskAction(form: FormData) {
 
   const now = new Date();
   // A wrong number is taken off the lead (and kept on the task, so Undo can put it back).
-  const [lead] = await db.select({ phone: leads.contactPhone }).from(leads).where(eq(leads.id, task.leadId));
+  const [lead] = await db.select({ phone: leads.contactPhone, segment: leads.segment }).from(leads).where(eq(leads.id, task.leadId));
+  const ca = isCaSegment(lead?.segment ?? '');
   const wrong = task.kind === 'call' && outcome === 'wrong_number' && !!lead?.phone;
   await db
     .update(tasks)
@@ -93,6 +96,7 @@ export async function completeTaskAction(form: FormData) {
   if (task.kind === 'linkedin' && outcome === 'sent') {
     await db.update(leads).set({ linkedinOutcome: 'Request sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.linkedinOutcome, ['', 'Not sent'])));
   }
+  if (ca) await caNextSteps(db, task, outcome, now);
   if (wrong) {
     await db.update(leads).set({ contactPhone: '' }).where(eq(leads.id, task.leadId));
     await logActivity(db, task.leadId, 'note', `Number ${lead!.phone} marked wrong and removed. Find the right one with ContactOut.`);
@@ -114,7 +118,8 @@ export async function completeTaskAction(form: FormData) {
   if (task.kind === 'call' && ['no_answer', 'busy', 'wrong_number'].includes(outcome)) {
     const [l] = await db.select({ id: leads.id, contactSince: leads.contactSince }).from(leads).where(eq(leads.id, task.leadId));
     if (l && (await unansweredCalls(db, l)) >= MAX_CALL_ATTEMPTS) escalated = await escalate(db, task.leadId, 'no_answer', now);
-    else if (outcome !== 'wrong_number') await remindToCallAgain(db, task);
+    // A CA firm is called once when its LinkedIn request isn't accepted; no call-again days.
+    else if (outcome !== 'wrong_number' && !ca) await remindToCallAgain(db, task);
   }
 
   if (task.kind === 'call' && outcome === 'connected') {
@@ -175,6 +180,35 @@ async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks
   const ids = open.filter((t) => t.id !== task.id && !laterToday(t)).map((t) => t.id);
   // Same time as the logged task, so Undo can bring them back together.
   if (ids.length) await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(inArray(tasks.id, ids), isNull(tasks.doneAt)));
+}
+
+/**
+ * A CA firm's flow (see planCaSequence):
+ * - request sent: wait for it to be accepted from today; not accepted, a call, WhatsApp and email on
+ *   the next working day;
+ * - no request (skipped, no LinkedIn): the call, WhatsApp and email today;
+ * - accepted: the firm is done (everything still open is ticked off);
+ * - the call, WhatsApp and email all logged: the firm is done (the wait ends too).
+ * Everything ticked off here shares the logged step's time, so Undo brings it back with it.
+ */
+async function caNextSteps(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, outcome: string, now: Date) {
+  if (task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && (outcome === 'sent' || outcome === 'skipped')) {
+    const today = istDay();
+    // Never twice: a request logged again after an Undo replaces what the first one set up.
+    await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), inArray(tasks.step, [CA_WAITING_STEP, CA_FALLBACK_STEP])));
+    const plan = planCaFallback(today, outcome === 'sent' ? nextWorkingDay(today) : today, outcome === 'sent');
+    await db.insert(tasks).values(plan.map((t) => ({ ...t, leadId: task.leadId, ownerId: task.ownerId, note: `${CA_AFTER_NOTE}${task.id}` })));
+    return;
+  }
+  if (outcome === 'accepted') {
+    await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false)));
+    await db.update(leads).set({ linkedinOutcome: 'Accepted' }).where(eq(leads.id, task.leadId));
+    return;
+  }
+  if (task.step === CA_FALLBACK_STEP) {
+    const left = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.step, CA_FALLBACK_STEP))).limit(1);
+    if (!left.length) await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.step, CA_WAITING_STEP)));
+  }
 }
 
 const RETRY_NOTE = 'auto-retry:';
@@ -321,6 +355,14 @@ export async function undoTaskAction(form: FormData) {
     await db.delete(tasks).where(and(eq(tasks.note, `${RETRY_NOTE}${task.id}`), isNull(tasks.doneAt)));
     // and the WhatsApp and email planned alongside it
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, 'Call again'), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
+  }
+  // A CA firm's request (or skipping it) set up a wait and a call, WhatsApp and email: they go with it.
+  if (task.kind === 'linkedin' && (task.outcome === 'sent' || task.outcome === 'skipped')) {
+    await db.delete(tasks).where(and(eq(tasks.note, `${CA_AFTER_NOTE}${task.id}`), or(isNull(tasks.doneAt), eq(tasks.outcome, 'closed'))));
+    if (task.outcome === 'sent') await db.update(leads).set({ linkedinOutcome: '' }).where(and(eq(leads.id, task.leadId), eq(leads.linkedinOutcome, 'Request sent')));
+  }
+  if (task.outcome === 'accepted') {
+    await db.update(leads).set({ linkedinOutcome: 'Request sent' }).where(and(eq(leads.id, task.leadId), eq(leads.linkedinOutcome, 'Accepted')));
   }
   // Whatever was ticked off along with it (the rest of the sequence after a connected call, or earlier rounds caught up) comes back too.
   await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));

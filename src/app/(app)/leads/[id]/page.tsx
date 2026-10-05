@@ -1,3 +1,4 @@
+import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { BackLink } from '@/components/nav-history';
 import Link from 'next/link';
 import { after } from 'next/server';
@@ -273,7 +274,7 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
   );
 }
 
-function PeopleCard({ company, city, list, tierFor }: { company: string; city: string; list: Person[]; tierFor: (title: string) => Tier }) {
+function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; company: string; city: string; list: Person[]; tierFor: (title: string) => Tier }) {
   // People found at the company who aren't contacts for this site aren't shown.
   const contacts = list.filter((p) => p.passedReason !== 'excluded');
   const row = (p: Person) => (
@@ -300,6 +301,12 @@ function PeopleCard({ company, city, list, tierFor }: { company: string; city: s
                     <div className="max-w-[16rem] truncate text-xs text-muted" title={p.location}>{p.location ? `Profile: ${p.location}` : 'Profile location not shown'}</div>
                   )}
                   {p.jobLocation && <div className="max-w-[16rem] truncate text-xs text-muted" title={p.jobLocation}>Job here: {p.jobLocation}</div>}
+                  {(p.phone || p.email) && (
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs">
+                      {p.phone && <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{p.phone}</a>}
+                      {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}
+                    </div>
+                  )}
                   {p.responsibility && <div className="max-w-[16rem] truncate text-xs text-muted">Responsible for: {p.responsibility}</div>}
                   {p.evidence && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Evidence: {p.evidence}</div>}
                   {p.passedAt && p.whyNot && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Not the main contact: {p.whyNot}</div>}
@@ -360,6 +367,9 @@ function PeopleCard({ company, city, list, tierFor }: { company: string; city: s
       <p className="border-t border-line px-5 py-2.5 text-xs text-muted">
         Making someone the main contact rewrites the email for them; the calls and messages on Today go to them from then on.
       </p>
+      <div className="px-5 pb-4">
+        <AddPointOfContact leadId={leadId} company={company} />
+      </div>
     </section>
   );
 }
@@ -498,9 +508,10 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
         </div>
       )}
 
-      {team.length > 0 && (
+      {/* Always shown, so a point of contact can be added even before anyone is found. */}
+      {(
         <div className="mb-6">
-          <PeopleCard company={lead.company} city={lead.city} list={team} tierFor={(title) => tierOf(title, icp ?? undefined)} />
+          <PeopleCard leadId={lead.id} company={lead.company} city={lead.city} list={team} tierFor={(title) => tierOf(title, icp ?? undefined)} />
         </div>
       )}
 

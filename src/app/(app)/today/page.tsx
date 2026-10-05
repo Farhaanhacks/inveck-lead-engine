@@ -20,7 +20,10 @@ import {
   DAILY_COMPANY_TARGET,
   DAILY_LINKEDIN_LIMIT,
   dayCounts,
+  CA_FALLBACK_STEP,
+  CA_WAITING_STEP,
   ensureSequences,
+  isCaSegment,
   istDay,
   loadDoneToday,
   loadTodayTasks,
@@ -38,6 +41,7 @@ import { CALL_FEEDBACK, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
 import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
+import { AddPointOfContact } from '@/components/add-point-of-contact';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
@@ -48,6 +52,8 @@ const OUTCOME_LABEL: Record<string, string> = {
   busy: 'Busy or voicemail',
   wrong_number: 'Wrong number',
   sent: 'Sent',
+  accepted: 'Accepted',
+  no_contact: 'No contact found',
   done: 'Sent',
   skipped: 'Skipped',
 };
@@ -143,6 +149,8 @@ const laterRound = (a: Task, b: Task) => a.dueDate > b.dueDate || (a.dueDate ===
 /** Which round this is, in plain words. */
 function roundLabel(task: Task): string {
   if (task.priority) return 'Promised callback';
+  if (task.step === CA_WAITING_STEP) return 'Waiting for LinkedIn';
+  if (task.step === CA_FALLBACK_STEP) return 'Not accepted on LinkedIn: call, WhatsApp and email';
   if (task.step.startsWith('Day 1')) return 'First contact';
   return task.step;
 }
@@ -180,13 +188,19 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
                 <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
               </>
             )}
-            {task.kind === 'linkedin' &&
+            {task.kind === 'linkedin' && task.step === CA_WAITING_STEP && (
+              <>
+                <span className="text-xs text-ink-2">Request sent. Not accepted yet: mark it once it is.</span>
+                <Outcome id={task.id} buttons={[['accepted', 'Request accepted']]} />
+              </>
+            )}
+            {task.kind === 'linkedin' && task.step !== CA_WAITING_STEP &&
               (linkedinFull ? (
                 <span className="text-xs text-muted">Daily limit of {DAILY_LINKEDIN_LIMIT} requests reached. This one stays for tomorrow.</span>
               ) : (
                 <>
                   {lead.contactLinkedin ? <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open LinkedIn profile</a> : null}
-                  <Outcome id={task.id} buttons={[['sent', 'Request sent'], ['skipped', 'Skip']]} />
+                  <Outcome id={task.id} buttons={[['sent', 'Request sent'], ['skipped', isCaSegment(lead.segment) ? 'Not on LinkedIn: call instead' : 'Skip']]} />
                 </>
               ))}
           </div>
@@ -194,7 +208,7 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
         {!readOnly && askPhone && !finding && !lead.contactPhone && (
           <FoundDetail leadId={lead.id} field="contactPhone" label="Found the number? Save it" placeholder="+91 98xxx xxxxx" type="tel" />
         )}
-        {!readOnly && task.kind === 'linkedin' && !lead.contactLinkedin && (
+        {!readOnly && task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && !lead.contactLinkedin && (
           <FoundDetail
             leadId={lead.id}
             field="contactLinkedin"
@@ -209,7 +223,7 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
           </p>
         )}
         {task.priority && task.note && !task.note.startsWith('auto-retry:') && <div className="mt-1 text-xs text-ink-2">Note: {task.note}</div>}
-        <details className={`mt-1.5 ${finding ? 'hidden' : ''}`}>
+        <details className={`mt-1.5 ${finding || task.step === CA_WAITING_STEP ? 'hidden' : ''}`}>
           <summary className="cursor-pointer text-xs text-muted hover:text-ink">{task.kind === 'call' ? 'Talk track' : task.kind === 'linkedin' ? 'Connection note' : 'Message'}</summary>
           <div className="mt-2 space-y-2 rounded-md bg-surface-2 p-3 text-sm">
             {task.kind === 'call' && (
@@ -266,6 +280,7 @@ function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
           <p className="text-xs text-muted">Changing the name to someone else clears the previous person&apos;s number, email and LinkedIn unless you type new ones.</p>
           <button className="btn-primary px-3 py-1.5 text-sm">Save contact</button>
         </form>
+        <AddPointOfContact leadId={lead.id} company={lead.company} />
         {others.length > 0 && (
           <form action={makePrimaryAction} className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
             <input type="hidden" name="id" value={lead.id} />
@@ -288,6 +303,7 @@ function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
 /** Everything due today for one company, as a checklist: call first, then WhatsApp, then email. */
 type CompanyGroup = { lead: Lead; items: TodayTask[]; priority: boolean; first: string; round: Task };
 const KIND_ORDER: Task['kind'][] = ['call', 'whatsapp', 'email', 'linkedin'];
+const CA_KIND_ORDER: Task['kind'][] = ['linkedin', 'call', 'whatsapp', 'email'];
 
 /** A step already logged today: ticked, with what happened and an Undo. */
 function DoneStep({ task, readOnly }: { task: Task; readOnly: boolean }) {
@@ -335,18 +351,24 @@ function CompanyCard({
   const { lead } = group;
   // One row per channel, in the same order every time: open ones to log, the ones logged today ticked.
   // Logging a row also ticks off any earlier rounds of that channel still open (see catchUp).
-  const rows = KIND_ORDER.flatMap((k): { kind: Task['kind']; open?: TodayTask; done?: Task }[] => {
+  // A CA firm starts on LinkedIn: that row comes first.
+  const ca = isCaSegment(lead.segment);
+  const rows = (ca ? CA_KIND_ORDER : KIND_ORDER).flatMap((k): { kind: Task['kind']; open?: TodayTask; done?: Task }[] => {
     // A promised callback first, else the latest round of this channel; logging a round also ticks off any older one still open.
     const ofKind = group.items.filter((i) => i.task.kind === k);
     const open = ofKind.find((i) => i.task.priority) ?? ofKind.at(-1);
-    if (open) return [{ kind: k, open, done: undefined }];
     const done = doneToday.find((t) => t.kind === k);
+    // A CA firm's request sent today stays ticked above the wait for it to be accepted.
+    if (open && open.task.step === CA_WAITING_STEP && done) return [{ kind: k, open: undefined, done }, { kind: k, open, done: undefined }];
+    if (open) return [{ kind: k, open, done: undefined }];
     return done ? [{ kind: k, open: undefined, done }] : [];
   });
   // Ask for a missing number once per company: on the call row, or on WhatsApp once the call is logged.
   const phoneRow = rows.find((r) => r.open && (r.kind === 'call' || r.kind === 'whatsapp'))?.kind;
-  const total = rows.length;
-  const ticked = rows.filter((r) => r.done).length;
+  // Waiting for a LinkedIn request to be accepted isn't a step to do.
+  const counted = rows.filter((r) => r.open?.task.step !== CA_WAITING_STEP);
+  const total = counted.length;
+  const ticked = counted.filter((r) => r.done).length;
   return (
     <li className="px-5 py-4" data-company={lead.id}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -364,18 +386,20 @@ function CompanyCard({
           {!readOnly && <EditContact lead={lead} others={others} />}
           {others.filter((p) => !p.passedAt).length > 0 && (
             <div className="mt-2 rounded-md border border-line bg-surface-2 px-3 py-2">
-              <div className="text-[11px] font-medium uppercase tracking-wide text-muted">Also at {lead.company}</div>
+              <div className="text-[11px] font-medium uppercase tracking-wide text-muted">More points of contact at {lead.company}</div>
               <ul className="mt-1 space-y-1">
                 {others
                   .filter((p) => !p.passedAt)
-                  .slice(0, 3)
+                  .slice(0, 6)
                   .map((p) => (
                     <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                       <span className="font-medium text-ink">{p.name}</span>
                       {p.title && <span className="text-muted">{p.title}</span>}
+                      {p.phone && <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="text-accent hover:underline">{p.phone}</a>}
+                      {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}
                       {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
-                      {!p.linkedin && <span className="text-muted">no details yet</span>}
-                      {!readOnly && (
+                      {!p.linkedin && !p.phone && !p.email && <span className="text-muted">no details yet</span>}
+                      {!readOnly && p.name !== 'Other number' && p.name !== 'Other email' && (
                         <form action={makePrimaryAction}>
                           <input type="hidden" name="id" value={lead.id} />
                           <input type="hidden" name="personId" value={p.id} />
@@ -508,7 +532,14 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const othersOf = (l: Lead) =>
     peopleRows
       // Only people on the ICP's P1/P2/P3 lists: INVECK doesn't want anyone else.
-      .filter((p) => p.leadId === l.id && !p.isPrimary && p.name.toLowerCase() !== l.contactName.toLowerCase() && contactPriority(p.title, icpOf(l)) < 99)
+      .filter(
+        (p) =>
+          p.leadId === l.id &&
+          !p.isPrimary &&
+          p.name.toLowerCase() !== l.contactName.toLowerCase() &&
+          // Points of contact the team added always show; others only if on the ICP's lists.
+          (p.source === 'Added by the team' || contactPriority(p.title, icpOf(l)) < 99),
+      )
       .sort((a, b) => Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icpOf(l), l.city) - candidateRank(b, icpOf(l), l.city));
   const startHere = unattended.length + demos.length;
 
@@ -672,6 +703,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
             </h2>
             <p className="text-xs text-muted">
               For each company, do every step today: call, WhatsApp, email and LinkedIn. When all are ticked the company is done for the day. A call marked Not interested ticks off the rest.
+              CA firms start with only a LinkedIn request: mark it sent, then Request accepted once they accept. Not accepted by the next working day, they get a call, WhatsApp and email that day; accepted, or all three done, and the firm is done.
             </p>
           </div>
           <ul className="divide-y divide-line">
