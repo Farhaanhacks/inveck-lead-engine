@@ -399,7 +399,7 @@ export const tasks = pgTable('tasks', {
   priority: boolean('priority').notNull().default(false),
   note: text('note').notNull().default(''),
   doneAt: timestamp('done_at', { withTimezone: true }),
-  /** connected, no_answer, busy, wrong_number, sent, done or skipped. */
+  /** connected, no_answer, busy, wrong_number, no_contact, sent, done or skipped. */
   outcome: text('outcome').notNull().default(''),
   /** The lead's stage before logging this moved it on, so Undo can put it back. */
   stageFrom: text('stage_from').notNull().default(''),

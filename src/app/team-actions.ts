@@ -23,7 +23,7 @@ import { dayCounts, DAILY_LINKEDIN_LIMIT, istDay, markCompanyDay, MAX_CALL_ATTEM
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
 const OUTCOMES: Record<TaskKind, string[]> = {
-  call: ['connected', 'no_answer', 'busy', 'wrong_number', 'skipped'],
+  call: ['connected', 'no_answer', 'busy', 'wrong_number', 'no_contact', 'skipped'],
   whatsapp: ['sent', 'skipped'],
   linkedin: ['sent', 'skipped'],
   email: ['done', 'skipped'],
@@ -36,6 +36,7 @@ const OUTCOME_TEXT: Record<string, string> = {
   no_answer: 'Call: no answer',
   busy: 'Call: busy or voicemail',
   wrong_number: 'Call: wrong number',
+  no_contact: 'Call: no contact number found',
 };
 
 /** A date typed as YYYY-MM-DD that is today or later, else ''. */
@@ -78,6 +79,14 @@ export async function completeTaskAction(form: FormData) {
       .where(eq(leads.id, task.leadId));
   }
   if (task.kind === 'call' && outcome === 'wrong_number') await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
+  // No number found: nothing to call or WhatsApp today, so today's WhatsApp is ticked off with the call
+  // (Undo brings it back). Later rounds stay, for when a number turns up.
+  if (task.kind === 'call' && outcome === 'no_contact') {
+    await db
+      .update(tasks)
+      .set({ doneAt: now, outcome: 'closed', note: 'No contact number found' })
+      .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt), lte(tasks.dueDate, istDay())));
+  }
   if (task.kind === 'email' && outcome === 'done') {
     await db.update(leads).set({ mailOutcome: 'Sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.mailOutcome, ['', 'Not sent'])));
   }

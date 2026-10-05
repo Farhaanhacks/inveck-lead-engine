@@ -18,7 +18,9 @@ holder.__inveckDb ??= {};
  * ./.data. `memory://` gives a throwaway in-memory database (used by the tests).
  */
 export function databaseUrl(): string {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+  // SUPABASE_DB_URL wins: set it to move the app to Supabase without touching the Neon integration's
+  // own variables (which Vercel manages).
+  return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 }
 
 async function connect(): Promise<Db> {
@@ -28,7 +30,8 @@ async function connect(): Promise<Db> {
     const { default: postgres } = await import('postgres');
     const { drizzle } = await import('drizzle-orm/postgres-js');
     // Serverless functions come and go, so keep the pool small.
-    const client = postgres(url, { max: 3, prepare: false });
+    // Supabase only takes encrypted connections; its pooler (port 6543) needs prepare: false, as here.
+    const client = postgres(url, { max: 3, prepare: false, ...(/supabase\.(co|com)/.test(url) ? { ssl: 'require' as const } : {}) });
     db = drizzle(client, { schema }) as unknown as Db;
   } else {
     if (!url && process.env.VERCEL) {
