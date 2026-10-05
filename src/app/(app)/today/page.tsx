@@ -95,7 +95,7 @@ function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
 function CallActions({ task }: { task: Task }) {
   return (
     <div className="flex flex-wrap items-start gap-2">
-      <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number'], ['no_contact', 'No contact']]} />
+      <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number'], ['no_contact', 'No contact found']]} />
       {/* Opens in place, under the buttons, so nothing can cut it off on any screen. */}
       <details className="group open:basis-full">
         <summary className="btn-primary list-none px-2.5 py-1 text-xs group-open:ring-2 group-open:ring-accent/30 [&::-webkit-details-marker]:hidden">Connected</summary>

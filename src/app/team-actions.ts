@@ -36,7 +36,7 @@ const OUTCOME_TEXT: Record<string, string> = {
   no_answer: 'Call: no answer',
   busy: 'Call: busy or voicemail',
   wrong_number: 'Call: wrong number',
-  no_contact: 'Call: no contact number found',
+  no_contact: 'Call: no contact found',
 };
 
 /** A date typed as YYYY-MM-DD that is today or later, else ''. */
@@ -84,7 +84,7 @@ export async function completeTaskAction(form: FormData) {
   if (task.kind === 'call' && outcome === 'no_contact') {
     await db
       .update(tasks)
-      .set({ doneAt: now, outcome: 'closed', note: 'No contact number found' })
+      .set({ doneAt: now, outcome: 'closed', note: 'No contact found' })
       .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt), lte(tasks.dueDate, istDay())));
   }
   if (task.kind === 'email' && outcome === 'done') {

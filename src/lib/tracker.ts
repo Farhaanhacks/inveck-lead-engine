@@ -56,7 +56,7 @@ const CALL_STATUS: Record<string, string> = {
   no_answer: 'Not connected: no answer',
   busy: 'Not connected: busy',
   wrong_number: 'Wrong number',
-  no_contact: 'No contact number found',
+  no_contact: 'No contact found',
 };
 
 export type TrackerRow = {
