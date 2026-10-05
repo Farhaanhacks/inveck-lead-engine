@@ -346,6 +346,8 @@ export async function processLead(
   // automatically; the team can still make one of them the main contact.
   const extras = linkedin.people
     .filter((p) => !update.people!.some((q) => sameName(q.name, p.name)))
+    // Only people on the ICP's lists are kept at all: HR, admin, IT and directors aren't shown anywhere.
+    .filter((p) => contactPriority(p.title, icp) < 99)
     .map((p) => {
       const branchContact = otherBranches.find((t) => sameName(t.contactName, p.name));
       const { standing, reason } = contactStanding(p, icp, lead.city);

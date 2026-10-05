@@ -150,7 +150,7 @@ function toLinkedInPeople(results: { title?: string; link?: string; snippet?: st
       // "CEO, Auto Diecasting Company" is a role and an employer, as "CEO - Auto Diecasting Company" would be.
       const parts = rest.map((p) => p.split(/\s*\|\s*/)[0].trim()).filter(Boolean).flatMap((p) => splitRoleAndFirm(p, company));
       const location = profileLocation(r.subtitle, r.snippet);
-      const abroad = basedAbroad(location, r.snippet);
+      const abroad = basedAbroad(location, r.snippet, r.link || '');
       const person = { name: (name || '').trim(), title: roleFromLinkedinTitle(parts, company), linkedin: (r.link || '').split('?')[0], snippet: r.snippet || '', location, abroad };
       // A title that is the company's name or a slogan ("Cold Chain .Warehousing .Fulfilment") isn't a job.
       if (person.title && (!JOB_WORD.test(person.title) || (company && sameFirm(person.title, company) && !JOB_WORD.test(roleOnly(person.title))))) person.title = '';
@@ -268,7 +268,7 @@ export async function searchLinkedIn(svc: Services, query: string, company = '',
   const firm = firmQuery(company);
   const town = city.split(',')[0].trim();
   const more = [
-    `site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR director OR proprietor OR CEO OR "chief executive" OR president)`,
+    `site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR proprietor OR CEO OR "chief executive" OR president)`,
     town ? `site:linkedin.com/in ${firm} "${town}"` : '',
   ].filter(Boolean);
   await knowPlaces(svc, [city, ...people.flatMap((p) => [p.location, p.jobLocation, p.responsibility])]);

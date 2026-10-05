@@ -47,7 +47,7 @@ export type Escalation = { switched: true; name: string; tier: Tier } | { switch
  * best P2 (else P3) already found, with a fresh plan from today. When nobody else is on file, a
  * "Find the next person" step goes on Today; naming someone with Edit point of contact restarts the plan.
  */
-export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong_person' | 'left' | 'abroad' | 'other_site' | 'unverified', now = new Date(), detail = ''): Promise<Escalation> {
+export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong_person' | 'left' | 'abroad' | 'other_site' | 'unverified' | 'off_list', now = new Date(), detail = ''): Promise<Escalation> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead) return { switched: false };
   const [icpRows, found] = await Promise.all([db.select().from(icps), db.select().from(people).where(eq(people.leadId, leadId))]);
@@ -61,19 +61,24 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
         ? `${lead.contactName || 'The contact'} is based outside India${detail ? ` (${detail})` : ''}, not at this site`
         : why === 'other_site'
           ? `${lead.contactName || 'The contact'} is based in ${detail || 'another city'}, not at the ${lead.city || 'lead\'s'} site`
+          : why === 'off_list'
+            ? `${lead.contactName || 'The contact'} isn't contacted: ${detail || "not on the ICP's contact lists"}`
           : why === 'unverified'
             ? `${lead.contactName || 'The contact'} couldn't be confirmed on LinkedIn at ${lead.company}${lead.city ? ` ${lead.city}` : ''}${detail ? ` (${detail})` : ''}; set aside until confirmed`
       : why === 'wrong_person'
         ? `${lead.contactName || 'The contact'} said they are not the right person`
         : `No answer from ${lead.contactName || 'the contact'} after ${MAX_CALL_ATTEMPTS} calls`;
 
+  if (why === 'off_list') {
+    await db.update(people).set({ passedAt: now, passedReason: 'excluded', whyNot: detail, isPrimary: false }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
+  }
   if (why === 'left' || why === 'abroad' || why === 'other_site') {
     // Someone who has left (or works abroad, or at another site) is never shown or contacted again.
     await db.delete(people).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
   }
 
   if (!next) {
-    if (why === 'left' || why === 'abroad' || why === 'other_site' || why === 'unverified') {
+    if (why === 'left' || why === 'abroad' || why === 'other_site' || why === 'off_list' || why === 'unverified') {
       // Someone not confirmed is set aside, not deleted: no longer the main contact, and checked on
       // LinkedIn again later (reconfirmSetAside), when they may be picked again.
       if (why === 'unverified') {
@@ -86,7 +91,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
         .set({ contactVerifiedAt: null, contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, ...(waiting ? { status: 'Needs Manual Contact' as const } : {}), updatedAt: now })
         .where(eq(leads.id, leadId));
     }
-    const cleared = why === 'left' || why === 'abroad' || why === 'other_site' || why === 'unverified';
+    const cleared = why === 'left' || why === 'abroad' || why === 'other_site' || why === 'off_list' || why === 'unverified';
     if (!lead.ownerId) {
       await logActivity(db, leadId, 'note', `${reason}. Nobody else on the ICP's P1/P2/P3 lists found at ${lead.company} yet.`);
       return cleared ? { switched: false, cleared } : { switched: false };

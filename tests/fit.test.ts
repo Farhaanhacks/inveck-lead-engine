@@ -502,7 +502,7 @@ describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobod
     { title: 'RAMACHANDRAN TK - el forge ltd', subtitle: 'Chennai, Tamil Nadu, India · President & Chief Technical Officer · EL FORGE LTD', link: 'https://in.linkedin.com/in/ramachandran-tk', snippet: 'President & Chief Technical Officer at EL FORGE LTD · Experience: EL FORGE LTD · Location: Chennai · 1 connection on LinkedIn.' },
   ];
 
-  it('keeps all four with the reason each is not the Hosur contact, and searches for the leadership', async () => {
+  it('keeps the corporate contacts with the reason each is not the Hosur contact, and searches for the leadership', async () => {
     const r = await run(await klt({ company: 'EL Forge Limited', city: 'Hosur' }), {
       research: (user) => kltAnswer(user, { risks: [] }),
       google: (q) => (q.startsWith('site:linkedin.com/in') ? results : []),
@@ -510,17 +510,15 @@ describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobod
     // A Chennai profile never becomes the Hosur plant contact on its own.
     expect(r.contactName ?? '').toBe('');
     const by = Object.fromEntries((r.people ?? []).map((p) => [p.name, p]));
-    expect(Object.keys(by).sort()).toEqual(['NIRMAL KUMAR DEBNATH', 'RAMACHANDRAN TK', 'Srihari K.R', 'vignesh swaminathan']);
-    for (const name of ['Srihari K.R', 'NIRMAL KUMAR DEBNATH', 'RAMACHANDRAN TK']) {
+    // The Executive Director isn't kept (directors, other than the MD, aren't contacted), nor is a
+    // Deputy Manager with no department (off the ICP lists).
+    expect(Object.keys(by).sort()).toEqual(['RAMACHANDRAN TK', 'Srihari K.R']);
+    for (const name of ['Srihari K.R', 'RAMACHANDRAN TK']) {
       expect(by[name]).toMatchObject({ passedReason: 'unverified' });
       expect(by[name].whyNot).toMatch(/^Corporate contact \(.+, a company-wide role\), for review/);
     }
     expect(by['Srihari K.R'].title).toBe('Chief Executive Officer');
-    expect(by['NIRMAL KUMAR DEBNATH'].title).toBe('EXECUTIVE DIRECTOR');
     expect(by['RAMACHANDRAN TK'].title).toBe('President & Chief Technical Officer');
-    expect(by['vignesh swaminathan']).toMatchObject({ passedReason: 'excluded', title: 'Deputy Manager' });
-    expect(by['vignesh swaminathan'].whyNot).toContain("the title doesn't say which department");
-    expect(by['vignesh swaminathan'].whyNot).toContain('Chennai, Tamil Nadu, India, not the Hosur site');
     // The search also asked for the company's leadership, as nobody was found at Hosur.
     expect(seen.google.some((q) => q.includes('"chief executive"'))).toBe(true);
 
@@ -530,8 +528,8 @@ describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobod
     expect(shown.detail).toContain('Srihari K.R (Chief Executive Officer)');
     expect(shown.detail).toMatch(/^Corporate contacts for review: /);
     // Everyone else is counted, not listed: their reasons are under People.
-    expect(shown.detail).toContain("1 other person at the company isn't a contact for this site (reasons under People)");
     expect(shown.detail).not.toContain('vignesh');
+    expect(shown.detail).not.toContain('NIRMAL');
     expect(shown.detail.length).toBeLessThan(400);
   });
 });

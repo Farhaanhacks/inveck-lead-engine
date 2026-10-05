@@ -1,4 +1,5 @@
 import { bestEffort } from '@/lib/best-effort';
+import { TierBadge } from '@/components/tier-badge';
 import Link from 'next/link';
 import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
@@ -7,7 +8,7 @@ import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { icps, leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
-import { contactPriority, icpFor } from '@/lib/tiers';
+import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
@@ -321,6 +322,7 @@ function CompanyCard({
   others,
   doneToday,
   linkedinFull,
+  tier,
 }: {
   group: CompanyGroup;
   bda: string;
@@ -328,6 +330,7 @@ function CompanyCard({
   others: Person[];
   doneToday: Task[];
   linkedinFull: boolean;
+  tier: Tier;
 }) {
   const { lead } = group;
   // One row per channel, in the same order every time: open ones to log, the ones logged today ticked.
@@ -355,6 +358,7 @@ function CompanyCard({
           <div className="text-sm text-ink-2">
             {lead.contactName}
             {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
+            {lead.contactName ? <TierBadge tier={tier} /> : null}
           </div>
           <Reach lead={lead} />
           {!readOnly && <EditContact lead={lead} others={others} />}
@@ -672,7 +676,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} />
+              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={tierOf(g.lead.contactTitle, icpOf(g.lead))} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

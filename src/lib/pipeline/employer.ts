@@ -286,11 +286,17 @@ export function profileLocation(subtitle: string | undefined, snippet = ''): str
  * Detroit Metropolitan Area is no contact for Rheinmetall Pune. Only a place that is clearly abroad
  * counts: any Indian town, listed or not (Jalandhar, Belagavi, Greater Tiruchirappalli Area), is kept.
  */
-export function basedAbroad(location: string, snippet = ''): boolean {
+export function basedAbroad(location: string, snippet = '', profileUrl = ''): boolean {
   if (location) {
     if (FOREIGN_COUNTRY.test(location)) return !/\bindia\b/i.test(location);
     if (INDIA_PLACES.test(location)) return false;
-    return OTHER_SCRIPT.test(location) || FOREIGN_PLACE.test(location);
+    if (OTHER_SCRIPT.test(location) || FOREIGN_PLACE.test(location)) return true;
+    // A place that isn't recognisably Indian, on a profile LinkedIn doesn't serve from India
+    // (in.linkedin.com): abroad ("Greater Sioux Falls Area"). An Indian town missing from the list
+    // ("Greater Tiruchirappalli Area") is on an in.linkedin.com profile, so it is kept.
+    const host = /^https?:\/\/([a-z]{2,3})\.linkedin\.com\//i.exec(profileUrl)?.[1]?.toLowerCase() ?? '';
+    if (profileUrl && host !== 'in') return true;
+    return false;
   }
   // No location line: only an obviously foreign place in the snippet, with no Indian one.
   return (FOREIGN_COUNTRY.test(snippet) || /metropolitan area/i.test(snippet)) && !INDIA_PLACES.test(snippet);

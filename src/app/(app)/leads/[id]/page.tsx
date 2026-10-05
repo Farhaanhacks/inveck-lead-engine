@@ -1,7 +1,9 @@
 import { BackLink } from '@/components/nav-history';
 import Link from 'next/link';
 import { after } from 'next/server';
-import { contactPriority, icpFor } from '@/lib/tiers';
+import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
+import { TierBadge } from '@/components/tier-badge';
+import { basedAbroad } from '@/lib/pipeline/employer';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { notFound } from 'next/navigation';
 import { asc, desc, eq } from 'drizzle-orm';
@@ -271,7 +273,7 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
   );
 }
 
-function PeopleCard({ company, city, list }: { company: string; city: string; list: Person[] }) {
+function PeopleCard({ company, city, list, tierFor }: { company: string; city: string; list: Person[]; tierFor: (title: string) => Tier }) {
   // People found at the company who aren't contacts for this site are listed apart, folded away.
   const contacts = list.filter((p) => p.passedReason !== 'excluded');
   const others = list.filter((p) => p.passedReason === 'excluded');
@@ -280,6 +282,7 @@ function PeopleCard({ company, city, list }: { company: string; city: string; li
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
                     {p.name}
+                    <TierBadge tier={tierFor(p.title)} />
                     {p.isPrimary && !p.passedAt && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
                     {p.passedAt && (
                       <span className="ml-2 text-xs font-normal text-muted">
@@ -410,7 +413,16 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
   const icp = icpFor(lead.segment, segmentRows);
   // Main contact first, then everyone else best first; people set aside after them, and people found
   // at the company who aren't contacts for this site last (shown with the reason, never contacted).
-  const team = found.filter((p) => p.isPrimary || p.passedReason === 'excluded' || contactPriority(p.title, icp ?? undefined) < 99).sort(
+  // Only people INVECK contacts: on the ICP's lists (never directors, HR, admin or IT) and based in
+  // India. People the team entered are always shown.
+  const team = found
+    .filter(
+      (p) =>
+        p.source === 'Sales team' ||
+        p.source === 'Added by the team' ||
+        (contactPriority(p.title, icp ?? undefined) < 99 && !(p.location && basedAbroad(p.location, '', p.linkedin))),
+    )
+    .sort(
     (a, b) =>
       Number(b.isPrimary) - Number(a.isPrimary) ||
       Number(!!a.passedAt) - Number(!!b.passedAt) ||
@@ -509,7 +521,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
 
       {team.length > 0 && (
         <div className="mb-6">
-          <PeopleCard company={lead.company} city={lead.city} list={team} />
+          <PeopleCard company={lead.company} city={lead.city} list={team} tierFor={(title) => tierOf(title, icp ?? undefined)} />
         </div>
       )}
 

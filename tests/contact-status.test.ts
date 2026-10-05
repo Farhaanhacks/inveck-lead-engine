@@ -75,3 +75,25 @@ describe('the status follows the contact after every change', () => {
     }
   });
 });
+
+describe('people INVECK does not contact are set aside, never deleted', () => {
+  it('directors (not the MD), HR and people abroad are hidden; a main contact among them is replaced', async () => {
+    const { purgeUnwanted } = await import('@/lib/verify-contacts');
+    const l = await addLead({ status: 'Awaiting Approval', contactName: 'Morgan Grumley', contactTitle: 'Logistics Manager', contactLinkedin: 'https://www.linkedin.com/in/morgan' });
+    await db.insert(people).values([
+      { leadId: l.id, name: 'Morgan Grumley', title: 'Logistics Manager', linkedin: 'https://www.linkedin.com/in/morgan', location: 'Greater Sioux Falls Area', source: 'LinkedIn', isPrimary: true },
+      { leadId: l.id, name: 'Manju Deepak', title: 'HR & Admin', linkedin: 'https://in.linkedin.com/in/manju', location: 'Pune', source: 'LinkedIn' },
+      { leadId: l.id, name: 'Ravi Director', title: 'Executive Director', linkedin: 'https://in.linkedin.com/in/ravi', location: 'Pune', source: 'LinkedIn' },
+      { leadId: l.id, name: 'Asha MD', title: 'Managing Director', linkedin: 'https://in.linkedin.com/in/asha', location: 'Pune', source: 'LinkedIn' },
+      { leadId: l.id, name: 'Team Pick', title: 'HR Manager', source: 'Sales team' },
+    ]);
+    expect(await purgeUnwanted(db)).toBe(3);
+    const rows = Object.fromEntries((await db.select().from(people).where(eq(people.leadId, l.id))).map((p) => [p.name, p]));
+    for (const name of ['Morgan Grumley', 'Manju Deepak', 'Ravi Director']) expect(rows[name]).toMatchObject({ passedReason: 'excluded', isPrimary: false });
+    expect(rows['Morgan Grumley'].whyNot).toContain('outside India');
+    expect(rows['Asha MD'].passedReason).toBe('');
+    expect(rows['Team Pick'].passedReason).toBe('');
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.contactName).not.toBe('Morgan Grumley');
+  });
+});

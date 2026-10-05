@@ -620,7 +620,8 @@ describe('who to contact first', () => {
     const scores = order.map((t) => contactPriority(t, mfg));
     expect([...scores].sort((a, b) => a - b)).toEqual(scores);
     expect(contactPriority('Factory Manager', mfg)).toBe(contactPriority('Plant Head', mfg));
-    expect(contactPriority('Director - Supply Chain', mfg)).toBeLessThan(99);
+    // Directors other than the MD aren't contacted (INVECK's instruction).
+    expect(contactPriority('Director - Supply Chain', mfg)).toBe(99);
     expect(contactPriority('Marketing Manager', mfg)).toBe(99);
     expect(contactPriority('GM - HR', mfg)).toBe(99);
   });
@@ -1374,7 +1375,8 @@ describe('Micron Sanand: staff of a site in a metro belt, under the brand they w
     const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Micron Semiconductor Technology"', company);
     const byName = Object.fromEntries(people.map((p) => [p.name, p]));
     expect(byName['Jitender Pratap Singh-JP']).toMatchObject({ title: 'Director Operations Management', location: 'Sanand, Gujarat, India' });
-    expect(contactPriority(byName['Jitender Pratap Singh-JP'].title, DEFAULT_ICPS[0] as never)).toBeLessThan(99);
+    // A director (not the MD), so never contacted.
+    expect(contactPriority(byName['Jitender Pratap Singh-JP'].title, DEFAULT_ICPS[0] as never)).toBe(99);
     // A dated line in the snippet never turns the title into a place.
     expect(byName['Himesh Sarvaiya'].title).toBe('Associate - Manufacturing Operations');
     expect(atOtherSite(byName['Hemanth kumar vemana'], 'Sanand')).toBe(true);

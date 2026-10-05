@@ -64,8 +64,19 @@ const list = (s: string) => s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolea
 /** The role without the company after it ("Plant Head @ Lumax World" gives "Plant Head"). */
 export const roleOnly = (title: string) => title.split(/\s+(?:at|@)\s+|\s*-?@\s*/i)[0];
 
+/**
+ * Directors are never contacted (INVECK's instruction): Director, Executive or Whole-time Director, and
+ * functional directors ("Director - Supply Chain"). The Managing Director (MD, CMD, Joint MD) is not
+ * one of them: the MD stays a contact.
+ */
+export function isDirector(title: string): boolean {
+  const t = roleOnly(cleanTitle(title)).replace(/\b(joint\s+|deputy\s+)?managing\s+director\b/gi, ' ');
+  return /\b(director|directors|wtd)\b/i.test(t);
+}
+
 export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): Tier {
   if (!title || !icp) return '';
+  if (isDirector(title)) return 'Avoid';
   // Only the role, not the company after it: "Manager at Allcargo Logistics" is a manager, not a logistics manager.
   const t = tokens(roleOnly(title));
   // HR, admin and quality people are never a priority, even with a senior title ("GM - HR").

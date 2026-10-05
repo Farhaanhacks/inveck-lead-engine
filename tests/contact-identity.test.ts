@@ -124,7 +124,8 @@ describe('roles read by function and seniority', () => {
     expect(tierOf('Senior Manager, ATSM Site Operations', mfg)).toBe('P2');
     expect(tierOf('Manufacturing Manager', mfg)).toBe('P2');
     expect(tierOf('Planning & Operations Lead', mfg)).toBe('P3');
-    expect(tierOf('Director Operations Management', mfg)).toBe('P1');
+    // Directors (other than the Managing Director) are never contacted, whatever they direct.
+    expect(tierOf('Director Operations Management', mfg)).toBe('Avoid');
     expect(contactPriority('MSTI Indirect Regional Supplier Manager', mfg)).toBe(20);
     for (const t of ['Associate - Manufacturing Operations', 'Test Engineering Manager (Process & Equipment)', 'Head of Talent Acquisition', 'Supply Demand Analyst', 'Senior Manager', 'Semiconductor Manufacturing Professional']) {
       expect(contactPriority(t, mfg)).toBe(99);
@@ -135,11 +136,13 @@ describe('roles read by function and seniority', () => {
 });
 
 describe('Mojj Engineering: the owner-director, and a search that failed', () => {
-  it("ranks a bare Director or Owner as the company's top (last resort), never a functional director outside the lists", () => {
+  it("ranks the MD, an Owner or founder as the company's top (last resort); other directors are never contacted", () => {
     const mfg = DEFAULT_ICPS[0];
-    for (const t of ['Director', 'Owner', 'Founder & CEO', 'Executive Director']) expect(contactPriority(t, mfg)).toBe(50);
-    for (const t of ['Director - Marketing', 'Director Projects', 'Technical Director', 'Board Member']) expect(contactPriority(t, mfg)).toBe(99);
-    expect(contactPriority('Plant Head', mfg)).toBeLessThan(contactPriority('Director', mfg));
+    for (const t of ['Owner', 'Founder & CEO', 'Managing Director', 'MD', 'CMD', 'Joint Managing Director']) expect(contactPriority(t, mfg)).toBe(50);
+    for (const t of ['Director', 'Executive Director', 'Whole-time Director', 'Director - Supply Chain', 'Associate Director-Plant Head', 'Director - Marketing', 'Director Projects', 'Technical Director', 'Board Member']) {
+      expect(contactPriority(t, mfg)).toBe(99);
+    }
+    expect(contactPriority('Plant Head', mfg)).toBeLessThan(contactPriority('Managing Director', mfg));
   });
 
   it('reads "Ltd" and "Limited" as the same company', () => {
@@ -369,5 +372,16 @@ describe('search evidence is read in full before deciding (contact pipeline revi
     const gone = await findLinkedinProfile(services(seen, () => [namesake]), 'Suresh Babu', company, { title: 'Plant Head', city: 'Hosur' });
     expect(gone?.employer).toBe('elsewhere');
     expect(seen.searches.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('only people based in India are contacts (Windwalker Logistics)', () => {
+  it('a US metro area on a non-India profile is abroad; an unlisted Indian town on an in.linkedin.com profile is kept', async () => {
+    const { basedAbroad } = await import('@/lib/pipeline/employer');
+    expect(basedAbroad('Greater Sioux Falls Area', '', 'https://www.linkedin.com/in/morgan-grumley')).toBe(true);
+    expect(basedAbroad('Greater Tiruchirappalli Area', '', 'https://in.linkedin.com/in/someone')).toBe(false);
+    expect(basedAbroad('Pune, Maharashtra, India', '', 'https://www.linkedin.com/in/someone')).toBe(false);
+    const morgan = { title: 'Morgan Grumley - Logistics Manager - Windwalker Logistics Inc', subtitle: 'Greater Sioux Falls Area · Logistics Manager · Windwalker Logistics Inc', link: 'https://www.linkedin.com/in/morgan-grumley', snippet: '' };
+    expect((await searchLinkedIn(services(seen, () => [morgan]), 'q', 'Windwalker Logistics')).people).toEqual([]);
   });
 });

@@ -19,7 +19,7 @@ function placeFields(profile: { location: string; jobLocation: string; responsib
 import { contactFromTeam } from './team-contact';
 import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
-import { currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
+import { basedAbroad, currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
 import { learnFirm, recallFirm } from './pipeline/firm-identity';
 import { knowPlaces } from './pipeline/places';
 import { dbEnrichmentCache } from './enrichment-cache';
@@ -77,6 +77,7 @@ export async function clearCompanyTitles(db: Db, scope: Scope = {}): Promise<num
 export async function tidyContacts(db: Db, scope: Scope = {}): Promise<number[]> {
   await clearCompanyTitles(db, scope);
   await purgeFormerEmployees(db, scope);
+  await purgeUnwanted(db, scope);
   return promoteBetterContacts(db, scope);
 }
 
@@ -370,6 +371,37 @@ export async function verifyContacts(
  * The same check over every company's stored people, with no search: anyone whose title shows another
  * employer goes, and a main contact who has left is replaced (P2 flow). For one lead when `leadId` is set.
  */
+/**
+ * People INVECK doesn't contact, found before the rules were tightened: anyone not on the ICP's lists
+ * (directors, HR, admin, IT…) and anyone based outside India. Set aside as not contacts (hidden, never
+ * contacted, nothing deleted); a main contact among them is replaced by the next confirmed person (or
+ * the lead waits for the team to find one). People the team entered themselves are never touched.
+ */
+export async function purgeUnwanted(db: Db, scope: Scope = {}): Promise<number> {
+  const [icpRows, rows] = await Promise.all([
+    db.select().from(icps),
+    db.select({ person: people, lead: leads }).from(people).innerJoin(leads, eq(people.leadId, leads.id)).where(inScope(scope)),
+  ]);
+  const verdict = ({ person: p, lead: l }: (typeof rows)[number]): string => {
+    if (p.source === 'Sales team' || p.source === 'Added by the team' || p.passedReason === 'excluded') return '';
+    if (p.location && basedAbroad(p.location, '', p.linkedin)) return `based in ${p.location}, outside India`;
+    const icp = icpFor(l.segment, icpRows);
+    if (icp && p.title.trim() && contactPriority(p.title, icp) >= 99) return `${p.title}: not on the ICP's contact lists (directors, HR, admin and IT aren't contacted)`;
+    return '';
+  };
+  const gone = rows.map((r) => ({ ...r, why: verdict(r) })).filter((r) => r.why);
+  const isMain = ({ person: p, lead: l }: (typeof gone)[number]) => p.isPrimary && p.name.toLowerCase() === l.contactName.toLowerCase();
+  const now = new Date();
+  for (const { person: p, why } of gone.filter((g) => !isMain(g))) {
+    await db.update(people).set({ passedAt: now, passedReason: 'excluded', whyNot: why, isPrimary: false }).where(eq(people.id, p.id));
+  }
+  for (const { lead: l, why } of gone.filter(isMain)) {
+    await escalate(db, l.id, 'off_list', now, why);
+    await db.update(leads).set({ contactCheckedAt: null }).where(eq(leads.id, l.id));
+  }
+  return gone.length;
+}
+
 export async function purgeFormerEmployees(db: Db, scope: Scope = {}): Promise<number> {
   const rows = await db
     .select({ person: people, lead: leads })
