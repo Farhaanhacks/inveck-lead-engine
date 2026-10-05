@@ -44,10 +44,17 @@ async function connect(): Promise<Db> {
     const client = dir ? new PGlite(dir) : new PGlite();
     db = drizzle(client, { schema }) as unknown as Db;
   }
-  for (const statement of SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
-  await seedIfEmpty(db);
-  await upgradeIcpsV2(db);
-  await seedUsers(db);
+  // Schema upkeep on each cold start. When the database won't take it (read-only, over a plan limit,
+  // a lock), the app still runs on the tables already there instead of every page failing.
+  try {
+    for (const statement of SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
+    await seedIfEmpty(db);
+    await upgradeIcpsV2(db);
+    await seedUsers(db);
+  } catch (e) {
+    const cause = (e as { cause?: unknown })?.cause;
+    console.error('[db] schema upkeep failed; running on the existing schema:', cause ?? e);
+  }
   return db;
 }
 

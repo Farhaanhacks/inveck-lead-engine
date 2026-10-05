@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
+import { SCHEMA_STATEMENTS } from '@/lib/db/migrate';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,8 @@ export async function GET() {
     const db = await getDb();
     await db.execute(sql`select 1`);
     const [row] = (await db.execute(sql`select count(*)::int as n from leads`)) as unknown as { n: number }[];
+    // Reading works; can the database also take the startup schema upkeep (a harmless no-op)?
+    await db.execute(sql.raw(SCHEMA_STATEMENTS[0]));
     return Response.json({ ok: true, database: 'reachable', leads: row?.n ?? null, ms: Date.now() - started });
   } catch (e) {
     // The database's own reason is on the wrapped error (drizzle's "Failed query" hides it).
