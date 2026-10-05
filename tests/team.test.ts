@@ -244,6 +244,11 @@ describe('contact priority (P1/P2/P3)', async () => {
   it('ranks 3PL titles', () => {
     expect(tierOf('National Head - Warehousing', log)).toBe('P1');
     expect(tierOf('Chief Operating Officer', log)).toBe('Top');
+    // HR in any spelling is never a contact, even with a P1 title (Om Logistics, Kanpur).
+    expect(tierOf('National Head HRM', log)).toBe('Avoid');
+    expect(tierOf('Regional Head - HR & Admin', log)).toBe('Avoid');
+    expect(tierOf('HRBP', log)).toBe('Avoid');
+    expect(tierOf('National Head - Warehousing', log)).toBe('P1');
     expect(tierOf('Warehouse Manager', log)).toBe('P2');
     expect(tierOf('Store Head', log)).toBe('P3');
   });

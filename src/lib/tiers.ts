@@ -81,9 +81,19 @@ export function isTopOfCompany(title: string): boolean {
   return !/\bvice\b/.test(t) && /\b(md|ceo|chief executive|chairman|chairperson|founder|co-?founder|owner|proprietor|promoter|president)\b/.test(t);
 }
 
+/**
+ * HR in any spelling: HR, HRM, HRD, HRBP, Human Resources, People / Talent / Human Capital, Payroll,
+ * Personnel, Recruitment, Industrial Relations. Never a contact, whatever the rest of the title says
+ * ("National Head HRM"): INVECK would rather have no contact than someone in HR.
+ */
+const HR = /\b(hr|hrm|hrd|hrbp|hris|hr\w*business partner|human resources?|human capital|people (?:operations|ops|function|partner|team|head|lead|manager|officer)|head of people|chief people officer|talent|payroll|personnel|recruit\w*|industrial relations|employee relations)\b/i;
+export function isHrRole(title: string): boolean {
+  return HR.test(roleOnly(title).replace(/[-–—/&,.|()]/g, ' '));
+}
+
 export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): Tier {
   if (!title || !icp) return '';
-  if (isDirector(title)) return 'Avoid';
+  if (isDirector(title) || isHrRole(title)) return 'Avoid';
   // The head of the company is never P1 (INVECK's instruction): kept only as the last resort.
   if (isTopOfCompany(title)) return 'Top';
   // Only the role, not the company after it: "Manager at Allcargo Logistics" is a manager, not a logistics manager.
