@@ -78,7 +78,6 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
                 <th className="px-5 py-2 font-medium">Name</th>
                 <th className="px-2 py-2 font-medium">Company</th>
                 <th className="px-2 py-2 font-medium">LinkedIn</th>
-                <th className="px-5 py-2 font-medium">Found via</th>
               </tr>
             </thead>
             <tbody>
@@ -98,7 +97,6 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
                   <td className="px-2 py-2.5">
                     {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
                   </td>
-                  <td className="px-5 py-2.5 text-xs text-ink-2">{p.source}</td>
                 </tr>
               ))}
               {!rows.length && (

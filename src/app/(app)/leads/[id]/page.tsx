@@ -315,7 +315,6 @@ function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; 
                 <td className="px-2 py-2.5">
                   {p.linkedin ? <a href={p.linkedin} target="_blank" rel="noreferrer" className="whitespace-nowrap text-accent hover:underline">LinkedIn</a> : <span className="text-muted">—</span>}
                 </td>
-                <td className="px-2 py-2.5 text-xs text-ink-2">{p.source}</td>
                 <td className="px-5 py-2.5 text-right">
                   <div className="flex flex-col items-end gap-1.5">
                     {(!p.isPrimary || p.passedAt) && (
@@ -357,7 +356,6 @@ function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; 
             <tr className="text-left text-xs text-muted">
               <th className="px-5 py-2 font-medium">Name</th>
               <th className="px-2 py-2 font-medium">LinkedIn</th>
-              <th className="px-2 py-2 font-medium">Found via</th>
               <th className="px-5 py-2"><span className="sr-only">Action</span></th>
             </tr>
           </thead>
