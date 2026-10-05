@@ -205,7 +205,7 @@ export type TodayTask = { task: Task; lead: Lead; overdue: boolean };
 const SLOT_ORDER = { morning: 0, day: 1, evening: 2 } as const;
 
 /** Open tasks due today or earlier for one person, most urgent first: promised callbacks, then overdue, then by time of day. */
-export async function loadTodayTasks(db: Db, ownerId: number, today = istDay()): Promise<TodayTask[]> {
+export async function loadTodayTasks(db: Db, ownerId: number, today = istDay(), now = new Date()): Promise<TodayTask[]> {
   const rows = await db
     .select({ task: tasks, lead: leads })
     .from(tasks)
@@ -219,6 +219,8 @@ export async function loadTodayTasks(db: Db, ownerId: number, today = istDay()):
       ),
     );
   return rows
+    // A call again set for 5 pm (or 9 am) shows from then.
+    .filter((r) => !notYet(r.task, today, now))
     .map((r) => ({ ...r, overdue: r.task.dueDate < today }))
     .sort(
       (a, b) =>
@@ -337,6 +339,40 @@ export async function companyProgress(db: Db, ownerId: number, day = istDay(), o
   const still = new Set(open.filter((o) => o.task.step !== CA_WAITING_STEP).map((o) => o.lead.id));
   const all = new Set([...finished.map((f) => f.leadId), ...still]);
   return { done: [...all].filter((id) => !still.has(id)).length, total: all.size };
+}
+
+/** The day is split at 2 pm IST: an unanswered call before it is tried again at 5 pm, one after it at 9 am the next working day. */
+export const CALL_AGAIN_SPLIT_HOUR = 14;
+export const EVENING_FROM_HOUR = 17;
+export const MORNING_FROM_HOUR = 9;
+
+/** The hour in India (0-23). */
+export function istHour(d = new Date()): number {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }).format(d)) % 24;
+}
+
+/** When to call again after no answer at `now`: this evening (5 pm) or the next working morning (9 am). */
+export function callAgainAt(now = new Date()): { day: string; slot: 'morning' | 'evening' } {
+  const today = istDay(now);
+  if (firstWorkingDay(today) === today && istHour(now) < CALL_AGAIN_SPLIT_HOUR) return { day: today, slot: 'evening' };
+  return { day: nextWorkingDay(today), slot: 'morning' };
+}
+
+/** Not on today's list yet: an evening call before 5 pm, a morning call before 9 am (IST). */
+function notYet(task: Pick<Task, 'dueDate' | 'slot'>, today: string, now: Date): boolean {
+  if (task.dueDate !== today || today !== istDay(now)) return false;
+  const hour = istHour(now);
+  return (task.slot === 'evening' && hour < EVENING_FROM_HOUR) || (task.slot === 'morning' && hour < MORNING_FROM_HOUR);
+}
+
+/** Steps due later today (a 5 pm call again), for the "later today" note on Today. */
+export async function laterToday(db: Db, ownerId: number, today = istDay(), now = new Date()): Promise<TodayTask[]> {
+  const rows = await db
+    .select({ task: tasks, lead: leads })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), eq(tasks.dueDate, today), inArray(tasks.slot, ['morning', 'evening']), SHOWN_ON_TODAY));
+  return rows.filter((r) => notYet(r.task, today, now)).map((r) => ({ ...r, overdue: false }));
 }
 
 /** The next working day after an Indian date. */

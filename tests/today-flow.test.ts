@@ -71,3 +71,33 @@ describe('leads go from the Leads list to Today on their own', () => {
     expect(await nextDue(db, owner, SUNDAY)).toEqual({ day: MONDAY, companies: 1 });
   });
 });
+
+describe('calling again after no answer: the day split at 2 pm IST', () => {
+  it('before 2 pm: again at 5 pm today; from 2 pm: again at 9 am the next working day', async () => {
+    const { callAgainAt } = await import('@/lib/tasks');
+    // Monday 5 Oct 2026, India time.
+    expect(callAgainAt(new Date('2026-10-05T10:00:00+05:30'))).toEqual({ day: '2026-10-05', slot: 'evening' });
+    expect(callAgainAt(new Date('2026-10-05T13:59:00+05:30'))).toEqual({ day: '2026-10-05', slot: 'evening' });
+    expect(callAgainAt(new Date('2026-10-05T18:00:00+05:30'))).toEqual({ day: '2026-10-06', slot: 'morning' });
+    // Friday evening: Monday morning.
+    expect(callAgainAt(new Date('2026-10-09T18:00:00+05:30'))).toEqual({ day: '2026-10-12', slot: 'morning' });
+    // A Saturday: Monday morning.
+    expect(callAgainAt(new Date('2026-10-10T10:00:00+05:30'))).toEqual({ day: '2026-10-12', slot: 'morning' });
+  });
+
+  it('a 5 pm call shows on Today from 5 pm (listed as later today before that); a 9 am call from 9 am', async () => {
+    const { laterToday } = await import('@/lib/tasks');
+    const l = await addLead({ status: 'Awaiting Approval', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
+    await db.insert(tasks).values([
+      { leadId: l.id, ownerId: owner, kind: 'call', step: 'Call again', title: 'Call again at 5 pm', dueDate: MONDAY, slot: 'evening' },
+    ]);
+    const at = (h: string) => new Date(`${MONDAY}T${h}:00+05:30`);
+    expect((await loadTodayTasks(db, owner, MONDAY, at('10:00'))).length).toBe(0);
+    expect((await laterToday(db, owner, MONDAY, at('10:00'))).map((t) => t.lead.id)).toEqual([l.id]);
+    expect((await loadTodayTasks(db, owner, MONDAY, at('17:05'))).length).toBe(1);
+    expect(await laterToday(db, owner, MONDAY, at('17:05'))).toEqual([]);
+    await db.update(tasks).set({ slot: 'morning', title: 'Call again at 9 am' }).where(eq(tasks.leadId, l.id));
+    expect((await loadTodayTasks(db, owner, MONDAY, at('08:30'))).length).toBe(0);
+    expect((await loadTodayTasks(db, owner, MONDAY, at('09:00'))).length).toBe(1);
+  });
+});

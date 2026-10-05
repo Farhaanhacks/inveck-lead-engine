@@ -19,7 +19,7 @@ import { CALL_FEEDBACK, cleanPhone, NOT_INTERESTED, validTrackerValue, type Trac
 import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack } from '@/lib/phones';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
-import { CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay, planCaFallback } from '@/lib/tasks';
+import { callAgainAt, CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay, planCaFallback } from '@/lib/tasks';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -131,7 +131,7 @@ export async function completeTaskAction(form: FormData) {
     const [l] = await db.select({ id: leads.id, contactSince: leads.contactSince }).from(leads).where(eq(leads.id, task.leadId));
     if (l && (await unansweredCalls(db, l)) >= MAX_CALL_ATTEMPTS) escalated = await escalate(db, task.leadId, 'no_answer', now);
     // A CA firm is called once when its LinkedIn request isn't accepted; no call-again days.
-    else if (outcome !== 'wrong_number' && !ca) await remindToCallAgain(db, task);
+    else if (outcome !== 'wrong_number' && !ca) await remindToCallAgain(db, task, now);
     // A wrong number with another one saved: call that one today.
     else if (wrong && dropped.rest) {
       await db.insert(tasks).values({
@@ -251,21 +251,23 @@ async function planAlongside(db: Awaited<ReturnType<typeof getDb>>, leadId: numb
 }
 
 /** No answer: make sure the person is called again on the next working day, unless a call is already planned by then. */
-async function remindToCallAgain(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect) {
-  const next = nextWorkingDay();
+async function remindToCallAgain(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, now = new Date()) {
+  // No answer before 2 pm: again at 5 pm today. From 2 pm: again at 9 am the next working day.
+  const { day, slot } = callAgainAt(now);
   const calls = await db.select().from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'call')));
-  if (calls.some((c) => !c.doneAt && c.dueDate <= next)) return;
+  if (calls.some((c) => !c.doneAt && c.dueDate <= day)) return;
   await db.insert(tasks).values({
     leadId: task.leadId,
     ownerId: task.ownerId,
     kind: 'call',
     step: 'Call again',
-    title: 'Call again: no answer last time',
-    dueDate: next,
-    slot: 'day',
+    title: slot === 'evening' ? 'Call again at 5 pm: no answer this morning' : 'Call again at 9 am: no answer last time',
+    dueDate: day,
+    slot,
     note: `${RETRY_NOTE}${task.id}`,
   });
-  await planAlongside(db, task.leadId, task.ownerId, next, 'Call again');
+  // A new day gets the WhatsApp and email too; this evening's call doesn't repeat today's.
+  if (slot === 'morning') await planAlongside(db, task.leadId, task.ownerId, day, 'Call again');
 }
 
 export async function clockInAction() {

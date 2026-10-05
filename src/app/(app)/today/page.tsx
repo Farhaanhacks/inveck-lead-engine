@@ -27,6 +27,7 @@ import {
   ensureSequences,
   isCaSegment,
   istDay,
+  laterToday,
   loadDoneToday,
   loadTodayTasks,
   nextDue,
@@ -485,7 +486,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
   const day = istDay();
   const caTeam = !!viewing && worksCaFirms(viewing.name);
-  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming] = await Promise.all([
+  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
     // Someone who works CA firms has them counted apart from the other companies.
@@ -495,6 +496,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     unattendedInbound(db, viewId),
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
     nextDue(db, viewId, day),
+    laterToday(db, viewId, day),
   ]);
   // Filter: a search by company or person.
   const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
@@ -706,6 +708,20 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         </section>
       )}
 
+      {!showDone && later.length > 0 && (
+        <p className="-mt-2 mb-4 text-xs text-ink-2">
+          Later today:{' '}
+          {[...new Map(later.map((l) => [l.lead.id, l])).values()].map((l, i) => (
+            <span key={l.lead.id}>
+              {i ? ', ' : ''}
+              <Link href={`/leads/${l.lead.id}`} className="text-accent hover:underline">{l.lead.company}</Link>
+              {l.task.slot === 'evening' ? ' (call again at 5 pm)' : ' (call again at 9 am)'}
+            </span>
+          ))}
+          . They appear on the list at that time.
+        </p>
+      )}
+
       {!showDone && visible.length > 0 && (
         <section className="card mb-6">
           <div className="border-b border-line px-5 py-3">
@@ -739,7 +755,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         <div className="card p-8 text-center text-sm text-muted">Nothing due here. <Link href={link({ view: 'all' })} className="text-accent hover:underline">See everything due</Link></div>
       )}
 
-      {!items.length && !startHere && (
+      {!items.length && !startHere && !later.length && (
         <div className="card p-8 text-center text-sm text-muted">
           {upcoming ? (
             <>
