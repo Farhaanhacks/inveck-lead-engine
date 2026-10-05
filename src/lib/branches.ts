@@ -1,4 +1,3 @@
-import { vagueLocation } from './pipeline/employer';
 import { domainOf } from './pipeline/text';
 
 /** Old and new names of the same city. */
@@ -48,10 +47,8 @@ export function companyKeys(company: string): string[] {
 type Known = { company: string; website: string; city: string };
 
 /**
- * What's already in the system, by branch. A company that is a client is always known. A company
- * that is a lead is known at its city: the same company at another city (another plant, warehouse
- * or branch) is a separate lead with its own contact. Without a city on either side it counts as
- * the same, so nothing is added twice by accident.
+ * What's already in the system. A company that is a client or a lead is known wherever it is: one
+ * company is one lead, never one per plant, warehouse or branch (INVECK's instruction).
  */
 export class KnownBranches {
   private leads: (Known & { keys: string[] })[] = [];
@@ -66,14 +63,15 @@ export class KnownBranches {
     }
   }
 
-  /** 'client', 'lead' (same branch already a lead), or '' when it can be added. */
-  has(company: string, website: string, city: string): 'client' | 'lead' | '' {
+  /** 'client', 'lead' (the company is already a lead, in any city), or '' when it can be added. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  has(company: string, website: string, city = ''): 'client' | 'lead' | '' {
     const names = companyKeys(company);
     const domain = domainOf(website);
     if (names.some((n) => this.clientNames.has(n)) || (domain && this.clientDomains.has(domain))) return 'client';
     const same = this.leads.filter((l) => l.keys.some((k) => names.includes(k)) || (domain && domainOf(l.website) === domain));
-    // A list entry with no city, or only a state or the country ("Gujarat", "India"), covers every site.
-    return same.some((l) => !city.trim() || vagueLocation(l.city) || sameCity(l.city, city)) ? 'lead' : '';
+    // One company, one lead (INVECK's instruction): its plant or branch in another city is not a new lead.
+    return same.length ? 'lead' : '';
   }
 
   add(company: string, website: string, city: string) {

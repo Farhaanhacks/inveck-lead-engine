@@ -33,12 +33,12 @@ describe("INVECK's own lead sheet with two company columns", () => {
     expect(rows.filter((r) => r.company === 'Foxtrot Batteries Ltd').map((r) => r.location)).toEqual(['Dhanbad', 'Lucknow']);
   });
 
-  it('a state or the country as the location covers every site; a city covers that city', () => {
+  it('a company on the sheet is skipped wherever it is: one company, one lead', () => {
     const known = new KnownBranches(rows.map((r) => ({ company: r.company, website: r.website, city: r.location })), []);
     expect(known.has('Hotel Drinks International', '', 'Ahmedabad')).toBe('lead');
     expect(known.has('Golf Auto Industries Ltd', '', 'Gurgaon')).toBe('lead');
     expect(known.has('Foxtrot Batteries', '', 'Lucknow')).toBe('lead');
-    expect(known.has('Foxtrot Batteries', '', 'Pune')).toBe('');
+    expect(known.has('Foxtrot Batteries', '', 'Pune')).toBe('lead');
     expect(known.has('Charlie Boilers', '', 'Chennai')).toBe('lead');
   });
 });

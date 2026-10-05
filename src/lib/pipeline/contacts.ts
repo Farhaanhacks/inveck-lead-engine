@@ -558,7 +558,9 @@ export function atOtherSite(c: Placed & { title: string }, city: string, icp?: R
  */
 export function canBeMain(c: Placed & { title?: string }, city: string, icp?: RankIcp): boolean {
   if (confirmedAtSite(c, city)) return true;
-  return !!icp && !!c.title && tierOf(c.title, icp) === 'P1' && personSite(c, city) === 'elsewhere';
+  // A P1 at the company in India, wherever their site is or when it isn't shown ("Maharashtra"):
+  // ahead of anyone lower at this site, and of the head of the company (people abroad never get here).
+  return !!icp && !!c.title && tierOf(c.title, icp) === 'P1';
 }
 
 /**

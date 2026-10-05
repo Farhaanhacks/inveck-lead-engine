@@ -97,12 +97,12 @@ export async function scanRadar(
   const result = await askJson(svc, RADAR_PROMPT, `ICP segments: ${segments.join(', ')}\n\n## News\n${list}`, schema);
   if (result.error !== undefined) return { added: 0, error: result.error };
 
-  // Skip what we already know: clients, the same branch already a lead, and earlier openings at the same
-  // place. A new plant or warehouse of a company that's already a lead elsewhere is a new branch lead.
+  // Skip what we already know: clients, companies already a lead (one company is one lead, whatever
+  // the city) and earlier openings.
   const [leadRows, clientRows, ownLeads, earlier] = await Promise.all([
     db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads),
     db.select({ company: clients.company, website: clients.website }).from(clients),
-    // Companies in INVECK's own lead lists, at their location (like leads: another plant is new).
+    // Companies in INVECK's own lead lists.
     db.select({ company: knownCompanies.company, website: knownCompanies.website, city: knownCompanies.location }).from(knownCompanies),
     db.select({ company: opportunities.company, location: opportunities.location, url: opportunities.url }).from(opportunities).orderBy(desc(opportunities.id)).limit(2000),
   ]);

@@ -717,11 +717,11 @@ describe('who to contact first', () => {
 });
 
 describe('branches of one company', () => {
-  it('treats the same company in another city as a new branch, not a duplicate', async () => {
+  it('one company is one lead: the same company in another city is a duplicate', async () => {
     const { KnownBranches, sameCity } = await import('@/lib/branches');
     const known = new KnownBranches([{ company: 'Nestle India Ltd', website: 'nestle.in', city: 'Moga' }], [{ company: 'Haldex India', website: 'haldex.com' }]);
     expect(known.has('Nestle India', '', 'Moga, Punjab')).toBe('lead');
-    expect(known.has('Nestle India', 'nestle.in', 'Samalkha')).toBe('');
+    expect(known.has('Nestle India', 'nestle.in', 'Samalkha')).toBe('lead');
     expect(known.has('Nestle India', '', '')).toBe('lead');
     expect(known.has('Haldex India Pvt Ltd', '', 'Pune')).toBe('client');
     expect(sameCity('Pune', 'Pune, Maharashtra')).toBe(true);
@@ -937,6 +937,18 @@ describe('Godamwale: Google\'s current-job line decides, supply chain managers f
     expect(snippetRoles(organic[0].snippet)).toEqual([]);
     const tpl = DEFAULT_ICPS[1];
     expect(contactPriority('Supply Chain Manager', tpl)).toBeLessThan(contactPriority('Regional Head', tpl));
+  });
+});
+
+describe('Shubham Engineering Works, Vapi: a plant head comes before the MD', () => {
+  it('makes the plant head the main contact even when his job shows only a state', async () => {
+    const { canBeMain, rankCandidates } = await import('@/lib/pipeline/contacts');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const icp = DEFAULT_ICPS[0];
+    const md = { title: 'Managing Director', location: 'Vapi, Gujarat, India' };
+    const plantHead = { title: 'Plant Head', location: '', jobLocation: 'Maharashtra, India' };
+    expect(canBeMain(plantHead, 'Vapi', icp)).toBe(true);
+    expect(rankCandidates([md, plantHead], icp, 'Vapi')[0].title).toBe('Plant Head');
   });
 });
 
@@ -1450,7 +1462,7 @@ describe("INVECK's own lead list", () => {
     ]);
   });
 
-  it('the prospect search skips a company at a location on the list, but not its plant elsewhere', async () => {
+  it('the prospect search skips a company on the list, wherever its plant is', async () => {
     const { KnownBranches } = await import('@/lib/branches');
     const known = new KnownBranches(
       [
@@ -1460,7 +1472,7 @@ describe("INVECK's own lead list", () => {
       [],
     );
     expect(known.has('Swastik Pipe Ltd', '', 'New Delhi')).toBe('lead');
-    expect(known.has('Swastik Pipe Ltd', '', 'Mumbai')).toBe('');
+    expect(known.has('Swastik Pipe Ltd', '', 'Mumbai')).toBe('lead');
     // No location given: the company is skipped wherever its plant is.
     expect(known.has('UKB Electronics', '', 'Pune')).toBe('lead');
     // Spelling differences in their sheet still match: brackets, former names, plurals, city names.
@@ -1475,9 +1487,9 @@ describe("INVECK's own lead list", () => {
     expect(sheet.has('Okaya EV', '', 'Neemrana')).toBe('lead');
     expect(sheet.has('OPG Mobility', '', 'Faridabad')).toBe('lead');
     expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Pune')).toBe('lead');
-    // Another town is another plant, even in the same metro.
-    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Chakan')).toBe('');
-    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Taloja')).toBe('');
+    // Another plant of a company on the list is the same company: one company, one lead.
+    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Chakan')).toBe('lead');
+    expect(sheet.has('Deepak Fertilisers and Petrochemicals', '', 'Taloja')).toBe('lead');
     expect(sheet.has('Pernod Ricard', '', 'Gurugram')).toBe('lead');
     // "Wadhokar Group Of Company" on their sheet is "Wadhokar Group" in a search result.
     expect(new KnownBranches([{ company: 'Wadhokar Group Of Company', website: '', city: '' }], []).has('Wadhokar Group', '', 'Pune')).toBe('lead');

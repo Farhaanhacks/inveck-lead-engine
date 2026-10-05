@@ -270,7 +270,7 @@ export async function findProspects(
     const pickText = [
       `ICP segments: ${icps.map((i) => i.segment).join(', ')}`,
       '',
-      '## Already on the list at these locations (skip the same company at the same location; its plant or branch at another location is new)',
+      '## Already on the list (skip these companies entirely: one company is one lead, so its plant or branch in another city is not new)',
       knownList.length ? knownList.slice(-400).join(', ') : '(none)',
       '',
       '## Search results',
