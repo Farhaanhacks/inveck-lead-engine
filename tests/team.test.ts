@@ -243,7 +243,7 @@ describe('contact priority (P1/P2/P3)', async () => {
   });
   it('ranks 3PL titles', () => {
     expect(tierOf('National Head - Warehousing', log)).toBe('P1');
-    expect(tierOf('Chief Operating Officer', log)).toBe('P1');
+    expect(tierOf('Chief Operating Officer', log)).toBe('Top');
     expect(tierOf('Warehouse Manager', log)).toBe('P2');
     expect(tierOf('Store Head', log)).toBe('P3');
   });

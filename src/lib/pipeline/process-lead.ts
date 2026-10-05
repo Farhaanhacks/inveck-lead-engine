@@ -189,7 +189,23 @@ export async function processLead(
   ], undefined, undefined, lead.company);
 
   const reused = (opts.contactsOnly || keepFit) && lead.researchSummary ? storedResearch(lead) : null;
-  const { research, error } = reused ? { research: reused, error: '' } : await researchLead(svc, input, icp, read, log);
+  const first = reused ? { research: reused, error: '' } : await researchLead(svc, input, icp, read, log);
+  let research = first.research;
+  const error = first.error;
+  // Prospect search can put a company in the wrong segment (a pipe maker as 3PL). One it found that
+  // fails its segment's ICP is checked against the other active ICPs and moved to one it fits. A
+  // segment the team chose is never second-guessed.
+  if (!reused && !keepFit && research?.assessment?.status === 'not_fit' && /^(Found by prospect search|Lookalike of)/.test(lead.source ?? '')) {
+    for (const other of ctx.icps.filter((i) => i.active && i.id !== icp.id)) {
+      const retry = await researchLead(svc, input, other, read, log);
+      if (retry.research?.assessment && retry.research.assessment.status !== 'not_fit') {
+        await log(`${lead.company}: not a ${icp.segment} company; checked against ${other.segment} instead and moved there`, 'warn');
+        icp = other;
+        research = retry.research;
+        break;
+      }
+    }
+  }
   if (!research) {
     await log(`${lead.company}: research failed: ${error}`, 'error');
     return { ...corrected, status: 'Error', lastError: error || 'Research failed' };

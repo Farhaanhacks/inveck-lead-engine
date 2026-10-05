@@ -595,6 +595,22 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(r.otherDecisionMakers).toContain("Contact picked by INVECK's ranking alone");
   });
 
+  it('a company prospect search put in the wrong segment is checked against the other ICPs and moved to the one it fits', async () => {
+    // A chassis maker the search labelled 3PL: not a 3PL, a manufacturer.
+    const answer = (user: string) =>
+      !user.includes('## ICP: Manufacturing')
+        ? kltAnswer(user, { qualified: false, fit_score: 2 }, { M1: ['not_met', ...cite(user, 'KLT is the leading authority when it comes to chassis manufacturing for several OEMs in India as well as overseas')] })
+        : kltAnswer(user, { risks: [] });
+    const found = await klt({ segment: '3PL & Logistics', source: 'Found by prospect search' });
+    const r = await run(found, { research: answer });
+    expect(r.segment).toBe('Manufacturing');
+    expect(r.status).not.toBe('Disqualified');
+    // A segment the team chose is never second-guessed.
+    const typed = await klt({ company: 'KLT Typed', segment: '3PL & Logistics', source: '' });
+    const t = await run(typed, { research: answer });
+    expect(t.status).toBe('Disqualified');
+  });
+
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
     const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
     const results = [

@@ -5,6 +5,19 @@ import { icps, leads, settings } from './schema';
 export const MANUFACTURING = 'Manufacturing';
 export const LOGISTICS = '3PL & Logistics';
 
+/** INVECK's 3PL ICP: 3PL and warehousing first, then supply chain management and e-commerce logistics. */
+export const LOGISTICS_ICP = {
+  description:
+    '3PL and warehousing companies (highest priority), supply chain management and e-commerce logistics providers that run warehouses or manage stock for B2B and enterprise clients across several locations.',
+  industries: 'Third-party logistics (3PL), warehousing, supply chain management, e-commerce logistics and fulfilment, cold chain, distribution',
+  companySize: '100+ employees',
+  mustHaves:
+    'Runs warehouses, distribution or fulfilment centres, or manages stock on behalf of clients; Operates from multiple locations or cities; Serves B2B or enterprise clients',
+  targetTitles: 'National Head, Regional Head, Head - Supply Chain, Head - Logistics, CFO, Head of Finance, Finance Controller',
+  p2Titles: 'Warehouse Head, Warehouse Manager, Supply Chain Manager, Logistics Head, Logistics Manager',
+  p3Titles: 'Store Head, Store Manager, Logistics Manager',
+};
+
 /** The industries INVECK's team targets in manufacturing, from their list: the core, then strong adjacent sectors. */
 export const MANUFACTURING_INDUSTRIES = [
   'Core: Bearing manufacturers',
@@ -52,16 +65,15 @@ export const DEFAULT_ICPS = [
   {
     segment: LOGISTICS,
     active: true,
-    description:
-      '3PL, warehousing, logistics and distribution companies (and retailers with their own warehouses and DCs) that hold or manage stock for themselves or their clients across several sites.',
-    industries: 'Third-party logistics (3PL), warehousing, cold chain, freight and express logistics, distribution, retail and e-commerce fulfilment',
-    companySize: '100+ employees or 3+ warehouses',
+    description: LOGISTICS_ICP.description,
+    industries: LOGISTICS_ICP.industries,
+    companySize: LOGISTICS_ICP.companySize,
     geography: 'India',
-    mustHaves: 'Runs warehouses, distribution or fulfilment centres, or manages stock on behalf of clients',
-    dealBreakers: 'Pure freight brokers or transporters with no warehousing; software-only logistics platforms',
-    targetTitles: 'National Head, Regional Head, Head of Supply Chain, Head of Logistics, COO, CFO, Head of Finance, Finance Controller',
-    p2Titles: 'Warehouse Head, Warehouse Manager, Supply Chain Manager, Logistics Head, Logistics Manager, General Manager, DGM',
-    p3Titles: 'Store Head, Store Manager, Logistics Manager',
+    mustHaves: LOGISTICS_ICP.mustHaves,
+    dealBreakers: 'Pure freight brokers or transporters with no warehousing; software-only logistics platforms; manufacturers, traders and retailers (they belong to their own ICP, not 3PL)',
+    targetTitles: LOGISTICS_ICP.targetTitles,
+    p2Titles: LOGISTICS_ICP.p2Titles,
+    p3Titles: LOGISTICS_ICP.p3Titles,
     avoidTitles: 'HR, Human Resources, Admin, Administration, Quality Assurance, QA, Quality',
     pitchAngle:
       'Cycle counts and client stock reconciliations across warehouses eat days and still leave disputes. INVECK makes warehouse counts mobile, reconciles them against the WMS or client records and gives an audit trail clients trust.',
@@ -123,6 +135,14 @@ export async function upgradeManufacturingIndustriesV3(db: Db) {
   const key = 'icpManufacturingIndustriesV3';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
   await db.update(icps).set({ industries: MANUFACTURING_INDUSTRIES }).where(eq(icps.segment, MANUFACTURING));
+  await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
+}
+
+/** The 3PL ICP set to INVECK's spec (size, locations, B2B clients, P1/P2/P3) in the database, once. */
+export async function upgradeLogisticsIcpV2(db: Db) {
+  const key = 'icpLogisticsV2';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  await db.update(icps).set(LOGISTICS_ICP).where(eq(icps.segment, LOGISTICS));
   await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
 }
 

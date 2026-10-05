@@ -162,7 +162,7 @@ export async function findProspects(
     ];
     const needed = shortOf();
     const balance = segmentNames.length > 1
-      ? `\n\n## Segments to search this time\nWrite at least 2 queries for each of these segments: ${(needed.length ? needed : segmentNames).join(', ')}. Lookalikes of a client belong to the client's own segment; for a segment with no similar client, search for companies matching that ICP directly.`
+      ? `\n\n## Segments to search this time\nWrite at least 2 queries for each of these segments: ${(needed.length ? needed : segmentNames).join(', ')}. Lookalikes of a client belong to the client's own segment; for a segment with no similar client, search for companies matching that ICP directly. A company's segment is what the company itself does, never the query it came from: a manufacturer (pipes, forgings, tea, machinery) is never 3PL & Logistics, even when found by a logistics search; leave out a company that fits no segment rather than labelling it one.`
       : '';
     const text = (past.length
       ? `${planText}\n\n## Searches already run (do not repeat them or reword them; search elsewhere)\n${past.join('\n')}`
