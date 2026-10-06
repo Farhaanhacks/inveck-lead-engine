@@ -960,6 +960,20 @@ describe('Shubham Engineering Works, Vapi: a plant head comes before the MD', ()
   });
 });
 
+describe('Navata Road Transport, Hyderabad: the tier comes before the site', () => {
+  it('a P2 elsewhere (only a state shown) is the main contact over a P3 at the site', async () => {
+    const { canBeMain, rankCandidates } = await import('@/lib/pipeline/contacts');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const icp = DEFAULT_ICPS.find((i) => i.segment === '3PL & Logistics')!;
+    const store = { title: 'Store Manager', location: 'Hyderabad, Telangana, India' };
+    const logistics = { title: 'Logistics Manager', location: 'Tamil Nadu, India' };
+    expect(canBeMain(logistics, 'Hyderabad', icp)).toBe(true);
+    expect(rankCandidates([store, logistics], icp, 'Hyderabad')[0].title).toBe('Logistics Manager');
+    // Within a tier, the one at this site first.
+    expect(rankCandidates([{ title: 'Logistics Manager', location: 'Chennai, Tamil Nadu, India' }, { title: 'Warehouse Manager', location: 'Hyderabad, Telangana, India' }], icp, 'Hyderabad')[0].title).toBe('Warehouse Manager');
+  });
+});
+
 describe('BESCO Limited: another company with the same first word is not this one', () => {
   it('drops Kevin Noble of Besco Water Treatment (Michigan), keeps BESCO staff', async () => {
     const { sameFirm, basedAbroad } = await import('@/lib/pipeline/employer');

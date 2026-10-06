@@ -595,21 +595,26 @@ export function candidateRank(c: Placed & { title: string; phone?: string; email
  * site: kept, though only made the main contact once confirmed at this one. Abroad is never kept
  * (see basedAbroad). True when they should be left out.
  */
+/** P1, P2 or P3: on the ICP's lists. The tier decides who comes first; the site only within a tier. */
+const TIERED = new Set(['P1', 'P2', 'P3']);
+
 export function atOtherSite(c: Placed & { title: string }, city: string, icp?: RankIcp): boolean {
-  // A P1 at another site is still a contact (ranked after P1s at this site, before P2s here).
-  if (icp && tierOf(c.title, icp) === 'P1') return false;
+  // Someone on the lists at another site is still a contact (after their own tier at this site,
+  // before any lower tier here).
+  if (icp && TIERED.has(tierOf(c.title, icp))) return false;
   return personSite(c, city) === 'elsewhere' && !companyWide(c.title);
 }
 
 /**
- * Can be the main contact for this site: at this site, or a P1 at another of the company's Indian
- * sites (a P1 elsewhere comes before a P2 here; P2 and P3 must be at this site).
+ * Can be the main contact for this site: at this site, or on the ICP's lists (P1, P2, P3) at another
+ * of the company's Indian sites. The tier comes first (a P2 elsewhere before a P3 here); the site
+ * decides only within a tier (candidateRank).
  */
 export function canBeMain(c: Placed & { title?: string }, city: string, icp?: RankIcp): boolean {
   if (confirmedAtSite(c, city)) return true;
-  // A P1 at the company in India, wherever their site is or when it isn't shown ("Maharashtra"):
-  // ahead of anyone lower at this site, and of the head of the company (people abroad never get here).
-  return !!icp && !!c.title && tierOf(c.title, icp) === 'P1';
+  // On the lists at the company in India, wherever their site is or when it isn't shown ("Tamil
+  // Nadu"): ahead of anyone in a lower tier at this site (people abroad never get here).
+  return !!icp && !!c.title && TIERED.has(tierOf(c.title, icp));
 }
 
 /**

@@ -28,7 +28,7 @@ export async function unansweredCalls(db: Db, lead: Pick<Lead, 'id' | 'contactSi
 export function nextContact(candidates: Person[], icp: Parameters<typeof tierOf>[1], city = ''): { person: Person; tier: Tier } | null {
   // Never someone known to be at another of the company's sites (company-wide roles aside).
   // At this site, or a P1 at another site (a P1 elsewhere before a P2 here).
-  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99 && (personSite(p, city) !== 'elsewhere' || tierOf(p.title, icp) === 'P1'));
+  const listed = candidates.filter((p) => !p.passedAt && contactPriority(p.title, icp) < 99 && (personSite(p, city) !== 'elsewhere' || ['P1', 'P2', 'P3'].includes(tierOf(p.title, icp))));
   const person = rankCandidates(listed, icp, city)[0];
   return person ? { person, tier: tierOf(person.title, icp) } : null;
 }
