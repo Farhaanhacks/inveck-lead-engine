@@ -8,7 +8,7 @@ export const FIND_NEXT_STEP = 'Find the next person';
 /** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
 export const MAX_CALL_ATTEMPTS = 5;
 /** Calls each person should attempt in a day. */
-export const DAILY_CALL_TARGET = 25;
+export const DAILY_CALL_TARGET = 40;
 /** Companies each person should complete in a day (every step done). */
 export const DAILY_COMPANY_TARGET = 40;
 /** CA firms reached in a day, for the people who work CA firms (CA_TEAM). */
