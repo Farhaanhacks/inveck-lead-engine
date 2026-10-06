@@ -163,6 +163,7 @@ describe('criteria from the ICP settings', () => {
       ['D1', 'deal_breaker'],
       ['D2', 'deal_breaker'],
       ['D3', 'deal_breaker'],
+      ['D4', 'deal_breaker'],
       ['SIZE', 'size'],
       ['GEO', 'geography'],
       ['IND', 'industry'],
@@ -295,7 +296,7 @@ describe('an automotive manufacturer with evidenced physical operations (KLT)', 
       {
         research: (user) => {
           const [notice, n] = cite(user, 'CORPORATE INSOLVENCY RESOLUTION PROCESS (CIRP) INITIATED ON 26TH SEPTEMBER 2024');
-          return kltAnswer(user, { qualified: false, fit_reason: 'Meets the must-haves but the insolvency deal-breaker applies' }, { D4: ['met', notice, n] });
+          return kltAnswer(user, { qualified: false, fit_reason: 'Meets the must-haves but the insolvency deal-breaker applies' }, { D5: ['met', notice, n] });
         },
       },
       strict,

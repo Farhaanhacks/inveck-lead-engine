@@ -20,41 +20,38 @@ export const LOGISTICS_ICP = {
 
 /** The industries INVECK's team targets in manufacturing, from their list: the core, then strong adjacent sectors. */
 export const MANUFACTURING_INDUSTRIES = [
-  'Core: Bearing manufacturers',
-  'Automotive / auto components',
+  'Bearing manufacturers',
+  'Automotive components, auto components, automotive',
   'Forging and forgers',
   'Foundries',
   'Engineering, heavy engineering, heavy industries',
   'Industrial machinery, machinery manufacturers, machine tools, industrial equipment',
   'Mechanical engineering, precision engineering',
-  'Industrial manufacturing',
-  'Strong adjacent sectors: Defence manufacturing',
-  'Aerospace components',
-  'Railways / railway components',
-  'Construction equipment, mining equipment, earthmoving equipment',
-  'Material handling equipment',
-  'Power equipment, electrical machinery',
-  'Pumps and valves',
-  'Motors and gearboxes, transmission components, drivetrain components',
-  'Tractors and agricultural equipment',
-  'Industrial automation, robotics, CNC machinery',
-  'Textile machinery',
-  'Steel plant equipment, cement plant equipment, process equipment',
+  'Manufacturing, industrial manufacturing (heavy engineering only)',
+  'Strong adjacent sectors: defence manufacturing, aerospace components',
 ].join('; ');
+
+/** Heavy manufacturing only (INVECK's instruction): process and consumer industries are out. */
+export const MANUFACTURING_ICP = {
+  description:
+    'Heavy manufacturing companies (engineering, metal and machinery makers) holding significant physical inventory (raw material, WIP, finished goods, spares) or fixed assets across plants and warehouses, where stock and asset verification is slow, manual and hard to reconcile.',
+  industries: MANUFACTURING_INDUSTRIES,
+  mustHaves:
+    'A heavy manufacturing company in one of the listed industries (bearings, auto components, forgings, castings, heavy engineering, machinery, machine tools, industrial equipment, precision engineering, defence or aerospace components) that holds physical inventory or fixed assets to verify; ERP or WMS in use is a plus (SAP, Oracle, Microsoft Dynamics, Tally)',
+  dealBreakers:
+    'Pharmaceuticals, life sciences, food and beverages, FMCG and consumer goods, chemicals, paints, plastics and packaging, textiles and apparel, cosmetics, agro processing, paper; no physical inventory (pure software, services, consulting, trading on paper); a single small shop; companies that sell inventory or audit software themselves',
+};
 
 export const DEFAULT_ICPS = [
   {
     segment: MANUFACTURING,
     active: true,
-    description:
-      'Manufacturers holding significant physical inventory (raw material, WIP, finished goods, spares) or fixed assets across plants and warehouses, where stock and asset verification is slow, manual and hard to reconcile.',
-    industries: MANUFACTURING_INDUSTRIES,
+    description: MANUFACTURING_ICP.description,
+    industries: MANUFACTURING_ICP.industries,
     companySize: '200+ employees or Rs 100 Cr+ revenue',
     geography: 'India',
-    mustHaves:
-      'Manufactures physical goods, or holds significant physical inventory or fixed assets to verify; ERP or WMS in use is a plus (SAP, Oracle, Microsoft Dynamics, Tally)',
-    dealBreakers:
-      'No physical inventory (pure software, services, consulting, trading on paper); a single small shop; companies that sell inventory or audit software themselves',
+    mustHaves: MANUFACTURING_ICP.mustHaves,
+    dealBreakers: MANUFACTURING_ICP.dealBreakers,
     targetTitles: 'Plant Head, Head of Supply Chain, VP Supply Chain, Supply Chain Head, Operations Head, Manufacturing Head, VP Operations, AVP Operations',
     p2Titles: 'Inventory Manager, Warehouse Head, Procurement Head, Procurement Manager, Supply Chain Manager, General Manager, DGM, Senior Manager Inventory',
     p3Titles: 'Store Head, Store Manager, Logistics Manager',
@@ -135,6 +132,14 @@ export async function upgradeManufacturingIndustriesV3(db: Db) {
   const key = 'icpManufacturingIndustriesV3';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
   await db.update(icps).set({ industries: MANUFACTURING_INDUSTRIES }).where(eq(icps.segment, MANUFACTURING));
+  await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
+}
+
+/** The Manufacturing ICP narrowed to heavy manufacturing (no pharma, food, FMCG...) in the database, once. */
+export async function upgradeManufacturingHeavyV4(db: Db) {
+  const key = 'icpManufacturingHeavyV4';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  await db.update(icps).set(MANUFACTURING_ICP).where(eq(icps.segment, MANUFACTURING));
   await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
 }
 

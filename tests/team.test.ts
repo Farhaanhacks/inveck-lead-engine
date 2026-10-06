@@ -253,10 +253,11 @@ describe('contact priority (P1/P2/P3)', async () => {
     expect(tierOf('Store Head', log)).toBe('P3');
   });
   it('covers every industry on the team list', () => {
-    // INVECK's manufacturing focus: the core and the strong adjacent sectors.
-    for (const word of ['bearing', 'auto components', 'forging', 'foundries', 'heavy engineering', 'machine tools', 'precision engineering', 'defence', 'aerospace', 'railway', 'construction equipment', 'mining equipment', 'material handling', 'power equipment', 'pumps and valves', 'gearboxes', 'drivetrain', 'tractors', 'earthmoving', 'industrial automation', 'robotics', 'cnc', 'textile machinery', 'steel plant equipment', 'cement plant equipment', 'process equipment'])
+    // INVECK's manufacturing focus: heavy manufacturing only, exactly the team's list.
+    for (const word of ['bearing', 'automotive components', 'auto components', 'automotive', 'forging', 'foundries', 'engineering', 'heavy engineering', 'heavy industries', 'industrial machinery', 'machinery manufacturers', 'machine tools', 'industrial equipment', 'mechanical engineering', 'precision engineering', 'industrial manufacturing', 'defence manufacturing', 'aerospace components'])
       expect(man.industries.toLowerCase()).toContain(word);
-    // No longer the focus.
+    // Process and consumer industries are deal-breakers.
+    for (const word of ['pharmaceuticals', 'food', 'fmcg', 'chemicals', 'textiles']) expect(man.dealBreakers.toLowerCase()).toContain(word);
     for (const word of ['pharmaceuticals', 'fmcg', 'furniture']) expect(man.industries.toLowerCase()).not.toContain(word);
   });
 });

@@ -3,7 +3,7 @@ import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 import { SCHEMA_STATEMENTS } from './migrate';
-import { removeTopFromP1, upgradeLogisticsIcpV2, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingIndustriesV3 } from './seed';
+import { removeTopFromP1, upgradeLogisticsIcpV2, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
 import { seedUsers } from '../passwords';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -56,6 +56,7 @@ async function connect(): Promise<Db> {
     await upgradeManufacturingIndustriesV3(db);
     await removeTopFromP1(db);
     await upgradeLogisticsIcpV2(db);
+    await upgradeManufacturingHeavyV4(db);
     await seedUsers(db);
   } catch (e) {
     const cause = (e as { cause?: unknown })?.cause;
