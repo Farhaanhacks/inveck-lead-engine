@@ -306,9 +306,10 @@ describe('search evidence is read in full before deciding (contact pipeline revi
   it('merges the results for one profile: a specific city from one result fills in "India" from another', async () => {
     const vague = { title: 'Ravi Kumar - Plant Head - Hosur Gears', subtitle: 'India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/ravi-kumar', snippet: '' };
     const placed = { ...vague, subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://www.linkedin.com/in/ravi-kumar/' };
-    const svc = services(seen, (q) => (q.includes('"Plant Head"') ? [vague] : [placed]));
+    const given = 'site:linkedin.com/in "Hosur Gears" "Plant Head"';
+    const svc = services(seen, (q) => (q === given ? [vague] : [placed]));
     await knowPlaces(svc, ['Hosur']);
-    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Hosur Gears" "Plant Head"', company, 'Hosur', mfg);
+    const { people } = await searchLinkedIn(svc, given, company, 'Hosur', mfg);
     expect(people).toHaveLength(1);
     expect(people[0].location).toBe('Hosur, Tamil Nadu, India');
   });
@@ -348,15 +349,26 @@ describe('search evidence is read in full before deciding (contact pipeline revi
     expect(found).toMatchObject({ employer: 'elsewhere', jobLocation: '' });
   });
 
-  it('keeps searching while the only person at the site is not eligible (HR), within a budget of two more searches', async () => {
+  it('keeps searching (P1, then P2) while nobody found passes the checks (HR), and stops once someone does', async () => {
     const hr = { title: 'Asha R - HR Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · HR Manager · Hosur Gears', link: 'https://in.linkedin.com/in/asha-r', snippet: '' };
-    const head = { title: 'Vikram P - Operations Head - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Operations Head · Hosur Gears', link: 'https://in.linkedin.com/in/vikram-p', snippet: '' };
-    const svc = services(seen, (q) => (q.endsWith('"Hosur"') ? [head] : [hr]));
+    const manager = { title: 'Vikram P - Supply Chain Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Supply Chain Manager · Hosur Gears', link: 'https://in.linkedin.com/in/vikram-p', snippet: '' };
+    const svc = services(seen, (q) => (q.includes('"Supply Chain Manager"') ? [manager] : [hr]));
     await knowPlaces(svc, ['Hosur']);
     const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Hosur Gears" "Plant Head" Hosur', company, 'Hosur', mfg);
     expect(people.map((p) => p.name).sort()).toEqual(['Asha R', 'Vikram P']);
-    // The first search, the broad one, then the leadership and the city searches: no more.
+    // Two P1 searches, two P2 searches: then someone passed, so no P3 or later searches.
     expect(seen.searches.filter((q) => q.startsWith('site:linkedin.com/in')).length).toBe(4);
+  });
+
+  it('a candidate with two current jobs does not stop the search; their own profile is looked up and settles it', async () => {
+    const meena = { title: 'Meena S - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', link: 'https://in.linkedin.com/in/meena-s', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present. Hosur, Tamil Nadu, India' };
+    const settled = { ...meena, subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present. Hosur, Tamil Nadu, India' };
+    const svc = services(seen, (q) => (q.includes('"Meena S"') ? [settled] : [meena]));
+    await knowPlaces(svc, ['Hosur']);
+    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Hosur Gears" "Plant Head" Hosur', company, 'Hosur', mfg);
+    // Every role search ran (nobody passed), then her own profile settled it.
+    expect(seen.searches.some((q) => q.includes('"Meena S"'))).toBe(true);
+    expect(people.map((p) => [p.name, p.conflict])).toEqual([['Meena S', undefined]]);
   });
 
   it('a same-name profile at another company does not end the lookup: the one at this company is found', async () => {

@@ -660,6 +660,23 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(f.status).toBe('Rejected');
   });
 
+  it("an imported firm whose website doesn't confirm a must-have goes ahead; found prospects still go to review", async () => {
+    const { importContactSheet, parseContactSheet } = await import('@/lib/contact-import');
+    const { KnownBranches } = await import('@/lib/branches');
+    const { rows } = parseContactSheet([
+      ['Firm', 'Phone', 'Matched partner / proprietor', 'Role', 'LinkedIn 1'],
+      ['DELTA & CO', '9800000005', '1. Kiran D', 'Partner', 'https://in.linkedin.com/in/kiran-d'],
+    ]);
+    await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: null, known: new KnownBranches([], []), by: 'Puja' });
+    const [lead] = await db.select().from(leads).where(eq(leads.company, 'DELTA & CO'));
+    const unsure = (user: string) => kltAnswer(user, { risks: [], qualified: true, fit_score: 6 }, { M1: ['unknown', 'Not stated on the website', ''] });
+    const r = await run(lead, { research: unsure, google: () => [] });
+    expect(r.status).toBe('Awaiting Approval');
+    expect(r.fitDecision).toContain("On the team's researched list");
+    const found = await addLead({ company: 'Delta Found & Co', segment: 'CA Firms', source: 'Found by prospect search' });
+    expect((await run(found, { research: unsure, google: () => [] })).status).toBe('Needs Review');
+  });
+
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
     const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
     const results = [

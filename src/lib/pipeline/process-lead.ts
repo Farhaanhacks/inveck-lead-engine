@@ -219,7 +219,15 @@ export async function processLead(
     return { ...corrected, status: 'Error', lastError: error || 'Research failed' };
   }
   const base: LeadUpdate = { ...corrected, segment: icp.segment, lastError: '' };
-  const a = keepFit ? undefined : research.assessment;
+  let a = keepFit ? undefined : research.assessment;
+  // A list the team researched themselves: what the website doesn't show isn't held against a firm.
+  // Only evidence against it (a must-have shown missing, a deal-breaker) stops it; anything that only
+  // couldn't be confirmed goes ahead, with the same score and the reason kept.
+  const onlyUnconfirmed = (reason: string) =>
+    /^Needs review: /.test(reason) && !/contradicts|failed the checks/.test(reason) && reason.replace(/^Needs review: /, '').split('; ').every((part) => part.startsWith("couldn't confirm must-have"));
+  if (a?.status === 'review' && lead.source === IMPORTED_SOURCE && onlyUnconfirmed(a.reason)) {
+    a = { ...a, status: 'qualified', reason: `On the team's researched list; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
+  }
   if (keepFit) {
     // The fit a person confirmed stands; research done now only adds the company description.
     if (!reused && research.text) base.researchSummary = research.text;

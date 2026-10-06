@@ -245,48 +245,97 @@ function firmQuery(company: string): string {
  * Public LinkedIn profiles via Google. Runs the targeted query (company + roles + city) and a
  * broad one (company + any senior role), since small companies rarely match the targeted one.
  */
-export async function searchLinkedIn(svc: Services, query: string, company = '', city = '', icp?: RankIcp): Promise<{ people: LinkedInPerson[]; error: string }> {
+/**
+ * The searches a company's contacts may take (INVECK's budget): two for P1 roles (the full company
+ * name and its verified aliases), two for P2, two for P3, and four to settle candidates whose current
+ * employer or role is unclear. Then, only if nobody passed, one for the owners and partners.
+ */
+export const CONTACT_SEARCH_BUDGET = { p1: 2, p2: 2, p3: 2, resolve: 4 } as const;
+
+/** The ICP's roles for a tier, most wanted first (plant heads first for manufacturers), at most six. */
+function tierRoles(icp: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>, tier: 'P1' | 'P2' | 'P3'): string[] {
+  const listed = (tier === 'P1' ? icp.targetTitles : tier === 'P2' ? icp.p2Titles : icp.p3Titles).split(',').map((r) => r.trim()).filter(Boolean);
+  const floor = tier === 'P1' && /manufactur|plant|factory|production|works/i.test(`${icp.segment ?? ''} ${icp.industries ?? ''}`) ? ['Plant Head', 'Plant Manager'] : [];
+  return [...new Set([...floor, ...listed])]
+    .filter((r) => contactPriority(r, icp) < 99)
+    .sort((x, y) => contactPriority(x, icp) - contactPriority(y, icp))
+    .slice(0, 6);
+}
+
+const roleSearch = (firm: string, roles: string[], place: string) =>
+  ['site:linkedin.com/in', firm, roles.length ? '(' + roles.map((r) => `"${r}"`).join(' OR ') + ')' : '', place].filter(Boolean).join(' ');
+
+/**
+ * People at the company on LinkedIn, via Google. Broad to find, strict to accept: a search finds
+ * candidates, but only a profile showing the company as the current employer keeps them, and the
+ * search goes on (P1, then P2, then P3, then settling unclear candidates, within the budget) until
+ * someone passes the same checks the main contact must pass: on the ICP's lists, one current job (no
+ * conflicting employers), and at this site (a P1 anywhere in India).
+ */
+export async function searchLinkedIn(svc: Services, query: string, company = '', city = '', icp?: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>): Promise<{ people: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
-  const queries = [query];
-  // The broad search looks for the people who run operations, not the top of the company.
-  if (name) queries.push(`site:linkedin.com/in ${firmQuery(company)} ("plant head" OR "plant manager" OR operations OR "supply chain" OR warehouse OR logistics OR inventory OR head OR manager)`);
-  const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q)));
-  // The broad search's first page was full: the next ten often hold the people at the site we want.
-  const broad = settled[1];
-  if (queries[1] && broad?.status === 'fulfilled' && broad.value.length >= 10) settled.push(...(await Promise.allSettled([googleSearch(svc, queries[1], 2)])));
-  // Every result for a profile is read together before deciding (see mergeSameProfile).
-  const found = mergeSameProfile(settled.flatMap((s) => (s.status === 'fulfilled' ? toLinkedInPeople(s.value, company) : [])));
+  const firm = firmQuery(company);
+  const found: FoundPerson[] = [];
+  const failures: unknown[] = [];
+  const run = async (queries: string[], page?: number) => {
+    const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q, page)));
+    const results = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : (failures.push(s.reason), [])));
+    for (const r of results) found.push(...toLinkedInPeople(r, company));
+    await knowPlaces(svc, [city, ...found.flatMap((p) => [p.location, p.jobLocation, p.responsibility])]);
+    return results;
+  };
+  // Settled on a second look: their current job is here after all (one employer, this company).
+  const settledHere = new Set<string>();
+  const keyOf = (p: { linkedin: string }) => p.linkedin.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '').replace(/\/+$/, '');
+  const merged = () =>
+    mergeSameProfile(found).map((p) => (settledHere.has(keyOf(p)) ? { ...p, employer: 'here' as const, conflict: undefined } : p));
   // Found by searching the company's name, so former employees turn up too: keep only people whose
   // profile shows they work there now; and nobody based outside India ("Detroit Metropolitan Area").
-  const people: LinkedInPerson[] = found.filter((p) => (!company || p.employer === 'here') && !p.abroad);
-  // The searches look for the people who run the site. Until someone eligible at this site is found
-  // (on the ICP's lists, not just anyone who works there), more is searched, within a small budget:
-  // the company's leadership (owners, partners, the CEO, directors, the president), kept as corporate
-  // contacts for review; then everyone at the company in the site's city.
-  const eligibleAtSite = () =>
-    people.some((p) => (!city.trim() || personSite(p, city) === 'here') && (!icp || contactPriority(p.title, icp) < 99));
-  const firm = firmQuery(company);
-  const town = city.split(',')[0].trim();
-  const more = [
-    `site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR proprietor OR CEO OR "chief executive" OR president)`,
-    town ? `site:linkedin.com/in ${firm} "${town}"` : '',
-  ].filter(Boolean);
-  await knowPlaces(svc, [city, ...people.flatMap((p) => [p.location, p.jobLocation, p.responsibility])]);
-  for (const q of more) {
-    if (!name || eligibleAtSite() || settled.some((s) => s.status === 'rejected')) break;
-    try {
-      const extra = toLinkedInPeople(await googleSearch(svc, q), company);
-      const merged = mergeSameProfile([...(people as FoundPerson[]), ...extra]).filter((p) => (!company || p.employer === 'here') && !p.abroad);
-      people.splice(0, people.length, ...merged);
-      await knowPlaces(svc, people.flatMap((p) => [p.location, p.jobLocation, p.responsibility]));
-    } catch {
-      // Nothing more found this time.
-      break;
+  const current = () => merged().filter((p) => (!company || p.employer === 'here') && !p.abroad);
+  const passes = (p: FoundPerson) =>
+    !p.conflict && (!icp || contactPriority(p.title, icp) < 99) && (icp ? canBeMain(p, city, icp) : !city.trim() || personSite(p, city) === 'here');
+  const done = () => current().some(passes);
+  const searchDown = () => failures.length > 0 && !found.length;
+
+  if (!icp || !name) {
+    // No contact lists to search by: the given search and a broad one for the people who run operations.
+    const broad = name ? `site:linkedin.com/in ${firm} ("plant head" OR "plant manager" OR operations OR "supply chain" OR warehouse OR logistics OR inventory OR head OR manager)` : '';
+    const [, broadResults] = await run([query, broad].filter(Boolean));
+    if (broad && (broadResults?.length ?? 0) >= 10) await run([broad], 2);
+  } else {
+    const town = city.split(',')[0].trim();
+    const tiers: string[][] = [
+      // P1: the search we were given (P1 roles at this site), and the P1 roles anywhere.
+      [query, roleSearch(firm, tierRoles(icp, 'P1'), '')],
+      [roleSearch(firm, tierRoles(icp, 'P2'), town), roleSearch(firm, tierRoles(icp, 'P2'), '')],
+      [roleSearch(firm, tierRoles(icp, 'P3'), town), roleSearch(firm, tierRoles(icp, 'P3'), '')],
+    ];
+    for (const tier of tiers) {
+      const queries = [...new Set(tier)].filter((q) => !/\(\)/.test(q));
+      if (done() || searchDown()) break;
+      await run(queries);
+    }
+    // Candidates whose current employer or role is unclear (two current jobs, or the company not shown
+    // as current): their own profile is looked up, best first, until someone passes.
+    const unclear = mergeSameProfile(found)
+      .filter((p) => !p.abroad && (p.employer === 'unknown' || !!p.conflict) && contactPriority(p.title, icp) < 99 && !settledHere.has(keyOf(p)))
+      .sort((x, y) => candidateRank(x, icp, city) - candidateRank(y, icp, city))
+      .slice(0, CONTACT_SEARCH_BUDGET.resolve);
+    for (const p of unclear) {
+      if (done() || searchDown()) break;
+      const before = found.length;
+      await run([`site:linkedin.com/in "${p.name}" ${firm}`]);
+      // Their own result shows one current job, here: settled.
+      const own = found.slice(before).filter((r) => keyOf(r) === keyOf(p));
+      if (own.some((r) => r.employer === 'here' && !r.conflict) && !own.some((r) => r.employer === 'elsewhere' || r.conflict)) settledHere.add(keyOf(p));
     }
   }
-  await knowPlaces(svc, people.flatMap((p) => [p.location, p.jobLocation, p.responsibility]));
-  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
-  return { people, error: failed && !people.length ? errorMessage(failed.reason) : '' };
+  // Last resort, once: nobody passed, so the company's owners and partners (small, owner-run firms).
+  if (name && !done() && !searchDown()) {
+    await run([`site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR proprietor OR CEO OR "chief executive" OR president)`]);
+  }
+  const people = current();
+  return { people, error: failures.length && !people.length ? errorMessage(failures[0]) : '' };
 }
 
 const leaderSchema = {
