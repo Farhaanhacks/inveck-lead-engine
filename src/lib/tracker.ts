@@ -16,6 +16,7 @@ export const CALL_FEEDBACK = [
   'Already using a solution',
   'Not the right person',
   'Wrong number',
+  'No contact found',
   'Not reachable',
 ] as const;
 

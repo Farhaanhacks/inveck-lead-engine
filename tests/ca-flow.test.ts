@@ -278,3 +278,17 @@ describe('adding an email from Today', () => {
     expect(extra.map((p) => p.email)).toEqual(['sales@mailworks.com']);
   });
 });
+
+describe('a CA reach-out is a firm someone was actually reached at', () => {
+  it('no LinkedIn, no contact found and the email skipped: the firm is done, but no reach-out', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await caLead({ contactLinkedin: '' });
+    const first = await start(l.id);
+    await completeTaskAction(form({ id: first.id, outcome: 'skipped' }));
+    const left = await open(l.id);
+    await completeTaskAction(form({ id: left.find((t) => t.kind === 'call')!.id, outcome: 'no_contact' }));
+    await completeTaskAction(form({ id: left.find((t) => t.kind === 'email')!.id, outcome: 'skipped' }));
+    expect(await open(l.id)).toEqual([]);
+    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0 });
+  });
+});

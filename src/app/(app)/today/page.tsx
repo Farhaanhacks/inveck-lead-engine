@@ -115,7 +115,7 @@ function CallActions({ task }: { task: Task }) {
           <label htmlFor={`fb-${task.id}`} className="label">Call outcome *</label>
           <select id={`fb-${task.id}`} name="feedback" defaultValue="" required className="field">
             <option value="">Choose…</option>
-            {CALL_FEEDBACK.filter((f) => f !== 'Wrong number' && f !== 'Not reachable').map((f) => <option key={f} value={f}>{f}</option>)}
+            {CALL_FEEDBACK.filter((f) => f !== 'Wrong number' && f !== 'No contact found' && f !== 'Not reachable').map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
           <label htmlFor={`cb-${task.id}`} className="label">Next call on (optional)</label>
           <input id={`cb-${task.id}`} name="callbackDate" type="date" min={istDay()} className="field" />

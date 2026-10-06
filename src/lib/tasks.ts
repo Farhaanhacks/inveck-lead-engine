@@ -308,13 +308,19 @@ async function openStepsFor(db: Db, leadId: number, day: string): Promise<number
   return rows.length;
 }
 
+/**
+ * Someone was actually reached out to: a number dialled, a message or request sent, a request
+ * accepted. Not skips, not "No contact found" (nothing to dial).
+ */
+const REAL_OUTREACH = [...CALL_ATTEMPT_OUTCOMES, 'sent', 'done', 'accepted'] as const;
+
 /** Something was really done for the company that day: a call attempted or a message sent (not only skips). */
 async function workedOn(db: Db, leadId: number, day: string): Promise<boolean> {
   const { start, end } = istDayBounds(day);
   const [row] = await db
     .select({ id: tasks.id })
     .from(tasks)
-    .where(and(eq(tasks.leadId, leadId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), notInArray(tasks.outcome, ['skipped', 'closed', ''])))
+    .where(and(eq(tasks.leadId, leadId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), inArray(tasks.outcome, [...REAL_OUTREACH])))
     .limit(1);
   return !!row;
 }
@@ -339,7 +345,18 @@ export async function companyProgress(db: Db, ownerId: number, day = istDay(), o
   ]);
   // Only CA firms (ca: true), only the other companies (ca: false), or everything.
   const keep = (segment: string) => opts.ca === undefined || isCaSegment(segment) === opts.ca;
-  const finished = allFinished.filter((f) => keep(f.segment));
+  // Done counts only where someone was actually reached that day (also for days recorded before
+  // skips and "No contact found" stopped counting).
+  const { start, end } = istDayBounds(day);
+  const reached = new Set(
+    (
+      await db
+        .selectDistinct({ leadId: tasks.leadId })
+        .from(tasks)
+        .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), inArray(tasks.outcome, [...REAL_OUTREACH])))
+    ).map((r) => r.leadId),
+  );
+  const finished = allFinished.filter((f) => keep(f.segment) && reached.has(f.leadId));
   const open = allOpen.filter((o) => keep(o.lead.segment));
   // A CA firm only waiting for its LinkedIn request to be accepted has nothing to do today: it counts
   // only if something was done for it today.

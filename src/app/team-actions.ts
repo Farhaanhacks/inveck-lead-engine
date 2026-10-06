@@ -88,6 +88,8 @@ export async function completeTaskAction(form: FormData) {
   if (task.kind === 'call' && outcome === 'wrong_number' && !dropped.rest) await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
   // No number found: nothing to call or WhatsApp today, so today's WhatsApp is ticked off with the call
   // (Undo brings it back). Later rounds stay, for when a number turns up.
+  // The tracker's call outcome says so too.
+  if (task.kind === 'call' && outcome === 'no_contact') await db.update(leads).set({ callFeedback: 'No contact found' }).where(eq(leads.id, task.leadId));
   if (task.kind === 'call' && outcome === 'no_contact') {
     await db
       .update(tasks)
