@@ -59,6 +59,15 @@ export function AddLeadForms({ segments, allSegments, team }: { segments: string
                 <input id={name} name={name} className="field" />
               </div>
             ))}
+            <div>
+              <label htmlFor="contactTier" className="label">Tier</label>
+              <select id="contactTier" name="contactTier" defaultValue="" className="field">
+                <option value="">From the title</option>
+                <option value="P1">P1 decision-maker</option>
+                <option value="P2">P2 process owner</option>
+                <option value="P3">P3 process level</option>
+              </select>
+            </div>
             <div className="col-span-2">
               <label htmlFor="contactLinkedin" className="label">LinkedIn URL</label>
               <input id="contactLinkedin" name="contactLinkedin" className="field" />

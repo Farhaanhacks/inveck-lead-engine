@@ -51,7 +51,14 @@ export function AddLeadRow({ segments, columns, showOwner }: { segments: string[
         {f('contactLinkedin', 'LinkedIn URL', 'Client LinkedIn profile')}
       </td>
       <td className={td}>{f('contactTitle', 'Designation', 'Client designation')}</td>
-      <td className={td} />
+      <td className={td}>
+        <select form="tracker-add" name="contactTier" aria-label="Contact tier" defaultValue="" className={INPUT}>
+          <option value="">Tier</option>
+          <option value="P1">P1</option>
+          <option value="P2">P2</option>
+          <option value="P3">P3</option>
+        </select>
+      </td>
       <td className={td}>{f('contactPhone', 'Number', 'Client contact number')}</td>
       <td className={td} colSpan={9}>
         <div className="flex flex-wrap items-center gap-2">

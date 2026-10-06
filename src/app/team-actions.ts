@@ -471,6 +471,11 @@ export async function updateContactAction(form: FormData) {
   const db = await getDb();
   // Saved from the contact form itself: the team vouches for this contact even when nothing changed.
   const saved = await saveContactEdit(db, id, contactFields(form), { force: true });
+  // The tier the team chose (P1, P2, P3), or worked out from the title ('').
+  if (form.has('contactTier')) {
+    const tier = str(form, 'contactTier');
+    await db.update(leads).set({ contactTier: ['P1', 'P2', 'P3'].includes(tier) ? tier : '' }).where(eq(leads.id, id));
+  }
   // Someone new gets an email written to them.
   if (saved?.newPerson) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   revalidatePath('/today');

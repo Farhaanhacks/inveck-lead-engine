@@ -321,3 +321,15 @@ describe('every way of reaching out tried: the company is done for the day', () 
     expect((await companyProgress(db, me.id, today())).done).toBe(1);
   });
 });
+
+describe('choosing the tier by hand', () => {
+  it('the tier picked when editing the contact is kept; "from the designation" clears it', async () => {
+    const { updateContactAction } = await import('@/app/team-actions');
+    const l = await caLead({ company: 'Tier Works', segment: 'Manufacturing' });
+    const tier = async () => (await db.select().from(leads).where(eq(leads.id, l.id)))[0].contactTier;
+    await updateContactAction(form({ id: l.id, contactName: 'Asha Rao', contactTitle: 'Senior Executive', contactPhone: '9800000001', contactLinkedin: l.contactLinkedin, contactTier: 'P1' }));
+    expect(await tier()).toBe('P1');
+    await updateContactAction(form({ id: l.id, contactName: 'Asha Rao', contactTitle: 'Senior Executive', contactPhone: '9800000001', contactLinkedin: l.contactLinkedin, contactTier: 'P9' }));
+    expect(await tier()).toBe('');
+  });
+});

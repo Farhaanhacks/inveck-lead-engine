@@ -166,6 +166,8 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     contactTitle: str(form, 'contactTitle'),
     contactPhone: str(form, 'contactPhone'),
     contactLinkedin: str(form, 'contactLinkedin'),
+    // P1, P2 or P3 when the team chose one; else worked out from the title.
+    contactTier: chosenTier(str(form, 'contactTier')),
   }).returning({ id: leads.id });
   await logActivity(db, row.id, 'added', inbound ? 'Inbound lead' : 'Added by hand');
   await assignUnowned(db);
@@ -180,6 +182,8 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
       : `Added ${company}. Researching it now; its calls, WhatsApp and email show on Today when it's ready.`,
   };
 }
+
+const chosenTier = (v: string) => (['P1', 'P2', 'P3'].includes(v) ? v : '');
 
 /** Bulk add: one company per line, "Company, website, city, segment" (comma or tab separated). */
 export async function addLeadsBulkAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {

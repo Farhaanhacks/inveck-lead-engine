@@ -298,6 +298,15 @@ function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
               </div>
             ))}
           </div>
+          <div className="sm:w-1/2">
+            <label htmlFor={`contactTier-${lead.id}`} className="label">Tier</label>
+            <select id={`contactTier-${lead.id}`} name="contactTier" defaultValue={lead.contactTier} className="field">
+              <option value="">From the designation</option>
+              <option value="P1">P1 decision-maker</option>
+              <option value="P2">P2 process owner</option>
+              <option value="P3">P3 process level</option>
+            </select>
+          </div>
           <p className="text-xs text-muted">Changing the name to someone else clears the previous person&apos;s number, email and LinkedIn unless you type new ones.</p>
           <button className="btn-primary px-3 py-1.5 text-sm">Save contact</button>
         </form>
@@ -763,7 +772,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={tierOf(g.lead.contactTitle, icpOf(g.lead))} />
+              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

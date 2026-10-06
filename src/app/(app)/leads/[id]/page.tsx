@@ -278,7 +278,7 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
 /** Evidence lines that only say the team entered someone: not shown. */
 const TEAM_EVIDENCE = /^(added by the team|entered by the team|on the team's researched list)$/i;
 
-function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; company: string; city: string; list: Person[]; tierFor: (title: string) => Tier }) {
+function PeopleCard({ leadId, company, city, list, tierFor, mainTier }: { leadId: number; company: string; city: string; list: Person[]; tierFor: (title: string) => Tier; mainTier?: Tier }) {
   // People found at the company who aren't contacts for this site aren't shown.
   const contacts = list.filter((p) => p.passedReason !== 'excluded');
   const row = (p: Person) => (
@@ -286,7 +286,7 @@ function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; 
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
                     {p.name}
-                    <TierBadge tier={tierFor(p.title)} />
+                    <TierBadge tier={p.isPrimary && mainTier ? mainTier : tierFor(p.title)} />
                     {p.isPrimary && !p.passedAt && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
                     {p.passedAt && (
                       <span className="ml-2 text-xs font-normal text-muted">
@@ -513,7 +513,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       {/* Always shown, so a point of contact can be added even before anyone is found. */}
       {(
         <div className="mb-6">
-          <PeopleCard leadId={lead.id} company={lead.company} city={lead.city} list={team} tierFor={(title) => tierOf(title, icp ?? undefined)} />
+          <PeopleCard leadId={lead.id} company={lead.company} city={lead.city} list={team} tierFor={(title) => tierOf(title, icp ?? undefined)} mainTier={(['P1', 'P2', 'P3'].includes(lead.contactTier) ? lead.contactTier : undefined) as Tier | undefined} />
         </div>
       )}
 
