@@ -231,6 +231,13 @@ export async function loadTodayTasks(db: Db, ownerId: number, today = istDay(), 
     );
 }
 
+/**
+ * A number was actually dialled: connected, no answer, busy or wrong number. "No contact found" (no
+ * number to call) and skipped steps are not calls.
+ */
+export const CALL_ATTEMPT_OUTCOMES = ['connected', 'no_answer', 'busy', 'wrong_number'] as const;
+export const isCallAttempt = (outcome: string) => (CALL_ATTEMPT_OUTCOMES as readonly string[]).includes(outcome);
+
 export type DayCounts = { connectedCalls: number; caConnectedCalls: number; callAttempts: number; linkedinSent: number; whatsappSent: number; emailsDone: number };
 
 /** What a person got done on an Indian day. A connected call is a conversation, not an attempt. */
@@ -244,7 +251,7 @@ export async function dayCounts(db: Db, ownerId: number, day = istDay()): Promis
   const c: DayCounts = { connectedCalls: 0, caConnectedCalls: 0, callAttempts: 0, linkedinSent: 0, whatsappSent: 0, emailsDone: 0 };
   for (const r of rows) {
     if (r.outcome === 'closed') continue;
-    if (r.kind === 'call' && r.outcome !== 'skipped') {
+    if (r.kind === 'call' && isCallAttempt(r.outcome)) {
       c.callAttempts++;
       if (r.outcome === 'connected') {
         c.connectedCalls++;

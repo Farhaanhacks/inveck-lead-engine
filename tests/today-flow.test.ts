@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { leads, tasks, users } from '@/lib/db/schema';
-import { ensureSequences, FIND_NEXT_STEP, loadTodayTasks, nextDue } from '@/lib/tasks';
+import { ensureSequences, FIND_NEXT_STEP, istDay, loadTodayTasks, nextDue } from '@/lib/tasks';
 import { saveContactEdit } from '@/lib/contact-edit';
 
 let db: Db;
@@ -99,5 +99,18 @@ describe('calling again after no answer: the day split at 2 pm IST', () => {
     await db.update(tasks).set({ slot: 'morning', title: 'Call again at 9 am' }).where(eq(tasks.leadId, l.id));
     expect((await loadTodayTasks(db, owner, MONDAY, at('08:30'))).length).toBe(0);
     expect((await loadTodayTasks(db, owner, MONDAY, at('09:00'))).length).toBe(1);
+  });
+});
+
+describe('calls attempted', () => {
+  it('counts numbers actually dialled, not "No contact found" or skips', async () => {
+    const { dayCounts } = await import('@/lib/tasks');
+    const l = await addLead({ status: 'Awaiting Approval', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
+    const now = new Date();
+    const call = (outcome: string) => ({ leadId: l.id, ownerId: owner, kind: 'call' as const, step: 'Day 1', title: 'call', dueDate: istDay(), slot: 'day' as const, doneAt: now, outcome });
+    await db.insert(tasks).values([call('connected'), call('no_answer'), call('busy'), call('wrong_number'), call('no_contact'), call('no_contact'), call('skipped'), call('closed')]);
+    const c = await dayCounts(db, owner, istDay());
+    expect(c.callAttempts).toBe(4);
+    expect(c.connectedCalls).toBe(1);
   });
 });

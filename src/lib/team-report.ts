@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, isNotNull, lt, lte } from 'drizzle-orm';
 import type { Db } from './db';
 import { activities, attendance, companyDays, leads, tasks, users } from './db/schema';
-import { istDay, istDayBounds } from './tasks';
+import { isCallAttempt, istDay, istDayBounds } from './tasks';
 
 export type Period = 'today' | 'yesterday' | 'week' | 'month';
 export const PERIODS: { key: Period; label: string }[] = [
@@ -82,7 +82,8 @@ export async function teamReport(db: Db, from: string, to: string): Promise<{ pe
 
   const people = team.map((t): PersonReport => {
     const mine = done.filter((d) => d.ownerId === t.id && d.outcome !== 'closed' && d.outcome !== 'skipped');
-    const callAttempts = mine.filter((d) => d.kind === 'call').length;
+    // Only numbers actually dialled: not "No contact found".
+    const callAttempts = mine.filter((d) => d.kind === 'call' && isCallAttempt(d.outcome)).length;
     const connected = mine.filter((d) => d.kind === 'call' && d.outcome === 'connected').length;
     const meetings = stages.filter((s) => s.ownerId === t.id && s.stage === 'Meeting Booked').length;
     const days = att.filter((a) => a.userId === t.id);

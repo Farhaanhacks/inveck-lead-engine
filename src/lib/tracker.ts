@@ -116,7 +116,8 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       owner: lead.ownerId ? names.get(lead.ownerId) ?? '' : '',
       callStatus: last ? CALL_STATUS[last.outcome] : 'Not called yet',
       callRemark: lead.callRemark,
-      callsDone: mine.length,
+      // Calls actually dialled (a "No contact found" isn't one).
+      callsDone: mine.filter((c) => c.outcome !== 'no_contact').length,
       lastCallAt: last?.doneAt ?? null,
       pointOfContact: lead.contactChannel || channelFromLog(lead, mine),
       autoChannel: channelFromLog(lead, mine),
