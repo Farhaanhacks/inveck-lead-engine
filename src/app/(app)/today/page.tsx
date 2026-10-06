@@ -426,6 +426,7 @@ function CompanyCard({
                   .map((p) => (
                     <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                       <span className="font-medium text-ink">{p.name}</span>
+                      {['P1', 'P2', 'P3'].includes(p.tier) && <TierBadge tier={p.tier as Tier} />}
                       {p.title && <span className="text-muted">{p.title}</span>}
                       <PhoneLinks value={p.phone} />
                       {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}

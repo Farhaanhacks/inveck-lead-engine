@@ -342,6 +342,8 @@ export const people = pgTable('people', {
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   /** Where they are based, from their LinkedIn profile ("Jaipur, Rajasthan, India"); empty when unknown. */
   location: text('location').notNull().default(''),
+  /** P1, P2 or P3 when the team chose it; '' = worked out from the title. */
+  tier: text('tier').notNull().default(''),
   /** Where their current job at the company is, from that job's own entry; empty when not shown. */
   jobLocation: text('job_location').notNull().default(''),
   /** The site their title says they are responsible for ("Plant Head - Coimbatore"); empty when none. */

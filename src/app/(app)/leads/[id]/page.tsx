@@ -286,7 +286,7 @@ function PeopleCard({ leadId, company, city, list, tierFor, mainTier }: { leadId
                 <td className="px-5 py-2.5">
                   <div className="font-medium">
                     {p.name}
-                    <TierBadge tier={p.isPrimary && mainTier ? mainTier : tierFor(p.title)} />
+                    <TierBadge tier={p.isPrimary && mainTier ? mainTier : (['P1', 'P2', 'P3'].includes(p.tier) ? (p.tier as Tier) : tierFor(p.title))} />
                     {p.isPrimary && !p.passedAt && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main contact</span>}
                     {p.passedAt && (
                       <span className="ml-2 text-xs font-normal text-muted">

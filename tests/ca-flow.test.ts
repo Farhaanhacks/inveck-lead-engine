@@ -333,3 +333,15 @@ describe('choosing the tier by hand', () => {
     expect(await tier()).toBe('');
   });
 });
+
+describe('a tier for any point of contact', () => {
+  it('the tier picked when adding a point of contact is kept, and goes with them when they become the main contact', async () => {
+    const { addPointOfContactAction, makePrimaryAction } = await import('@/app/actions');
+    const l = await caLead({ company: 'Sugam Group', segment: 'Manufacturing' });
+    await addPointOfContactAction(form({ id: l.id, name: 'Neha P', title: 'Senior Executive', phone: '9800000009', email: '', linkedin: '', tier: 'P2' }));
+    const [neha] = (await db.select().from(people).where(eq(people.leadId, l.id))).filter((p) => p.name === 'Neha P');
+    expect(neha.tier).toBe('P2');
+    await makePrimaryAction(form({ id: l.id, personId: neha.id }));
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].contactTier).toBe('P2');
+  });
+});

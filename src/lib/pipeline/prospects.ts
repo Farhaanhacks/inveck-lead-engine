@@ -107,6 +107,21 @@ const titleCompany = (title = '') => title.split(/\s+[|–—-]\s+|\s*\|\s*/)[0]
  * Throws when the searches themselves fail (so the run shows it), not when they only turn up
  * companies already known.
  */
+/** Everything a company is judged on, so searches and picks aim at real fits (not pharma for heavy manufacturing). */
+function icpBlock(i: Pick<Icp, 'segment' | 'description' | 'industries' | 'companySize' | 'geography' | 'mustHaves' | 'dealBreakers'>): string {
+  return [
+    `### ${i.segment}`,
+    `Description: ${i.description}`,
+    `Industries: ${i.industries}`,
+    `Company size: ${i.companySize}`,
+    `Geography: ${i.geography}`,
+    i.mustHaves ? `Must-haves: ${i.mustHaves}` : '',
+    i.dealBreakers ? `Deal-breakers (never suggest a company these rule out): ${i.dealBreakers}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 export async function findProspects(
   svc: Services,
   icps: Icp[],
@@ -119,7 +134,7 @@ export async function findProspects(
   const planText = [
     '## ICPs',
     ...icps.map((i) =>
-      [`### ${i.segment}`, `Description: ${i.description}`, `Industries: ${i.industries}`, `Company size: ${i.companySize}`, `Geography: ${i.geography}`].join('\n'),
+      icpBlock(i),
     ),
     '',
     '## Current clients',
@@ -268,7 +283,8 @@ export async function findProspects(
     }
 
     const pickText = [
-      `ICP segments: ${icps.map((i) => i.segment).join(', ')}`,
+      '## ICP segments (pick only companies that fit one: its industries, its size, its must-haves, and no deal-breaker)',
+      ...icps.map(icpBlock),
       '',
       '## Already on the list (skip these companies entirely: one company is one lead, so its plant or branch in another city is not new)',
       knownList.length ? knownList.slice(-400).join(', ') : '(none)',

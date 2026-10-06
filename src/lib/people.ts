@@ -24,6 +24,8 @@ export async function makePrimary(db: Db, personId: number, opts: { byTeam?: boo
       contactTitle: p.title,
       contactEmail: p.email,
       contactPhone: p.phone,
+      // The tier the team chose for this person, if any.
+      contactTier: p.tier ?? '',
       contactLinkedin: p.linkedin,
       emailStatus: p.emailStatus,
       emailSource: p.emailSource,

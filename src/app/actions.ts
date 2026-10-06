@@ -296,7 +296,7 @@ export async function addPointOfContactAction(form: FormData) {
   const [lead] = await db.select({ id: leads.id }).from(leads).where(eq(leads.id, leadId));
   if (!lead) return;
   const label = name || (phone ? 'Other number' : email ? 'Other email' : 'LinkedIn profile');
-  await db.insert(people).values({ leadId, name: label, title: str(form, 'title').slice(0, 200), phone, email, linkedin, source: 'Added by the team', evidence: 'Added by the team' });
+  await db.insert(people).values({ leadId, name: label, title: str(form, 'title').slice(0, 200), tier: chosenTier(str(form, 'tier')), phone, email, linkedin, source: 'Added by the team', evidence: 'Added by the team' });
   await logActivity(db, leadId, 'note', `Point of contact added by ${await actorName()}: ${[label, phone, email, linkedin].filter(Boolean).join(' · ')}`);
   refreshLeadPages(leadId);
   revalidatePath('/today');
@@ -462,10 +462,8 @@ export async function makePrimaryAction(form: FormData) {
   const db = await getDb();
   const leadId = await makePrimary(db, Number(str(form, 'personId')), { byTeam: true });
   if (leadId) {
-    // A new point of contact: the tier is worked out again, calls count afresh, and the email is rewritten for them.
-    const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
-    // The tier is worked out again; the status already follows the contact (makePrimary).
-    if (lead) await db.update(leads).set({ contactTier: '' }).where(eq(leads.id, leadId));
+    // A new point of contact: their tier comes with them (the one the team chose, else worked out from
+    // the title, see makePrimary), calls count afresh, and the email is rewritten for them.
     await newContactNamed(db, leadId);
     after(async () => redraftForContact(await getDb(), await liveServices(), leadId));
     refreshLeadPages(leadId);

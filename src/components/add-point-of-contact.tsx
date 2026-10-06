@@ -11,7 +11,13 @@ export function AddPointOfContact({ leadId, company }: { leadId: number; company
         <input aria-label="Designation" name="title" placeholder="Designation" className="field" />
         <input aria-label="Phone" name="phone" type="tel" placeholder="Phone" className="field" />
         <input aria-label="Email" name="email" type="email" placeholder="Email" className="field" />
-        <input aria-label="LinkedIn URL" name="linkedin" placeholder="linkedin.com/in/…" className="field sm:col-span-2" />
+        <input aria-label="LinkedIn URL" name="linkedin" placeholder="linkedin.com/in/…" className="field" />
+        <select aria-label="Tier" name="tier" defaultValue="" className="field">
+          <option value="">Tier: from the designation</option>
+          <option value="P1">P1 decision-maker</option>
+          <option value="P2">P2 process owner</option>
+          <option value="P3">P3 process level</option>
+        </select>
       </div>
       <button className="btn-secondary px-3 py-1.5 text-sm">Add point of contact</button>
     </form>
