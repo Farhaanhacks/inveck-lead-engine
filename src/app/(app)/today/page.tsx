@@ -5,7 +5,7 @@ import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { icps, leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
 import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
@@ -39,6 +39,7 @@ import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLi
 import { formatDate, formatTime } from '@/lib/dates';
 import { FIND_NEXT_STEP } from '@/lib/escalate';
 import { PageHeader } from '@/components/page-header';
+import { normSegment } from '@/lib/icp-match';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
@@ -517,8 +518,12 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
   const q = typeof sp.q === 'string' ? sp.q.trim() : '';
   const needle = q.toLowerCase();
+  // And by segment (3PL, Manufacturing, CA firms…): one of the ICPs.
+  const icpRows = await db.select().from(icps).orderBy(asc(icps.id));
+  const seg = typeof sp.seg === 'string' ? (icpRows.find((i) => normSegment(i.segment) === normSegment(String(sp.seg)))?.segment ?? '') : '';
+  const inSeg = (l: Lead) => !seg || normSegment(l.segment) === normSegment(seg);
   const matches = (i: TodayTask) =>
-    !needle || [i.lead.company, i.lead.contactName, i.lead.city].some((v) => v.toLowerCase().includes(needle));
+    inSeg(i.lead) && (!needle || [i.lead.company, i.lead.contactName, i.lead.city].some((v) => v.toLowerCase().includes(needle)));
   const filtered = items.filter(matches);
   // One entry per company, with everything due for it.
   const groupsById = new Map<number, CompanyGroup>();
@@ -536,13 +541,14 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const doneAll = await loadDoneToday(db, viewId, day);
   const doneOf = (leadId: number) => doneAll.filter((d) => d.lead.id === leadId).map((d) => d.task);
   const linkedinFull = counts.linkedinSent >= DAILY_LINKEDIN_LIMIT;
-  const done = doneAll.filter((d) => !needle || [d.lead.company, d.lead.contactName].some((v) => v.toLowerCase().includes(needle)));
+  const done = doneAll.filter((d) => inSeg(d.lead) && (!needle || [d.lead.company, d.lead.contactName].some((v) => v.toLowerCase().includes(needle))));
   const tabCount = (k: TabKey) => (k === 'done' ? done.length : groups.length);
   const link = (next: Record<string, string>) => {
     const p = new URLSearchParams({
       ...(me.role === 'admin' && viewId ? { user: String(viewId) } : {}),
       ...(tab !== 'all' && { view: tab }),
       ...(q && { q }),
+      ...(seg && { seg }),
       ...next,
     });
     for (const [k, v] of [...p]) if (!v || (k === 'view' && v === 'all')) p.delete(k);
@@ -553,7 +559,6 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
-  const icpRows = await db.select().from(icps);
   const icpOf = (l: Lead) => icpFor(l.segment, icpRows);
   // Best first by INVECK's contact priority; people already tried go last.
   const othersOf = (l: Lead) =>
@@ -675,10 +680,17 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         <AutoFilterForm className="mt-3 flex flex-wrap items-center gap-3 text-sm">
           {me.role === 'admin' && viewId ? <input type="hidden" name="user" value={viewId} /> : null}
           {tab !== 'all' && <input type="hidden" name="view" value={tab} />}
+          <label htmlFor="today-seg" className="sr-only">Segment</label>
+          <select id="today-seg" name="seg" defaultValue={seg} className="field h-9 w-auto py-1.5">
+            <option value="">All segments</option>
+            {icpRows.map((i) => (
+              <option key={i.id} value={i.segment}>{i.segment}</option>
+            ))}
+          </select>
           <label htmlFor="today-q" className="sr-only">Search company or person</label>
           <input id="today-q" type="search" name="q" defaultValue={q} placeholder="Search company or person" className="field h-9 max-w-xs py-1.5" />
-          {q && (
-            <Link href={link({ q: '' })} className="text-xs text-muted hover:text-ink">Clear search</Link>
+          {(q || seg) && (
+            <Link href={link({ q: '', seg: '' })} className="text-xs text-muted hover:text-ink">Clear filters</Link>
           )}
         </AutoFilterForm>
       </div>
@@ -764,7 +776,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
       {items.length > 0 && !filtered.length && (
         <div className="card p-8 text-center text-sm text-muted">
-          Nothing matches this search. <Link href={link({ q: '' })} className="text-accent hover:underline">Clear search</Link>
+          Nothing matches these filters. <Link href={link({ q: '', seg: '' })} className="text-accent hover:underline">Clear filters</Link>
         </div>
       )}
       {items.length > 0 && filtered.length > 0 && tab !== 'all' && tab !== 'done' && !shownGroups.length && (
