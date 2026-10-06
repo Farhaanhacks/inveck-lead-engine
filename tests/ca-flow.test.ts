@@ -60,7 +60,7 @@ describe('CA firms on Today', () => {
       [['call', nextWorkingDay(today())], ['email', nextWorkingDay(today())], ['whatsapp', nextWorkingDay(today())]].sort(),
     );
     // Sending the request is the day's work: the firm counts as done today, still waiting on LinkedIn.
-    expect(await companyProgress(db, me.id, today())).toEqual({ done: 1, total: 1 });
+    expect(await companyProgress(db, me.id, today())).toEqual({ done: 1, total: 1, backlog: 0 });
     expect((await loadTodayTasks(db, me.id, today())).map((t) => t.task.step)).toEqual([CA_WAITING_STEP]);
 
     // "accepted" fits only the waiting step.
@@ -221,8 +221,8 @@ describe('daily counts for the people who work CA firms', () => {
     const l = await caLead();
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
-    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 1, total: 1 });
-    expect(await companyProgress(db, me.id, today(), { ca: false })).toEqual({ done: 0, total: 0 });
+    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 1, total: 1, backlog: 0 });
+    expect(await companyProgress(db, me.id, today(), { ca: false })).toEqual({ done: 0, total: 0, backlog: 0 });
   });
 });
 
@@ -289,6 +289,18 @@ describe('a CA reach-out is a firm someone was actually reached at', () => {
     await completeTaskAction(form({ id: left.find((t) => t.kind === 'call')!.id, outcome: 'no_contact' }));
     await completeTaskAction(form({ id: left.find((t) => t.kind === 'email')!.id, outcome: 'skipped' }));
     expect(await open(l.id)).toEqual([]);
-    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0 });
+    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0, backlog: 0 });
+  });
+});
+
+describe('backlog', () => {
+  it('a step due yesterday and done today counts as backlog cleared, not as today\'s', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await caLead();
+    const first = await start(l.id);
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    await db.update(tasks).set({ dueDate: yesterday }).where(eq(tasks.id, first.id));
+    await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
+    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0, backlog: 1 });
   });
 });

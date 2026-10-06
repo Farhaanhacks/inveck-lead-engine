@@ -338,7 +338,7 @@ export async function markCompanyDay(db: Db, leadId: number, ownerId: number, da
 }
 
 /** How many companies on a person's list for the day are fully done. */
-export async function companyProgress(db: Db, ownerId: number, day = istDay(), opts: { ca?: boolean } = {}): Promise<{ done: number; total: number }> {
+export async function companyProgress(db: Db, ownerId: number, day = istDay(), opts: { ca?: boolean } = {}): Promise<{ done: number; total: number; backlog: number }> {
   const [allFinished, allOpen] = await Promise.all([
     db.select({ leadId: companyDays.leadId, segment: leads.segment }).from(companyDays).innerJoin(leads, eq(companyDays.leadId, leads.id)).where(and(eq(companyDays.ownerId, ownerId), eq(companyDays.day, day))),
     loadTodayTasks(db, ownerId, day),
@@ -348,21 +348,22 @@ export async function companyProgress(db: Db, ownerId: number, day = istDay(), o
   // Done counts only where someone was actually reached that day (also for days recorded before
   // skips and "No contact found" stopped counting).
   const { start, end } = istDayBounds(day);
-  const reached = new Set(
-    (
-      await db
-        .selectDistinct({ leadId: tasks.leadId })
-        .from(tasks)
-        .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), inArray(tasks.outcome, [...REAL_OUTREACH])))
-    ).map((r) => r.leadId),
-  );
-  const finished = allFinished.filter((f) => keep(f.segment) && reached.has(f.leadId));
+  const outreach = await db
+    .select({ leadId: tasks.leadId, dueDate: tasks.dueDate })
+    .from(tasks)
+    .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), inArray(tasks.outcome, [...REAL_OUTREACH])));
+  const reached = new Set(outreach.map((r) => r.leadId));
+  // Backlog: a company whose step was due on an earlier day, done today. Counted apart from today's.
+  const late = new Set(outreach.filter((r) => r.dueDate < day).map((r) => r.leadId));
+  const doneHere = allFinished.filter((f) => keep(f.segment) && reached.has(f.leadId));
+  const backlog = new Set(doneHere.filter((f) => late.has(f.leadId)).map((f) => f.leadId));
+  const finished = doneHere.filter((f) => !backlog.has(f.leadId));
   const open = allOpen.filter((o) => keep(o.lead.segment));
   // A CA firm only waiting for its LinkedIn request to be accepted has nothing to do today: it counts
   // only if something was done for it today.
   const still = new Set(open.filter((o) => o.task.step !== CA_WAITING_STEP).map((o) => o.lead.id));
   const all = new Set([...finished.map((f) => f.leadId), ...still]);
-  return { done: [...all].filter((id) => !still.has(id)).length, total: all.size };
+  return { done: [...all].filter((id) => !still.has(id)).length, total: all.size, backlog: [...backlog].filter((id) => !still.has(id)).length };
 }
 
 /** The day is split at 2 pm IST: an unanswered call before it is tried again at 5 pm, one after it at 9 am the next working day. */
