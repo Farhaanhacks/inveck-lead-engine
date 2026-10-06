@@ -275,6 +275,9 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
   );
 }
 
+/** Evidence lines that only say the team entered someone: not shown. */
+const TEAM_EVIDENCE = /^(added by the team|entered by the team|on the team's researched list)$/i;
+
 function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; company: string; city: string; list: Person[]; tierFor: (title: string) => Tier }) {
   // People found at the company who aren't contacts for this site aren't shown.
   const contacts = list.filter((p) => p.passedReason !== 'excluded');
@@ -309,7 +312,7 @@ function PeopleCard({ leadId, company, city, list, tierFor }: { leadId: number; 
                     </div>
                   )}
                   {p.responsibility && <div className="max-w-[16rem] truncate text-xs text-muted">Responsible for: {p.responsibility}</div>}
-                  {p.evidence && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Evidence: {p.evidence}</div>}
+                  {p.evidence && !TEAM_EVIDENCE.test(p.evidence) && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Evidence: {p.evidence}</div>}
                   {p.passedAt && p.whyNot && <div className="mt-1 max-w-[22rem] text-xs text-ink-2">Not the main contact: {p.whyNot}</div>}
                 </td>
                 <td className="px-2 py-2.5">
