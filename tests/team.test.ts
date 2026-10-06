@@ -258,6 +258,8 @@ describe('contact priority (P1/P2/P3)', async () => {
       expect(man.industries.toLowerCase()).toContain(word);
     // Process and consumer industries are deal-breakers.
     for (const word of ['pharmaceuticals', 'food', 'fmcg', 'chemicals', 'textiles']) expect(man.dealBreakers.toLowerCase()).toContain(word);
+    // Judged by what the company makes: machinery for food or pharma plants is heavy manufacturing (ABC Process Solution).
+    expect(man.dealBreakers).toContain('not by the industries it sells to');
     for (const word of ['pharmaceuticals', 'fmcg', 'furniture']) expect(man.industries.toLowerCase()).not.toContain(word);
   });
 });

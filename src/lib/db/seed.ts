@@ -39,7 +39,7 @@ export const MANUFACTURING_ICP = {
   mustHaves:
     'A heavy manufacturing company in one of the listed industries (bearings, auto components, forgings, castings, heavy engineering, machinery, machine tools, industrial equipment, precision engineering, defence or aerospace components) that holds physical inventory or fixed assets to verify; ERP or WMS in use is a plus (SAP, Oracle, Microsoft Dynamics, Tally)',
   dealBreakers:
-    'Pharmaceuticals, life sciences, food and beverages, FMCG and consumer goods, chemicals, paints, plastics and packaging, textiles and apparel, cosmetics, agro processing, paper; no physical inventory (pure software, services, consulting, trading on paper); a single small shop; companies that sell inventory or audit software themselves',
+    "The company's own products are pharmaceuticals, life sciences, food and beverages, FMCG or consumer goods, chemicals, paints, plastics or packaging, textiles or apparel, cosmetics, agro products or paper (judged by what the company itself makes, not by the industries it sells to: a maker of machinery, equipment or components for these industries, such as dairy, food processing or pharma machinery, is heavy manufacturing and this does not apply); no physical inventory (pure software, services, consulting, trading on paper); a single small shop; companies that sell inventory or audit software themselves",
 };
 
 export const DEFAULT_ICPS = [
@@ -140,6 +140,14 @@ export async function upgradeManufacturingHeavyV4(db: Db) {
   const key = 'icpManufacturingHeavyV4';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
   await db.update(icps).set(MANUFACTURING_ICP).where(eq(icps.segment, MANUFACTURING));
+  await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
+}
+
+/** The process-industry deal-breaker judged by what a company makes, not whom it sells to (machinery for food plants is heavy manufacturing), once. */
+export async function upgradeManufacturingDealBreakersV5(db: Db) {
+  const key = 'icpManufacturingDealBreakersV5';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  await db.update(icps).set({ dealBreakers: MANUFACTURING_ICP.dealBreakers }).where(eq(icps.segment, MANUFACTURING));
   await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
 }
 
