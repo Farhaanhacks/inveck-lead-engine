@@ -225,3 +225,40 @@ describe('daily counts for the people who work CA firms', () => {
     expect(await companyProgress(db, me.id, today(), { ca: false })).toEqual({ done: 0, total: 0 });
   });
 });
+
+describe('call outcomes: demo completed, client onboarded, already a client', () => {
+  const connect = async (feedback: string) => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { clients } = await import('@/lib/db/schema');
+    const l = await caLead({ company: `Gear Works ${feedback}`, segment: 'Manufacturing', status: 'Contacted' });
+    await ensureSequences(db, today());
+    await db.update(tasks).set({ dueDate: today() }).where(and(eq(tasks.leadId, l.id), eq(tasks.step, 'Day 1')));
+    const call = (await open(l.id)).find((t) => t.kind === 'call' && t.dueDate === today())!;
+    await completeTaskAction(form({ id: call.id, outcome: 'connected', note: 'Spoke with them', feedback }));
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    const onSheet = (await db.select().from(clients)).some((c) => c.company === l.company);
+    return { status: after.status, callFeedback: after.callFeedback, open: await open(l.id), onSheet };
+  };
+
+  it('Demo completed: Meeting Booked, the later rounds stop', async () => {
+    const r = await connect('Demo completed');
+    expect(r.status).toBe('Meeting Booked');
+    expect(r.callFeedback).toBe('Demo completed');
+    expect(r.open.every((t) => t.dueDate <= today())).toBe(true);
+    expect(r.onSheet).toBe(false);
+  });
+
+  it('Client onboarded: Won, on the clients sheet, nothing more goes out', async () => {
+    const r = await connect('Client onboarded');
+    expect(r.status).toBe('Won');
+    expect(r.onSheet).toBe(true);
+    expect(r.open).toEqual([]);
+  });
+
+  it('Already a client: Existing Client, on the clients sheet, nothing more goes out', async () => {
+    const r = await connect('Already a client');
+    expect(r.status).toBe('Existing Client');
+    expect(r.onSheet).toBe(true);
+    expect(r.open).toEqual([]);
+  });
+});

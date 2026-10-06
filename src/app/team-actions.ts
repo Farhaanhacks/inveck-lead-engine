@@ -15,7 +15,7 @@ import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { reconcileContactStatus } from '@/lib/contact-status';
-import { CALL_FEEDBACK, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
+import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack } from '@/lib/phones';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
@@ -150,7 +150,7 @@ export async function completeTaskAction(form: FormData) {
   if (task.kind === 'call' && outcome === 'connected') {
     // Not interested: nothing more to send, today or later. Otherwise today's WhatsApp, email and LinkedIn
     // still go out, and the later follow-up rounds stop: the conversation has started.
-    const dropped = (NOT_INTERESTED as readonly string[]).includes(feedback);
+    const dropped = ([...NOT_INTERESTED, ...CLIENT_OUTCOMES] as readonly string[]).includes(feedback);
     await db
       .update(tasks)
       .set({ doneAt: now, outcome: 'closed' })

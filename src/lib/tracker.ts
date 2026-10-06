@@ -6,6 +6,9 @@ import { leads, tasks, users, type Lead } from './db/schema';
 export const CALL_FEEDBACK = [
   'Interested',
   'Demo scheduled',
+  'Demo completed',
+  'Client onboarded',
+  'Already a client',
   'Call back later',
   'Send details on email / WhatsApp',
   'Not interested',
@@ -18,6 +21,8 @@ export const CALL_FEEDBACK = [
 
 /** Call outcomes that end the outreach: no WhatsApp, email or LinkedIn after them. */
 export const NOT_INTERESTED = ['Not interested', 'No requirement right now', 'Already using a solution'] as const;
+/** Call outcomes that mean they are a client (now, or already were): outreach ends too. */
+export const CLIENT_OUTCOMES = ['Client onboarded', 'Already a client'] as const;
 
 export const MAIL_OUTCOMES = ['Not sent', 'Sent', 'No reply', 'Replied: interested', 'Replied: not interested', 'Bounced'] as const;
 export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', 'Replied', 'No response', 'Not on LinkedIn'] as const;

@@ -5,7 +5,7 @@ import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { icps, leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
 import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
@@ -40,7 +40,7 @@ import { formatDate, formatTime } from '@/lib/dates';
 import { FIND_NEXT_STEP } from '@/lib/escalate';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
-import { CALL_FEEDBACK, NOT_INTERESTED } from '@/lib/tracker';
+import { CALL_FEEDBACK, CLIENT_OUTCOMES, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
 import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
@@ -120,7 +120,7 @@ function CallActions({ task }: { task: Task }) {
           <label htmlFor={`cb-${task.id}`} className="label">Next call on (optional)</label>
           <input id={`cb-${task.id}`} name="callbackDate" type="date" min={istDay()} className="field" />
           <p className="text-xs text-muted">
-            {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list.
+            {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. {CLIENT_OUTCOMES.join(', ')}: the same, and the company goes on the clients sheet (Won, or Existing Client). Demo completed: moves it to Meeting Booked. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list.
           </p>
           <button name="outcome" value="connected" className="btn-primary">Save call</button>
         </form>
@@ -494,7 +494,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     caTeam ? companyProgress(db, viewId, day, { ca: true }) : Promise.resolve(null),
     getAttendance(db, viewId, day),
     unattendedInbound(db, viewId),
-    db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'))),
+    // Demos to prepare for: not the ones already done.
+    db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'), ne(leads.callFeedback, 'Demo completed'))),
     nextDue(db, viewId, day),
     laterToday(db, viewId, day),
   ]);

@@ -61,8 +61,9 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
     if (ENGAGED_STAGES.includes(status)) {
       await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, lead.id), isNull(tasks.doneAt), eq(tasks.priority, false), gt(tasks.dueDate, istDay(now))));
     }
-    // Won means they became a client: put them on the client sheet, so they're never prospected again.
-    if (status === 'Won') {
+    // Won means they became a client (Existing Client: they already were): put them on the client
+    // sheet, so they're never prospected again.
+    if (status === 'Won' || status === 'Existing Client') {
       const r = await importClients(db, [{ company: lead.company, website: lead.website, industry: lead.segment, whyBought: whyBought ?? '' }]);
       await logActivity(db, lead.id, 'note', r.added ? 'Added to current clients' : 'Already on the current clients sheet');
     }
@@ -92,7 +93,10 @@ export function stageAfterOutreach(current: LeadStatus, kind: string, outcome: s
   if (['Won', 'Disqualified', 'Needs Review', 'Existing Client'].includes(current) || outcome === 'skipped' || outcome === 'closed') return null;
   let target: LeadStatus = 'Contacted';
   if (kind === 'call' && outcome === 'connected') {
-    if (feedback === 'Demo scheduled') target = 'Meeting Booked';
+    // A client now, or one already: wherever the lead was.
+    if (feedback === 'Client onboarded') return 'Won';
+    if (feedback === 'Already a client') return 'Existing Client';
+    if (feedback === 'Demo scheduled' || feedback === 'Demo completed') target = 'Meeting Booked';
     else if ((NOT_INTERESTED as readonly string[]).includes(feedback)) target = 'Lost';
     else if (['Interested', 'Call back later', 'Send details on email / WhatsApp'].includes(feedback)) target = 'Replied';
   }
