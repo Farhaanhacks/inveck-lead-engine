@@ -158,7 +158,7 @@ function roundLabel(task: Task): string {
 }
 
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
-function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean }) {
+function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [] }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean; emails?: string[] }) {
   const { task, lead } = item;
   // The P2 flow ran out of people: this row asks for the next person rather than a call.
   const finding = task.step === FIND_NEXT_STEP;
@@ -186,6 +186,9 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
             )}
             {task.kind === 'email' && (
               <>
+                {emails.map((e) => (
+                  <a key={e} href={`mailto:${e}`} className="self-center text-xs text-accent hover:underline">{e}</a>
+                ))}
                 <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
                 <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
               </>
@@ -214,6 +217,15 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone }: { item: TodayTask
             label={lead.contactPhone ? 'Another number? Add it' : 'Found the number? Save it'}
             placeholder="+91 98xxx xxxxx"
             type="tel"
+          />
+        )}
+        {!readOnly && task.kind === 'email' && (
+          <FoundDetail
+            leadId={lead.id}
+            field="contactEmail"
+            label={lead.contactEmail ? 'Another email? Add it' : 'Found the email? Save it'}
+            placeholder="name@company.com"
+            type="email"
           />
         )}
         {!readOnly && task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && !lead.contactLinkedin && (
@@ -371,6 +383,8 @@ function CompanyCard({
     if (open) return [{ kind: k, open, done: undefined }];
     return done ? [{ kind: k, open: undefined, done }] : [];
   });
+  // The contact's email and any more saved for the company, for the email row.
+  const emails = [...new Set([lead.contactEmail, ...others.filter((p) => p.name === 'Other email').map((p) => p.email)].filter(Boolean))];
   // Ask for a missing number once per company: on the call row, or on WhatsApp once the call is logged.
   const phoneRow = rows.find((r) => r.open && (r.kind === 'call' || r.kind === 'whatsapp'))?.kind;
   // Waiting for a LinkedIn request to be accepted isn't a step to do.
@@ -424,7 +438,7 @@ function CompanyCard({
       <ul className="mt-2 divide-y divide-line border-t border-line">
         {rows.map((r) =>
           r.open ? (
-            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} />
+            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={emails} />
           ) : (
             <DoneStep key={r.done!.id} task={r.done!} readOnly={readOnly} />
           ),

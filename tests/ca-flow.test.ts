@@ -262,3 +262,19 @@ describe('call outcomes: demo completed, client onboarded, already a client', ()
     expect(r.open).toEqual([]);
   });
 });
+
+describe('adding an email from Today', () => {
+  it('the first email is the contact\'s; more are kept beside it, never twice', async () => {
+    const { saveFoundDetailAction } = await import('@/app/team-actions');
+    const l = await caLead({ company: 'Mail Works', segment: 'Manufacturing', contactEmail: '' });
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactEmail', value: 'Ravi@MailWorks.com' }));
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactEmail', value: 'sales@mailworks.com' }));
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactEmail', value: 'sales@mailworks.com' }));
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactEmail', value: 'not an email' }));
+    const [lead] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(lead.contactEmail).toBe('ravi@mailworks.com');
+    expect(lead.emailStatus).toBe('entered by the team');
+    const extra = (await db.select().from(people).where(eq(people.leadId, l.id))).filter((p) => p.name === 'Other email');
+    expect(extra.map((p) => p.email)).toEqual(['sales@mailworks.com']);
+  });
+});

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, unansweredCalls, type Escalation } from '@/lib/escalate';
-import { contactFields, saveContactEdit } from '@/lib/contact-edit';
+import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
@@ -485,25 +485,43 @@ export async function drawNowAction() {
   for (const p of ['/team', '/today', '/tracker', '/leads']) revalidatePath(p);
 }
 
-const QUICK_FIELDS = { contactPhone: 'number', contactLinkedin: 'LinkedIn' } as const;
+const QUICK_FIELDS = { contactPhone: 'number', contactLinkedin: 'LinkedIn', contactEmail: 'email' } as const;
+/** An email added when the contact already has one: kept as another point of contact. */
+const OTHER_EMAIL = 'Other email';
 
-/** Saves a number or LinkedIn link the team member found themselves, straight from a Today row. */
+/** Saves a number, email or LinkedIn link the team member found themselves, straight from a Today row. */
 export async function saveFoundDetailAction(form: FormData) {
   const id = Number(str(form, 'id'));
   const field = str(form, 'field') as keyof typeof QUICK_FIELDS;
   if (!(field in QUICK_FIELDS) || !(await mayActOn(id))) return;
   let value = str(form, 'value').slice(0, field === 'contactLinkedin' ? 300 : 200);
   if (field === 'contactPhone' && value.replace(/\D/g, '').length < 6) return;
+  if (field === 'contactEmail') {
+    value = value.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return;
+  }
   if (field === 'contactLinkedin' && !/^https?:\/\//i.test(value)) value = `https://${value}`;
   if (!value) return;
   const db = await getDb();
-  const [lead] = await db.select({ phone: leads.contactPhone }).from(leads).where(eq(leads.id, id));
+  const [lead] = await db.select({ phone: leads.contactPhone, email: leads.contactEmail }).from(leads).where(eq(leads.id, id));
   if (!lead) return;
-  // A number is added to the ones already saved (a contact can have several); a LinkedIn replaces.
-  const saved = field === 'contactPhone' ? addPhone(lead.phone, value) : value;
-  await db.update(leads).set({ [field]: saved, updatedAt: new Date() }).where(eq(leads.id, id));
-  const personField = { contactPhone: 'phone', contactLinkedin: 'linkedin' } as const;
-  await db.update(people).set({ [personField[field]]: saved }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+  if (field === 'contactEmail') {
+    // The first email is the contact's (the draft goes to it); any more are kept beside it.
+    if (!lead.email) {
+      await db.update(leads).set({ contactEmail: value, ...teamEmail(value), updatedAt: new Date() }).where(eq(leads.id, id));
+      await db.update(people).set({ email: value, ...teamEmail(value) }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+    } else {
+      const known = (await db.select({ email: people.email }).from(people).where(eq(people.leadId, id))).map((p) => p.email.toLowerCase());
+      if (value === lead.email.toLowerCase() || known.includes(value)) return;
+      await db.insert(people).values({ leadId: id, name: OTHER_EMAIL, email: value, source: 'Added by the team', evidence: 'Added by the team' });
+    }
+  } else {
+    // A number is added to the ones already saved (a contact can have several); a LinkedIn replaces.
+    const saved = field === 'contactPhone' ? addPhone(lead.phone, value) : value;
+    await db.update(leads).set({ [field]: saved, updatedAt: new Date() }).where(eq(leads.id, id));
+    const personField = { contactPhone: 'phone', contactLinkedin: 'linkedin' } as const;
+    await db.update(people).set({ [personField[field]]: saved }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+  }
   await logActivity(db, id, 'contact', `Point of contact's ${QUICK_FIELDS[field]} added by the team: ${value}`);
   revalidatePath('/today');
   revalidatePath('/tracker');
