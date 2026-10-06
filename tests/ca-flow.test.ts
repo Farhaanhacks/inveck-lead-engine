@@ -304,3 +304,20 @@ describe('backlog', () => {
     expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0, backlog: 1 });
   });
 });
+
+describe('every way of reaching out tried: the company is done for the day', () => {
+  it('an unanswered call still counts; the 5 pm call-back it set up does not keep the company open', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await caLead({ company: 'Gear Works Tried', segment: 'Manufacturing' });
+    await ensureSequences(db, today());
+    await db.update(tasks).set({ dueDate: today() }).where(and(eq(tasks.leadId, l.id), eq(tasks.step, 'Day 1')));
+    const day1 = (await open(l.id)).filter((t) => t.step === 'Day 1');
+    const outcome = { call: 'no_answer', whatsapp: 'sent', email: 'done', linkedin: 'sent' } as const;
+    for (const t of day1) await completeTaskAction(form({ id: t.id, outcome: outcome[t.kind] }));
+    // Whatever time the test runs, a same-day call-back is waiting.
+    await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'call', step: 'Call again', title: 'Call again at 5 pm: no answer this morning', dueDate: today(), slot: 'evening', note: 'auto-retry:1' });
+    const { markCompanyDay } = await import('@/lib/tasks');
+    expect(await markCompanyDay(db, l.id, me.id)).toBe(true);
+    expect((await companyProgress(db, me.id, today())).done).toBe(1);
+  });
+});

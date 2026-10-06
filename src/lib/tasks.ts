@@ -299,13 +299,20 @@ export async function loadDoneToday(db: Db, ownerId: number, day = istDay()): Pr
 }
 
 /** Open steps due by `day` that show on Today for a lead (callbacks always; the sequence only while the lead is being worked). */
+/**
+ * A try again set up because a call didn't connect the same day: the 5 pm call after no answer, or the
+ * next number after a wrong one. The attempt was made, so these don't keep the company open for the day.
+ */
+export const isSameDayRetry = (t: Pick<Task, 'note' | 'slot' | 'title'>) =>
+  t.note.startsWith('auto-retry:') && (t.slot === 'evening' || t.title === 'Call the next number');
+
 async function openStepsFor(db: Db, leadId: number, day: string): Promise<number> {
   const rows = await db
-    .select({ id: tasks.id })
+    .select({ id: tasks.id, note: tasks.note, slot: tasks.slot, title: tasks.title })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
     .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), ne(tasks.step, CA_WAITING_STEP), or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES))));
-  return rows.length;
+  return rows.filter((r) => !isSameDayRetry(r)).length;
 }
 
 /**
@@ -361,7 +368,8 @@ export async function companyProgress(db: Db, ownerId: number, day = istDay(), o
   const open = allOpen.filter((o) => keep(o.lead.segment));
   // A CA firm only waiting for its LinkedIn request to be accepted has nothing to do today: it counts
   // only if something was done for it today.
-  const still = new Set(open.filter((o) => o.task.step !== CA_WAITING_STEP).map((o) => o.lead.id));
+  // Nor does a call-back after a call that didn't connect today: the attempt was made.
+  const still = new Set(open.filter((o) => o.task.step !== CA_WAITING_STEP && !isSameDayRetry(o.task)).map((o) => o.lead.id));
   const all = new Set([...finished.map((f) => f.leadId), ...still]);
   return { done: [...all].filter((id) => !still.has(id)).length, total: all.size, backlog: [...backlog].filter((id) => !still.has(id)).length };
 }
