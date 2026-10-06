@@ -345,3 +345,39 @@ describe('a tier for any point of contact', () => {
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].contactTier).toBe('P2');
   });
 });
+
+
+describe('the follow-up funnel', () => {
+  it('puts each company in its stage from the same steps Today uses, and its buttons move it on', async () => {
+    const { loadFunnel } = await import('@/lib/followups');
+    const { followUpAgainAction, moveFromFunnelAction } = await import('@/app/followup-actions');
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const stageOf = async (id: number) => (await loadFunnel(db, me.id, today())).find((c) => c.lead.id === id)?.stage;
+
+    // A CA firm: due today, then waiting for LinkedIn once the request is sent.
+    const ca = await caLead();
+    const first = await start(ca.id);
+    expect(await stageOf(ca.id)).toBe('today');
+    await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
+    expect(await stageOf(ca.id)).toBe('waiting');
+
+    // A company whose rounds are all done with no reply: no reply yet, then followed up again (back on Today).
+    const quiet = await caLead({ company: 'Quiet Works', segment: 'Manufacturing', status: 'Contacted' });
+    await db.insert(tasks).values({ leadId: quiet.id, ownerId: me.id, kind: 'call', step: 'Follow-up 3', title: 'call', dueDate: today(), slot: 'day', doneAt: new Date(), outcome: 'no_answer' });
+    expect(await stageOf(quiet.id)).toBe('finished');
+    await followUpAgainAction(form({ id: quiet.id }));
+    await followUpAgainAction(form({ id: quiet.id }));
+    expect((await open(quiet.id)).map((t) => t.kind).sort()).toEqual(['call', 'email', 'whatsapp']);
+    expect(await stageOf(quiet.id)).toMatch(/today|upcoming/);
+
+    // They replied: in conversation; then won.
+    await moveFromFunnelAction(form({ id: quiet.id, stage: 'Replied' }));
+    expect(await stageOf(quiet.id)).toBe('conversation');
+    await moveFromFunnelAction(form({ id: quiet.id, stage: 'Won' }));
+    expect(await stageOf(quiet.id)).toBeUndefined();
+    expect((await db.select().from(leads).where(eq(leads.id, quiet.id)))[0].status).toBe('Won');
+    // Not a stage the funnel moves to: nothing happens.
+    await moveFromFunnelAction(form({ id: ca.id, stage: 'Disqualified' }));
+    expect((await db.select().from(leads).where(eq(leads.id, ca.id)))[0].status).not.toBe('Disqualified');
+  });
+});

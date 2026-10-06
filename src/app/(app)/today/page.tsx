@@ -47,6 +47,7 @@ import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction,
 import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { PhoneLinks } from '@/components/phone-links';
+import { loadFunnel } from '@/lib/followups';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
@@ -524,6 +525,9 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     nextDue(db, viewId, day),
     laterToday(db, viewId, day),
   ]);
+  // Where this person's follow-ups stand, with a link to the funnel.
+  const funnel = viewId ? await bestEffort('loading follow-ups', () => loadFunnel(db, viewId, day), []) : [];
+  const funnelCount = (stage: string) => funnel.filter((c) => c.stage === stage).length;
   // Filter: a search by company or person.
   const tab: TabKey = TABS.some((t) => t.key === sp.view) ? (sp.view as TabKey) : 'all';
   const q = typeof sp.q === 'string' ? sp.q.trim() : '';
@@ -645,6 +649,25 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         <Counter label="Emails sent" done={counts.emailsDone} />
         <Counter label="LinkedIn requests" done={counts.linkedinSent} />
       </div>
+
+      {funnel.length > 0 && (
+        <div className="card mb-6 flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-sm">
+          <span className="font-medium">Follow-ups</span>
+          {(
+            [
+              ['waiting', 'waiting on LinkedIn'],
+              ['upcoming', 'coming up'],
+              ['finished', 'no reply yet'],
+              ['conversation', 'in conversation'],
+            ] as const
+          ).map(([stage, label]) => (
+            <Link key={stage} href={`/followups${me.role === 'admin' ? `?user=${viewId}` : ''}#${stage}`} className="text-ink-2 hover:text-accent hover:underline">
+              <span className="font-semibold tabular-nums text-ink">{funnelCount(stage)}</span> {label}
+            </Link>
+          ))}
+          <Link href={`/followups${me.role === 'admin' ? `?user=${viewId}` : ''}`} className="ml-auto text-xs font-medium text-accent hover:underline">Open the follow-up funnel</Link>
+        </div>
+      )}
 
       {startHere > 0 && (
         <section className="card mb-6 border-warning-ink/40">
