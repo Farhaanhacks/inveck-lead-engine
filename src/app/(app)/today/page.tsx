@@ -69,10 +69,18 @@ function Counter({ label, done, goal }: { label: string; done: number; goal?: nu
   return (
     <div className="card p-4">
       <div className="text-xs text-muted">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">
-        {done}
-        {goal ? <span className="text-sm font-normal text-muted"> / {goal}</span> : null}
-      </div>
+      {goal && done >= goal ? (
+        // Target reached: said in words, not a number over the target.
+        <>
+          <div className="mt-1 text-lg font-semibold text-good-ink">Done for the day</div>
+          <div className="text-xs text-muted tabular-nums">{done} done, target {goal}</div>
+        </>
+      ) : (
+        <div className="mt-1 text-2xl font-semibold tabular-nums">
+          {done}
+          {goal ? <span className="text-sm font-normal text-muted"> / {goal}</span> : null}
+        </div>
+      )}
       {goal ? (
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2" role="img" aria-label={`${pct}% of the daily target`}>
           <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
