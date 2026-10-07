@@ -642,7 +642,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       <div className={`mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 ${caProgress ? 'xl:grid-cols-8' : 'xl:grid-cols-7'}`}>
         <Counter label="Companies done today" done={progress.done} goal={DAILY_COMPANY_TARGET} />
         {caProgress && <Counter label="CA reach-outs today" done={caProgress.done} goal={DAILY_CA_TARGET} />}
-        <Counter label="Backlog cleared (due earlier)" done={progress.backlog + (caProgress?.backlog ?? 0)} />
+        <Counter label="Backlog cleared (counted in done)" done={progress.backlog + (caProgress?.backlog ?? 0)} />
         <Counter label="Calls attempted" done={counts.callAttempts} goal={DAILY_CALL_TARGET} />
         <Counter label="Connected calls" done={counts.connectedCalls} />
         <Counter label="WhatsApp sent" done={counts.whatsappSent} />

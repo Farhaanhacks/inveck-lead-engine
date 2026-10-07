@@ -360,11 +360,11 @@ export async function companyProgress(db: Db, ownerId: number, day = istDay(), o
     .from(tasks)
     .where(and(eq(tasks.ownerId, ownerId), gte(tasks.doneAt, start), lt(tasks.doneAt, end), inArray(tasks.outcome, [...REAL_OUTREACH])));
   const reached = new Set(outreach.map((r) => r.leadId));
-  // Backlog: a company whose step was due on an earlier day, done today. Counted apart from today's.
+  // Backlog: a company whose step was due on an earlier day, done today. It counts as done today too;
+  // `backlog` says how many of them were left over.
   const late = new Set(outreach.filter((r) => r.dueDate < day).map((r) => r.leadId));
-  const doneHere = allFinished.filter((f) => keep(f.segment) && reached.has(f.leadId));
-  const backlog = new Set(doneHere.filter((f) => late.has(f.leadId)).map((f) => f.leadId));
-  const finished = doneHere.filter((f) => !backlog.has(f.leadId));
+  const finished = allFinished.filter((f) => keep(f.segment) && reached.has(f.leadId));
+  const backlog = new Set(finished.filter((f) => late.has(f.leadId)).map((f) => f.leadId));
   const open = allOpen.filter((o) => keep(o.lead.segment));
   // A CA firm only waiting for its LinkedIn request to be accepted has nothing to do today: it counts
   // only if something was done for it today.

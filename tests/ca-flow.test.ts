@@ -294,14 +294,14 @@ describe('a CA reach-out is a firm someone was actually reached at', () => {
 });
 
 describe('backlog', () => {
-  it('a step due yesterday and done today counts as backlog cleared, not as today\'s', async () => {
+  it('a step due yesterday and done today counts as done today, and as backlog cleared', async () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const l = await caLead();
     const first = await start(l.id);
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     await db.update(tasks).set({ dueDate: yesterday }).where(eq(tasks.id, first.id));
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
-    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0, backlog: 1 });
+    expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 1, total: 1, backlog: 1 });
   });
 });
 
