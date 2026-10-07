@@ -45,6 +45,12 @@ function futureDay(value: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && value >= istDay() ? value : '';
 }
 
+/** Turned away (already logged on a page that was out of date, not theirs): the page still redraws, so it shows what is saved. */
+function refreshToday() {
+  revalidatePath('/today');
+  revalidatePath('/followups');
+}
+
 /** Logs what happened on a task. A connected call needs a note and ends the rest of the sequence for that lead. */
 export async function completeTaskAction(form: FormData) {
   const user = await requireUser();
@@ -53,16 +59,16 @@ export async function completeTaskAction(form: FormData) {
   const note = str(form, 'note').slice(0, 2000);
   const db = await getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-  if (!task || task.doneAt) return;
+  if (!task || task.doneAt) return refreshToday();
   // Only the owner logs their own work, so the daily numbers are always theirs.
-  if (task.ownerId !== user.id) return;
-  if (!OUTCOMES[task.kind].includes(outcome)) return;
+  if (task.ownerId !== user.id) return refreshToday();
+  if (!OUTCOMES[task.kind].includes(outcome)) return refreshToday();
   // A CA firm's waiting step is only ever marked accepted; "accepted" fits nothing else.
-  if ((task.step === CA_WAITING_STEP) !== (outcome === 'accepted')) return;
+  if ((task.step === CA_WAITING_STEP) !== (outcome === 'accepted')) return refreshToday();
   const feedback = str(form, 'feedback');
-  if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return;
+  if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return refreshToday();
   if (task.kind === 'linkedin' && outcome === 'sent') {
-    if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return;
+    if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return refreshToday();
   }
 
   const now = new Date();

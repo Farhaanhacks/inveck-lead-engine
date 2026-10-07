@@ -2,6 +2,7 @@ import { bestEffort } from '@/lib/best-effort';
 import { atMostEvery } from '@/lib/throttle';
 
 import { TierBadge } from '@/components/tier-badge';
+import { SubmitButton } from '@/components/submit-button';
 import Link from 'next/link';
 import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
@@ -55,6 +56,9 @@ import { loadFunnel } from '@/lib/followups';
 /** How often Today's housekeeping runs (contact checks, new steps), at most. */
 const HOUSEKEEPING_EVERY = 2 * 60 * 1000;
 
+// Saving a step redraws this page in the same request: never cut short.
+export const maxDuration = 300;
+
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
 
@@ -104,7 +108,7 @@ function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
     <form action={completeTaskAction} className="flex flex-wrap gap-2">
       <input type="hidden" name="id" value={id} />
       {buttons.map(([value, label]) => (
-        <button key={value} name="outcome" value={value} className={SMALL}>{label}</button>
+        <SubmitButton key={value} name="outcome" value={value} className={SMALL} pendingText={label}>{label}</SubmitButton>
       ))}
     </form>
   );
@@ -131,7 +135,7 @@ function CallActions({ task }: { task: Task }) {
           <p className="text-xs text-muted">
             {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. {CLIENT_OUTCOMES.join(', ')}: the same, and the company goes on the clients sheet (Won, or Existing Client). Demo completed: moves it to Meeting Booked. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list on that day; today&apos;s date means this evening at 5 pm (from 2 pm, the next working morning).
           </p>
-          <button name="outcome" value="connected" className="btn-primary">Save call</button>
+          <SubmitButton name="outcome" value="connected" pendingText="Saving…">Save call</SubmitButton>
         </form>
       </details>
     </div>

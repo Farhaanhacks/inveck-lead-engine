@@ -15,6 +15,8 @@ import { FUNNEL_HELP, FUNNEL_LABEL, FUNNEL_STAGES, loadFunnel, type FunnelCard, 
 import { completeTaskAction } from '../../team-actions';
 import { followUpAgainAction, moveFromFunnelAction } from '../../followup-actions';
 
+export const maxDuration = 300;
+
 const SMALL = 'btn-secondary px-2 py-0.5 text-xs';
 
 const STAGE_TONE: Record<FunnelStage, string> = {
