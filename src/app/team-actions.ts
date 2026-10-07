@@ -186,6 +186,7 @@ export async function completeTaskAction(form: FormData) {
   }
   await markCompanyDay(db, task.leadId, task.ownerId);
   revalidatePath('/today');
+  revalidatePath('/followups');
   revalidatePath('/team');
   revalidatePath('/pipeline');
   revalidatePath('/leads');
@@ -276,12 +277,14 @@ export async function clockInAction() {
   const user = await requireUser();
   if (user.id) await clockIn(await getDb(), user.id);
   revalidatePath('/today');
+  revalidatePath('/followups');
 }
 
 export async function clockOutAction() {
   const user = await requireUser();
   if (user.id) await clockOut(await getDb(), user.id);
   revalidatePath('/today');
+  revalidatePath('/followups');
 }
 
 export type PasswordState = { ok: boolean; message: string } | undefined;
@@ -329,6 +332,7 @@ export async function assignOwnerAction(form: FormData) {
   revalidatePath(`/leads/${id}`);
   revalidatePath('/leads');
   revalidatePath('/today');
+  revalidatePath('/followups');
 }
 
 /** Admin only: wipes a team member's logged tasks and attendance (testing before go-live). Their sequences are planned again. */
@@ -357,6 +361,7 @@ export async function resetTodayLogAction(form: FormData) {
   // The tracker's outcome columns start empty again too.
   await db.update(leads).set({ callFeedback: '', callRemark: '', mailOutcome: '', linkedinOutcome: '' }).where(eq(leads.ownerId, id));
   revalidatePath('/today');
+  revalidatePath('/followups');
   revalidatePath('/tracker');
 }
 
@@ -412,6 +417,7 @@ export async function undoTaskAction(form: FormData) {
   revalidatePath('/pipeline');
   await logActivity(db, task.leadId, 'note', `Undone: ${task.title}${task.step && !task.title.startsWith(task.step) ? ` (${task.step})` : ''}`);
   revalidatePath('/today');
+  revalidatePath('/followups');
   revalidatePath(`/leads/${task.leadId}`);
 }
 
@@ -460,6 +466,7 @@ export async function updateTrackerPhoneAction(id: number, value: string): Promi
   }
   revalidatePath('/tracker');
   revalidatePath('/today');
+  revalidatePath('/followups');
   revalidatePath(`/leads/${id}`);
   return { ok: true, value: phone };
 }
@@ -479,6 +486,7 @@ export async function updateContactAction(form: FormData) {
   // Someone new gets an email written to them.
   if (saved?.newPerson) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   revalidatePath('/today');
+  revalidatePath('/followups');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
 }
@@ -531,6 +539,7 @@ export async function saveFoundDetailAction(form: FormData) {
   }
   await logActivity(db, id, 'contact', `Point of contact's ${QUICK_FIELDS[field]} added by the team: ${value}`);
   revalidatePath('/today');
+  revalidatePath('/followups');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
 }

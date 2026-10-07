@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
-import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, firstWorkingDay, isCallAttempt, isCaSegment, istDay } from './tasks';
+import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, firstWorkingDay, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
 
 /**
  * The follow-up funnel: every lead in outreach, by where its follow-up stands. Built from the same
@@ -62,7 +62,7 @@ function roundOf(t: Task | null): string {
   return t.step || t.title;
 }
 
-export async function loadFunnel(db: Db, ownerId: number | null, today = istDay()): Promise<FunnelCard[]> {
+export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(), now = new Date()): Promise<FunnelCard[]> {
   const rows = await db
     .select()
     .from(leads)
@@ -84,7 +84,8 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
     const next = steps[0] ?? null;
     let stage: FunnelStage;
     if (TALKING.includes(lead.status)) stage = 'conversation';
-    else if (next && next.dueDate <= today) stage = 'today';
+    // On Today now (a 5 pm call-back only from 5 pm, like Today shows it).
+    else if (next && next.dueDate <= today && !notYet(next, today, now)) stage = 'today';
     else if (waitingTask) stage = 'waiting';
     else if (next) stage = 'upcoming';
     else if (done.length) stage = 'finished';

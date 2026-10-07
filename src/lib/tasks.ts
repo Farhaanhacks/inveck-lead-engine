@@ -392,7 +392,7 @@ export function callAgainAt(now = new Date()): { day: string; slot: 'morning' | 
 }
 
 /** Not on today's list yet: an evening call before 5 pm, a morning call before 9 am (IST). */
-function notYet(task: Pick<Task, 'dueDate' | 'slot'>, today: string, now: Date): boolean {
+export function notYet(task: Pick<Task, 'dueDate' | 'slot'>, today: string, now: Date): boolean {
   if (task.dueDate !== today || today !== istDay(now)) return false;
   const hour = istHour(now);
   return (task.slot === 'evening' && hour < EVENING_FROM_HOUR) || (task.slot === 'morning' && hour < MORNING_FROM_HOUR);
