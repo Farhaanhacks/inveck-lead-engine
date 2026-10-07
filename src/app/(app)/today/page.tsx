@@ -1,4 +1,6 @@
 import { bestEffort } from '@/lib/best-effort';
+import { atMostEvery } from '@/lib/throttle';
+
 import { TierBadge } from '@/components/tier-badge';
 import Link from 'next/link';
 import { after } from 'next/server';
@@ -49,6 +51,9 @@ import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { PhoneLinks } from '@/components/phone-links';
 import { loadFunnel } from '@/lib/followups';
+
+/** How often Today's housekeeping runs (contact checks, new steps), at most. */
+const HOUSEKEEPING_EVERY = 2 * 60 * 1000;
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 
@@ -475,10 +480,14 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const me = (await getCurrentUser())!;
   const db = await getDb();
   // Housekeeping before the list is drawn; none of it can stop the page from showing.
-  await bestEffort('assigning inbound leads', () => assignUnowned(db), 0);
-  await bestEffort('the morning draw', () => runDailyDraw(db), null);
-  await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
-  await bestEffort('planning Today steps', () => ensureSequences(db), 0);
+  // Run every couple of minutes, not before every click: Show all, a filter or a logged step redraws
+  // the page, and none of these need to run again for it.
+  await atMostEvery('today:housekeeping', HOUSEKEEPING_EVERY, async () => {
+    await bestEffort('assigning inbound leads', () => assignUnowned(db), 0);
+    await bestEffort('the morning draw', () => runDailyDraw(db), null);
+    await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
+    await bestEffort('planning Today steps', () => ensureSequences(db), 0);
+  }, undefined);
 
   const team = await listBdas(db);
   const sp = await searchParams;
@@ -486,30 +495,32 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const viewId = me.role === 'admin' ? (team.find((b) => b.id === asked)?.id ?? team[0]?.id ?? 0) : me.id;
   // The right person on every card before it's drawn (a plant head over someone off the lists, nobody
   // who has left); anything not yet checked on LinkedIn is checked right after the page is sent.
-  const switched = viewId ? await bestEffort('tidying contacts', () => tidyContacts(db, { ownerId: viewId }), [] as number[]) : [];
+  // Like the housekeeping above: once every couple of minutes per person, not on every click.
+  const tidyNow = !!viewId && (await atMostEvery(`today:tidy:${viewId}`, HOUSEKEEPING_EVERY, async () => true, false));
+  const switched = tidyNow ? await bestEffort('tidying contacts', () => tidyContacts(db, { ownerId: viewId }), [] as number[]) : [];
   // A LinkedIn request for anyone on today's list whose current contact hasn't been sent one.
   if (viewId) await bestEffort('planning LinkedIn requests', () => ensureLinkedinSteps(db, viewId), 0);
   // Main contacts due today that were never checked on LinkedIn are checked before the cards are drawn
   // (a few seconds at most; whatever's left carries on after the page is sent).
-  if (viewId) {
+  if (tidyNow) {
     await bestEffort(
       "checking today's contacts on LinkedIn",
       async () => {
         const svc = await liveServices();
         await Promise.race([
           verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10 }),
-          new Promise((resolve) => setTimeout(resolve, 8000)),
+          new Promise((resolve) => setTimeout(resolve, 3000)),
         ]);
       },
       undefined,
     );
+    after(async () => {
+      const d = await getDb();
+      const svc = await liveServices();
+      for (const id of switched) await redraftForContact(d, svc, id);
+      await verifyContacts(d, svc, { ownerId: viewId, limit: 30 });
+    });
   }
-  after(async () => {
-    const d = await getDb();
-    const svc = await liveServices();
-    for (const id of switched) await redraftForContact(d, svc, id);
-    await verifyContacts(d, svc, { ownerId: viewId, limit: 30 });
-  });
   const viewing = team.find((b) => b.id === viewId);
   const bda = viewing?.name ?? me.name;
   const own = me.id === viewId;
