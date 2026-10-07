@@ -64,7 +64,7 @@ const OUTCOME_LABEL: Record<string, string> = {
   skipped: 'Skipped',
 };
 
-function Counter({ label, done, goal }: { label: string; done: number; goal?: number }) {
+function Counter({ label, done, goal, note }: { label: string; done: number; goal?: number; note?: string }) {
   const pct = goal ? Math.min(100, Math.round((done / goal) * 100)) : 0;
   return (
     <div className="card p-4">
@@ -73,6 +73,7 @@ function Counter({ label, done, goal }: { label: string; done: number; goal?: nu
         {done}
         {goal ? <span className="text-sm font-normal text-muted"> / {goal}</span> : null}
       </div>
+      {note ? <div className="text-xs text-muted">{note}</div> : null}
       {goal ? (
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2" role="img" aria-label={`${pct}% of the daily target`}>
           <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
@@ -641,8 +642,9 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
       <div className={`mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 ${caProgress ? 'xl:grid-cols-8' : 'xl:grid-cols-7'}`}>
         <Counter label="Companies done today" done={progress.done} goal={DAILY_COMPANY_TARGET} />
-        {caProgress && <Counter label="CA reach-outs today" done={caProgress.done} goal={DAILY_CA_TARGET} />}
-        <Counter label="Backlog cleared" done={progress.backlog + (caProgress?.backlog ?? 0)} />
+        {caProgress && <Counter label="CA reach-outs today" done={caProgress.done} goal={DAILY_CA_TARGET} note={caProgress.backlog ? `incl. ${caProgress.backlog} backlog` : undefined} />}
+        {/* The companies' own backlog: part of Companies done today (CA firms' is noted on their card). */}
+        <Counter label="Backlog cleared" done={progress.backlog} />
         <Counter label="Calls attempted" done={counts.callAttempts} goal={DAILY_CALL_TARGET} />
         <Counter label="Connected calls" done={counts.connectedCalls} />
         <Counter label="WhatsApp sent" done={counts.whatsappSent} />
