@@ -381,3 +381,43 @@ describe('the follow-up funnel', () => {
     expect((await db.select().from(leads).where(eq(leads.id, ca.id)))[0].status).not.toBe('Disqualified');
   });
 });
+
+describe('saving the contact form never wipes the saved email', () => {
+  it('the Today and lead-page contact forms have no email field: the email stays (and goes when the person changes)', async () => {
+    const { updateContactAction, saveFoundDetailAction } = await import('@/app/team-actions');
+    const l = await caLead({ company: 'Asian Paints', segment: 'Manufacturing', contactName: 'Harish Lade', contactTitle: 'VP Supply Chain' });
+    await saveFoundDetailAction(form({ id: l.id, field: 'contactEmail', value: 'harish@asianpaints.com' }));
+    const email = async () => (await db.select().from(leads).where(eq(leads.id, l.id)))[0].contactEmail;
+    expect(await email()).toBe('harish@asianpaints.com');
+    // Edit point of contact: a new number and a tier, no email field on the form.
+    await updateContactAction(form({ id: l.id, contactName: 'Harish Lade', contactTitle: 'VP Supply Chain', contactPhone: '9892301071', contactLinkedin: l.contactLinkedin, contactTier: 'P1' }));
+    expect(await email()).toBe('harish@asianpaints.com');
+    // Someone else named: the previous person's email doesn't carry over.
+    await updateContactAction(form({ id: l.id, contactName: 'Amardeep Jain', contactTitle: 'Factory Head', contactPhone: '', contactLinkedin: '' }));
+    expect(await email()).toBe('');
+  });
+});
+
+describe('a LinkedIn request in the follow-up rounds when none was sent', () => {
+  it('adds one for a company worked today whose contact has no request yet; never twice, never after one was sent', async () => {
+    const { ensureLinkedinSteps } = await import('@/lib/tasks');
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await caLead({ company: 'Wonder Cement', segment: 'Manufacturing', status: 'Contacted' });
+    // Day 1's request was skipped; Follow-up 1 is today with a call, WhatsApp and email only.
+    await db.insert(tasks).values([
+      { leadId: l.id, ownerId: me.id, kind: 'linkedin', step: 'Day 1', title: 'Send the LinkedIn connection request', dueDate: '2026-10-01', doneAt: new Date('2026-10-01T06:00:00Z'), outcome: 'skipped' },
+      { leadId: l.id, ownerId: me.id, kind: 'call', step: 'Follow-up 1', title: 'Follow-up 1: call', dueDate: today() },
+      { leadId: l.id, ownerId: me.id, kind: 'email', step: 'Follow-up 1', title: 'Follow-up 1: email', dueDate: today() },
+    ]);
+    expect(await ensureLinkedinSteps(db, me.id, today())).toBe(1);
+    expect(await ensureLinkedinSteps(db, me.id, today())).toBe(0);
+    const li = (await open(l.id)).find((t) => t.kind === 'linkedin')!;
+    expect(li).toMatchObject({ step: 'Follow-up 1', dueDate: today() });
+    await completeTaskAction(form({ id: li.id, outcome: 'sent' }));
+    expect(await ensureLinkedinSteps(db, me.id, today())).toBe(0);
+    // A company without a LinkedIn profile gets none.
+    const noLi = await caLead({ company: 'No Profile Co', segment: 'Manufacturing', status: 'Contacted', contactLinkedin: '' });
+    await db.insert(tasks).values({ leadId: noLi.id, ownerId: me.id, kind: 'call', step: 'Follow-up 1', title: 'call', dueDate: today() });
+    expect(await ensureLinkedinSteps(db, me.id, today())).toBe(0);
+  });
+});

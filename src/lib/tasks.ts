@@ -182,6 +182,36 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
   return waiting.length + finding.length;
 }
 
+/**
+ * A LinkedIn request for every company being worked today whose current contact hasn't been sent one:
+ * the request is planned on Day 1 only, so one skipped then (no profile yet), a contact who changed
+ * since, or a company followed up again would otherwise never get one. Added to today's steps; once
+ * sent (or skipped today), it isn't added again for that person. CA firms have their own LinkedIn flow.
+ */
+export async function ensureLinkedinSteps(db: Db, ownerId: number, today = istDay()): Promise<number> {
+  const working = await db
+    .select({ task: tasks, lead: leads })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), lte(tasks.dueDate, today), eq(tasks.priority, false), inArray(leads.status, [...WORKING_STATUSES]), ne(leads.contactLinkedin, '')));
+  const byLead = new Map<number, { lead: Lead; step: string }>();
+  for (const r of working) if (!isCaSegment(r.lead.segment) && r.task.step !== FIND_NEXT_STEP && !byLead.has(r.lead.id)) byLead.set(r.lead.id, { lead: r.lead, step: r.task.step });
+  if (!byLead.size) return 0;
+  const linkedin = await db.select().from(tasks).where(and(inArray(tasks.leadId, [...byLead.keys()]), eq(tasks.kind, 'linkedin')));
+  const { start } = istDayBounds(today);
+  const rows = [...byLead.values()]
+    .filter(({ lead }) => {
+      const mine = linkedin.filter((t) => t.leadId === lead.id);
+      if (mine.some((t) => !t.doneAt)) return false;
+      // Already sent to this contact (since they became the contact), or dealt with today.
+      const since = lead.contactSince?.getTime() ?? 0;
+      return !mine.some((t) => t.doneAt && ((['sent', 'accepted'].includes(t.outcome) && t.doneAt.getTime() >= since) || (t.outcome !== 'closed' && t.doneAt >= start)));
+    })
+    .map(({ lead, step }) => ({ leadId: lead.id, ownerId, kind: 'linkedin' as const, step, title: 'Send the LinkedIn connection request', dueDate: today, slot: 'day' as const }));
+  if (rows.length) await db.insert(tasks).values(rows);
+  return rows.length;
+}
+
 /** When the next steps are due after today, and for how many companies: shown when nothing is due today. */
 export async function nextDue(db: Db, ownerId: number, today = istDay()): Promise<{ day: string; companies: number } | null> {
   // The same steps Today will show that day, counted by company: never those of a lead that was

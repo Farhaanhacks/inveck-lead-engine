@@ -24,6 +24,7 @@ import {
   dayCounts,
   CA_FALLBACK_STEP,
   CA_WAITING_STEP,
+  ensureLinkedinSteps,
   ensureSequences,
   isCaSegment,
   istDay,
@@ -486,6 +487,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // The right person on every card before it's drawn (a plant head over someone off the lists, nobody
   // who has left); anything not yet checked on LinkedIn is checked right after the page is sent.
   const switched = viewId ? await bestEffort('tidying contacts', () => tidyContacts(db, { ownerId: viewId }), [] as number[]) : [];
+  // A LinkedIn request for anyone on today's list whose current contact hasn't been sent one.
+  if (viewId) await bestEffort('planning LinkedIn requests', () => ensureLinkedinSteps(db, viewId), 0);
   // Main contacts due today that were never checked on LinkedIn are checked before the cards are drawn
   // (a few seconds at most; whatever's left carries on after the page is sent).
   if (viewId) {

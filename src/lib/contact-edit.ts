@@ -5,7 +5,8 @@ import { logActivity } from './activity';
 import { newContactNamed } from './escalate';
 import { reconcileContactStatus } from './contact-status';
 
-export type ContactEdit = { contactName: string; contactTitle: string; contactPhone: string; contactEmail: string; contactLinkedin: string };
+/** contactEmail null: the form had no email field, so the saved email stays as it is. */
+export type ContactEdit = { contactName: string; contactTitle: string; contactPhone: string; contactEmail: string | null; contactLinkedin: string };
 
 const FIELDS = ['contactName', 'contactTitle', 'contactPhone', 'contactEmail', 'contactLinkedin'] as const;
 const LABEL: Record<(typeof FIELDS)[number], string> = { contactName: 'name', contactTitle: 'designation', contactPhone: 'number', contactEmail: 'email', contactLinkedin: 'LinkedIn' };
@@ -17,10 +18,13 @@ export function teamEmail(email: string) {
     : { emailStatus: '', emailSource: '', emailVerification: '', emailProviderStatus: '', emailRetrievedAt: null };
 }
 
-/** The contact fields of a submitted form. Emails aren't kept at all (no field anywhere), so always empty. */
+/**
+ * The contact fields of a submitted form. A form without an email field leaves the saved email alone
+ * (null): the contact forms on Today and the lead page don't show one, and saving them must never wipe it.
+ */
 export function contactFields(form: FormData): ContactEdit {
   const get = (k: string) => String(form.get(k) ?? '');
-  return { contactName: get('contactName'), contactTitle: get('contactTitle'), contactPhone: get('contactPhone'), contactEmail: '', contactLinkedin: get('contactLinkedin') };
+  return { contactName: get('contactName'), contactTitle: get('contactTitle'), contactPhone: get('contactPhone'), contactEmail: form.has('contactEmail') ? get('contactEmail') : null, contactLinkedin: get('contactLinkedin') };
 }
 
 /** The point of contact as typed: trimmed, cut to size, email in lower case. Null when the email isn't one. */
@@ -29,7 +33,7 @@ export function cleanContact(input: ContactEdit): ContactEdit | null {
     contactName: input.contactName.trim().slice(0, 200),
     contactTitle: input.contactTitle.trim().slice(0, 200),
     contactPhone: input.contactPhone.trim().slice(0, 120),
-    contactEmail: input.contactEmail.trim().slice(0, 200).toLowerCase(),
+    contactEmail: input.contactEmail === null ? null : input.contactEmail.trim().slice(0, 200).toLowerCase(),
     contactLinkedin: input.contactLinkedin.trim().slice(0, 300),
   };
   return v.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.contactEmail) ? null : v;
@@ -43,10 +47,13 @@ export function cleanContact(input: ContactEdit): ContactEdit | null {
  * null when nothing was saved, else whether it's a new person (whose email then needs rewriting).
  */
 export async function saveContactEdit(db: Db, id: number, input: ContactEdit, opts: { force?: boolean } = {}): Promise<{ newPerson: boolean } | null> {
-  const v = cleanContact(input);
-  if (!v) return null;
+  const typed = cleanContact(input);
+  if (!typed) return null;
   const [before] = await db.select().from(leads).where(eq(leads.id, id));
   if (!before) return null;
+  // No email field on the form: the same person keeps their saved email (someone new starts without one).
+  const samePerson = typed.contactName.toLowerCase() === before.contactName.toLowerCase();
+  const v = { ...typed, contactEmail: typed.contactEmail ?? (samePerson ? before.contactEmail : '') };
   // A different person: the previous person's number, email and LinkedIn don't carry over unless retyped.
   if (before.contactName && v.contactName.toLowerCase() !== before.contactName.toLowerCase()) {
     for (const k of ['contactPhone', 'contactEmail', 'contactLinkedin'] as const) if (v[k] === before[k]) v[k] = '';
