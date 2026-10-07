@@ -6,6 +6,7 @@ import { getCurrentUser, listBdas } from '@/lib/users';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TierBadge } from '@/components/tier-badge';
+import { PhoneLinks } from '@/components/phone-links';
 import { formatDate, formatTime } from '@/lib/dates';
 import { normSegment } from '@/lib/icp-match';
 import { icpFor, tierOf, type Tier } from '@/lib/tiers';
@@ -69,6 +70,12 @@ function CardView({ card, today, todayHref, canLog, owner, tier }: { card: Funne
           {lead.contactName}
           {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
           <TierBadge tier={tier} />
+        </div>
+      )}
+      {(lead.contactPhone || lead.contactEmail) && (
+        <div className="flex flex-wrap gap-x-3 text-xs">
+          <PhoneLinks value={lead.contactPhone} className="text-accent hover:underline" />
+          {lead.contactEmail && <a href={`mailto:${lead.contactEmail}`} className="text-accent hover:underline">{lead.contactEmail}</a>}
         </div>
       )}
       <div className="text-xs text-ink-2">

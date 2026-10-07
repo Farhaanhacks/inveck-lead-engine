@@ -93,11 +93,15 @@ function Counter({ label, done, goal, note }: { label: string; done: number; goa
   );
 }
 
-function Reach({ lead }: { lead: Lead }) {
+function Reach({ lead, emails = [] }: { lead: Lead; emails?: string[] }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       {/* Only a number the team found and saved: phone numbers aren't collected automatically. */}
       <PhoneLinks value={lead.contactPhone} className="font-medium text-accent hover:underline" />
+      {/* Every saved email, on every round (not only on a day with an email step). */}
+      {emails.map((e) => (
+        <a key={e} href={`mailto:${e}`} className="text-accent hover:underline">{e}</a>
+      ))}
       {lead.contactLinkedin && <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn profile</a>}
     </div>
   );
@@ -426,7 +430,7 @@ function CompanyCard({
             {lead.contactTitle ? <span className="text-muted">, {lead.contactTitle}</span> : null}
             {lead.contactName ? <TierBadge tier={tier} /> : null}
           </div>
-          <Reach lead={lead} />
+          <Reach lead={lead} emails={emails} />
           {!readOnly && <EditContact lead={lead} others={others} />}
           {others.filter((p) => !p.passedAt).length > 0 && (
             <div className="mt-2 rounded-md border border-line bg-surface-2 px-3 py-2">
