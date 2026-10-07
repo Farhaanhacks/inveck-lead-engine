@@ -157,7 +157,10 @@ export async function completeTaskAction(form: FormData) {
       .update(tasks)
       .set({ doneAt: now, outcome: 'closed' })
       .where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false), dropped ? undefined : gt(tasks.dueDate, istDay())));
-    const callback = futureDay(str(form, 'callbackDate'));
+    const asked = futureDay(str(form, 'callbackDate'));
+    // A callback for today isn't due straight away (the call was just made, and the company would stay
+    // on top of the list as if nothing was logged): this evening at 5 pm, or from 2 pm the next working morning.
+    const callback = asked && asked === istDay(now) ? callAgainAt(now) : asked ? { day: asked, slot: 'day' as const } : null;
     if (callback) {
       await db.insert(tasks).values({
         leadId: task.leadId,
@@ -165,13 +168,13 @@ export async function completeTaskAction(form: FormData) {
         kind: 'call',
         step: 'Promised callback',
         title: 'Promised callback',
-        dueDate: callback,
-        slot: 'day',
+        dueDate: callback.day,
+        slot: callback.slot,
         priority: true,
         note,
       });
-      await planAlongside(db, task.leadId, task.ownerId, callback, 'Promised callback');
-      await logActivity(db, task.leadId, 'note', `Callback promised for ${callback}`);
+      if (callback.day > istDay(now)) await planAlongside(db, task.leadId, task.ownerId, callback.day, 'Promised callback');
+      await logActivity(db, task.leadId, 'note', `Callback promised for ${callback.day}${callback.slot === 'evening' ? ' at 5 pm' : callback.slot === 'morning' ? ' at 9 am' : ''}`);
     }
   }
   if (task.kind === 'call' && outcome === 'connected' && feedback === 'Not the right person') escalated = await escalate(db, task.leadId, 'wrong_person', now);

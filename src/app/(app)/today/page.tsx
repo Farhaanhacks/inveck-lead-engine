@@ -124,7 +124,7 @@ function CallActions({ task }: { task: Task }) {
           <label htmlFor={`cb-${task.id}`} className="label">Next call on (optional)</label>
           <input id={`cb-${task.id}`} name="callbackDate" type="date" min={istDay()} className="field" />
           <p className="text-xs text-muted">
-            {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. {CLIENT_OUTCOMES.join(', ')}: the same, and the company goes on the clients sheet (Won, or Existing Client). Demo completed: moves it to Meeting Booked. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list.
+            {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. {CLIENT_OUTCOMES.join(', ')}: the same, and the company goes on the clients sheet (Won, or Existing Client). Demo completed: moves it to Meeting Booked. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list on that day; today&apos;s date means this evening at 5 pm (from 2 pm, the next working morning).
           </p>
           <button name="outcome" value="connected" className="btn-primary">Save call</button>
         </form>

@@ -226,6 +226,23 @@ describe('daily counts for the people who work CA firms', () => {
   });
 });
 
+describe('a connected call with a callback for today', () => {
+  it('does not put a call back on the list straight away', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { notYet } = await import('@/lib/tasks');
+    const l = await caLead({ company: 'WareIQ Test', segment: '3PL', status: 'Contacted' });
+    await ensureSequences(db, today());
+    await db.update(tasks).set({ dueDate: today() }).where(and(eq(tasks.leadId, l.id), eq(tasks.step, 'Day 1')));
+    const call = (await open(l.id)).find((t) => t.kind === 'call' && t.dueDate === today())!;
+    await completeTaskAction(form({ id: call.id, outcome: 'connected', note: 'Asked to call back', feedback: 'Call back later', callbackDate: today() }));
+    const cb = (await open(l.id)).find((t) => t.priority)!;
+    expect(cb.slot === 'evening' || cb.dueDate > today()).toBe(true);
+    // Not due on Today right now (only from 5 pm, or a later day).
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }).format(new Date())) % 24;
+    if (hour < 17) expect(cb.dueDate > today() || notYet(cb, today(), new Date())).toBe(true);
+  });
+});
+
 describe('call outcomes: demo completed, client onboarded, already a client', () => {
   const connect = async (feedback: string) => {
     const { completeTaskAction } = await import('@/app/team-actions');
