@@ -1404,7 +1404,7 @@ describe('only confirmed contacts go out', () => {
 
 describe('Micron Sanand: staff of a site in a metro belt, under the brand they write', () => {
   it('keeps Ahmedabad-based staff for a Sanand site, reads the short name and the current position', async () => {
-    const { searchLinkedIn, linkedinQuery, confirmedAtSite, atOtherSite } = await import('@/lib/pipeline/contacts');
+    const { searchLinkedIn, contactSearchPlan, confirmedAtSite, atOtherSite } = await import('@/lib/pipeline/contacts');
     const { registerFirmWebsite, sameFirm, inCity } = await import('@/lib/pipeline/employer');
     const { contactPriority } = await import('@/lib/tiers');
     const { DEFAULT_ICPS } = await import('@/lib/db/seed');
@@ -1421,7 +1421,7 @@ describe('Micron Sanand: staff of a site in a metro belt, under the brand they w
     expect(sameFirm('MICRON SEMICONDUCTOR LIMITED', company)).toBe(true);
     expect(sameFirm('Micron Steel', company)).toBe(false);
     // Staff don't write "India": the search leaves it out.
-    expect(linkedinQuery(company, 'Sanand', { ...DEFAULT_ICPS[0], id: 1 } as never)).toContain('"Micron Semiconductor Technology" (');
+    expect(contactSearchPlan(company, 'Sanand', { ...DEFAULT_ICPS[0], id: 1 } as never)[0].queries[0]).toBe('site:linkedin.com/in "Micron Semiconductor Technology" "Plant Head" Sanand');
 
     // Exactly what Google returned.
     const organic = [

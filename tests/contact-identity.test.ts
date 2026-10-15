@@ -4,7 +4,7 @@ import type { EnrichmentCache, Services } from '@/lib/pipeline/services';
 import { distanceKm, forgetPlaces, knowPlaces, placeKey, pointOf } from '@/lib/pipeline/places';
 import { learnFirm, linkedinPageName, recallFirm } from '@/lib/pipeline/firm-identity';
 import { firmAliasesOf, sameFirm, siteOf } from '@/lib/pipeline/employer';
-import { atOtherSite, confirmedAtSite, linkedinQuery, personSite, searchLinkedIn } from '@/lib/pipeline/contacts';
+import { atOtherSite, confirmedAtSite, contactSearchPlan, personSite, searchLinkedIn } from '@/lib/pipeline/contacts';
 import { cleanTitle, companyWide, contactPriority, noDepartment, tierOf } from '@/lib/tiers';
 import { DEFAULT_ICPS } from '@/lib/db/seed';
 
@@ -93,7 +93,8 @@ describe("the company's LinkedIn page name", () => {
     expect(firmAliasesOf(company)).toEqual(['Micron Technology']);
     expect(sameFirm('Micron Technology', company)).toBe(true);
     expect(sameFirm('Micron Instruments', company)).toBe(false);
-    expect(linkedinQuery(company, 'Sanand', { ...DEFAULT_ICPS[0], id: 1 } as never)).toContain('"Micron Technology"');
+    // Searched as a name of its own: the legal name first, then the LinkedIn page's name.
+    expect(contactSearchPlan(company, 'Sanand', { ...DEFAULT_ICPS[0], id: 1 } as never)[0].queries).toContain('site:linkedin.com/in "Micron Technology" "Plant Head" Sanand');
     // Looked up once: the clean-up jobs read it from the database with no search.
     const searches = seen.searches.length;
     expect(await recallFirm(cache, company, 'micron.com')).toBe(true);
@@ -306,10 +307,11 @@ describe('search evidence is read in full before deciding (contact pipeline revi
   it('merges the results for one profile: a specific city from one result fills in "India" from another', async () => {
     const vague = { title: 'Ravi Kumar - Plant Head - Hosur Gears', subtitle: 'India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/ravi-kumar', snippet: '' };
     const placed = { ...vague, subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://www.linkedin.com/in/ravi-kumar/' };
-    const given = 'site:linkedin.com/in "Hosur Gears" "Plant Head"';
-    const svc = services(seen, (q) => (q === given ? [vague] : [placed]));
+    const first = 'site:linkedin.com/in "Hosur Gears" "Plant Head" Hosur';
+    const svc = services(seen, (q) => (q === first ? [vague] : [placed]));
     await knowPlaces(svc, ['Hosur']);
-    const { people } = await searchLinkedIn(svc, given, company, 'Hosur', mfg);
+    const { people } = await searchLinkedIn(svc, '', company, 'Hosur', mfg);
+    expect(seen.searches[0]).toBe(first);
     expect(people).toHaveLength(1);
     expect(people[0].location).toBe('Hosur, Tamil Nadu, India');
   });
@@ -349,15 +351,18 @@ describe('search evidence is read in full before deciding (contact pipeline revi
     expect(found).toMatchObject({ employer: 'elsewhere', jobLocation: '' });
   });
 
-  it('keeps searching (P1, then P2) while nobody found passes the checks (HR), and stops once someone does', async () => {
+  it('keeps searching past people who fail the checks (HR), designation by designation, into P2', async () => {
     const hr = { title: 'Asha R - HR Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · HR Manager · Hosur Gears', link: 'https://in.linkedin.com/in/asha-r', snippet: '' };
     const manager = { title: 'Vikram P - Supply Chain Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Supply Chain Manager · Hosur Gears', link: 'https://in.linkedin.com/in/vikram-p', snippet: '' };
     const svc = services(seen, (q) => (q.includes('"Supply Chain Manager"') ? [manager] : [hr]));
     await knowPlaces(svc, ['Hosur']);
-    const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Hosur Gears" "Plant Head" Hosur', company, 'Hosur', mfg);
-    expect(people.map((p) => p.name).sort()).toEqual(['Asha R', 'Vikram P']);
-    // Two P1 searches, two P2 searches: then someone passed, so no P3 or later searches.
-    expect(seen.searches.filter((q) => q.startsWith('site:linkedin.com/in')).length).toBe(4);
+    const { people } = await searchLinkedIn(svc, '', company, 'Hosur', mfg);
+    expect(people.map((p) => p.name)).toEqual(['Vikram P', 'Asha R']);
+    // Every P1 designation was searched before the first P2 one; one acceptable contact is not four,
+    // so the rest of P2 and P3 were searched too.
+    const searched = seen.searches.filter((q) => q.startsWith('site:linkedin.com/in'));
+    expect(searched.findIndex((q) => q.includes('"Supply Chain Manager"'))).toBe(9);
+    expect(searched.at(-1)).toBe('site:linkedin.com/in "Hosur Gears" "Logistics Manager" Hosur');
   });
 
   it('a candidate with two current jobs does not stop the search; their own profile is looked up and settles it', async () => {
@@ -395,5 +400,170 @@ describe('only people based in India are contacts (Windwalker Logistics)', () =>
     expect(basedAbroad('Pune, Maharashtra, India', '', 'https://www.linkedin.com/in/someone')).toBe(false);
     const morgan = { title: 'Morgan Grumley - Logistics Manager - Windwalker Logistics Inc', subtitle: 'Greater Sioux Falls Area · Logistics Manager · Windwalker Logistics Inc', link: 'https://www.linkedin.com/in/morgan-grumley', snippet: '' };
     expect((await searchLinkedIn(services(seen, () => [morgan]), 'q', 'Windwalker Logistics')).people).toEqual([]);
+  });
+});
+
+describe('contact search, one designation at a time (Hosur Gears, manufacturing)', () => {
+  const company = 'Hosur Gears';
+  const mfg = DEFAULT_ICPS[0];
+  const KEY = 'test-serper-key-0042';
+  /** A Google result for someone at a company: "Name - Title - Company", with the line under it. */
+  const person = (name: string, title: string, opts: { place?: string; firm?: string; link?: string; snippet?: string } = {}) => ({
+    title: `${name} - ${title} - ${opts.firm ?? company}`,
+    subtitle: `${opts.place ?? 'Hosur, Tamil Nadu, India'} · ${title} · ${opts.firm ?? company}`,
+    link: opts.link ?? `https://in.linkedin.com/in/${name.toLowerCase().replace(/[^a-z]+/g, '-')}`,
+    snippet: opts.snippet ?? '',
+  });
+  const q = (designation: string, town = 'Hosur') => `site:linkedin.com/in "${company}" "${designation}"${town ? ` ${town}` : ''}`;
+  const search = async (organic: (query: string) => unknown[]) => {
+    const svc = { ...services(seen, organic), keys: { serper: KEY } as never };
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    const result = await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m));
+    return { ...result, logs, searched: seen.searches.filter((s) => s.startsWith('site:linkedin.com/in')) };
+  };
+
+  it('builds one query per designation from the ICP: P1 (plant heads first), then P2, then P3, never an OR of roles', () => {
+    const plan = contactSearchPlan(company, 'Hosur, Tamil Nadu', mfg);
+    expect(plan.slice(0, 2).map((s) => s.designation)).toEqual(['Plant Head', 'Plant Manager']);
+    const tiers = plan.map((s) => s.tier);
+    expect(tiers.lastIndexOf('P1')).toBeLessThan(tiers.indexOf('P2'));
+    expect(tiers.lastIndexOf('P2')).toBeLessThan(tiers.indexOf('P3'));
+    // Every designation the ICP lists (and only those), once each: "Logistics Manager" is on no list twice here.
+    const listed = [mfg.targetTitles, mfg.p2Titles, mfg.p3Titles].join(',').split(',').map((t) => t.trim());
+    for (const s of plan) expect(['Plant Manager', ...listed]).toContain(s.designation);
+    expect(new Set(plan.map((s) => s.designation)).size).toBe(plan.length);
+    // The query shape: company, designation, LinkedIn profiles, the town; then the same without the town.
+    expect(plan[0].queries).toEqual([q('Plant Head'), q('Plant Head', '')]);
+    for (const s of plan) for (const query of s.queries) expect(query).not.toMatch(/ OR /);
+  });
+
+  it('moves from P1 to P2 to P3 while fewer than four are acceptable, and ranks what it found by INVECK\'s priority', async () => {
+    const { people, searched, logs } = await search((query) =>
+      query === q('Plant Head')
+        ? [person('Ravi Kumar', 'Plant Head')]
+        : query === q('Inventory Manager')
+          ? [person('Vikram P', 'Inventory Manager')]
+          : query === q('Store Manager')
+            ? [person('Lata M', 'Store Manager')]
+            : [],
+    );
+    expect(people.map((p) => [p.name, tierOf(p.title, mfg)])).toEqual([
+      ['Ravi Kumar', 'P1'],
+      ['Vikram P', 'P2'],
+      ['Lata M', 'P3'],
+    ]);
+    // Someone at the company turned up for "Plant Head" in Hosur: no search without the town for it.
+    expect(searched[0]).toBe(q('Plant Head'));
+    expect(searched).not.toContain(q('Plant Head', ''));
+    // Nobody for "Plant Manager" in Hosur: the same designation without the town, then the next one.
+    expect(searched.slice(1, 4)).toEqual([q('Plant Manager'), q('Plant Manager', ''), q('Head of Supply Chain')]);
+    const firstP2 = searched.findIndex((s) => s.includes('"Supply Chain Manager"'));
+    expect(searched.slice(0, firstP2).every((s) => /"(Plant Head|Plant Manager|Head of Supply Chain|Supply Chain Head|Operations Head|Manufacturing Head|VP Supply Chain|VP Operations|AVP Operations)"/.test(s))).toBe(true);
+    expect(searched).toContain(q('Store Manager'));
+    // Someone passed, so the leadership search never ran.
+    expect(searched.some((s) => /\(owner OR founder/.test(s))).toBe(false);
+    // What was searched, what came back and why each person was taken; never the search key.
+    expect(logs).toContain(`P1 1/20 "Plant Head": ${q('Plant Head')} → 1 LinkedIn profile`);
+    expect(logs.some((l) => l.startsWith('  accepted: Ravi Kumar (Plant Head): P1'))).toBe(true);
+    expect(logs.at(-1)).toBe('contact search done: 3 acceptable contacts (Ravi Kumar, Plant Head; Vikram P, Inventory Manager; Lata M, Store Manager)');
+    expect(logs.join('\n')).not.toContain(KEY);
+  });
+
+  it('stops once four distinct people are acceptable', async () => {
+    const byDesignation: Record<string, ReturnType<typeof person>> = {
+      [q('Plant Head')]: person('Anil A', 'Plant Head'),
+      [q('Plant Manager')]: person('Bina B', 'Plant Manager'),
+      [q('Head of Supply Chain')]: person('Chetan C', 'Head of Supply Chain'),
+      [q('Supply Chain Head')]: person('Deepa D', 'Supply Chain Head'),
+      [q('Operations Head')]: person('Esha E', 'Operations Head'),
+    };
+    const { people, searched, logs } = await search((query) => (byDesignation[query] ? [byDesignation[query]] : []));
+    expect(searched).toEqual([q('Plant Head'), q('Plant Manager'), q('Head of Supply Chain'), q('Supply Chain Head')]);
+    expect(people.map((p) => p.name)).toEqual(['Anil A', 'Bina B', 'Chetan C', 'Deepa D']);
+    expect(logs.at(-1)).toMatch(/^contact search done: 4 acceptable contacts/);
+  });
+
+  it('counts a person found by several searches once, keeping the best evidence from each', async () => {
+    const undated = person('Ravi Kumar', 'Plant Head', { place: 'India' });
+    const dated = { ...person('Ravi Kumar', 'Plant Head', { link: 'https://www.linkedin.com/in/ravi-kumar/' }), snippet: 'Plant Head. Hosur Gears. Jan 2021 - Present. Hosur, Tamil Nadu, India' };
+    const { people, searched, logs } = await search((query) =>
+      query === q('Plant Head') ? [undated] : query === q('Plant Manager') ? [dated] : query === q('Inventory Manager') ? [person('Vikram P', 'Inventory Manager')] : [],
+    );
+    expect(people.map((p) => p.name)).toEqual(['Ravi Kumar', 'Vikram P']);
+    expect(people[0]).toMatchObject({ location: 'Hosur, Tamil Nadu, India' });
+    expect(people[0].evidence).toContain('current');
+    // Two people is fewer than four: the duplicate never cut the search short.
+    expect(searched.at(-1)).toBe(q('Logistics Manager', ''));
+    expect(logs.filter((l) => l.startsWith('  accepted: Ravi Kumar')).length).toBeLessThanOrEqual(2);
+  });
+
+  it('a search result is only a candidate: HR, a former employee, someone abroad and a conflicting profile are rejected, with the reason', async () => {
+    const hr = person('Asha R', 'HR Manager');
+    const left = person('Gopal N', 'Plant Head', { firm: 'Other Forge' });
+    const abroad = person('Morgan G', 'Plant Head', { place: 'Greater Sioux Falls Area', link: 'https://www.linkedin.com/in/morgan-g' });
+    const twoJobs = { ...person('Meena S', 'Plant Head', { firm: 'Lean Partners' }), title: 'Meena S - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present. Hosur, Tamil Nadu, India' };
+    const { people, searched, logs } = await search((query) => (query === q('Plant Head') ? [hr, left, abroad, twoJobs] : []));
+    const line = (who: string) => logs.find((l) => l.includes(`: ${who} (`)) ?? '';
+    expect(line('Asha R')).toBe('  rejected: Asha R (HR Manager): HR Manager: not a role on the ICP lists');
+    expect(line('Gopal N')).toMatch(/^ {2}rejected: Gopal N \(Plant Head\): .*Other Forge/);
+    expect(line('Morgan G')).toMatch(/^ {2}rejected: Morgan G .*based outside India/);
+    expect(line('Meena S')).toMatch(/^ {2}rejected: Meena S .*two current jobs/);
+    // None of them is acceptable: the search went on, settled the unclear profile by name, and ended
+    // with the leadership search.
+    expect(searched).toContain(q('Plant Manager'));
+    expect(searched.some((s) => s.includes('"Meena S"'))).toBe(true);
+    expect(searched.at(-1)).toMatch(/\(owner OR founder/);
+    expect(people.map((p) => p.name)).not.toContain('Gopal N');
+    expect(people.map((p) => p.name)).not.toContain('Morgan G');
+    expect(logs.at(-1)).toBe('contact search done: no acceptable contact found');
+  });
+
+  it('nobody acceptable: every designation is searched (with and without the town), then the leadership search; the lead waits for a manual contact', async () => {
+    const { people, searched, logs } = await search(() => []);
+    const plan = contactSearchPlan(company, 'Hosur', mfg);
+    expect(searched).toEqual([...plan.flatMap((s) => s.queries), expect.stringMatching(/^site:linkedin\.com\/in "Hosur Gears" \(owner OR founder/)]);
+    expect(people).toEqual([]);
+    expect(logs).toContain(`P3 20/20 "Logistics Manager": ${q('Logistics Manager', '')} → no LinkedIn profiles`);
+    expect(logs.at(-1)).toBe('contact search done: no acceptable contact found');
+    // The status stays the existing one: no contact waits for the team; a found contact waits for approval.
+    const { scoreLead } = await import('@/lib/pipeline/scoring');
+    const { EMPTY_CONTACT } = await import('@/lib/pipeline/contacts');
+    expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found').status).toBe('Needs Manual Contact');
+    expect(scoreLead(8, { ...EMPTY_CONTACT, name: 'Ravi Kumar', linkedin: 'https://in.linkedin.com/in/ravi-kumar' }, 'no email found').status).toBe('Awaiting Approval');
+  });
+
+  it("tries the company's verified LinkedIn name when its own name finds nobody there", async () => {
+    const micron = 'Micron Semiconductor Technology India';
+    const page = { title: 'Micron Technology | LinkedIn', link: 'https://www.linkedin.com/company/micron-technology', snippet: 'Website: http://www.micron.com. External link for Micron Technology' };
+    const sumanth = { title: 'Sumanth G - Plant Head', subtitle: 'Ahmedabad, Gujarat, India · Plant Head · Micron Technology', link: 'https://in.linkedin.com/in/sumanth-g', snippet: '' };
+    const svc = services(seen, (query) => (query.startsWith('site:linkedin.com/company') ? [page] : query.includes('"Micron Technology" "Plant Head"') ? [sumanth] : []));
+    await learnFirm(svc, micron, 'micron.com');
+    await knowPlaces(svc, ['Sanand']);
+    seen.searches.length = 0;
+    const { people } = await searchLinkedIn(svc, '', micron, 'Sanand', mfg);
+    expect(seen.searches.slice(0, 3)).toEqual([
+      'site:linkedin.com/in "Micron Semiconductor Technology" "Plant Head" Sanand',
+      'site:linkedin.com/in "Micron Technology" "Plant Head" Sanand',
+      'site:linkedin.com/in "Micron Semiconductor Technology" "Plant Manager" Sanand',
+    ]);
+    expect(people.map((p) => p.name)).toEqual(['Sumanth G']);
+  });
+
+  it('skips one failed search, and stops when two fail in a row (the search is down) without calling it "nobody found"', async () => {
+    let n = 0;
+    const flaky = { ...services(seen, (query) => (query === q('Plant Manager') ? [person('Bina B', 'Plant Manager')] : [])), keys: { serper: KEY } as never };
+    const fetchOk = flaky.fetch;
+    flaky.fetch = (async (u: RequestInfo | URL, init?: RequestInit) => (String(u).endsWith('/search') && n++ === 0 ? new Response('busy', { status: 503 }) : fetchOk(u, init))) as typeof fetch;
+    const logs: string[] = [];
+    const { people } = await searchLinkedIn(flaky, '', company, 'Hosur', mfg, (m) => void logs.push(m));
+    expect(logs[1]).toMatch(/"Plant Head": .* → search failed: 503/);
+    expect(people.map((p) => p.name)).toEqual(['Bina B']);
+    // Down from the start: two failures, then nothing more is searched, and the error is reported.
+    seen.searches.length = 0;
+    const down = { ...services(seen), fetch: (async () => new Response('no credits', { status: 403 })) as unknown as typeof fetch };
+    const result = await searchLinkedIn(down, '', company, 'Hosur', mfg);
+    expect(result.people).toEqual([]);
+    expect(result.error).toContain('403');
   });
 });

@@ -1,6 +1,6 @@
 import { KnownBranches } from '../branches';
 import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
-import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, canBeMain, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, linkedinQuery, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
+import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, canBeMain, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
 import { buildSources } from './fit';
@@ -36,7 +36,7 @@ export { icpFor };
 /**
  * Takes one lead through the whole pipeline and returns the fields to save:
  * client check → website → research & qualify → decision-maker search → contact pick →
- * email search → score → outreach draft. Never throws for a single lead's problems;
+ * score → outreach draft. Never throws for a single lead's problems;
  * they end up in `status: 'Error'` and `lastError`.
  */
 /** The company research saved on a lead, for finding its contacts again without researching it again. */
@@ -272,7 +272,9 @@ export async function processLead(
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
   const [linkedin, leaders, news] = await Promise.all([
-    searchLinkedIn(svc, linkedinQuery(lead.company, lead.city, icp), lead.company, lead.city, icp),
+    // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
+    // each person's verdict goes on the run's log.
+    searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`)),
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
   ]);
