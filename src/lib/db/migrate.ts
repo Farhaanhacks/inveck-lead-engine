@@ -534,6 +534,7 @@ export const SCHEMA_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_messages_wamid ON whatsapp_messages (wamid) WHERE wamid <> ''`,
   `CREATE INDEX IF NOT EXISTS whatsapp_messages_lead ON whatsapp_messages (lead_id)`,
   `CREATE INDEX IF NOT EXISTS whatsapp_messages_wa ON whatsapp_messages (wa_id)`,
+  `ALTER TABLE whatsapp_contacts ADD COLUMN IF NOT EXISTS last_template_at TIMESTAMPTZ`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

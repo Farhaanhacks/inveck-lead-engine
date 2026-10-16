@@ -236,8 +236,14 @@ async function followUpSentByHand(db: Awaited<ReturnType<typeof getDb>>, task: T
 
 /** Undo of an email marked sent: a follow-up's draft and count come back; a first email is not sent after all. */
 async function undoEmailSent(db: Awaited<ReturnType<typeof getDb>>, task: Task) {
-  if (task.followUpFrom) {
-    const was = JSON.parse(task.followUpFrom) as { subject: string; body: string; step: number; next: string | null };
+  const was = (() => {
+    try {
+      return task.followUpFrom ? (JSON.parse(task.followUpFrom) as { subject: string; body: string; step: number; next: string | null }) : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (was) {
     // Unless a new follow-up was written since.
     await db
       .update(leads)

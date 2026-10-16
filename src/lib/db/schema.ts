@@ -493,6 +493,8 @@ export const whatsappContacts = pgTable('whatsapp_contacts', {
   optedOutAt: timestamp('opted_out_at', { withTimezone: true }),
   /** Their last message: for 24 hours after it, a free-text reply may go (otherwise only the approved template). */
   lastInboundAt: timestamp('last_inbound_at', { withTimezone: true }),
+  /** When the approved template last went to them: not again for a week unless they reply. */
+  lastTemplateAt: timestamp('last_template_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type WhatsappContact = typeof whatsappContacts.$inferSelect;

@@ -97,7 +97,9 @@ that record and sends from INVECK's own business number (Meta's WhatsApp Cloud A
 - **Sending.** For someone who agreed, the WhatsApp step on Today has **Send WhatsApp**, with an arrow
   to review it first. Until they write back, WhatsApp only allows the template Meta approved (set in
   **Settings → WhatsApp template**), filled in with their first name, the sender's name and the
-  company. For 24 hours after their last message, anything can be written.
+  company. For 24 hours after their last message, anything can be written. The template doesn't go
+  again to someone who hasn't replied for a week (repeats get a number reported and limited by
+  Meta); until then the step says so and offers the BDA's own phone.
 - **Replies.** Messages to INVECK's number show on Today under **WhatsApp replies** and on the company
   page, where the whole conversation is, with delivery ticks and the reason when one isn't
   delivered. A reply moves the lead to Replied.

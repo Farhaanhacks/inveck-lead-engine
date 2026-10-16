@@ -265,6 +265,8 @@ function Step({
                 <>
                   {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
                   <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+                  {/* They agreed, but nothing can go from INVECK's number now: say why. */}
+                  {whatsapp?.agreed && whatsapp.plan?.problem && <p className="basis-full text-xs text-muted">{whatsapp.plan.problem}</p>}
                 </>
               ))}
             {task.kind === 'email' && (

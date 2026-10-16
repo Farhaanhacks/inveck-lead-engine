@@ -10,6 +10,11 @@ import { sendWhatsApp, WaError, type WaConfig } from './cloud';
 
 /** After someone's last message, WhatsApp lets a business write freely for 24 hours; otherwise only an approved template. */
 export const WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * The template goes again to someone who hasn't replied only after this long: the same message again
+ * and again gets INVECK's number blocked and reported, and Meta then limits or bans it.
+ */
+export const TEMPLATE_AGAIN_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** How someone can agree, as the team logs it on the company page. */
 export const CONSENT_WAYS = ['On a call', 'By email', 'In person or at an event', 'On a form', 'Other'] as const;
@@ -155,6 +160,10 @@ export function planWhatsApp(lead: Pick<Lead, 'contactName' | 'company' | 'conta
   else if (contact?.optedOutAt) plan.problem = `They asked not to get WhatsApp messages from INVECK (${formatDate(contact.optedOutAt)}).`;
   else if (!canMessage(contact)) plan.problem = "They haven't agreed to WhatsApp messages from INVECK yet.";
   else if (plan.template && !templateReady(s)) plan.problem = 'No approved WhatsApp template is set in Settings yet.';
+  else if (plan.template && contact?.lastTemplateAt && !(contact.lastInboundAt && contact.lastInboundAt > contact.lastTemplateAt)) {
+    const again = new Date(contact.lastTemplateAt.getTime() + TEMPLATE_AGAIN_MS);
+    if (again > now) plan.problem = `The details already went on ${formatDate(contact.lastTemplateAt)} and they haven't replied. To keep INVECK's number in good standing, the template can go again from ${formatDate(again)}; until then, follow up by call or from your own phone.`;
+  }
   return plan;
 }
 
@@ -194,7 +203,10 @@ export async function sendFromInveck(
     const now = new Date();
     await db.update(whatsappMessages).set({ wamid: sent.wamid, status: 'sent', statusAt: now }).where(eq(whatsappMessages.id, claim.id));
     await db.update(whatsappMessages).set({ handledAt: now }).where(and(eq(whatsappMessages.waId, to), eq(whatsappMessages.direction, 'in'), isNull(whatsappMessages.handledAt)));
-    await db.update(whatsappContacts).set({ leadId: a.lead.id, updatedAt: now }).where(eq(whatsappContacts.waId, to));
+    await db
+      .update(whatsappContacts)
+      .set({ leadId: a.lead.id, updatedAt: now, ...(plan.template ? { lastTemplateAt: now } : {}) })
+      .where(eq(whatsappContacts.waId, to));
   } catch (e) {
     await db.delete(whatsappMessages).where(eq(whatsappMessages.id, claim.id));
     if (!(e instanceof WaError)) console.error('[whatsapp] send failed:', e);

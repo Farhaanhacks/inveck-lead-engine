@@ -327,7 +327,9 @@ describe('the webhook', () => {
     await post(status('wamid.out-1', 'delivered'));
     expect((await status1()).status).toBe('read');
 
-    await sendFromPage({ leadId: l.id });
+    // A week later (the template doesn't go again sooner without a reply).
+    await db.update(whatsappContacts).set({ lastTemplateAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) }).where(eq(whatsappContacts.waId, RAVI));
+    expect((await sendFromPage({ leadId: l.id })).error).toBe('');
     await post(status('wamid.out-2', 'failed', [{ code: 131026, title: 'Message undeliverable' }]));
     const [failed] = await db.select().from(whatsappMessages).where(eq(whatsappMessages.wamid, 'wamid.out-2'));
     expect(failed.status).toBe('failed');
@@ -411,6 +413,39 @@ describe('found in review', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }));
     expect((await sendFromPage({ leadId: l.id })).error).toMatch(/may or may not have gone/);
     expect(await db.select().from(whatsappMessages)).toHaveLength(0);
+  });
+});
+
+describe('protecting the number', () => {
+  it("the template doesn't go again to someone who hasn't replied, for a week; a reply (or a week) allows it", async () => {
+    await useTemplate();
+    const l = await lead();
+    await agree(l.id);
+    expect((await sendFromPage({ leadId: l.id })).error).toBe('');
+    // Again, no reply yet: refused, and nothing goes.
+    expect((await sendFromPage({ leadId: l.id })).error).toMatch(/already went .+ and they haven't replied/);
+    const t = await task(l.id, 'whatsapp', 'Promised callback');
+    expect((await sendStep({ id: t.id })).error).toMatch(/haven't replied/);
+    expect(calls).toHaveLength(1);
+    // A week on: one more is allowed.
+    const { planWhatsApp, waContacts } = await import('@/lib/whatsapp/contacts');
+    const { getSettings } = await import('@/lib/settings');
+    const c = (await waContacts(db, [RAVI])).get(RAVI);
+    const later = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    expect(planWhatsApp(l, 'Puja', await getSettings(db), c, later).problem).toBe('');
+    // They reply: free text now, and the template again once the 24 hours are over.
+    await post(inbound('Thanks, will check', 'wamid.in-r', { at: new Date(Date.now() + 60_000) }));
+    expect((await sendFromPage({ leadId: l.id, body: 'Great, speak soon.' })).error).toBe('');
+    const after = (await waContacts(db, [RAVI])).get(RAVI);
+    expect(planWhatsApp(l, 'Puja', await getSettings(db), after, new Date(Date.now() + 25 * 60 * 60 * 1000)).problem).toBe('');
+  });
+
+  it('a STOP is not a reply waiting for an answer', async () => {
+    await lead();
+    await post(inbound('STOP', 'wamid.in-stop'));
+    const { waitingReplies } = await import('@/lib/whatsapp/contacts');
+    expect((await waitingReplies(db, me.id, true)).replies).toEqual([]);
+    expect((await db.select().from(whatsappMessages))[0].handledAt).toBeTruthy();
   });
 });
 

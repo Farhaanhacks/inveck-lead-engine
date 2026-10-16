@@ -94,18 +94,19 @@ async function received(db: Db, m: Inbound, names: Map<string, string>): Promise
   const at = m.timestamp && Number(m.timestamp) > 0 ? new Date(Number(m.timestamp) * 1000) : new Date();
   const text = inboundText(m).slice(0, 4096);
   const notWritten = NOT_WRITTEN.includes(m.type ?? '');
+  const stop = !notWritten && STOP.test(text);
+  const start = !notWritten && START.test(text);
   const leadId = await leadForNumber(db, waId);
   const [row] = await db
     .insert(whatsappMessages)
-    .values({ waId, leadId, direction: 'in', kind: m.type ?? 'text', body: text, wamid: m.id, status: 'received', at, handledAt: notWritten ? at : null })
+    // Nothing goes back to a STOP, so it waits for no answer.
+    .values({ waId, leadId, direction: 'in', kind: m.type ?? 'text', body: text, wamid: m.id, status: 'received', at, handledAt: notWritten || stop ? at : null })
     .onConflictDoNothing()
     .returning({ id: whatsappMessages.id });
   if (!row) return false;
 
   const name = names.get(waId) ?? '';
   const [before] = await db.select().from(whatsappContacts).where(eq(whatsappContacts.waId, waId));
-  const stop = !notWritten && STOP.test(text);
-  const start = !notWritten && START.test(text);
   const now = new Date();
   const set: Partial<typeof whatsappContacts.$inferInsert> = { updatedAt: now };
   if (name) set.profileName = name;
