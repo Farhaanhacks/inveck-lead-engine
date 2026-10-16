@@ -189,8 +189,8 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [], mail }
   const finding = task.step === FIND_NEXT_STEP;
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
-  const prior = task.kind === 'email' && mail?.from ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
-  const plan = task.kind === 'email' && mail?.from ? planEmail(lead, task, prior, { from: mail.senderName, as: bda }) : null;
+  const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
+  const plan = task.kind === 'email' && mail ? planEmail(lead, task, prior, { from: mail.senderName, as: bda }) : null;
   return (
     <li className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
       <div className="flex w-40 shrink-0 items-start gap-2">
@@ -214,20 +214,20 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [], mail }
             )}
             {task.kind === 'email' && (
               <>
-                {/* Sending from Outlook shows the address in its review; otherwise a link to write by hand. */}
-                {!(mail?.from && plan && emails.length) &&
-                  emails.map((e) => (
-                    <a key={e} href={`mailto:${e}`} className="self-center text-xs text-accent hover:underline">{e}</a>
-                  ))}
-                {mail?.from && plan && emails.length ? (
-                  <SendMail taskId={task.id} from={mail.from} addresses={emails} subject={plan.subject} body={plan.body} followUp={plan.followUp} threaded={!!plan.replyTo} />
-                ) : (
-                  <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
+                {/* From their connected Outlook; until it is connected, it opens their email app filled in. */}
+                {mail && plan && emails.length > 0 && (
+                  <SendMail
+                    taskId={task.id}
+                    from={mail.from}
+                    configured={mail.configured}
+                    addresses={emails}
+                    subject={plan.subject}
+                    body={plan.body}
+                    followUp={plan.followUp}
+                    threaded={!!(mail.from && plan.replyTo)}
+                  />
                 )}
                 <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
-                {mail?.configured && !mail.from && emails.length > 0 && (
-                  <Link href="/account" className="self-center text-xs text-accent hover:underline">Connect Outlook to send from here</Link>
-                )}
               </>
             )}
             {task.kind === 'linkedin' && task.step === CA_WAITING_STEP && (
@@ -623,11 +623,12 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
-  // Sending from Outlook: only from your own connected mailbox, on your own list.
+  // Email steps, on your own list: sent from your connected Outlook, or opened in your email app.
   const mailReady = !!mailConfig();
-  const mailbox = own && mailReady ? await getMailbox(db, me.id) : null;
-  const sentMail = mailbox ? await sentByLead(db, visible.map((g) => g.lead.id)) : new Map<number, SentEmail[]>();
-  const senderName = mailbox ? (await getSettings(db)).senderName : '';
+  const emailLeadIds = own ? visible.filter((g) => g.items.some((i) => i.task.kind === 'email')).map((g) => g.lead.id) : [];
+  const [mailbox, sentMail, senderName] = emailLeadIds.length
+    ? await Promise.all([mailReady ? getMailbox(db, me.id) : null, sentByLead(db, emailLeadIds), getSettings(db).then((s) => s.senderName)])
+    : [null, new Map<number, SentEmail[]>(), ''];
   const mailFor = (leadId: number): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, sent: sentMail.get(leadId) } : undefined);
   const icpOf = (l: Lead) => icpFor(l.segment, icpRows);
   // Best first by INVECK's contact priority; people already tried go last.

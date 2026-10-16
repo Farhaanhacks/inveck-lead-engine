@@ -1,10 +1,18 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import Link from 'next/link';
+import { useActionState, useState, type FormEvent } from 'react';
 import { useFormStatus } from 'react-dom';
 import { sendEmailAction, writeFollowUpForTaskAction, type SendMailState } from '@/app/mail-actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
+const MAIN = 'btn-primary rounded-r-none px-2.5 py-1 text-xs';
+
+/** The email, ready in the person's own email app (lines as mail apps expect them). */
+function mailtoUrl(to: string, subject: string, body: string): string {
+  const q = [subject && `subject=${encodeURIComponent(subject)}`, body && `body=${encodeURIComponent(body.replace(/\r?\n/g, '\r\n'))}`].filter(Boolean);
+  return `mailto:${to.trim()}${q.length ? `?${q.join('&')}` : ''}`;
+}
 
 function WriteButton() {
   const { pending } = useFormStatus();
@@ -16,12 +24,14 @@ function WriteButton() {
 }
 
 /**
- * "Send mail" for a Today email step: sends the draft from the person's own Outlook in one click; the
- * arrow beside it opens the email to review (and edit) before sending.
+ * "Send mail" for a Today email step, with the arrow beside it to review (and edit) the email first.
+ * With the person's Outlook connected it sends from their mailbox in one click; until then it opens
+ * their email app with the address, subject and message filled in, and they log it with Mark sent.
  */
 export function SendMail({
   taskId,
   from,
+  configured,
   addresses,
   subject,
   body,
@@ -29,8 +39,10 @@ export function SendMail({
   threaded,
 }: {
   taskId: number;
-  /** The connected mailbox it goes from. */
+  /** The connected mailbox it goes from; empty: it opens their email app instead. */
   from: string;
+  /** Outlook sending is set up on the server (they could connect theirs). */
+  configured: boolean;
   addresses: string[];
   subject: string;
   body: string;
@@ -40,24 +52,35 @@ export function SendMail({
 }) {
   const [state, send, pending] = useActionState<SendMailState, FormData>(sendEmailAction, { error: '' });
   const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const outlook = !!from;
   const ready = !!body.trim();
   const reviewId = `review-mail-${taskId}`;
+  const toMailApp = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    window.location.href = mailtoUrl(String(f.get('to') ?? ''), String(f.get('subject') ?? ''), String(f.get('body') ?? ''));
+    setOpened(true);
+  };
   return (
     // Open, the email takes the whole row (under the buttons), like the Connected call form.
     <div className={`flex flex-col items-start gap-2 ${open ? 'basis-full' : ''}`}>
       <div className="inline-flex">
-        <form action={send}>
-          <input type="hidden" name="id" value={taskId} />
-          {/* Nothing written yet: the button opens the email to write instead of sending. */}
-          <button
-            type={ready ? 'submit' : 'button'}
-            onClick={ready ? undefined : () => setOpen(true)}
-            disabled={pending}
-            className="btn-primary rounded-r-none px-2.5 py-1 text-xs"
-          >
-            {pending ? 'Sending…' : ready ? 'Send mail' : 'Write and send'}
+        {/* Nothing written yet: the button opens the email to write instead. */}
+        {!ready ? (
+          <button type="button" onClick={() => setOpen(true)} disabled={pending} className={MAIN}>
+            Write and send
           </button>
-        </form>
+        ) : outlook ? (
+          <form action={send}>
+            <input type="hidden" name="id" value={taskId} />
+            <button disabled={pending} className={MAIN}>{pending ? 'Sending…' : 'Send mail'}</button>
+          </form>
+        ) : (
+          <a href={mailtoUrl(addresses[0] ?? '', subject, body)} onClick={() => setOpened(true)} title="Opens your email app with this email ready to send" className={MAIN}>
+            Send mail
+          </a>
+        )}
         <button
           type="button"
           onClick={() => setOpen(!open)}
@@ -76,12 +99,24 @@ export function SendMail({
       {open && (
         <div id={reviewId} className="w-[min(34rem,calc(100vw-5rem))] space-y-2 rounded-lg border border-line bg-surface-2 p-4">
           {/* A new draft (written for them) replaces the fields. */}
-          <form action={send} key={`${subject}\n${body}`} className="space-y-2">
+          <form action={outlook ? send : undefined} onSubmit={outlook ? undefined : toMailApp} key={`${subject}\n${body}`} className="space-y-2">
             <input type="hidden" name="id" value={taskId} />
-            <p className="text-xs text-muted">
-              From {from}
-              {followUp ? (threaded ? '. A follow-up, sent as a reply in the same thread as the last email (quoted below it).' : '. A follow-up.') : '.'}
-            </p>
+            {outlook ? (
+              <p className="text-xs text-muted">
+                From {from}
+                {followUp ? (threaded ? '. A follow-up, sent as a reply in the same thread as the last email (quoted below it).' : '. A follow-up.') : '.'}
+              </p>
+            ) : (
+              <p className="text-xs text-muted">
+                {followUp ? 'A follow-up. ' : ''}Send mail opens your email app with this email filled in: send it from there, then click Mark sent.
+                {configured && (
+                  <>
+                    {' '}
+                    <Link href="/account" className="text-accent hover:underline">Connect your Outlook</Link> to send from here in one click.
+                  </>
+                )}
+              </p>
+            )}
             <label htmlFor={`to-${taskId}`} className="label">To</label>
             <select id={`to-${taskId}`} name="to" defaultValue={addresses[0]} className="field">
               {addresses.map((a) => (
@@ -113,6 +148,7 @@ export function SendMail({
           )}
         </div>
       )}
+      {!outlook && opened && <p className="text-xs text-muted">Sent it from your email app? Click Mark sent.</p>}
       {state.error && (
         <p role="alert" className="max-w-md text-xs text-critical-ink">
           {state.error}
