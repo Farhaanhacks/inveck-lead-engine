@@ -211,6 +211,12 @@ describe('Send WhatsApp on Today', () => {
 
     expect((await sendStep({ id: t.id })).error).toMatch(/already logged/);
     expect(calls).toHaveLength(1);
+
+    // Undone since: it went, so it is only to be logged.
+    const { undoTaskAction } = await import('@/app/team-actions');
+    await undoTaskAction(form({ id: t.id }));
+    expect((await sendStep({ id: t.id })).error).toMatch(/^This WhatsApp already went from INVECK's number \(.+\): click Mark sent to log it\.$/);
+    expect(calls).toHaveLength(1);
   });
 
   it('a refusal from WhatsApp is shown in plain words, and the step stays open', async () => {
@@ -354,6 +360,57 @@ describe('the webhook', () => {
     await dismissWhatsAppReplyAction(form({ id: m.id }));
     expect((await waitingReplies(db, me.id, false)).replies).toEqual([]);
     expect((await db.select().from(whatsappMessages).where(eq(whatsappMessages.id, m.id)))[0]).toMatchObject({ leadId: l.id, handledAt: expect.any(Date) });
+  });
+});
+
+describe('found in review', () => {
+  it("a deleted company no longer claims its number: a later message goes to the company that has it now", async () => {
+    const old = await lead();
+    await agree(old.id);
+    const { leadForNumber } = await import('@/lib/whatsapp/contacts');
+    expect(await leadForNumber(db, RAVI)).toBe(old.id);
+    const { deleteLeadAction } = await import('@/app/actions');
+    await deleteLeadAction(form({ id: old.id })).catch(() => {}); // it redirects to the list
+    expect((await contact()).leadId).toBeNull();
+    const now = await lead({ company: 'Hosur Gears (Unit 2)' });
+    await post(inbound('Hello again', 'wamid.in-9'));
+    expect((await db.select().from(whatsappMessages))[0].leadId).toBe(now.id);
+    expect((await contact()).leadId).toBe(now.id);
+
+    // A company removed some other way (or before this was fixed) still links the number: ignored.
+    await db.delete(leads).where(eq(leads.id, now.id));
+    expect((await contact()).leadId).toBe(now.id);
+    expect(await leadForNumber(db, RAVI)).toBeNull();
+  });
+
+  it("STOP ticks off the company's day when WhatsApp was all that was left", async () => {
+    const l = await lead();
+    await agree(l.id);
+    await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'call', step: 'Day 1', title: 'Day 1: call', dueDate: istDay(), doneAt: new Date(), outcome: 'no_answer' });
+    await task(l.id, 'whatsapp');
+    const { companyDays } = await import('@/lib/db/schema');
+    expect(await db.select().from(companyDays)).toHaveLength(0);
+    await post(inbound('Stop', 'wamid.in-stop'));
+    expect((await db.select().from(companyDays)).map((d) => d.leadId)).toEqual([l.id]);
+  });
+
+  it("WhatsApp's own notices (a changed number) need no answer, and are not agreeing to anything", async () => {
+    await lead();
+    await post(change({ messages: [{ from: RAVI, id: 'wamid.sys', timestamp: String(Math.floor(Date.now() / 1000)), type: 'system', system: { body: 'User changed number' } }] }));
+    const [m] = await db.select().from(whatsappMessages);
+    expect(m).toMatchObject({ body: '[User changed number]', handledAt: expect.any(Date) });
+    const c = await contact();
+    expect(c?.consentAt ?? null).toBeNull();
+    expect(c?.lastInboundAt ?? null).toBeNull();
+  });
+
+  it("no answer from WhatsApp: says it may have gone, rather than inviting a second copy", async () => {
+    await useTemplate();
+    const l = await lead();
+    await agree(l.id);
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }));
+    expect((await sendFromPage({ leadId: l.id })).error).toMatch(/may or may not have gone/);
+    expect(await db.select().from(whatsappMessages)).toHaveLength(0);
   });
 });
 

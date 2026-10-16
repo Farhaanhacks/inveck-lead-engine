@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db';
-import { sentEmails, type Lead, type SentEmail, type Task } from '../db/schema';
+import { sentEmails, type Lead, type SentEmail } from '../db/schema';
 import { formatDateTime } from '../dates';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,6 +19,10 @@ export async function sentByLead(db: Db, leadIds: number[]): Promise<Map<number,
   for (const r of rows) out.set(r.leadId, [...(out.get(r.leadId) ?? []), r]);
   return out;
 }
+
+/** Mail outcomes that mean the first email has gone (from the app or by hand); a bounce means it never arrived. */
+const EMAILED = ['Sent', 'No reply', 'Replied: interested', 'Replied: not interested'];
+export const emailedAlready = (lead: Pick<Lead, 'mailOutcome'>) => EMAILED.includes(lead.mailOutcome);
 
 /** The last email sent from the app to this address, if any. */
 export const lastSentTo = (sent: SentEmail[] | undefined, to: string) => sent?.find((e) => e.toAddress === to.trim().toLowerCase());
@@ -39,11 +43,16 @@ export type EmailPlan = {
  * emailed, a follow-up (the follow-up draft, sent as a reply to the last email). Drafts are signed
  * with the sender name in Settings; sent from someone's own mailbox, they are signed with theirs.
  */
-export function planEmail(lead: Lead, task: Pick<Task, 'step'>, prior: SentEmail | undefined, sign: { from: string; as: string }): EmailPlan {
-  // Emailed from the app before, or by hand on an earlier round (marked sent).
-  const followUp = !!prior || (/^Follow-up/i.test(task.step) && lead.mailOutcome === 'Sent');
+export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string }): EmailPlan {
+  // Emailed from the app before, or by hand on any earlier step (marked sent): never the first email twice.
+  const followUp = !!prior || emailedAlready(lead);
   const from = sign.from.trim();
-  const signed = (text: string) => (from.length >= 3 && sign.as.trim() && from !== sign.as.trim() ? text.split(from).join(sign.as.trim()) : text);
+  const as = sign.as.trim();
+  // Only the sign-off: the sender name where it last appears, near the end (not every mention of it).
+  const signed = (text: string) => {
+    const i = text.lastIndexOf(from);
+    return from.length >= 3 && as && from !== as && i >= 0 && i >= text.length - from.length - 200 ? text.slice(0, i) + as + text.slice(i + from.length) : text;
+  };
   if (!followUp) return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '', replyTo: '' };
   const original = (prior?.subject || lead.emailSubject).replace(/^\s*re:\s*/i, '');
   return {

@@ -8,7 +8,9 @@ import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { attendance, leads, people, tasks, users, type LeadStatus, type TaskKind } from '@/lib/db/schema';
+import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
+import { emailedAlready } from '@/lib/mail/plan';
+import { FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
@@ -104,6 +106,7 @@ export async function completeTaskAction(form: FormData) {
       .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt), lte(tasks.dueDate, istDay())));
   }
   if (task.kind === 'email' && outcome === 'done') {
+    await followUpSentByHand(db, task);
     await db.update(leads).set({ mailOutcome: 'Sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.mailOutcome, ['', 'Not sent'])));
   }
   if (task.kind === 'linkedin' && outcome === 'sent') {
@@ -209,6 +212,44 @@ export async function completeTaskAction(form: FormData) {
   revalidatePath('/pipeline');
   revalidatePath('/leads');
   revalidatePath(`/leads/${task.leadId}`);
+}
+
+/**
+ * An email step marked sent after the first email had gone was a follow-up, sent by hand: its draft is
+ * used up and the count moves on (as sending it from Outlook does), so the next round doesn't offer the
+ * same text again. What it replaced is kept on the step for Undo.
+ */
+async function followUpSentByHand(db: Awaited<ReturnType<typeof getDb>>, task: Task) {
+  const [lead] = await db.select().from(leads).where(eq(leads.id, task.leadId));
+  if (!lead || !emailedAlready(lead)) return;
+  // Sent from Outlook: that already moved the follow-ups on.
+  const [fromOutlook] = await db.select({ id: sentEmails.id }).from(sentEmails).where(and(eq(sentEmails.taskId, task.id), eq(sentEmails.status, 'sent')));
+  if (fromOutlook) return;
+  const step = Math.min(lead.followUpStep + 1, FOLLOW_UP_DAYS.length);
+  const was = { subject: lead.followUpSubject, body: lead.followUpBody, step: lead.followUpStep, next: lead.nextFollowUpAt?.toISOString() ?? null };
+  await db.update(tasks).set({ followUpFrom: JSON.stringify(was) }).where(eq(tasks.id, task.id));
+  await db
+    .update(leads)
+    .set({ followUpSubject: '', followUpBody: '', followUpStep: step, ...(lead.sentAt ? { nextFollowUpAt: nextFollowUpAt(lead.sentAt, step) } : {}) })
+    .where(eq(leads.id, lead.id));
+}
+
+/** Undo of an email marked sent: a follow-up's draft and count come back; a first email is not sent after all. */
+async function undoEmailSent(db: Awaited<ReturnType<typeof getDb>>, task: Task) {
+  if (task.followUpFrom) {
+    const was = JSON.parse(task.followUpFrom) as { subject: string; body: string; step: number; next: string | null };
+    // Unless a new follow-up was written since.
+    await db
+      .update(leads)
+      .set({ followUpSubject: was.subject, followUpBody: was.body, followUpStep: was.step, nextFollowUpAt: was.next ? new Date(was.next) : null })
+      .where(and(eq(leads.id, task.leadId), eq(leads.followUpBody, '')));
+    await db.update(tasks).set({ followUpFrom: '' }).where(eq(tasks.id, task.id));
+    return;
+  }
+  // The first email, unless another email step was logged or an email went from Outlook.
+  const [other] = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'email'), eq(tasks.outcome, 'done'), ne(tasks.id, task.id))).limit(1);
+  const [fromOutlook] = await db.select({ id: sentEmails.id }).from(sentEmails).where(and(eq(sentEmails.leadId, task.leadId), eq(sentEmails.status, 'sent'))).limit(1);
+  if (!other && !fromOutlook) await db.update(leads).set({ mailOutcome: '' }).where(and(eq(leads.id, task.leadId), eq(leads.mailOutcome, 'Sent')));
 }
 
 /**
@@ -417,6 +458,7 @@ export async function undoTaskAction(form: FormData) {
     await db.delete(tasks).where(and(eq(tasks.note, `${CA_AFTER_NOTE}${task.id}`), or(isNull(tasks.doneAt), eq(tasks.outcome, 'closed'))));
     if (task.outcome === 'sent') await db.update(leads).set({ linkedinOutcome: '' }).where(and(eq(leads.id, task.leadId), eq(leads.linkedinOutcome, 'Request sent')));
   }
+  if (task.kind === 'email' && task.outcome === 'done') await undoEmailSent(db, task);
   if (task.outcome === 'accepted') {
     await db.update(leads).set({ linkedinOutcome: 'Request sent' }).where(and(eq(leads.id, task.leadId), eq(leads.linkedinOutcome, 'Accepted')));
   }

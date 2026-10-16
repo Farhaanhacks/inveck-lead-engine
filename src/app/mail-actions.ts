@@ -11,6 +11,7 @@ import { disconnectMailbox, MailError, sendFromMailbox } from '@/lib/mail/outloo
 import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
 import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
 import { errorMessage } from '@/lib/pipeline/text';
+import { formatDateTime } from '@/lib/dates';
 import { liveServices } from '@/lib/run-driver';
 import { completeTaskAction } from './team-actions';
 
@@ -32,6 +33,9 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   if (!task || task.kind !== 'email') return { error: 'This email step no longer exists. Refresh the page.' };
   if (task.doneAt) return { error: 'This step was already logged. Refresh the page.' };
   if (task.ownerId !== user.id) return { error: 'Only the person this company belongs to can send its email.' };
+  // Sent before and the step undone since: it went, so it is only to be logged.
+  const [went] = await db.select().from(sentEmails).where(eq(sentEmails.taskId, task.id));
+  if (went) return { error: went.status === 'sent' ? `This email already went from Outlook${went.sentAt ? ` (${formatDateTime(went.sentAt)})` : ''}: click Mark sent to log it.` : 'This email is already being sent. Refresh the page.' };
   const [lead] = await db.select().from(leads).where(eq(leads.id, task.leadId));
   if (!lead) return { error: 'This company no longer exists.' };
 
@@ -43,7 +47,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
 
   const settings = await getSettings(db);
   const prior = lastSentTo((await sentByLead(db, [lead.id])).get(lead.id), to);
-  const plan = planEmail(lead, task, prior, { from: settings.senderName, as: user.name });
+  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name });
   const reviewed = form.has('body');
   const subject = (reviewed ? str(form, 'subject') : plan.subject).trim();
   const body = (reviewed ? String(form.get('body') ?? '') : plan.body).trim();

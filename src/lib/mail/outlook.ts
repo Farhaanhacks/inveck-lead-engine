@@ -82,12 +82,17 @@ export function authorizeUrl(c: MailConfig, redirectUri: string, state: string):
 
 type Tokens = { accessToken: string; refreshToken?: string };
 
+/** Microsoft didn't answer (network, timeout): status 0, unlike a refusal. */
+const noAnswer = () => new MailError("Microsoft didn't answer. Try again in a minute.", false, 0);
+
 async function token(c: MailConfig, params: Record<string, string>): Promise<Tokens> {
   const res = await fetch(`${LOGIN}/${encodeURIComponent(c.tenant)}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: c.clientId, client_secret: c.clientSecret, scope: OUTLOOK_SCOPES, ...params }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
+  }).catch(() => {
+    throw noAnswer();
   });
   const data = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; error?: string; error_description?: string };
   if (!res.ok || !data.access_token) {
@@ -102,7 +107,7 @@ async function token(c: MailConfig, params: Record<string, string>): Promise<Tok
 type GraphMessage = { id: string; conversationId?: string };
 
 async function graph<T>(accessToken: string, method: string, path: string, body?: unknown): Promise<T | null> {
-  const res = await fetch(`${GRAPH}${path}`, {
+  const res: Response = await fetch(`${GRAPH}${path}`, {
     method,
     headers: {
       authorization: `Bearer ${accessToken}`,
@@ -112,6 +117,8 @@ async function graph<T>(accessToken: string, method: string, path: string, body?
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(TIMEOUT_MS),
+  }).catch(() => {
+    throw noAnswer();
   });
   if (res.status === 202 || res.status === 204) return null;
   const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
@@ -194,8 +201,14 @@ export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail
   try {
     await graph(t.accessToken, 'POST', `/me/messages/${encodeURIComponent(draft.id)}/send`);
   } catch (e) {
-    // Not sent: don't leave the unsent draft in their Drafts folder.
-    await graph(t.accessToken, 'DELETE', `/me/messages/${encodeURIComponent(draft.id)}`).catch(() => {});
+    // No answer: it may well have gone, so it is left where it is (in Sent Items, or Drafts).
+    if (e instanceof MailError && e.status === 0) {
+      throw new MailError("Outlook didn't confirm the email went. Check your Sent Items before sending again: if it's there, click Mark sent.", false, 0);
+    }
+    // Refused: don't leave the unsent draft in their Drafts folder.
+    if (e instanceof MailError && e.status >= 400 && e.status < 500) {
+      await graph(t.accessToken, 'DELETE', `/me/messages/${encodeURIComponent(draft.id)}`).catch(() => {});
+    }
     throw e;
   }
   return { from: box.address, graphId: draft.id, conversationId: draft.conversationId ?? '' };

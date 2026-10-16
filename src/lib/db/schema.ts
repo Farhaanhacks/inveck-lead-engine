@@ -405,6 +405,8 @@ export const tasks = pgTable('tasks', {
   outcome: text('outcome').notNull().default(''),
   /** The lead's stage before logging this moved it on, so Undo can put it back. */
   stageFrom: text('stage_from').notNull().default(''),
+  /** An email follow-up marked sent by hand: the follow-up draft and count it used up (JSON), so Undo can put them back. */
+  followUpFrom: text('follow_up_from').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Task = typeof tasks.$inferSelect;

@@ -66,8 +66,9 @@ export async function undoCallConsent(db: Db, taskId: number): Promise<void> {
  * saved with that number (compared on its last ten digits, however it was written).
  */
 export async function leadForNumber(db: Db, waId: string): Promise<number | null> {
-  const [known] = await db.select({ leadId: whatsappContacts.leadId }).from(whatsappContacts).where(eq(whatsappContacts.waId, waId));
-  if (known?.leadId) return known.leadId;
+  // The lead it was last used with, if that company still exists.
+  const [known] = await db.select({ leadId: leads.id }).from(whatsappContacts).innerJoin(leads, eq(leads.id, whatsappContacts.leadId)).where(eq(whatsappContacts.waId, waId));
+  if (known) return known.leadId;
   const last10 = waId.slice(-10);
   if (last10.length < 10) return null;
   const like = `%${last10}%`;

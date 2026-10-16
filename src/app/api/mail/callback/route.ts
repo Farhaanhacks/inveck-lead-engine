@@ -1,17 +1,19 @@
-import { timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/users';
 import { CALLBACK_PATH, connectMailbox, MailError, STATE_COOKIE } from '@/lib/mail/outlook';
-
-const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+import { safeEqual } from '@/lib/safe-equal';
 
 /** Microsoft sends the person back here after they sign in: the connection is checked and saved. */
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const back = (mail: string) => {
-    const res = NextResponse.redirect(new URL(`/account?mail=${mail}`, request.url));
+  // `why`: Microsoft's own reason, shown on the Account page (an administrator's approval needed, say).
+  const back = (mail: string, why = '') => {
+    const to = new URL('/account', request.url);
+    to.searchParams.set('mail', mail);
+    if (why) to.searchParams.set('why', why.split(/\r?\n/)[0].slice(0, 300));
+    const res = NextResponse.redirect(to);
     res.cookies.set(STATE_COOKIE, '', { path: '/api/mail', maxAge: 0 });
     return res;
   };
@@ -20,8 +22,8 @@ export async function GET(request: Request) {
   // Only the sign-in this person started, in this browser, in the last ten minutes.
   const [who, state] = ((await cookies()).get(STATE_COOKIE)?.value ?? '').split('.');
   const given = url.searchParams.get('state') ?? '';
-  if (!state || who !== String(me.id) || !same(state, given)) return back('expired');
-  if (url.searchParams.get('error')) return back('declined');
+  if (!state || who !== String(me.id) || !safeEqual(state, given)) return back('expired');
+  if (url.searchParams.get('error')) return back('declined', url.searchParams.get('error_description') || url.searchParams.get('error') || '');
   const code = url.searchParams.get('code');
   if (!code) return back('declined');
   try {
@@ -29,6 +31,6 @@ export async function GET(request: Request) {
     return back('connected');
   } catch (e) {
     console.error('[mail] connecting Outlook failed:', e instanceof MailError ? e.message : e);
-    return back('failed');
+    return back('failed', e instanceof MailError ? e.message : '');
   }
 }

@@ -54,7 +54,7 @@ import { PhoneLinks } from '@/components/phone-links';
 import { loadFunnel } from '@/lib/followups';
 import { SendMail } from '@/components/send-mail';
 import { getMailbox, mailConfig } from '@/lib/mail/outlook';
-import { lastSentTo, planEmail, sentByLead } from '@/lib/mail/plan';
+import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
 import { getSettings } from '@/lib/settings';
 import type { SentEmail } from '@/lib/db/schema';
 import { SendWhatsApp } from '@/components/send-whatsapp';
@@ -225,7 +225,9 @@ function Step({
   const fromInveck = task.kind === 'whatsapp' && whatsapp?.plan && !whatsapp.plan.problem ? whatsapp.plan : null;
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
   const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
-  const plan = task.kind === 'email' && mail ? planEmail(lead, task, prior, { from: mail.senderName, as: bda }) : null;
+  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda }) : null;
+  // This step's email already went from Outlook (and the step was undone since): only to be logged.
+  const went = task.kind === 'email' ? mail?.sent?.find((e) => e.taskId === task.id) : undefined;
   return (
     <li className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
       <div className="flex w-40 shrink-0 items-start gap-2">
@@ -257,7 +259,7 @@ function Step({
                     text={fromInveck.text}
                     freeUntil={fromInveck.freeUntil ? `until ${formatDateTime(fromInveck.freeUntil)}` : undefined}
                   />
-                  <Outcome id={task.id} buttons={[['skipped', 'Skip']]} />
+                  <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
                 </>
               ) : (
                 <>
@@ -268,7 +270,9 @@ function Step({
             {task.kind === 'email' && (
               <>
                 {/* From their connected Outlook; until it is connected, it opens their email app filled in. */}
-                {mail && plan && emails.length > 0 && (
+                {went ? (
+                  <span className="self-center text-xs text-ink-2">Sent from Outlook{went.sentAt ? ` ${formatDateTime(went.sentAt)}` : ''}</span>
+                ) : mail && plan && emails.length > 0 && (
                   <SendMail
                     taskId={task.id}
                     from={mail.from}
@@ -494,8 +498,9 @@ function CompanyCard({
     if (open) return [{ kind: k, open, done: undefined }];
     return done ? [{ kind: k, open: undefined, done }] : [];
   });
-  // The contact's email and any more saved for the company, for the email row.
+  // The contact's email and any more saved for the company; the email row offers the valid ones.
   const emails = [...new Set([lead.contactEmail, ...others.filter((p) => p.name === 'Other email').map((p) => p.email)].filter(Boolean))];
+  const sendTo = leadAddresses(lead, others);
   // Ask for a missing number once per company: on the call row, or on WhatsApp once the call is logged.
   const phoneRow = rows.find((r) => r.open && (r.kind === 'call' || r.kind === 'whatsapp'))?.kind;
   // Waiting for a LinkedIn request to be accepted isn't a step to do.
@@ -550,7 +555,7 @@ function CompanyCard({
       <ul className="mt-2 divide-y divide-line border-t border-line">
         {rows.map((r) =>
           r.open ? (
-            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={emails} mail={mail} whatsapp={whatsapp} />
+            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={sendTo} mail={mail} whatsapp={whatsapp} />
           ) : (
             <DoneStep key={r.done!.id} task={r.done!} readOnly={readOnly} />
           ),

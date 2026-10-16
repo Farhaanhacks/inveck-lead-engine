@@ -42,7 +42,7 @@ export async function writeFollowUp(svc: Services, lead: Lead): Promise<{ subjec
     `Subject: ${lead.emailSubject}`,
     lead.emailBody,
     '',
-    `## This is follow-up ${step} of ${FOLLOW_UP_DAYS.length}`,
+    step <= FOLLOW_UP_DAYS.length ? `## This is follow-up ${step} of ${FOLLOW_UP_DAYS.length}` : `## This is follow-up ${step}: a last, short nudge`,
     '',
     '## Sender',
     `Name: ${s.senderName}`,

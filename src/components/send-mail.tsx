@@ -8,6 +8,9 @@ import { sendEmailAction, writeFollowUpForTaskAction, type SendMailState } from 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 const MAIN = 'btn-primary rounded-r-none px-2.5 py-1 text-xs';
 
+/** Longer than this, some email apps (Outlook on Windows) cut a mailto link short. */
+const MAILTO_SAFE = 1800;
+
 /** The email, ready in the person's own email app (lines as mail apps expect them). */
 function mailtoUrl(to: string, subject: string, body: string): string {
   const q = [subject && `subject=${encodeURIComponent(subject)}`, body && `body=${encodeURIComponent(body.replace(/\r?\n/g, '\r\n'))}`].filter(Boolean);
@@ -53,14 +56,23 @@ export function SendMail({
   const [state, send, pending] = useActionState<SendMailState, FormData>(sendEmailAction, { error: '' });
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // Opened in their email app: a long message is copied too, in case the app cuts it short.
+  const openedInApp = (url: string, text: string) => {
+    setOpened(true);
+    const long = url.length > MAILTO_SAFE;
+    setCopied(long);
+    if (long) navigator.clipboard?.writeText(text).catch(() => setCopied(false));
+  };
   const outlook = !!from;
   const ready = !!body.trim();
   const reviewId = `review-mail-${taskId}`;
   const toMailApp = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    window.location.href = mailtoUrl(String(f.get('to') ?? ''), String(f.get('subject') ?? ''), String(f.get('body') ?? ''));
-    setOpened(true);
+    const url = mailtoUrl(String(f.get('to') ?? ''), String(f.get('subject') ?? ''), String(f.get('body') ?? ''));
+    openedInApp(url, String(f.get('body') ?? ''));
+    window.location.href = url;
   };
   return (
     // Open, the email takes the whole row (under the buttons), like the Connected call form.
@@ -77,7 +89,7 @@ export function SendMail({
             <button disabled={pending} className={MAIN}>{pending ? 'Sending…' : 'Send mail'}</button>
           </form>
         ) : (
-          <a href={mailtoUrl(addresses[0] ?? '', subject, body)} onClick={() => setOpened(true)} title="Opens your email app with this email ready to send" className={MAIN}>
+          <a href={mailtoUrl(addresses[0] ?? '', subject, body)} onClick={(e) => openedInApp(e.currentTarget.href, body)} title="Opens your email app with this email ready to send" className={MAIN}>
             Send mail
           </a>
         )}
@@ -148,7 +160,12 @@ export function SendMail({
           )}
         </div>
       )}
-      {!outlook && opened && <p className="text-xs text-muted">Sent it from your email app? Click Mark sent.</p>}
+      {!outlook && opened && (
+        <p className="max-w-md text-xs text-muted">
+          Sent it from your email app? Click Mark sent.
+          {copied && " The message is long, so it's also copied: if your email app shows it cut short, paste it in."}
+        </p>
+      )}
       {state.error && (
         <p role="alert" className="max-w-md text-xs text-critical-ink">
           {state.error}

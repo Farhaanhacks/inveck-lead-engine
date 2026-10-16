@@ -500,6 +500,7 @@ export const SCHEMA_STATEMENTS = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS sent_emails_lead ON sent_emails (lead_id)`,
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS follow_up_from TEXT NOT NULL DEFAULT ''`,
   `CREATE TABLE IF NOT EXISTS whatsapp_contacts (
     wa_id TEXT PRIMARY KEY,
     lead_id INTEGER,

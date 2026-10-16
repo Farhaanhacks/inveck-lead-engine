@@ -1,17 +1,15 @@
-import { timingSafeEqual } from 'node:crypto';
 import { getDb } from '@/lib/db';
 import { validSignature, waConfig } from '@/lib/whatsapp/cloud';
 import { handleWebhook } from '@/lib/whatsapp/webhook';
+import { safeEqual } from '@/lib/safe-equal';
 
 export const dynamic = 'force-dynamic';
-
-const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 /** Meta checks the webhook once, when it is set up: it must echo the challenge for our verify token. */
 export async function GET(req: Request) {
   const q = new URL(req.url).searchParams;
   const verify = (process.env.WHATSAPP_VERIFY_TOKEN ?? '').trim();
-  if (verify && q.get('hub.mode') === 'subscribe' && same(q.get('hub.verify_token') ?? '', verify)) {
+  if (verify && q.get('hub.mode') === 'subscribe' && safeEqual(q.get('hub.verify_token') ?? '', verify)) {
     return new Response(q.get('hub.challenge') ?? '', { status: 200, headers: { 'content-type': 'text/plain' } });
   }
   return new Response('Forbidden', { status: 403 });

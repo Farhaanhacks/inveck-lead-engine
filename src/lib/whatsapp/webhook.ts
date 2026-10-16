@@ -3,6 +3,7 @@ import type { Db } from '../db';
 import { leads, tasks, whatsappContacts, whatsappMessages } from '../db/schema';
 import { logActivity } from '../activity';
 import { moveAfterOutreach } from '../stages';
+import { markCompanyDay } from '../tasks';
 import { waErrorText, type WaConfig } from './cloud';
 import { leadForNumber, THEY_MESSAGED } from './contacts';
 
@@ -19,6 +20,7 @@ type Inbound = {
   video?: { caption?: string };
   document?: { caption?: string; filename?: string };
   reaction?: { emoji?: string };
+  system?: { body?: string };
 };
 type Status = { id?: string; status?: string; timestamp?: string; errors?: { code?: number; title?: string; message?: string; error_data?: { details?: string } }[] };
 type Change = { field?: string; value?: { metadata?: { phone_number_id?: string }; contacts?: { wa_id?: string; profile?: { name?: string } }[]; messages?: Inbound[]; statuses?: Status[] } };
@@ -53,12 +55,16 @@ export function inboundText(m: Inbound): string {
       return '[Contact card]';
     case 'reaction':
       return `[Reacted ${m.reaction?.emoji ?? ''}]`.replace(' ]', ']');
+    case 'system':
+      return `[${m.system?.body || 'System message'}]`;
     default:
       return `[${m.type ?? 'message'}]`;
   }
 }
 
 const RANK: Record<string, number> = { sending: 0, sent: 1, delivered: 2, read: 3 };
+/** Not something they wrote: a reaction, WhatsApp's own notices (a changed number). No answer needed, and not agreeing to anything. */
+const NOT_WRITTEN = ['reaction', 'system', 'request_welcome'];
 /** A conversation started: the lead moves to Replied from any stage before it (or back from Lost). */
 const REPLY_MOVES = ['Awaiting Approval', 'Approved', 'Contacted', 'Lost'];
 
@@ -87,28 +93,28 @@ async function received(db: Db, m: Inbound, names: Map<string, string>): Promise
   if (!waId || !m.id) return false;
   const at = m.timestamp && Number(m.timestamp) > 0 ? new Date(Number(m.timestamp) * 1000) : new Date();
   const text = inboundText(m).slice(0, 4096);
-  const reaction = m.type === 'reaction';
+  const notWritten = NOT_WRITTEN.includes(m.type ?? '');
   const leadId = await leadForNumber(db, waId);
   const [row] = await db
     .insert(whatsappMessages)
-    // A reaction needs no answer.
-    .values({ waId, leadId, direction: 'in', kind: m.type ?? 'text', body: text, wamid: m.id, status: 'received', at, handledAt: reaction ? at : null })
+    .values({ waId, leadId, direction: 'in', kind: m.type ?? 'text', body: text, wamid: m.id, status: 'received', at, handledAt: notWritten ? at : null })
     .onConflictDoNothing()
     .returning({ id: whatsappMessages.id });
   if (!row) return false;
 
   const name = names.get(waId) ?? '';
   const [before] = await db.select().from(whatsappContacts).where(eq(whatsappContacts.waId, waId));
-  const stop = STOP.test(text);
-  const start = START.test(text);
+  const stop = !notWritten && STOP.test(text);
+  const start = !notWritten && START.test(text);
   const now = new Date();
   const set: Partial<typeof whatsappContacts.$inferInsert> = { updatedAt: now };
   if (name) set.profileName = name;
-  if (leadId && !before?.leadId) set.leadId = leadId;
-  if (!before?.lastInboundAt || before.lastInboundAt < at) set.lastInboundAt = at;
+  if (leadId && leadId !== before?.leadId) set.leadId = leadId;
+  // A notice from WhatsApp itself opens no 24-hour window.
+  if (m.type !== 'system' && (!before?.lastInboundAt || before.lastInboundAt < at)) set.lastInboundAt = at;
   if (stop) Object.assign(set, { optedOutAt: at, consentAt: null, consentBy: null, consentHow: '', consentTaskId: null });
   // Writing to INVECK is agreeing to hear back; after a STOP, only START (or a new agreement) undoes it.
-  else if (start || (!reaction && !before?.optedOutAt && !before?.consentAt)) {
+  else if (start || (!notWritten && !before?.optedOutAt && !before?.consentAt)) {
     Object.assign(set, { consentAt: at, consentBy: null, consentHow: start ? 'They sent START on WhatsApp' : THEY_MESSAGED, consentTaskId: null, optedOutAt: null });
   }
   await db.insert(whatsappContacts).values({ waId, ...set }).onConflictDoUpdate({ target: whatsappContacts.waId, set });
@@ -117,15 +123,17 @@ async function received(db: Db, m: Inbound, names: Map<string, string>): Promise
   const who = name || `+${waId}`;
   if (stop) {
     await logActivity(db, leadId, 'note', `WhatsApp from ${who}: “${text}”. They asked not to get WhatsApp messages from INVECK: none will go to +${waId}.`);
-    // Nothing more on WhatsApp for them, from INVECK's number or by hand.
+    // Nothing more on WhatsApp for them, from INVECK's number or by hand; the company's day may now be done.
+    const open = await db.select({ ownerId: tasks.ownerId }).from(tasks).where(and(eq(tasks.leadId, leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt)));
     await db
       .update(tasks)
       .set({ doneAt: now, outcome: 'closed', note: 'Asked not to get WhatsApp messages (STOP)' })
       .where(and(eq(tasks.leadId, leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt)));
+    for (const ownerId of new Set(open.map((t) => t.ownerId))) await markCompanyDay(db, leadId, ownerId);
     return true;
   }
   await logActivity(db, leadId, 'note', `WhatsApp from ${who}: “${text}”`);
-  if (!reaction) {
+  if (!notWritten) {
     const [lead] = await db.select({ status: leads.status }).from(leads).where(eq(leads.id, leadId));
     if (lead && REPLY_MOVES.includes(lead.status)) await moveAfterOutreach(db, leadId, 'Replied', at);
   }

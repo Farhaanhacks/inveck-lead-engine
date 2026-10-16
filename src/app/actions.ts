@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, clients, icps, knownCompanies as ownLeadList, leads, opportunities, people, tasks, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage } from '@/lib/db/schema';
+import { activities, clients, icps, knownCompanies as ownLeadList, leads, opportunities, people, tasks, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage, whatsappContacts } from '@/lib/db/schema';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { applyStage } from '@/lib/stages';
 import { makePrimary } from '@/lib/people';
@@ -577,6 +577,8 @@ export async function deleteLeadAction(form: FormData) {
   await db.delete(activities).where(eq(activities.leadId, id));
   await db.delete(people).where(eq(people.leadId, id));
   await db.delete(tasks).where(eq(tasks.leadId, id));
+  // Its WhatsApp number is no longer this company's: a message from it is matched afresh.
+  await db.update(whatsappContacts).set({ leadId: null }).where(eq(whatsappContacts.leadId, id));
   revalidatePath('/leads');
   redirect('/leads');
 }

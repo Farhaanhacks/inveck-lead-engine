@@ -18,6 +18,8 @@ let calls: Call[];
 /** Refresh tokens Microsoft still honours; anything else is revoked. */
 let liveRefresh: Set<string>;
 let failSend: boolean;
+/** A Microsoft address that doesn't answer (network down, timed out). */
+let hang: string | null;
 
 /** Microsoft's sign-in and Graph, as far as sending needs them. */
 async function fakeMicrosoft(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
@@ -27,6 +29,7 @@ async function fakeMicrosoft(input: RequestInfo | URL, init: RequestInit = {}): 
   const body = typeof init.body === 'string' ? init.body : init.body instanceof URLSearchParams ? init.body.toString() : '';
   const method = init.method ?? 'GET';
   calls.push({ method, url, headers, body });
+  if (hang && url.includes(hang)) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
   if (url.includes('/oauth2/v2.0/token')) {
     const p = new URLSearchParams(body);
@@ -59,6 +62,7 @@ beforeEach(async () => {
   calls = [];
   liveRefresh = new Set(['refresh-1']);
   failSend = false;
+  hang = null;
   vi.stubGlobal('fetch', vi.fn(fakeMicrosoft));
 });
 afterEach(() => {
@@ -242,7 +246,7 @@ describe('Send mail on Today', () => {
 
     // Already being sent (another tab): never twice.
     await db.insert(sentEmails).values({ leadId: l.id, taskId: t.id, userId: me.id, toAddress: 'ravi@hosurgears.in' });
-    expect((await send({ id: t.id })).error).toMatch(/already being sent/);
+    expect((await send({ id: t.id })).error).toBe('This email is already being sent. Refresh the page.');
     expect(graphCalls()).toEqual([]);
     await db.delete(sentEmails).where(eq(sentEmails.taskId, t.id));
 
@@ -271,18 +275,109 @@ describe('Send mail on Today', () => {
   });
 });
 
+describe('Microsoft not answering', () => {
+  it("a send that isn't confirmed is left alone (it may have gone): no delete, and the person is told to check Sent Items", async () => {
+    await connect();
+    const l = await lead();
+    const t = await emailTask(l.id);
+    hang = '/send';
+    expect((await send({ id: t.id })).error).toMatch(/didn't confirm the email went\. Check your Sent Items/);
+    expect(graphCalls().some((c) => c.method === 'DELETE')).toBe(false);
+    expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].doneAt).toBeNull();
+    expect(await db.select().from(sentEmails)).toEqual([]);
+  });
+
+  it('a sign-in that gets no answer says so in plain words', async () => {
+    await connect();
+    const l = await lead();
+    hang = '/oauth2/v2.0/token';
+    expect((await send({ id: (await emailTask(l.id)).id })).error).toBe("Microsoft didn't answer. Try again in a minute.");
+  });
+
+  it('comparing the sign-in state never fails on unusual text', async () => {
+    const { safeEqual } = await import('@/lib/safe-equal');
+    expect(safeEqual('abc', 'abc')).toBe(true);
+    expect(safeEqual('é', 'ab')).toBe(false);
+    expect(safeEqual('', 'x')).toBe(false);
+  });
+});
+
+describe('emails sent by hand (Mark sent)', () => {
+  const { completeTaskAction, undoTaskAction } = { completeTaskAction: async (f: FormData) => (await import('@/app/team-actions')).completeTaskAction(f), undoTaskAction: async (f: FormData) => (await import('@/app/team-actions')).undoTaskAction(f) };
+
+  it('after the first email is marked sent, a later email step (Call again) is never the first email again', async () => {
+    await connect();
+    const l = await lead();
+    await completeTaskAction(form({ id: (await emailTask(l.id)).id, outcome: 'done' }));
+    const again = await emailTask(l.id, 'Call again');
+    calls = [];
+    expect((await send({ id: again.id })).error).toMatch(/No follow-up written yet/);
+    expect(graphCalls()).toEqual([]);
+  });
+
+  it('a follow-up marked sent uses up its draft (the next round asks for a new one), and Undo puts it back', async () => {
+    const { planEmail } = await import('@/lib/mail/plan');
+    const sentAt = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+    const l = await lead({ mailOutcome: 'Sent', sentAt, status: 'Contacted', followUpSubject: 'Re: Stock checks', followUpBody: 'Hi Ravi, following up.' });
+    const t = await emailTask(l.id, 'Follow-up 1');
+    await completeTaskAction(form({ id: t.id, outcome: 'done' }));
+    let [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ followUpBody: '', followUpSubject: '', followUpStep: 1 });
+    expect(planEmail(after, undefined, { from: 'INVECK Sales Team', as: 'Puja' }).body).toBe('');
+
+    await undoTaskAction(form({ id: t.id }));
+    [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after).toMatchObject({ followUpBody: 'Hi Ravi, following up.', followUpSubject: 'Re: Stock checks', followUpStep: 0, mailOutcome: 'Sent' });
+    expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].followUpFrom).toBe('');
+  });
+
+  it('Undo of the first email marked sent: it is the first email again', async () => {
+    const { planEmail } = await import('@/lib/mail/plan');
+    const l = await lead();
+    const t = await emailTask(l.id);
+    await completeTaskAction(form({ id: t.id, outcome: 'done' }));
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].mailOutcome).toBe('Sent');
+    await undoTaskAction(form({ id: t.id }));
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.mailOutcome).toBe('');
+    expect(planEmail(after, undefined, { from: 'INVECK Sales Team', as: 'Puja' }).followUp).toBe(false);
+  });
+
+  it('an email sent from Outlook stays sent when its step is undone', async () => {
+    await connect();
+    const l = await lead();
+    const t = await emailTask(l.id);
+    expect((await send({ id: t.id })).error).toBe('');
+    await undoTaskAction(form({ id: t.id }));
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].mailOutcome).toBe('Sent');
+    // And it can't go twice: it is only to be logged.
+    calls = [];
+    expect((await send({ id: t.id })).error).toMatch(/^This email already went from Outlook \(.+\): click Mark sent to log it\.$/);
+    expect(graphCalls()).toEqual([]);
+  });
+});
+
 describe('what the next email is', () => {
   it('first email until they have been emailed; then a follow-up; signed with the sender\'s name', async () => {
     const { planEmail } = await import('@/lib/mail/plan');
     const l = await lead();
     const sign = { from: 'INVECK Sales Team', as: 'Puja' };
-    expect(planEmail(l, { step: 'Day 1' }, undefined, sign)).toMatchObject({ followUp: false, subject: 'Stock checks at Hosur Gears', replyTo: '' });
-    expect(planEmail(l, { step: 'Day 1' }, undefined, sign).body).toContain('Regards,\nPuja');
+    expect(planEmail(l, undefined, sign)).toMatchObject({ followUp: false, subject: 'Stock checks at Hosur Gears', replyTo: '' });
+    expect(planEmail(l, undefined, sign).body).toContain('Regards,\nPuja');
     // Emailed by hand on Day 1 (marked sent): Follow-up 1 is a follow-up, as a new email.
     const marked = { ...l, mailOutcome: 'Sent', followUpBody: 'Following up.' };
-    expect(planEmail(marked, { step: 'Follow-up 1' }, undefined, sign)).toMatchObject({ followUp: true, subject: 'Re: Stock checks at Hosur Gears', body: 'Following up.', replyTo: '' });
+    expect(planEmail(marked, undefined, sign)).toMatchObject({ followUp: true, subject: 'Re: Stock checks at Hosur Gears', body: 'Following up.', replyTo: '' });
     // No sender name in Settings that matches: the text is left as written.
-    expect(planEmail(l, { step: 'Day 1' }, undefined, { from: '', as: 'Puja' }).body).toContain('INVECK Sales Team');
+    expect(planEmail(l, undefined, { from: '', as: 'Puja' }).body).toContain('INVECK Sales Team');
+    // Any email marked as gone counts, on any step; a bounce never arrived.
+    expect(planEmail({ ...l, mailOutcome: 'No reply' }, undefined, sign).followUp).toBe(true);
+    expect(planEmail({ ...l, mailOutcome: 'Bounced' }, undefined, sign).followUp).toBe(false);
+  });
+
+  it('only the sign-off is re-signed, not every mention of the sender name', async () => {
+    const { planEmail } = await import('@/lib/mail/plan');
+    const l = await lead({ emailBody: 'Hi Ravi,\n\nINVECK helps plants count stock on mobile.\n\nRegards,\nINVECK' });
+    expect(planEmail(l, undefined, { from: 'INVECK', as: 'Puja' }).body).toBe('Hi Ravi,\n\nINVECK helps plants count stock on mobile.\n\nRegards,\nPuja');
   });
 });
 

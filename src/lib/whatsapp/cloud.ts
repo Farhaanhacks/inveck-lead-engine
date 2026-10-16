@@ -96,8 +96,9 @@ export async function sendWhatsApp(c: WaConfig, msg: WaOutgoing): Promise<{ wami
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-  } catch (e) {
-    throw new WaError(`Couldn't reach WhatsApp: ${e instanceof Error ? e.message : String(e)}`);
+  } catch {
+    // It may still have gone: say so, rather than invite a second copy straight away.
+    throw new WaError("WhatsApp didn't answer, so this may or may not have gone. Wait a few minutes before sending again.");
   }
   const data = (await res.json().catch(() => ({}))) as {
     messages?: { id?: string }[];

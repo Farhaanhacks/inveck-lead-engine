@@ -25,6 +25,8 @@ export default async function AccountPage({ searchParams }: PageProps<'/account'
   const mailbox = me.id ? await getMailbox(db, me.id) : null;
   const sp = await searchParams;
   const notice = typeof sp.mail === 'string' ? MAIL_NOTICE[sp.mail] : undefined;
+  // Microsoft's reason, for a sign-in that was refused or failed.
+  const why = notice && (sp.mail === 'declined' || sp.mail === 'failed') && typeof sp.why === 'string' ? sp.why.slice(0, 300) : '';
   return (
     <>
       <PageHeader title="Account" description={me.id ? `Logged in as ${me.name} (${me.username}).` : 'Logged in as the administrator.'} />
@@ -37,6 +39,7 @@ export default async function AccountPage({ searchParams }: PageProps<'/account'
         <section className="card mt-6 max-w-md space-y-3 p-5">
           <h2 className="text-sm font-semibold">Outlook</h2>
           {notice && <p role="status" className={`text-xs ${notice.good ? 'text-good-ink' : 'text-warning-ink'}`}>{notice.text}</p>}
+          {why && <p className="text-xs text-muted">Microsoft said: {why}</p>}
           {!mailReady ? (
             <p className="text-xs text-muted">Sending from Outlook isn&apos;t set up yet. An administrator adds INVECK&apos;s Microsoft app details to the server first (see the README).</p>
           ) : mailbox ? (

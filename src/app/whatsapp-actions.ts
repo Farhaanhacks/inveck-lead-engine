@@ -8,6 +8,7 @@ import { mayActOn } from '@/lib/access';
 import { waNumber } from '@/lib/phones';
 import { getSettings } from '@/lib/settings';
 import { requireUser } from '@/lib/users';
+import { formatDateTime } from '@/lib/dates';
 import { waConfig } from '@/lib/whatsapp/cloud';
 import { CONSENT_WAYS, recordConsent, removeConsent, sendFromInveck } from '@/lib/whatsapp/contacts';
 import { completeTaskAction } from './team-actions';
@@ -29,6 +30,9 @@ export async function sendWhatsAppAction(_prev: SendWhatsAppState, form: FormDat
   if (!task || task.kind !== 'whatsapp') return { error: 'This WhatsApp step no longer exists. Refresh the page.' };
   if (task.doneAt) return { error: 'This step was already logged. Refresh the page.' };
   if (task.ownerId !== user.id) return { error: 'Only the person this company belongs to can send its WhatsApp.' };
+  // Sent before and the step undone since: it went, so it is only to be logged.
+  const [went] = await db.select().from(whatsappMessages).where(eq(whatsappMessages.taskId, task.id));
+  if (went) return { error: went.status === 'sending' ? 'This WhatsApp is already being sent. Refresh the page.' : `This WhatsApp already went from INVECK's number (${formatDateTime(went.at)}): click Mark sent to log it.` };
   const c = waConfig();
   if (!c) return { error: "WhatsApp sending isn't set up on the server yet." };
   const [lead] = await db.select().from(leads).where(eq(leads.id, task.leadId));
