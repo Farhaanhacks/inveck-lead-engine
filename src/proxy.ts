@@ -8,6 +8,12 @@ const PUBLIC_PATHS = [/^\/login$/, /^\/api\/health$/, /^\/api\/cron(\/draw)?$/, 
 export async function proxy(request: NextRequest) {
   if (PUBLIC_PATHS.some((p) => p.test(request.nextUrl.pathname))) return NextResponse.next();
   if (await isValidSession(request.cookies.get(SESSION_COOKIE)?.value)) return NextResponse.next();
+  // Connecting Outlook happens in the browser: log in, then back to the Account page to connect.
+  if (request.nextUrl.pathname.startsWith('/api/mail/')) {
+    const login = new URL('/login', request.url);
+    login.searchParams.set('next', '/account');
+    return NextResponse.redirect(login);
+  }
   if (request.nextUrl.pathname.startsWith('/api/')) {
     return NextResponse.json({ error: 'Not logged in' }, { status: 401 });
   }
