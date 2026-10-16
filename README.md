@@ -47,8 +47,41 @@ number is kept only when the sales team types it in (Edit point of contact), lab
 team". Drafts are still written for every qualified lead, to send from LinkedIn or once the team has
 an address.
 
-The one human step is **approval**. A person reads the draft, edits it if needed, approves
-it and marks it as sent. Nothing is ever sent automatically.
+The one human step is **approval**. A person reads the draft, edits it if needed, and sends it.
+Nothing is ever sent automatically: every email goes out because someone clicked Send mail.
+
+### Sending email from Outlook
+
+Each team member connects their own INVECK Outlook (Microsoft 365) once, on the **Account** page.
+After that, the email step on **Today** has a **Send mail** button: one click sends the draft from
+their own mailbox (it shows in their Sent Items, and replies come to their inbox), and the arrow
+beside it opens the email to review and edit first: the address, the subject and the text. The step
+is then logged as sent, as "Mark sent" would log it. Drafts are signed with the sender name in
+Settings; sent from someone's mailbox, that name becomes theirs. A follow-up goes as a reply in the
+same thread as the last email sent to that person, with it quoted below; if no follow-up is written
+yet, **Write it for me** drafts one. "Mark sent" is still there for emails sent by hand.
+
+One-time setup by an administrator:
+
+1. In the Microsoft Entra admin center (entra.microsoft.com), **App registrations → New
+   registration**: name it "INVECK Lead Engine", **Accounts in this organizational directory only**,
+   and a **Web** redirect URI of `https://<the app's address>/api/mail/callback`
+   (e.g. `https://inveck-lead-engine.vercel.app/api/mail/callback`).
+2. **API permissions → Add → Microsoft Graph → Delegated**: `Mail.ReadWrite`, `User.Read`,
+   `offline_access`, `openid`, `email`. If your tenant doesn't let people consent to apps
+   themselves, click **Grant admin consent for INVECK**.
+3. **Certificates & secrets → New client secret**; copy its **Value** (shown once).
+4. In Vercel (Project → Settings → Environment Variables), add:
+   - `MS_CLIENT_ID`: the app's Application (client) ID
+   - `MS_TENANT_ID`: the Directory (tenant) ID
+   - `MS_CLIENT_SECRET`: the secret's value
+   - `MAIL_TOKEN_KEY`: any long random string (40+ characters); stored connections are encrypted
+     with it. Changing it later means everyone connects Outlook again.
+
+   Then redeploy. Never paste these anywhere else.
+5. Each team member: **Account → Connect Outlook**, sign in with their INVECK account.
+
+The secret expires (Entra shows when): make a new one before then and update `MS_CLIENT_SECRET`.
 
 ### After the first email
 

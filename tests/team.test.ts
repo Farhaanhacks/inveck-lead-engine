@@ -1442,19 +1442,19 @@ describe('Micron Sanand: staff of a site in a metro belt, under the brand they w
   });
 });
 
-describe('emails are not kept anywhere', () => {
-  it('clears every stored email and its labels, and no tracker column shows one', async () => {
+describe('emails: only the team\'s, kept; never on the tracker', () => {
+  it('startup upkeep never clears a saved email (it once did, on every start), and no tracker column shows one', async () => {
     const db = await getDb();
     const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
     const { people } = await import('@/lib/db/schema');
     const { TRACKER_HEADERS } = await import('@/lib/tracker');
     const { sql } = await import('drizzle-orm');
-    const [l] = await db.insert(leads).values(lead('Mojj Engineering', { contactEmail: 'dhirendra@mojj.in', emailStatus: 'Prospeo (verified)', emailSource: 'prospeo', emailRetrievedAt: new Date() })).returning();
-    await db.insert(people).values({ leadId: l.id, name: 'Dhirendra Oke', email: 'dhirendra@mojj.in', emailStatus: 'inferred', emailSource: 'inferred', isPrimary: true });
-    for (const s of SCHEMA_STATEMENTS.filter((s) => /SET contact_email = ''|SET email = ''/.test(s))) await db.execute(sql.raw(s));
-    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(after).toMatchObject({ contactEmail: '', emailStatus: '', emailSource: '', emailRetrievedAt: null, contactName: 'Ravi Shah' });
-    expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0]).toMatchObject({ email: '', emailStatus: '', emailSource: '', name: 'Dhirendra Oke' });
+    const [l] = await db.insert(leads).values(lead('Mojj Engineering', { contactEmail: 'dhirendra@mojj.in', emailStatus: 'entered by the team', emailSource: 'manual' })).returning();
+    await db.insert(people).values({ leadId: l.id, name: 'Dhirendra Oke', email: 'dhirendra@mojj.in', emailSource: 'manual', isPrimary: true });
+    expect(SCHEMA_STATEMENTS.some((s) => /SET contact_email = ''|SET email = ''/.test(s) && !/NOT EXISTS \(SELECT 1 FROM settings/.test(s) && !/best guess/.test(s))).toBe(false);
+    for (const s of SCHEMA_STATEMENTS) await db.execute(sql.raw(s));
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0]).toMatchObject({ contactEmail: 'dhirendra@mojj.in', emailSource: 'manual' });
+    expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0].email).toBe('dhirendra@mojj.in');
     expect(TRACKER_HEADERS.some((h) => /email id/i.test(h))).toBe(false);
   });
 });

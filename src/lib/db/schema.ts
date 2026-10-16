@@ -430,3 +430,42 @@ export const companyDays = pgTable('company_days', {
   day: text('day').notNull(),
   doneAt: timestamp('done_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * A team member's Outlook mailbox (Microsoft 365), connected once on the Account page: emails go out
+ * from it. Only the refresh token is kept, encrypted (see lib/mail/outlook.ts); never shown anywhere.
+ */
+export const mailboxes = pgTable('mailboxes', {
+  userId: integer('user_id').primaryKey(),
+  address: text('address').notNull(),
+  displayName: text('display_name').notNull().default(''),
+  refreshToken: text('refresh_token').notNull(),
+  connectedAt: timestamp('connected_at', { withTimezone: true }).notNull().defaultNow(),
+  /** Why the last send couldn't use it (e.g. the connection expired): shown on the Account page. */
+  lastError: text('last_error').notNull().default(''),
+});
+export type Mailbox = typeof mailboxes.$inferSelect;
+
+/**
+ * Every email sent from the app: what went, from whom, to whom, and Outlook's id for it, so a
+ * follow-up is a reply in the same thread. One per Today step (`taskId`), so a second click never
+ * sends twice.
+ */
+export const sentEmails = pgTable('sent_emails', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').notNull(),
+  taskId: integer('task_id').unique(),
+  userId: integer('user_id').notNull(),
+  fromAddress: text('from_address').notNull().default(''),
+  toAddress: text('to_address').notNull(),
+  subject: text('subject').notNull().default(''),
+  body: text('body').notNull().default(''),
+  /** Outlook's (immutable) message id and conversation. */
+  graphId: text('graph_id').notNull().default(''),
+  conversationId: text('conversation_id').notNull().default(''),
+  /** 'sending' while Outlook is being asked; 'sent' once it took it. */
+  status: text('status').notNull().default('sending'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type SentEmail = typeof sentEmails.$inferSelect;

@@ -52,6 +52,11 @@ import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { PhoneLinks } from '@/components/phone-links';
 import { loadFunnel } from '@/lib/followups';
+import { SendMail } from '@/components/send-mail';
+import { getMailbox, mailConfig } from '@/lib/mail/outlook';
+import { lastSentTo, planEmail, sentByLead } from '@/lib/mail/plan';
+import { getSettings } from '@/lib/settings';
+import type { SentEmail } from '@/lib/db/schema';
 
 /** How often Today's housekeeping runs (contact checks, new steps), at most. */
 const HOUSEKEEPING_EVERY = 2 * 60 * 1000;
@@ -174,12 +179,18 @@ function roundLabel(task: Task): string {
   return task.step;
 }
 
+/** Sending from Outlook: the viewer's connected mailbox (if any) and what was already sent to this company. */
+type MailContext = { configured: boolean; from: string; senderName: string; sent?: SentEmail[] };
+
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
-function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [] }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean; emails?: string[] }) {
+function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [], mail }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean; emails?: string[]; mail?: MailContext }) {
   const { task, lead } = item;
   // The P2 flow ran out of people: this row asks for the next person rather than a call.
   const finding = task.step === FIND_NEXT_STEP;
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
+  // The email this step sends: the first email, or a follow-up replying to the last one sent.
+  const prior = task.kind === 'email' && mail?.from ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
+  const plan = task.kind === 'email' && mail?.from ? planEmail(lead, task, prior, { from: mail.senderName, as: bda }) : null;
   return (
     <li className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
       <div className="flex w-40 shrink-0 items-start gap-2">
@@ -203,11 +214,20 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [] }: { it
             )}
             {task.kind === 'email' && (
               <>
-                {emails.map((e) => (
-                  <a key={e} href={`mailto:${e}`} className="self-center text-xs text-accent hover:underline">{e}</a>
-                ))}
-                <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
+                {/* Sending from Outlook shows the address in its review; otherwise a link to write by hand. */}
+                {!(mail?.from && plan && emails.length) &&
+                  emails.map((e) => (
+                    <a key={e} href={`mailto:${e}`} className="self-center text-xs text-accent hover:underline">{e}</a>
+                  ))}
+                {mail?.from && plan && emails.length ? (
+                  <SendMail taskId={task.id} from={mail.from} addresses={emails} subject={plan.subject} body={plan.body} followUp={plan.followUp} threaded={!!plan.replyTo} />
+                ) : (
+                  <Link href={`/leads/${lead.id}`} className={SMALL}>Open draft</Link>
+                )}
                 <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
+                {mail?.configured && !mail.from && emails.length > 0 && (
+                  <Link href="/account" className="self-center text-xs text-accent hover:underline">Connect Outlook to send from here</Link>
+                )}
               </>
             )}
             {task.kind === 'linkedin' && task.step === CA_WAITING_STEP && (
@@ -277,7 +297,12 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [] }: { it
                 <CopyButton text={whatsappIntro(lead, bda)} label="Copy message" />
               </>
             )}
-            {task.kind === 'email' && <p className="whitespace-pre-line">{lead.emailSubject ? `Subject: ${lead.emailSubject}\n\n` : ''}{lead.emailBody || 'No draft yet.'}</p>}
+            {task.kind === 'email' &&
+              (plan ? (
+                <p className="whitespace-pre-line">{plan.subject ? `Subject: ${plan.subject}\n\n` : ''}{plan.body || (plan.followUp ? 'No follow-up written yet.' : 'No draft yet.')}</p>
+              ) : (
+                <p className="whitespace-pre-line">{lead.emailSubject ? `Subject: ${lead.emailSubject}\n\n` : ''}{lead.emailBody || 'No draft yet.'}</p>
+              ))}
             {task.kind === 'linkedin' && (
               <>
                 <p>{linkedinNote(lead, bda)}</p>
@@ -385,6 +410,7 @@ function CompanyCard({
   doneToday,
   linkedinFull,
   tier,
+  mail,
 }: {
   group: CompanyGroup;
   bda: string;
@@ -393,6 +419,7 @@ function CompanyCard({
   doneToday: Task[];
   linkedinFull: boolean;
   tier: Tier;
+  mail?: MailContext;
 }) {
   const { lead } = group;
   // One row per channel, in the same order every time: open ones to log, the ones logged today ticked.
@@ -465,7 +492,7 @@ function CompanyCard({
       <ul className="mt-2 divide-y divide-line border-t border-line">
         {rows.map((r) =>
           r.open ? (
-            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={emails} />
+            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={emails} mail={mail} />
           ) : (
             <DoneStep key={r.done!.id} task={r.done!} readOnly={readOnly} />
           ),
@@ -596,6 +623,12 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
+  // Sending from Outlook: only from your own connected mailbox, on your own list.
+  const mailReady = !!mailConfig();
+  const mailbox = own && mailReady ? await getMailbox(db, me.id) : null;
+  const sentMail = mailbox ? await sentByLead(db, visible.map((g) => g.lead.id)) : new Map<number, SentEmail[]>();
+  const senderName = mailbox ? (await getSettings(db)).senderName : '';
+  const mailFor = (leadId: number): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, sent: sentMail.get(leadId) } : undefined);
   const icpOf = (l: Lead) => icpFor(l.segment, icpRows);
   // Best first by INVECK's contact priority; people already tried go last.
   const othersOf = (l: Lead) =>
@@ -820,7 +853,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} />
+              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead.id)} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

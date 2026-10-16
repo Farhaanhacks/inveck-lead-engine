@@ -465,13 +465,9 @@ export const SCHEMA_STATEMENTS = [
     value JSONB NOT NULL,
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
-  // Emails aren't kept at all (like phone numbers found automatically): every stored address, its
-  // labels and the email lookups cached for reuse are cleared. Nothing can store one again, so this
-  // only ever changes anything once.
-  `UPDATE leads SET contact_email = '', email_status = '', email_source = '', email_verification = '', email_provider_status = '', email_retrieved_at = NULL
-    WHERE contact_email <> '' OR email_status <> '' OR email_source <> '' OR email_retrieved_at IS NOT NULL`,
-  `UPDATE people SET email = '', email_status = '', email_source = '', email_verification = '', email_provider_status = '', email_retrieved_at = NULL
-    WHERE email <> '' OR email_status <> '' OR email_source <> '' OR email_retrieved_at IS NOT NULL`,
+  // Emails the app had looked up itself were cleared once, when it stopped looking them up. That
+  // clearing ran on every start and also erased the addresses the team saves (on Today, by import, in
+  // Edit point of contact): it is gone. Emails are never looked up, so only the team's are stored.
   `DELETE FROM enrichment_cache WHERE key LIKE 'apollo:%' OR key LIKE 'prospeo:%'`,
   `CREATE TABLE IF NOT EXISTS known_companies (
     id SERIAL PRIMARY KEY,
@@ -480,6 +476,30 @@ export const SCHEMA_STATEMENTS = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `ALTER TABLE known_companies ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT ''`,
+  `CREATE TABLE IF NOT EXISTS mailboxes (
+    user_id INTEGER PRIMARY KEY,
+    address TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    refresh_token TEXT NOT NULL,
+    connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE TABLE IF NOT EXISTS sent_emails (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    task_id INTEGER UNIQUE,
+    user_id INTEGER NOT NULL,
+    from_address TEXT NOT NULL DEFAULT '',
+    to_address TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    graph_id TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'sending',
+    sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS sent_emails_lead ON sent_emails (lead_id)`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.
