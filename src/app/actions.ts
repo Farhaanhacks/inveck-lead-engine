@@ -758,6 +758,9 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
     senderCompany: str(form, 'senderCompany'),
     demoLink: str(form, 'demoLink'),
     productDescription: str(form, 'productDescription'),
+    waTemplateName: str(form, 'waTemplateName'),
+    waTemplateLanguage: str(form, 'waTemplateLanguage') || 'en',
+    waTemplateText: str(form, 'waTemplateText'),
   });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

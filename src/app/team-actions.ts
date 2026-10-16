@@ -17,7 +17,8 @@ import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
-import { addPhone, dropFirstPhone, putPhoneBack } from '@/lib/phones';
+import { addPhone, dropFirstPhone, putPhoneBack, waNumber } from '@/lib/phones';
+import { ON_A_CALL, recordConsent, undoCallConsent, WA_DETAILS_STEP } from '@/lib/whatsapp/contacts';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
 import { callAgainAt, CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay, planCaFallback } from '@/lib/tasks';
 
@@ -163,6 +164,14 @@ export async function completeTaskAction(form: FormData) {
       .update(tasks)
       .set({ doneAt: now, outcome: 'closed' })
       .where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false), dropped ? undefined : gt(tasks.dueDate, istDay())));
+    // They agreed on the call to hear from INVECK on WhatsApp: kept on record (undoing the call takes it
+    // back), and the details go on WhatsApp today.
+    const waId = form.get('waConsent') === 'on' && !dropped ? waNumber(lead?.phone ?? '') : '';
+    if (waId) {
+      await recordConsent(db, { waId, leadId: task.leadId, how: ON_A_CALL, by: { id: user.id, name: user.name }, taskId: task.id, at: now });
+      const open = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt), lte(tasks.dueDate, istDay()))).limit(1);
+      if (!open.length) await db.insert(tasks).values({ leadId: task.leadId, ownerId: task.ownerId, kind: 'whatsapp', step: WA_DETAILS_STEP, title: 'Send the details on WhatsApp', dueDate: istDay(), slot: 'day', createdAt: now });
+    }
     const asked = futureDay(str(form, 'callbackDate'));
     // A callback for today isn't due straight away (the call was just made, and the company would stay
     // on top of the list as if nothing was logged): this evening at 5 pm, or from 2 pm the next working morning.
@@ -414,6 +423,8 @@ export async function undoTaskAction(form: FormData) {
   // Whatever was ticked off along with it (the rest of the sequence after a connected call, or earlier rounds caught up) comes back too.
   await db.update(tasks).set({ doneAt: null, outcome: '' }).where(and(eq(tasks.leadId, task.leadId), eq(tasks.outcome, 'closed'), eq(tasks.doneAt, task.doneAt)));
   if (task.kind === 'call' && task.outcome === 'connected') {
+    await undoCallConsent(db, task.id);
+    await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, WA_DETAILS_STEP), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.priority, true), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, 'Promised callback'), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
   }

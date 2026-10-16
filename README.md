@@ -83,6 +83,66 @@ One-time setup by an administrator:
 
 The secret expires (Entra shows when): make a new one before then and update `MS_CLIENT_SECRET`.
 
+### WhatsApp from INVECK's number
+
+WhatsApp only allows a business to message people who agreed to hear from it, so the app keeps
+that record and sends from INVECK's own business number (Meta's WhatsApp Cloud API) only to them:
+
+- **Agreeing.** On a connected call, tick **They agreed to get WhatsApp messages from INVECK**: it is
+  saved with the date, the call and who logged it, and a WhatsApp step to send the details appears
+  for today (undoing the call takes both back). It can also be marked on the company page (how they
+  agreed: on a call, by email, in person, on a form). Someone who messages INVECK's number counts as
+  agreeing. A number found online is not agreement: those contacts keep the manual **Open
+  WhatsApp** from the team member's own phone.
+- **Sending.** For someone who agreed, the WhatsApp step on Today has **Send WhatsApp**, with an arrow
+  to review it first. Until they write back, WhatsApp only allows the template Meta approved (set in
+  **Settings → WhatsApp template**), filled in with their first name, the sender's name and the
+  company. For 24 hours after their last message, anything can be written.
+- **Replies.** Messages to INVECK's number show on Today under **WhatsApp replies** and on the company
+  page, where the whole conversation is, with delivery ticks and the reason when one isn't
+  delivered. A reply moves the lead to Replied.
+- **STOP.** A reply of STOP (or Meta's "Stop promotions" button) stops everything to that number,
+  open WhatsApp steps included, until they send START or agree again.
+
+One-time setup, by whoever manages INVECK's Meta (Facebook) business account:
+
+1. **Meta Business portfolio** (business.facebook.com) for INVECK, with **business verification**
+   done (Security centre; it asks for registration documents such as GST).
+2. **developers.facebook.com → My apps → Create app**, type **Business**, linked to that portfolio;
+   add the **WhatsApp** product.
+3. **WhatsApp → API setup → Add phone number**: a number not in use on WhatsApp (or INVECK's WhatsApp
+   Business app number, if Meta offers to connect it with the app kept: "coexistence"). Verify it and
+   set the display name. Copy its **Phone number ID**.
+4. **Business settings → Users → System users → Add** (admin); **Assign assets**: the app and the
+   WhatsApp account. **Generate token** for the app with `whatsapp_business_messaging` and
+   `whatsapp_business_management`, expiring **Never**.
+5. **App settings → Basic → App secret**: copy it.
+6. In Vercel (Project → Settings → Environment Variables), add, then redeploy:
+   - `WHATSAPP_PHONE_NUMBER_ID`: the phone number ID
+   - `WHATSAPP_TOKEN`: the system user token
+   - `WHATSAPP_APP_SECRET`: the app secret
+   - `WHATSAPP_VERIFY_TOKEN`: any long random string you choose
+7. **WhatsApp → Configuration → Webhook**: callback URL
+   `https://<the app's address>/api/whatsapp/webhook`
+   (e.g. `https://inveck-lead-engine.vercel.app/api/whatsapp/webhook`), verify token the same string
+   as `WHATSAPP_VERIFY_TOKEN`; **Verify and save**, then subscribe to the **messages** field. Switch
+   the app to **Live**.
+8. **WhatsApp Manager → Message templates → Create**: category **Marketing**, name
+   `inveck_details`, language English, a body like the one below, and the "Stop promotions" quick
+   reply button if offered. Once approved, copy its name, language code (`en` or `en_US`, as shown)
+   and body text exactly into **Settings → WhatsApp template**.
+
+   > Hi {{1}}, this is {{2}} from INVECK, following up on our call. INVECK lets your team count stock
+   > and verify assets on mobile and reconcile against ERP records without Excel, with audit-ready
+   > reports. Would a short demo for {{3}} be useful? Reply with a convenient time, or STOP to stop
+   > these messages.
+
+9. **WhatsApp Manager → Payment settings**: add a payment method (Meta charges per marketing
+   message).
+
+To test: on a company with your own number as the contact, mark that you agreed, then send from its
+page or its Today step.
+
 ### After the first email
 
 - **Follow-ups**: marking a lead as sent schedules follow-up 1 (day 3) and 2 (day 7). Each run drafts the ones that are due; the team approves and sends them like the first email. A reply, meeting, win or loss stops the sequence.

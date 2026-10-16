@@ -34,6 +34,19 @@ export const settingsSchema = z.object({
   senderCompany: z.string().trim().default('INVECK India'),
   demoLink: z.string().trim().default(''),
   productDescription: z.string().trim().min(20).default(DEFAULT_PRODUCT_DESCRIPTION),
+  /**
+   * The WhatsApp template Meta approved for INVECK's first message to someone who agreed: its name,
+   * language code and body text exactly as approved, where {{1}} is the contact's first name, {{2}}
+   * the sender's name and {{3}} the company. Empty: nothing goes from INVECK's number.
+   */
+  waTemplateName: z.string().trim().regex(/^[a-z0-9_]*$/, 'lowercase letters, numbers and _ only, as in Meta').default(''),
+  waTemplateLanguage: z.string().trim().regex(/^[a-zA-Z_]{2,10}$/, 'a language code such as en or en_US').default('en'),
+  waTemplateText: z
+    .string()
+    .trim()
+    .max(1024)
+    .refine((t) => [...t.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].every((m) => ['1', '2', '3'].includes(m[1])), 'only {{1}}, {{2}} and {{3}} can be filled in')
+    .default(''),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 

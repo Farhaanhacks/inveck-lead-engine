@@ -10,7 +10,7 @@ import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { icps, leads, people, type Lead, type Person, type Task } from '@/lib/db/schema';
+import { icps, leads, people, type Lead, type Person, type Task, type WhatsappContact } from '@/lib/db/schema';
 import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
@@ -40,7 +40,7 @@ import {
   type TodayTask,
 } from '@/lib/tasks';
 import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLink } from '@/lib/talk';
-import { formatDate, formatTime } from '@/lib/dates';
+import { formatDate, formatDateTime, formatTime } from '@/lib/dates';
 import { FIND_NEXT_STEP } from '@/lib/escalate';
 import { PageHeader } from '@/components/page-header';
 import { normSegment } from '@/lib/icp-match';
@@ -57,6 +57,11 @@ import { getMailbox, mailConfig } from '@/lib/mail/outlook';
 import { lastSentTo, planEmail, sentByLead } from '@/lib/mail/plan';
 import { getSettings } from '@/lib/settings';
 import type { SentEmail } from '@/lib/db/schema';
+import { SendWhatsApp } from '@/components/send-whatsapp';
+import { waConfig } from '@/lib/whatsapp/cloud';
+import { canMessage, planWhatsApp, waContacts, waitingReplies, type WaPlan } from '@/lib/whatsapp/contacts';
+import { waNumber } from '@/lib/phones';
+import { dismissWhatsAppReplyAction } from '../../whatsapp-actions';
 
 /** How often Today's housekeeping runs (contact checks, new steps), at most. */
 const HOUSEKEEPING_EVERY = 2 * 60 * 1000;
@@ -123,7 +128,7 @@ function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
   );
 }
 
-function CallActions({ task }: { task: Task }) {
+function CallActions({ task, waTo, waAgreed }: { task: Task; waTo: string; waAgreed: boolean }) {
   return (
     <div className="flex flex-wrap items-start gap-2">
       <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number'], ['no_contact', 'No contact found']]} />
@@ -141,6 +146,13 @@ function CallActions({ task }: { task: Task }) {
           </select>
           <label htmlFor={`cb-${task.id}`} className="label">Next call on (optional)</label>
           <input id={`cb-${task.id}`} name="callbackDate" type="date" min={istDay()} className="field" />
+          {/* Their yes is the record WhatsApp asks for: only then can INVECK's number message them. */}
+          {waTo && !waAgreed && (
+            <label className="flex items-start gap-2 text-sm text-ink-2">
+              <input type="checkbox" name="waConsent" className="mt-1" />
+              <span>They agreed to get WhatsApp messages from INVECK on +{waTo}. Adds a WhatsApp step for today to send the details.</span>
+            </label>
+          )}
           <p className="text-xs text-muted">
             {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. {CLIENT_OUTCOMES.join(', ')}: the same, and the company goes on the clients sheet (Won, or Existing Client). Demo completed: moves it to Meeting Booked. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list on that day; today&apos;s date means this evening at 5 pm (from 2 pm, the next working morning).
           </p>
@@ -179,15 +191,38 @@ function roundLabel(task: Task): string {
   return task.step;
 }
 
+/** WhatsApp for the company's contact: their number, whether they agreed or asked to stop, and what INVECK's number can send them. */
+type WaContext = { to: string; agreed: boolean; optedOut: boolean; plan: WaPlan | null };
+
 /** Sending from Outlook: the viewer's connected mailbox (if any) and what was already sent to this company. */
 type MailContext = { configured: boolean; from: string; senderName: string; sent?: SentEmail[] };
 
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
-function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [], mail }: { item: TodayTask; bda: string; readOnly: boolean; linkedinFull: boolean; askPhone: boolean; emails?: string[]; mail?: MailContext }) {
+function Step({
+  item,
+  bda,
+  readOnly,
+  linkedinFull,
+  askPhone,
+  emails = [],
+  mail,
+  whatsapp,
+}: {
+  item: TodayTask;
+  bda: string;
+  readOnly: boolean;
+  linkedinFull: boolean;
+  askPhone: boolean;
+  emails?: string[];
+  mail?: MailContext;
+  whatsapp?: WaContext;
+}) {
   const { task, lead } = item;
   // The P2 flow ran out of people: this row asks for the next person rather than a call.
   const finding = task.step === FIND_NEXT_STEP;
   const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
+  // They agreed: it goes from INVECK's number (when that is set up and a template approved).
+  const fromInveck = task.kind === 'whatsapp' && whatsapp?.plan && !whatsapp.plan.problem ? whatsapp.plan : null;
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
   const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
   const plan = task.kind === 'email' && mail ? planEmail(lead, task, prior, { from: mail.senderName, as: bda }) : null;
@@ -205,13 +240,31 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [], mail }
           <span className="text-xs text-muted">Only {bda} can log this</span>
         ) : (
           <div className="flex flex-wrap items-start gap-2">
-            {task.kind === 'call' && (finding ? <Outcome id={task.id} buttons={[['skipped', 'Skip for today']]} /> : <CallActions task={task} />)}
-            {task.kind === 'whatsapp' && (
-              <>
-                {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
-                <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
-              </>
-            )}
+            {task.kind === 'call' &&
+              (finding ? <Outcome id={task.id} buttons={[['skipped', 'Skip for today']]} /> : <CallActions task={task} waTo={whatsapp?.to ?? ''} waAgreed={!!whatsapp?.agreed} />)}
+            {task.kind === 'whatsapp' &&
+              (whatsapp?.optedOut ? (
+                <>
+                  <span className="self-center text-xs text-warning-ink">Asked not to get WhatsApp messages from INVECK.</span>
+                  <Outcome id={task.id} buttons={[['skipped', 'Skip']]} />
+                </>
+              ) : fromInveck ? (
+                <>
+                  <SendWhatsApp
+                    taskId={task.id}
+                    to={`+${fromInveck.to}`}
+                    template={fromInveck.template}
+                    text={fromInveck.text}
+                    freeUntil={fromInveck.freeUntil ? `until ${formatDateTime(fromInveck.freeUntil)}` : undefined}
+                  />
+                  <Outcome id={task.id} buttons={[['skipped', 'Skip']]} />
+                </>
+              ) : (
+                <>
+                  {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
+                  <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
+                </>
+              ))}
             {task.kind === 'email' && (
               <>
                 {/* From their connected Outlook; until it is connected, it opens their email app filled in. */}
@@ -291,12 +344,15 @@ function Step({ item, bda, readOnly, linkedinFull, askPhone, emails = [], mail }
                 </ul>
               </>
             )}
-            {task.kind === 'whatsapp' && (
-              <>
-                <p>{whatsappIntro(lead, bda)}</p>
-                <CopyButton text={whatsappIntro(lead, bda)} label="Copy message" />
-              </>
-            )}
+            {task.kind === 'whatsapp' &&
+              (fromInveck ? (
+                <p className="whitespace-pre-line">{fromInveck.text}</p>
+              ) : (
+                <>
+                  <p>{whatsappIntro(lead, bda)}</p>
+                  <CopyButton text={whatsappIntro(lead, bda)} label="Copy message" />
+                </>
+              ))}
             {task.kind === 'email' &&
               (plan ? (
                 <p className="whitespace-pre-line">{plan.subject ? `Subject: ${plan.subject}\n\n` : ''}{plan.body || (plan.followUp ? 'No follow-up written yet.' : 'No draft yet.')}</p>
@@ -411,6 +467,7 @@ function CompanyCard({
   linkedinFull,
   tier,
   mail,
+  whatsapp,
 }: {
   group: CompanyGroup;
   bda: string;
@@ -420,6 +477,7 @@ function CompanyCard({
   linkedinFull: boolean;
   tier: Tier;
   mail?: MailContext;
+  whatsapp?: WaContext;
 }) {
   const { lead } = group;
   // One row per channel, in the same order every time: open ones to log, the ones logged today ticked.
@@ -492,7 +550,7 @@ function CompanyCard({
       <ul className="mt-2 divide-y divide-line border-t border-line">
         {rows.map((r) =>
           r.open ? (
-            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={emails} mail={mail} />
+            <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={emails} mail={mail} whatsapp={whatsapp} />
           ) : (
             <DoneStep key={r.done!.id} task={r.done!} readOnly={readOnly} />
           ),
@@ -626,10 +684,37 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // Email steps, on your own list: sent from your connected Outlook, or opened in your email app.
   const mailReady = !!mailConfig();
   const emailLeadIds = own ? visible.filter((g) => g.items.some((i) => i.task.kind === 'email')).map((g) => g.lead.id) : [];
-  const [mailbox, sentMail, senderName] = emailLeadIds.length
-    ? await Promise.all([mailReady ? getMailbox(db, me.id) : null, sentByLead(db, emailLeadIds), getSettings(db).then((s) => s.senderName)])
-    : [null, new Map<number, SentEmail[]>(), ''];
+  // WhatsApp, on your own list: who agreed to hear from INVECK (or asked to stop), and what its number can send.
+  const waReady = !!waConfig();
+  const waIds = own ? visible.map((g) => waNumber(g.lead.contactPhone)).filter(Boolean) : [];
+  const [mailbox, sentMail, settings, waKnown] = await Promise.all([
+    emailLeadIds.length && mailReady ? getMailbox(db, me.id) : null,
+    emailLeadIds.length ? sentByLead(db, emailLeadIds) : new Map<number, SentEmail[]>(),
+    emailLeadIds.length || waIds.length ? getSettings(db) : null,
+    waContacts(db, waIds),
+  ]);
+  const senderName = settings?.senderName ?? '';
   const mailFor = (leadId: number): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, sent: sentMail.get(leadId) } : undefined);
+  const waFor = (l: Lead): WaContext | undefined => {
+    if (!own) return undefined;
+    const to = waNumber(l.contactPhone);
+    const c: WhatsappContact | undefined = waKnown.get(to);
+    return { to, agreed: canMessage(c), optedOut: !!c?.optedOutAt, plan: waReady && settings && to ? planWhatsApp(l, bda, settings, c) : null };
+  };
+  // WhatsApp messages waiting for an answer: the list's own, and for administrators, ones from numbers not on any company.
+  const { replies, strangers } = waReady ? await waitingReplies(db, viewId, me.role === 'admin') : { replies: [], strangers: [] };
+  // One line per number: its latest message, and how many are waiting.
+  const byNumber = <T,>(rows: T[], waId: (r: T) => string) => {
+    const out = new Map<string, { first: T; waiting: number }>();
+    for (const r of rows) {
+      const seen = out.get(waId(r));
+      if (seen) seen.waiting++;
+      else out.set(waId(r), { first: r, waiting: 1 });
+    }
+    return [...out.values()];
+  };
+  const replyRows = byNumber(replies, (r) => r.m.waId).map(({ first, waiting }) => ({ ...first, waiting }));
+  const strangerRows = byNumber(strangers, (m) => m.waId).map(({ first, waiting }) => ({ m: first, waiting }));
   const icpOf = (l: Lead) => icpFor(l.segment, icpRows);
   // Best first by INVECK's contact priority; people already tried go last.
   const othersOf = (l: Lead) =>
@@ -755,6 +840,51 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         </section>
       )}
 
+      {replyRows.length + strangerRows.length > 0 && (
+        <section className="card mb-6">
+          <div className="border-b border-line px-5 py-3">
+            <h2 className="text-sm font-semibold">
+              WhatsApp replies <span className="font-normal tabular-nums text-muted">{replyRows.length + strangerRows.length}</span>
+            </h2>
+            <p className="text-xs text-muted">Messages to INVECK&apos;s WhatsApp number waiting for an answer. Reply from the company page (free text for 24 hours after their message), or mark it done.</p>
+          </div>
+          <ul className="divide-y divide-line">
+            {replyRows.map(({ m, company, contactName, waiting }) => (
+              <li key={m.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <Link href={`/leads/${m.leadId}#whatsapp`} className="font-medium hover:underline">{company}</Link>
+                  <span className="text-sm text-ink-2">{contactName ? ` · ${contactName}` : ''}</span>
+                  <span className="ml-2 text-xs text-muted">{formatDateTime(m.at)}{waiting > 1 ? ` · ${waiting} messages` : ''}</span>
+                  <p className="mt-0.5 line-clamp-2 text-sm text-ink-2">{m.body}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link href={`/leads/${m.leadId}#whatsapp`} className={SMALL}>Reply</Link>
+                  {own && (
+                    <form action={dismissWhatsAppReplyAction}>
+                      <input type="hidden" name="id" value={m.id} />
+                      <button className={SMALL}>Done</button>
+                    </form>
+                  )}
+                </div>
+              </li>
+            ))}
+            {strangerRows.map(({ m, waiting }) => (
+              <li key={m.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <span className="font-medium">+{m.waId}</span>
+                  <span className="ml-2 text-xs text-muted">Not on any company · {formatDateTime(m.at)}{waiting > 1 ? ` · ${waiting} messages` : ''}</span>
+                  <p className="mt-0.5 line-clamp-2 text-sm text-ink-2">{m.body}</p>
+                </div>
+                <form action={dismissWhatsAppReplyAction}>
+                  <input type="hidden" name="id" value={m.id} />
+                  <button className={SMALL}>Done</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div className="sticky top-0 z-20 -mx-4 mb-6 border-b border-line bg-page/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
         <nav className="flex flex-wrap gap-1.5" aria-label="Show">
           {TABS.map((t) => (
@@ -854,7 +984,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead.id)} />
+              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead.id)} whatsapp={waFor(g.lead)} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

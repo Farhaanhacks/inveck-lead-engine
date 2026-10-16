@@ -8,12 +8,18 @@ import { TierBadge } from '@/components/tier-badge';
 import { basedAbroad } from '@/lib/pipeline/employer';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { notFound } from 'next/navigation';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, icps, leads, people, type Lead, type Person } from '@/lib/db/schema';
+import { activities, icps, leads, people, whatsappMessages, type Lead, type Person, type WhatsappContact, type WhatsappMessage } from '@/lib/db/schema';
 import { Timeline } from '@/components/timeline';
 import { FOLLOW_UP_DAYS } from '@/lib/pipeline/follow-ups';
-import { formatDate, isPast, relativeDays } from '@/lib/dates';
+import { formatDate, formatDateTime, isPast, relativeDays } from '@/lib/dates';
+import { SendWhatsApp } from '@/components/send-whatsapp';
+import { waNumber } from '@/lib/phones';
+import { getSettings, type Settings } from '@/lib/settings';
+import { waConfig } from '@/lib/whatsapp/cloud';
+import { canMessage, CONSENT_WAYS, planWhatsApp, waContacts } from '@/lib/whatsapp/contacts';
+import { setWhatsAppConsentAction } from '../../../whatsapp-actions';
 import { StatusPill } from '@/components/status-pill';
 import { CopyButton } from '@/components/copy-button';
 import { SubmitButton } from '@/components/submit-button';
@@ -377,6 +383,102 @@ function PeopleCard({ leadId, company, city, list, tierFor, mainTier }: { leadId
 }
 
 // Research started from this page keeps working after the response.
+const WA_STATUS: Record<string, string> = { sending: 'Sending', sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Not delivered' };
+
+/**
+ * WhatsApp with the contact from INVECK's business number: whether they agreed to hear from INVECK
+ * (and how), the conversation, and sending: the approved template, or free text within 24 hours of
+ * their last message.
+ */
+function WhatsAppCard({
+  lead,
+  to,
+  contact,
+  messages,
+  names,
+  canAct,
+  ready,
+  settings,
+  sender,
+}: {
+  lead: Lead;
+  to: string;
+  contact?: WhatsappContact;
+  messages: WhatsappMessage[];
+  names: Map<number, string>;
+  canAct: boolean;
+  ready: boolean;
+  settings: Settings;
+  sender: string;
+}) {
+  const agreed = canMessage(contact);
+  const plan = ready && to ? planWhatsApp(lead, sender, settings, contact) : null;
+  const who = (id: number | null) => (id == null ? '' : (names.get(id) ?? 'a team member'));
+  return (
+    <section id="whatsapp" className="card scroll-mt-6 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">WhatsApp</h2>
+        <span className="text-xs text-muted">{to ? `+${to}` : 'No number saved for the contact'}</span>
+      </div>
+      {to && (
+        <p className="mt-2 text-sm text-ink-2">
+          {contact?.optedOutAt
+            ? `Asked not to get WhatsApp messages from INVECK on ${formatDate(contact.optedOutAt)}. Nothing goes to this number unless they agree again.`
+            : agreed && contact?.consentAt
+              ? `Agreed to WhatsApp messages from INVECK on ${formatDate(contact.consentAt)}: ${(contact.consentHow || 'how not recorded').replace(/^\w/, (ch) => ch.toLowerCase())}${contact.consentBy != null ? `, logged by ${who(contact.consentBy)}` : ''}.`
+              : "Hasn't agreed to WhatsApp messages from INVECK yet. Until they do, message them only from your own phone (Open WhatsApp on Today)."}
+        </p>
+      )}
+      {canAct && to && !agreed && (
+        <form action={setWhatsAppConsentAction} className="mt-3 flex flex-wrap items-end gap-2">
+          <input type="hidden" name="leadId" value={lead.id} />
+          <input type="hidden" name="agree" value="1" />
+          <div>
+            <label htmlFor="wa-how" className="label">How they agreed</label>
+            <select id="wa-how" name="how" defaultValue="On a call" className="field h-8 w-auto py-1 text-xs">
+              {CONSENT_WAYS.map((w) => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </div>
+          <SubmitButton pendingText="Saving…" className="btn-secondary px-2.5 py-1 text-xs">They agreed to WhatsApp from INVECK</SubmitButton>
+          <p className="basis-full text-xs text-muted">Only when they said yes to hearing from INVECK. A number found online or in a directory isn&apos;t agreement.</p>
+        </form>
+      )}
+      {canAct && agreed && contact?.consentBy != null && (
+        <form action={setWhatsAppConsentAction} className="mt-1">
+          <input type="hidden" name="leadId" value={lead.id} />
+          <input type="hidden" name="agree" value="0" />
+          <button className="text-xs text-muted hover:text-ink hover:underline">Remove (logged by mistake)</button>
+        </form>
+      )}
+      {messages.length > 0 && (
+        <ul className="mt-4 space-y-2">
+          {messages.map((m) => (
+            <li key={m.id} className={`flex ${m.direction === 'out' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.direction === 'out' ? 'bg-accent-soft' : 'bg-surface-2'}`}>
+                <p className="whitespace-pre-line">{m.body}</p>
+                <p className="mt-1 text-[11px] text-muted">
+                  {formatDateTime(m.at)} · {m.direction === 'out' ? `${WA_STATUS[m.status] ?? m.status}${m.userId != null ? ` · ${who(m.userId)}` : ''}` : contact?.profileName || 'Received'}
+                </p>
+                {m.status === 'failed' && m.error && <p className="text-[11px] text-critical-ink">{m.error}</p>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canAct && agreed && !ready && <p className="mt-3 text-xs text-muted">Sending from INVECK&apos;s WhatsApp number isn&apos;t set up yet.</p>}
+      {canAct && plan && (
+        <div className="mt-4">
+          {plan.problem ? (
+            agreed && <p className="text-xs text-warning-ink">{plan.problem}</p>
+          ) : (
+            <SendWhatsApp leadId={lead.id} to={`+${plan.to}`} template={plan.template} text={plan.freeUntil ? '' : plan.text} freeUntil={plan.freeUntil ? `until ${formatDateTime(plan.freeUntil)}` : undefined} />
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export const maxDuration = 300;
 
 export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
@@ -422,6 +524,24 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
   );
   const inSequence = lead.status === 'Contacted';
+  // WhatsApp with the contact: shown once there is a number, or messages.
+  const waTo = waNumber(lead.contactPhone);
+  const [waKnown, waMessages] = await Promise.all([
+    waContacts(db, [waTo]),
+    db
+      .select()
+      .from(whatsappMessages)
+      .where(waTo ? or(eq(whatsappMessages.leadId, id), eq(whatsappMessages.waId, waTo)) : eq(whatsappMessages.leadId, id))
+      .orderBy(desc(whatsappMessages.at), desc(whatsappMessages.id))
+      .limit(50),
+  ]);
+  const waReady = !!waConfig();
+  const waSettings = waReady ? await getSettings(db) : null;
+  const names = new Map(bdas.map((b) => [b.id, b.name]));
+  if (me) names.set(me.id, me.name);
+  const canAct = !!me && (me.role === 'admin' || lead.ownerId === me.id);
+  // Signed with the owner's name, also when an administrator sends.
+  const sender = (me?.role === 'admin' && lead.ownerId ? names.get(lead.ownerId) : me?.name) ?? '';
 
   const hasDraft = !!(lead.emailSubject || lead.emailBody || lead.linkedinMessage);
 
@@ -520,6 +640,22 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       {inSequence && (
         <div className="mb-6">
           <FollowUpCard lead={lead} />
+        </div>
+      )}
+
+      {(waTo || waMessages.length > 0) && (
+        <div className="mb-6">
+          <WhatsAppCard
+            lead={lead}
+            to={waTo}
+            contact={waKnown.get(waTo)}
+            messages={[...waMessages].reverse()}
+            names={names}
+            canAct={canAct}
+            ready={!!waSettings}
+            settings={waSettings ?? ({} as Settings)}
+            sender={sender}
+          />
         </div>
       )}
 

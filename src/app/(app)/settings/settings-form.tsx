@@ -103,6 +103,36 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
         </div>
       </section>
 
+      <section className="card space-y-4 p-5">
+        <h2 className="text-sm font-semibold">WhatsApp template</h2>
+        <p className="text-xs text-muted">
+          The first message from INVECK&apos;s WhatsApp number to someone who agreed has to be a template Meta approved. Create it in Meta&apos;s WhatsApp Manager, then copy it here exactly as approved.
+          In its text, {'{{1}}'} is the contact&apos;s first name, {'{{2}}'} the sender&apos;s name and {'{{3}}'} the company.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="sm:col-span-2">
+            <label htmlFor="waTemplateName" className="label">Template name</label>
+            <input id="waTemplateName" name="waTemplateName" defaultValue={s.waTemplateName} placeholder="inveck_details" className="field" />
+          </div>
+          <div>
+            <label htmlFor="waTemplateLanguage" className="label">Language code</label>
+            <input id="waTemplateLanguage" name="waTemplateLanguage" defaultValue={s.waTemplateLanguage} placeholder="en" className="field" />
+          </div>
+        </div>
+        <div>
+          <label htmlFor="waTemplateText" className="label">Template text (the body, as approved)</label>
+          <textarea
+            id="waTemplateText"
+            name="waTemplateText"
+            defaultValue={s.waTemplateText}
+            rows={5}
+            placeholder="Hi {{1}}, this is {{2}} from INVECK, following up on our call. …"
+            className="field"
+          />
+          <p className="mt-1 text-xs text-muted">Shown to the team before sending, and used to fill in the template. Leave the name empty to send nothing from INVECK&apos;s number.</p>
+        </div>
+      </section>
+
       <div className="flex items-center gap-3">
         <SubmitButton pendingText="Saving…">Save settings</SubmitButton>
         {state && <p className={`text-sm ${state.ok ? 'text-good-ink' : 'text-critical-ink'}`} role="status">{state.message}</p>}

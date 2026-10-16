@@ -469,3 +469,57 @@ export const sentEmails = pgTable('sent_emails', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type SentEmail = typeof sentEmails.$inferSelect;
+
+/**
+ * A WhatsApp number INVECK is in touch with (`waId`: country code and number, digits only), and
+ * whether it may message them from its business number: when and how they agreed, who logged it, and
+ * when they asked to stop. Messages from INVECK's number only ever go to numbers that agreed.
+ */
+export const whatsappContacts = pgTable('whatsapp_contacts', {
+  waId: text('wa_id').primaryKey(),
+  leadId: integer('lead_id'),
+  /** The name on their WhatsApp profile, from their messages. */
+  profileName: text('profile_name').notNull().default(''),
+  consentAt: timestamp('consent_at', { withTimezone: true }),
+  /** The team member who logged it; null when they messaged INVECK themselves. */
+  consentBy: integer('consent_by'),
+  /** How they agreed, in words: "On a call", "They messaged INVECK on WhatsApp"... */
+  consentHow: text('consent_how').notNull().default(''),
+  /** The call it was logged on, so undoing the call takes it back. */
+  consentTaskId: integer('consent_task_id'),
+  /** They asked to stop (STOP): nothing more goes to them until they agree again. */
+  optedOutAt: timestamp('opted_out_at', { withTimezone: true }),
+  /** Their last message: for 24 hours after it, a free-text reply may go (otherwise only the approved template). */
+  lastInboundAt: timestamp('last_inbound_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type WhatsappContact = typeof whatsappContacts.$inferSelect;
+
+/**
+ * Every WhatsApp message to and from INVECK's business number. Sent ones are one per Today step
+ * (`taskId`), so a second click never sends twice; `wamid` is WhatsApp's id, which delivery updates
+ * and replies refer to.
+ */
+export const whatsappMessages = pgTable('whatsapp_messages', {
+  id: serial('id').primaryKey(),
+  waId: text('wa_id').notNull(),
+  leadId: integer('lead_id'),
+  taskId: integer('task_id').unique(),
+  /** Who sent it (outgoing). */
+  userId: integer('user_id'),
+  direction: text('direction').$type<'in' | 'out'>().notNull(),
+  /** 'template' or 'text' going out; what came in ('text', 'image', 'button'...). */
+  kind: text('kind').notNull().default('text'),
+  template: text('template').notNull().default(''),
+  /** The text as sent or received (a template filled in). */
+  body: text('body').notNull().default(''),
+  wamid: text('wamid').notNull().default(''),
+  /** Going out: sending, sent, delivered, read or failed. Coming in: received. */
+  status: text('status').notNull().default('sending'),
+  error: text('error').notNull().default(''),
+  /** A message that came in, once dealt with (answered, or marked done): off the replies list. */
+  handledAt: timestamp('handled_at', { withTimezone: true }),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  statusAt: timestamp('status_at', { withTimezone: true }),
+});
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;

@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { isValidSession, SESSION_COOKIE } from '@/lib/auth';
 
 // Every page and API route needs the shared-password session, except the login page
-// and the two machine endpoints, which check their own secret.
-const PUBLIC_PATHS = [/^\/login$/, /^\/api\/health$/, /^\/api\/cron(\/draw)?$/, /^\/api\/runs\/\d+\/continue$/];
+// and the machine endpoints, which check their own secret (WhatsApp's: Meta's signature).
+const PUBLIC_PATHS = [/^\/login$/, /^\/api\/health$/, /^\/api\/cron(\/draw)?$/, /^\/api\/runs\/\d+\/continue$/, /^\/api\/whatsapp\/webhook$/];
 
 export async function proxy(request: NextRequest) {
   if (PUBLIC_PATHS.some((p) => p.test(request.nextUrl.pathname))) return NextResponse.next();

@@ -1,4 +1,4 @@
-import { splitPhones } from './phones';
+import { waNumber } from './phones';
 import type { Lead } from './db/schema';
 
 const CA = /\b(ca|chartered|audit|accountant)/i;
@@ -53,10 +53,6 @@ export function linkedinNote(lead: Pick<Lead, 'contactName' | 'segment'>, bda: s
 /** A click-to-chat link with the message filled in, or '' when there is no usable number. */
 export function whatsappLink(phone: string, text: string): string {
   // Several numbers: the first one.
-  let digits = (splitPhones(phone)[0] ?? '').replace(/\D/g, '');
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  else if (digits.startsWith('0')) digits = digits.slice(1);
-  if (digits.length === 10) digits = '91' + digits;
-  if (digits.length < 11 || digits.length > 15) return '';
-  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+  const n = waNumber(phone);
+  return n ? `https://wa.me/${n}?text=${encodeURIComponent(text)}` : '';
 }

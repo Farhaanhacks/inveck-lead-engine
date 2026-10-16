@@ -17,6 +17,10 @@ export default async function SettingsPage() {
     { name: 'JINA_API_KEY', ok: !!keys.jina, use: 'Optional: higher limits for reading JavaScript-heavy websites', needed: false },
     { name: 'APP_PASSWORD', ok: !!process.env.APP_PASSWORD, use: 'Team login', needed: true },
     { name: 'CRON_SECRET', ok: !!process.env.CRON_SECRET, use: 'Scheduled runs on Vercel', needed: !!process.env.VERCEL },
+    { name: 'WHATSAPP_PHONE_NUMBER_ID', ok: !!process.env.WHATSAPP_PHONE_NUMBER_ID, use: "Optional: WhatsApp from INVECK's number (Meta's phone number ID)", needed: false },
+    { name: 'WHATSAPP_TOKEN', ok: !!process.env.WHATSAPP_TOKEN, use: 'Optional: WhatsApp, a permanent System User token', needed: false },
+    { name: 'WHATSAPP_APP_SECRET', ok: !!process.env.WHATSAPP_APP_SECRET, use: "Optional: WhatsApp, checks replies come from Meta (the app's secret)", needed: false },
+    { name: 'WHATSAPP_VERIFY_TOKEN', ok: !!process.env.WHATSAPP_VERIFY_TOKEN, use: "Optional: WhatsApp, any random string, also typed into Meta's webhook setup", needed: false },
   ];
 
   return (

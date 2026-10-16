@@ -500,6 +500,39 @@ export const SCHEMA_STATEMENTS = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS sent_emails_lead ON sent_emails (lead_id)`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+    wa_id TEXT PRIMARY KEY,
+    lead_id INTEGER,
+    profile_name TEXT NOT NULL DEFAULT '',
+    consent_at TIMESTAMPTZ,
+    consent_by INTEGER,
+    consent_how TEXT NOT NULL DEFAULT '',
+    consent_task_id INTEGER,
+    opted_out_at TIMESTAMPTZ,
+    last_inbound_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS whatsapp_messages (
+    id SERIAL PRIMARY KEY,
+    wa_id TEXT NOT NULL,
+    lead_id INTEGER,
+    task_id INTEGER UNIQUE,
+    user_id INTEGER,
+    direction TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'text',
+    template TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    wamid TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'sending',
+    error TEXT NOT NULL DEFAULT '',
+    handled_at TIMESTAMPTZ,
+    at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status_at TIMESTAMPTZ
+  )`,
+  // WhatsApp sends a webhook again when it isn't sure it arrived: a message is stored once.
+  `CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_messages_wamid ON whatsapp_messages (wamid) WHERE wamid <> ''`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_messages_lead ON whatsapp_messages (lead_id)`,
+  `CREATE INDEX IF NOT EXISTS whatsapp_messages_wa ON whatsapp_messages (wa_id)`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

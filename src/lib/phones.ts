@@ -31,3 +31,15 @@ export function putPhoneBack(value: string, phone: string): string {
 }
 
 export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, '')}`;
+
+/**
+ * The (first) number as WhatsApp knows it: country code first, digits only (919845012345), or '' when
+ * it can't be one. Indian numbers may be written without +91.
+ */
+export function waNumber(phone: string): string {
+  let n = (splitPhones(phone)[0] ?? '').replace(/\D/g, '');
+  if (n.startsWith('00')) n = n.slice(2);
+  else if (n.startsWith('0')) n = n.slice(1);
+  if (n.length === 10) n = '91' + n;
+  return n.length >= 11 && n.length <= 15 ? n : '';
+}
