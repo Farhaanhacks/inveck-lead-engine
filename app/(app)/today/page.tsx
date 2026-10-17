@@ -15,7 +15,8 @@ import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
-import { runDailyDraw } from '@/lib/draw';
+import { allocationFor, quotaOf, quotaTotal, runDailyDraw, topUpDraw } from '@/lib/draw';
+import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { getAttendance } from '@/lib/attendance';
 import {
   companyProgress,
@@ -179,7 +180,7 @@ function FoundDetail({ leadId, field, label, placeholder, type }: { leadId: numb
 const STEP_LABEL: Record<Task['kind'], string> = { call: 'Call', whatsapp: 'WhatsApp', email: 'Email', linkedin: 'LinkedIn' };
 
 const roundNo = (t: Task) => Number(/Follow-up (\d+)/.exec(t.step)?.[1] ?? 0);
-/** The later of two rounds: by due date, then Follow-up 3 after Follow-up 2 on the same day. */
+/** The later of two rounds: by due date, then a later follow-up round after an earlier one on the same day. */
 const laterRound = (a: Task, b: Task) => a.dueDate > b.dueDate || (a.dueDate === b.dueDate && roundNo(a) >= roundNo(b));
 
 /** Which round this is, in plain words. */
@@ -585,6 +586,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   await atMostEvery('today:housekeeping', HOUSEKEEPING_EVERY, async () => {
     await bestEffort('assigning inbound leads', () => assignUnowned(db), 0);
     await bestEffort('the morning draw', () => runDailyDraw(db), null);
+    // Leads that turned up since a short draw go to the associates still short, in the segment they were short in.
+    await bestEffort('topping up the draw', () => topUpDraw(db), null);
     await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
     await bestEffort('planning Today steps', () => ensureSequences(db), 0);
   }, undefined);
@@ -627,7 +630,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
   const day = istDay();
   const caTeam = !!viewing && worksCaFirms(viewing.name);
-  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later] = await Promise.all([
+  const drawQuota = quotaOf(await getSettings(db));
+  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later, assigned] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
     // Someone who works CA firms has them counted apart from the other companies.
@@ -639,6 +643,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     db.select().from(leads).where(and(eq(leads.ownerId, viewId), eq(leads.status, 'Meeting Booked'), ne(leads.callFeedback, 'Demo completed'))),
     nextDue(db, viewId, day),
     laterToday(db, viewId, day),
+    allocationFor(db, viewId, day),
   ]);
   // Where this person's follow-ups stand, with a link to the funnel.
   const funnel = viewId ? await bestEffort('loading follow-ups', () => loadFunnel(db, viewId, day), []) : [];
@@ -788,7 +793,16 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
         ) : null}
       </section>
 
-      <div className={`mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 ${caProgress ? 'xl:grid-cols-8' : 'xl:grid-cols-7'}`}>
+      <p className="mb-2 text-xs text-muted">
+        Daily targets, per associate: {quotaTotal(drawQuota)} leads assigned ({drawQuota[MANUFACTURING]} Manufacturing + {drawQuota[LOGISTICS]} 3PL &amp; Logistics), {DAILY_COMPANY_TARGET} companies completed, {DAILY_CALL_TARGET} calls attempted.
+      </p>
+      <div className={`mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 ${caProgress ? 'xl:grid-cols-9' : 'xl:grid-cols-8'}`}>
+        <Counter
+          label="Leads assigned today"
+          done={assigned.total}
+          goal={quotaTotal(drawQuota)}
+          note={`${assigned.bySegment[MANUFACTURING]}/${drawQuota[MANUFACTURING]} Manufacturing + ${assigned.bySegment[LOGISTICS]}/${drawQuota[LOGISTICS]} 3PL & Logistics`}
+        />
         <Counter label="Companies done today" done={progress.done} goal={DAILY_COMPANY_TARGET} />
         {caProgress && <Counter label="CA reach-outs today" done={caProgress.done} goal={DAILY_CA_TARGET} note={caProgress.backlog ? `incl. ${caProgress.backlog} backlog` : undefined} />}
         {/* The companies' own backlog: part of Companies done today (CA firms' is noted on their card). */}

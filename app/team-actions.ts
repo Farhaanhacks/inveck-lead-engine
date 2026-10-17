@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
-import { escalate, unansweredCalls, type Escalation } from '@/lib/escalate';
+import { escalate, type Escalation } from '@/lib/escalate';
 import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
@@ -10,7 +10,7 @@ import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
 import { emailedAlready } from '@/lib/mail/plan';
-import { FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
+import { cancelFollowUpSequence, FOLLOW_UP_ROUNDS, isQualifyingOutcome, JUNK_REASON, junkIfComplete, restoreLead, startFollowUpSequence } from '@/lib/follow-up-sequence';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
@@ -22,7 +22,7 @@ import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack, waNumber } from '@/lib/phones';
 import { ON_A_CALL, recordConsent, undoCallConsent, WA_DETAILS_STEP } from '@/lib/whatsapp/contacts';
 import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
-import { callAgainAt, CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, MAX_CALL_ATTEMPTS, nextWorkingDay, planCaFallback } from '@/lib/tasks';
+import { callAgainAt, CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, nextWorkingDay, planCaFallback } from '@/lib/tasks';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -137,15 +137,12 @@ export async function completeTaskAction(form: FormData) {
   const skipped = outcome === 'skipped';
   await logActivity(db, task.leadId, task.kind === 'call' && !skipped ? 'call' : 'note', skipped ? `${task.title}: skipped` : `${what}${task.step ? ` (${task.step})` : ''}${note ? `. ${note}` : ''}`);
 
-  // The P2 flow: enough unanswered calls, or the wrong person, and the next person at the company takes over.
+  // The P2 flow: only when a connected call says it is the wrong person. Unanswered calls never switch the contact
+  // by themselves: the follow-up sequence runs its five rounds and the lead is then moved to Deleted.
   let escalated: Escalation | null = null;
   if (task.kind === 'call' && ['no_answer', 'busy', 'wrong_number'].includes(outcome)) {
-    const [l] = await db.select({ id: leads.id, contactSince: leads.contactSince }).from(leads).where(eq(leads.id, task.leadId));
-    if (l && (await unansweredCalls(db, l)) >= MAX_CALL_ATTEMPTS) escalated = await escalate(db, task.leadId, 'no_answer', now);
-    // A CA firm is called once when its LinkedIn request isn't accepted; no call-again days.
-    else if (outcome !== 'wrong_number' && !ca) await remindToCallAgain(db, task, now);
-    // A wrong number with another one saved: call that one today.
-    else if (wrong && dropped.rest) {
+    // A wrong number with another one saved: call that one today (not one of the five follow-up rounds).
+    if (wrong && dropped.rest) {
       await db.insert(tasks).values({
         leadId: task.leadId,
         ownerId: task.ownerId,
@@ -205,6 +202,12 @@ export async function completeTaskAction(form: FormData) {
     const from = await moveAfterOutreach(db, task.leadId, target, now);
     if (from) await db.update(tasks).set({ stageFrom: `${from}>${target}` }).where(eq(tasks.id, task.id));
   }
+  // The follow-up sequence: a call saved as no answer, busy or wrong number starts it right away; a
+  // connected call stops it (and it never starts for a lead that has had one).
+  if (task.kind === 'call' && outcome === 'connected') await cancelFollowUpSequence(db, task.leadId, 'a call connected', { now });
+  else if (task.kind === 'call' && isQualifyingOutcome(outcome) && !escalated?.switched) await startFollowUpSequence(db, task.leadId, now);
+  // The last round done (every step done or skipped): the lead goes to Deleted as junk.
+  if (task.followUpRound > 0) await junkIfComplete(db, task.leadId, now);
   await markCompanyDay(db, task.leadId, task.ownerId);
   revalidatePath('/today');
   revalidatePath('/followups');
@@ -225,12 +228,12 @@ async function followUpSentByHand(db: Awaited<ReturnType<typeof getDb>>, task: T
   // Sent from Outlook: that already moved the follow-ups on.
   const [fromOutlook] = await db.select({ id: sentEmails.id }).from(sentEmails).where(and(eq(sentEmails.taskId, task.id), eq(sentEmails.status, 'sent')));
   if (fromOutlook) return;
-  const step = Math.min(lead.followUpStep + 1, FOLLOW_UP_DAYS.length);
-  const was = { subject: lead.followUpSubject, body: lead.followUpBody, step: lead.followUpStep, next: lead.nextFollowUpAt?.toISOString() ?? null };
+  const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, FOLLOW_UP_ROUNDS);
+  const was = { subject: lead.followUpSubject, body: lead.followUpBody, step: lead.followUpStep };
   await db.update(tasks).set({ followUpFrom: JSON.stringify(was) }).where(eq(tasks.id, task.id));
   await db
     .update(leads)
-    .set({ followUpSubject: '', followUpBody: '', followUpStep: step, ...(lead.sentAt ? { nextFollowUpAt: nextFollowUpAt(lead.sentAt, step) } : {}) })
+    .set({ followUpSubject: '', followUpBody: '', followUpStep: step })
     .where(eq(leads.id, lead.id));
 }
 
@@ -238,7 +241,7 @@ async function followUpSentByHand(db: Awaited<ReturnType<typeof getDb>>, task: T
 async function undoEmailSent(db: Awaited<ReturnType<typeof getDb>>, task: Task) {
   const was = (() => {
     try {
-      return task.followUpFrom ? (JSON.parse(task.followUpFrom) as { subject: string; body: string; step: number; next: string | null }) : null;
+      return task.followUpFrom ? (JSON.parse(task.followUpFrom) as { subject: string; body: string; step: number }) : null;
     } catch {
       return null;
     }
@@ -247,7 +250,7 @@ async function undoEmailSent(db: Awaited<ReturnType<typeof getDb>>, task: Task) 
     // Unless a new follow-up was written since.
     await db
       .update(leads)
-      .set({ followUpSubject: was.subject, followUpBody: was.body, followUpStep: was.step, nextFollowUpAt: was.next ? new Date(was.next) : null })
+      .set({ followUpSubject: was.subject, followUpBody: was.body, followUpStep: was.step })
       .where(and(eq(leads.id, task.leadId), eq(leads.followUpBody, '')));
     await db.update(tasks).set({ followUpFrom: '' }).where(eq(tasks.id, task.id));
     return;
@@ -261,14 +264,15 @@ async function undoEmailSent(db: Awaited<ReturnType<typeof getDb>>, task: Task) 
 /**
  * One message per channel catches the person up: logging a WhatsApp, email or call also ticks off the
  * other ones of that kind still open for the company from earlier rounds, so a missed day never leaves
- * a backlog to send twice. This evening's round still comes in the evening.
+ * a backlog to send twice. The follow-up rounds are never ticked off this way: each round is done (or
+ * skipped) by a person. This evening's round still comes in the evening.
  */
 async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, now: Date) {
   const today = istDay();
   const open = await db
     .select({ id: tasks.id, dueDate: tasks.dueDate, slot: tasks.slot })
     .from(tasks)
-    .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, task.kind), isNull(tasks.doneAt), eq(tasks.priority, false), lte(tasks.dueDate, today)));
+    .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, task.kind), isNull(tasks.doneAt), eq(tasks.priority, false), eq(tasks.followUpRound, 0), lte(tasks.dueDate, today)));
   const laterToday = (t: { dueDate: string; slot: string }) => t.dueDate === today && t.slot === 'evening' && !(task.dueDate === today && task.slot === 'evening');
   const ids = open.filter((t) => t.id !== task.id && !laterToday(t)).map((t) => t.id);
   // Same time as the logged task, so Undo can bring them back together.
@@ -316,26 +320,6 @@ async function planAlongside(db: Awaited<ReturnType<typeof getDb>>, leadId: numb
     if (planned.some((p) => p.kind === kind)) continue;
     await db.insert(tasks).values({ leadId, ownerId, kind, step, title: `${step}: ${kind === 'email' ? 'email' : 'WhatsApp'}`, dueDate: day, slot: 'day' });
   }
-}
-
-/** No answer: make sure the person is called again on the next working day, unless a call is already planned by then. */
-async function remindToCallAgain(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, now = new Date()) {
-  // No answer before 2 pm: again at 5 pm today. From 2 pm: again at 9 am the next working day.
-  const { day, slot } = callAgainAt(now);
-  const calls = await db.select().from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'call')));
-  if (calls.some((c) => !c.doneAt && c.dueDate <= day)) return;
-  await db.insert(tasks).values({
-    leadId: task.leadId,
-    ownerId: task.ownerId,
-    kind: 'call',
-    step: 'Call again',
-    title: slot === 'evening' ? 'Call again at 5 pm: no answer this morning' : 'Call again at 9 am: no answer last time',
-    dueDate: day,
-    slot,
-    note: `${RETRY_NOTE}${task.id}`,
-  });
-  // A new day gets the WhatsApp and email too; this evening's call doesn't repeat today's.
-  if (slot === 'morning') await planAlongside(db, task.leadId, task.ownerId, day, 'Call again');
 }
 
 export async function clockInAction() {
@@ -458,6 +442,20 @@ export async function undoTaskAction(form: FormData) {
     await db.delete(tasks).where(and(eq(tasks.note, `${RETRY_NOTE}${task.id}`), isNull(tasks.doneAt)));
     // and the WhatsApp and email planned alongside it
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.step, 'Call again'), isNull(tasks.doneAt), gte(tasks.createdAt, task.doneAt)));
+    // The call that started the follow-up sequence is undone: the sequence goes with it, unless a round has been worked.
+    if (task.followUpRound === 0) {
+      const [l] = await db.select({ started: leads.followUpStartedOn }).from(leads).where(eq(leads.id, task.leadId));
+      const rounds = await db.select({ doneAt: tasks.doneAt }).from(tasks).where(and(eq(tasks.leadId, task.leadId), gt(tasks.followUpRound, 0)));
+      if (l?.started === istDay(task.doneAt) && rounds.every((r) => !r.doneAt)) {
+        await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), gt(tasks.followUpRound, 0)));
+        await db.update(leads).set({ followUpStartedOn: '' }).where(eq(leads.id, task.leadId));
+      }
+    }
+  }
+  // Undoing the step that moved the lead to Deleted (the last follow-up round) brings the lead back.
+  if (task.followUpRound > 0) {
+    const [l] = await db.select({ status: leads.status, reason: leads.deletedReason }).from(leads).where(eq(leads.id, task.leadId));
+    if (l?.status === 'Deleted' && l.reason === JUNK_REASON) await restoreLead(db, task.leadId, user.name);
   }
   // A CA firm's request (or skipping it) set up a wait and a call, WhatsApp and email: they go with it.
   if (task.kind === 'linkedin' && (task.outcome === 'sent' || task.outcome === 'skipped')) {

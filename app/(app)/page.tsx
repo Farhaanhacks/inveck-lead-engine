@@ -6,7 +6,7 @@ import { leads, opportunities } from '@/lib/db/schema';
 import { RadarCard } from '@/components/radar-card';
 import { getAnalytics, type Best } from '@/lib/analytics';
 import { Funnel, WeeklyColumns } from '@/components/charts';
-import { relativeDays } from '@/lib/dates';
+import { roundBadge } from '@/lib/follow-up-sequence';
 import { activeRun } from '@/lib/runs';
 import { getRunView, listRuns } from '@/lib/run-view';
 import { RunPanel } from '@/components/run-panel';
@@ -140,19 +140,19 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
             </div>
             {analytics.followUpsDue.length ? (
               <ul className="mt-2 divide-y divide-line">
-                {analytics.followUpsDue.map((l) => (
+                {analytics.followUpsDue.map(({ lead: l, round, dueDate }) => (
                   <li key={l.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                     <Link href={`/leads/${l.id}`} className="min-w-0 truncate font-medium hover:underline">
                       {l.company}
                     </Link>
                     <span className="shrink-0 text-xs text-warning-ink">
-                      Follow-up {l.followUpStep + 1} · {l.followUpBody ? 'draft ready' : 'due'} {l.nextFollowUpAt ? relativeDays(l.nextFollowUpAt) : ''}
+                      {roundBadge({ round, dueDate }).label}{l.followUpBody ? ' · draft ready' : ''}
                     </span>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="mt-2 text-sm text-muted">Nothing due. Follow-ups are scheduled for day 3 and day 7 after a lead is marked as sent.</p>
+              <p className="mt-2 text-sm text-muted">Nothing due. Five follow-ups, every other working day, start when a call is saved as no answer, busy or wrong number.</p>
             )}
           </section>
         </div>

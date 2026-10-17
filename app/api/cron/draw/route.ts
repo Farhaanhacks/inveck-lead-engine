@@ -1,7 +1,7 @@
 import { runSecret } from '@/lib/auth';
 import { bestEffort } from '@/lib/best-effort';
 import { getDb } from '@/lib/db';
-import { getDraw, runDailyDraw } from '@/lib/draw';
+import { getDraw, runDailyDraw, topUpDraw } from '@/lib/draw';
 import { liveServices } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   const promoted = await bestEffort('tidying contacts', () => tidyContacts(db), [] as number[]);
   for (const id of promoted) await bestEffort('rewriting a draft', () => redraftForContact(db, svc, id), undefined);
   const checked = await bestEffort('checking contacts on LinkedIn', () => verifyContacts(db, svc, { limit: 200 }), null);
-  const drawn = await bestEffort('the morning draw', () => runDailyDraw(db), null);
+  const drawn = (await bestEffort('the morning draw', () => runDailyDraw(db), null)) ?? (await bestEffort('topping up the draw', () => topUpDraw(db), null));
   // Every owned lead's steps on its owner's Today now, not only once someone opens the page.
   const planned = await bestEffort('planning Today steps', () => ensureSequences(db), 0);
   // Qualified leads missing an email or LinkedIn draft (none written yet, or the AI dropped one).

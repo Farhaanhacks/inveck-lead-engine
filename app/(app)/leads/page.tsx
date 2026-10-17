@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, eq, ilike, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, ilike, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
@@ -12,7 +12,7 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { StatusPill } from '@/components/status-pill';
 import { bulkLeadAction } from '../../actions';
-import { isPast, relativeDays } from '@/lib/dates';
+import { nextRounds, roundBadge } from '@/lib/follow-up-sequence';
 import { fitAssessment, TONE_CLASS } from '@/lib/fit-view';
 
 const PAGE_SIZE = 100;
@@ -65,10 +65,10 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   if (segment) filters.push(eq(leads.segment, segment));
   if (q) filters.push(or(ilike(leads.company, `%${q}%`), ilike(leads.contactName, `%${q}%`), ilike(leads.city, `%${q}%`))!);
   const where = filters.length ? and(...filters) : undefined;
-  // "All" leaves out disqualified companies; they have their own filter.
+  // "All" leaves out disqualified and Deleted companies; they have their own filters.
   const whereWithStatus = status
     ? and(where, eq(leads.status, status as (typeof LEAD_STATUSES)[number]))
-    : and(where, ne(leads.status, 'Disqualified'));
+    : and(where, notInArray(leads.status, ['Disqualified', 'Deleted']));
 
   const [rows, byStatus, segments, [{ total }]] = await Promise.all([
     db
@@ -84,7 +84,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
     db.select({ total: sql<number>`count(*)::int` }).from(leads).where(whereWithStatus),
   ]);
   const counts: Record<string, number> = Object.fromEntries(byStatus.map((r) => [r.status, r.n]));
-  const all = Object.entries(counts).reduce((a, [s, n]) => (s === 'Disqualified' ? a : a + n), 0);
+  const rounds = await nextRounds(db, rows.map((l) => l.id));
+  const all = Object.entries(counts).reduce((a, [s, n]) => (s === 'Disqualified' || s === 'Deleted' ? a : a + n), 0);
 
   const link = (next: Record<string, string>) => {
     const p = new URLSearchParams({ ...(status && { status }), ...(segment && { segment }), ...(q && { q }), owner: ownerParam, ...next });
@@ -152,7 +153,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
           </button>
           <button name="action" value="approve" className="btn-secondary px-2.5 py-1 text-xs">Approve</button>
           <button name="action" value="reject" className="btn-secondary px-2.5 py-1 text-xs">Reject</button>
-          <button name="action" value="delete" className="btn-danger px-2.5 py-1 text-xs">Delete</button>
+          {status === 'Deleted' && <button name="action" value="restore" className="btn-primary px-2.5 py-1 text-xs">Restore</button>}
+          <button name="action" value="delete" className="btn-danger px-2.5 py-1 text-xs" title="Removes the company and its history for good">Delete for good</button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1180px] text-sm">
@@ -179,11 +181,10 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
                   </td>
                   <td className="px-2 py-3">
                     <StatusPill status={l.status} />
-                    {l.status === 'Contacted' && l.nextFollowUpAt && (
-                      <div className={`mt-1 text-xs ${isPast(l.nextFollowUpAt) ? 'font-medium text-warning-ink' : 'text-muted'}`}>
-                        Follow-up {l.followUpStep + 1} {isPast(l.nextFollowUpAt) ? 'due' : relativeDays(l.nextFollowUpAt)}
-                      </div>
+                    {rounds.has(l.id) && l.status !== 'Deleted' && (
+                      <div className={`mt-1 text-xs ${roundBadge(rounds.get(l.id)!).due ? 'font-medium text-warning-ink' : 'text-muted'}`}>{roundBadge(rounds.get(l.id)!).label}</div>
                     )}
+                    {l.status === 'Deleted' && l.deletedReason && <div className="mt-1 max-w-[16rem] text-xs text-muted">{l.deletedReason}</div>}
                   </td>
                   <td className="px-2 py-3">
                     <FitCell lead={l} />

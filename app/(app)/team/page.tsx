@@ -4,7 +4,9 @@ import { adminPage } from '@/lib/access';
 import { PERIODS, periodDays, teamReport, type Period } from '@/lib/team-report';
 import { formatTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
-import { drawPool, getDraw, runDailyDraw } from '@/lib/draw';
+import { DRAW_SEGMENTS, drawPool, getDraw, handedOut, quotaOf, quotaTotal, runDailyDraw, shortfalls, topUpDraw } from '@/lib/draw';
+import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
+import { istDay } from '@/lib/tasks';
 import { getSettings } from '@/lib/settings';
 import { drawNowAction } from '@/app/team-actions';
 import { refetchProgress, startRefetchIfWaiting } from '@/lib/run-driver';
@@ -20,10 +22,17 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   const { from, to } = periodDays(period);
   const db = await getDb();
   await runDailyDraw(db);
+  await topUpDraw(db);
   await startRefetchIfWaiting();
   const refetch = await refetchProgress();
   const resetRecent = refetch.recent;
-  const [{ people, attendance }, draw, pool, { leadsPerMorning }] = await Promise.all([teamReport(db, from, to), getDraw(db), drawPool(db), getSettings(db)]);
+  const [{ people, attendance }, draw, pool, drawSettings, hands] = await Promise.all([teamReport(db, from, to), getDraw(db), drawPool(db), getSettings(db), handedOut(db, istDay())]);
+  // Per associate: the quota in each segment (12 + 8 by default), so the team-wide total is 20 x the associates (80 for four).
+  const quota = draw?.quota ?? quotaOf(drawSettings);
+  const teamWanted = people.length * quotaTotal(quota);
+  const teamDrawn = people.reduce((n, p) => n + (hands[String(p.id)]?.[MANUFACTURING] ?? 0) + (hands[String(p.id)]?.[LOGISTICS] ?? 0), 0);
+  const names = new Map(people.map((p) => [p.id, p.name]));
+  const shortage = shortfalls(people.map((p) => p.id), quota, hands);
   const totals = people.reduce(
     (t, p) => ({ companies: t.companies + p.companiesDone, attempts: t.attempts + p.callAttempts, connected: t.connected + p.connected, meetings: t.meetings + p.meetings, won: t.won + p.won }),
     { companies: 0, attempts: 0, connected: 0, meetings: 0, won: 0 },
@@ -82,37 +91,72 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
           <div>
             <h2 className="text-sm font-semibold">Morning draw</h2>
             <p className="text-xs text-muted">
-              Every working day at 8:00 am, {leadsPerMorning} researched leads nobody has had yet are picked at random and split evenly across the team.
+              Every working day at 8:00 am, each associate is handed {quotaTotal(quota)} researched leads nobody has had yet: {quota[MANUFACTURING]} {MANUFACTURING} + {quota[LOGISTICS]} {LOGISTICS}, picked at random per segment. Team-wide
+              that is {teamWanted} a day for {people.length} {people.length === 1 ? 'associate' : 'associates'} ({quota[MANUFACTURING] * people.length} {MANUFACTURING} + {quota[LOGISTICS] * people.length} {LOGISTICS}). A segment that runs short is never filled from the other segment or from CA firms.
             </p>
           </div>
           {(!draw || (draw.short && pool.total > 0)) && (
             <form action={drawNowAction}>
-              <button className="btn-secondary px-3 py-1.5 text-sm">{draw ? `Top up to ${draw.wanted}` : 'Draw today\'s leads now'}</button>
+              <button className="btn-secondary px-3 py-1.5 text-sm">{draw ? 'Top up the shortfalls' : 'Draw today\'s leads now'}</button>
             </form>
           )}
         </div>
         <p className="mt-3 text-sm">
-          {draw && draw.wanted === 0 ? (
-            'No draw today (fresh start). The first leads go out on the next working morning at 8:00.'
-          ) : draw ? (
+          {draw ? (
             <>
-              Today: <span className="font-medium tabular-nums">{draw.drawn}</span> of {draw.wanted} handed out at {formatTime(new Date(draw.at))}
-              {people.length > 0 && ' (' + people.map((p) => `${p.name} ${draw.perOwner[p.id] ?? 0}`).join(', ') + ')'}.
+              Team-wide today: <span className="font-medium tabular-nums">{teamDrawn}</span> of {teamWanted} handed out (first draw at {formatTime(new Date(draw.at))}).
             </>
           ) : (
             'Not drawn yet today.'
           )}{' '}
           <span className="text-ink-2">
-            Ready for the next draw: <span className="tabular-nums">{pool.total}</span> {pool.total === 1 ? 'lead' : 'leads'}
-            {pool.total > 0 && pool.withContact < pool.total && `, ${pool.withContact} with a named decision-maker`}.
+            Ready for the next draw: <span className="tabular-nums">{pool.bySegment[MANUFACTURING]}</span> {MANUFACTURING}, <span className="tabular-nums">{pool.bySegment[LOGISTICS]}</span> {LOGISTICS}
+            {pool.total > 0 && pool.withContact < pool.total && ` (${pool.withContact} with a named decision-maker)`}.
           </span>
         </p>
-        {(draw?.short || pool.total < leadsPerMorning) && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead className="text-xs text-ink-2">
+              <tr>
+                <th className={th}>Associate</th>
+                {DRAW_SEGMENTS.map((s) => (
+                  <th key={s} className={th}>{s} (of {quota[s]})</th>
+                ))}
+                <th className={th}>Total (of {quotaTotal(quota)})</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {people.map((p) => {
+                const h = hands[String(p.id)];
+                return (
+                  <tr key={p.id}>
+                    <td className={`${td} font-medium`}>{p.name}</td>
+                    {DRAW_SEGMENTS.map((s) => {
+                      const got = h?.[s] ?? 0;
+                      return (
+                        <td key={s} className={td}>
+                          {got}
+                          {got < quota[s] && draw && <span className="ml-1 text-xs text-warning-ink">{quota[s] - got} short</span>}
+                        </td>
+                      );
+                    })}
+                    <td className={td}>{(h?.[MANUFACTURING] ?? 0) + (h?.[LOGISTICS] ?? 0)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {shortage.length > 0 && draw && (
           <p className="mt-2 text-xs text-warning-ink">
-            {draw?.short ? `Only ${draw.drawn} of ${draw.wanted} were available today. ` : ''}
-            {pool.total < leadsPerMorning && `The list has ${pool.total} researched ${pool.total === 1 ? 'lead' : 'leads'} left, short of the ${leadsPerMorning} needed for the next morning. Add companies to keep the draw full.`}
+            Shortfall: {shortage.map((s) => `${names.get(s.owner) ?? 'Associate'} ${s.short} ${s.segment}`).join('; ')}. They are topped up as soon as more {pool.total === 0 ? 'researched leads' : 'leads'} are available the same day.
           </p>
         )}
+        {pool.bySegment[MANUFACTURING] < quota[MANUFACTURING] * people.length || pool.bySegment[LOGISTICS] < quota[LOGISTICS] * people.length ? (
+          <p className="mt-2 text-xs text-warning-ink">
+            The list is short of tomorrow&apos;s need ({quota[MANUFACTURING] * people.length} {MANUFACTURING} and {quota[LOGISTICS] * people.length} {LOGISTICS}). Add companies in the segment that is short to keep the draw full.
+          </p>
+        ) : null}
       </section>
 
       <section className="card mb-6 overflow-x-auto">

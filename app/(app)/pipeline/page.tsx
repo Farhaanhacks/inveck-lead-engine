@@ -4,7 +4,7 @@ import { ownerScope } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { leads, PIPELINE_STAGES } from '@/lib/db/schema';
 import { PageHeader } from '@/components/page-header';
-import { isPast, relativeDays } from '@/lib/dates';
+import { nextRounds, roundBadge } from '@/lib/follow-up-sequence';
 import { Board, type Card } from './board';
 
 export default async function PipelinePage() {
@@ -17,16 +17,14 @@ export default async function PipelinePage() {
     .where(and(inArray(leads.status, [...PIPELINE_STAGES]), owner === null ? undefined : eq(leads.ownerId, owner)))
     .orderBy(desc(leads.finalScore), desc(leads.updatedAt));
 
+  const rounds = await nextRounds(db, rows.map((l) => l.id));
   const cards: Card[] = rows.map((l) => ({
     id: l.id,
     company: l.company,
     stage: l.status as Card['stage'],
     contact: [l.contactName, l.contactTitle].filter(Boolean).join(' · '),
     score: l.finalScore,
-    followUp:
-      l.status === 'Contacted' && l.nextFollowUpAt
-        ? { due: isPast(l.nextFollowUpAt), label: `Follow-up ${l.followUpStep + 1} ${isPast(l.nextFollowUpAt) ? 'due' : relativeDays(l.nextFollowUpAt)}` }
-        : null,
+    followUp: rounds.has(l.id) ? roundBadge(rounds.get(l.id)!) : null,
   }));
 
   return (
