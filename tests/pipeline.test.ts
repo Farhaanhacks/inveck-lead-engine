@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { activities, clients, leads, opportunities, people, runEvents, runs } from '@/lib/db/schema';
+import { activities, clients, leads, opportunities, people, runEvents, runs, tasks } from '@/lib/db/schema';
+import { startFollowUpSequence } from '@/lib/follow-up-sequence';
+import { istDay } from '@/lib/tasks';
 import { makePrimary } from '@/lib/people';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { settingsSchema, type Settings } from '@/lib/settings';
@@ -9,7 +11,7 @@ import { executeRun, startRun } from '@/lib/runs';
 import type { Services } from '@/lib/pipeline/services';
 import { fakeFetch, type FakeLog } from './fake-apis';
 import { applyStage } from '@/lib/stages';
-import { draftDueFollowUps, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
+import { draftDueFollowUps } from '@/lib/pipeline/follow-ups';
 import { getAnalytics } from '@/lib/analytics';
 
 const M = 'Manufacturing';
@@ -241,21 +243,23 @@ describe('full run with DeepSeek-style messy answers', () => {
 });
 
 describe('follow-ups, stages and analytics', () => {
-  it('schedules follow-ups on send, drafts them when due, and stops on a reply', async () => {
+  it('sending schedules nothing; the sequence drafts a follow-up when a round is due, and a reply stops it', async () => {
     const [lead] = await db
       .insert(leads)
-      .values({ company: 'Acme Forge', status: 'Approved', emailSubject: 'Stock checks at Acme', emailBody: 'Hi', contactName: 'Ravi Shah', segment: 'Manufacturing', qualified: true, source: 'Lookalike of Haldex: x' })
+      .values({ company: 'Acme Forge', status: 'Approved', ownerId: 1, mailOutcome: 'Sent', emailSubject: 'Stock checks at Acme', emailBody: 'Hi', contactName: 'Ravi Shah', segment: 'Manufacturing', qualified: true, source: 'Lookalike of Haldex: x' })
       .returning();
     await applyStage(db, [lead.id], 'Contacted');
     let [l] = await db.select().from(leads).where(eq(leads.id, lead.id));
     expect(l.sentAt).toBeInstanceOf(Date);
-    expect(Math.round((l.nextFollowUpAt!.getTime() - l.sentAt!.getTime()) / 86_400_000)).toBe(3);
+    // Marking a lead as sent no longer schedules follow-ups: only a no answer / busy / wrong number call does.
+    expect(l.nextFollowUpAt).toBeNull();
+    expect(await startFollowUpSequence(db, lead.id)).toHaveLength(5);
 
     // Not due yet: nothing drafted.
     const noop = async () => {};
     expect(await draftDueFollowUps(db, services(), noop)).toBe(0);
-    // Pretend three days passed.
-    await db.update(leads).set({ nextFollowUpAt: new Date(Date.now() - 1000) }).where(eq(leads.id, lead.id));
+    // Follow-up 1 comes due.
+    await db.update(tasks).set({ dueDate: istDay() }).where(eq(tasks.followUpRound, 1));
     expect(await draftDueFollowUps(db, services(), noop)).toBe(1);
     [l] = await db.select().from(leads).where(eq(leads.id, lead.id));
     expect(l.followUpBody).toBe('Follow-up 1 body');
@@ -264,10 +268,9 @@ describe('follow-ups, stages and analytics', () => {
     // Replying ends the sequence.
     await applyStage(db, [lead.id], 'Replied');
     [l] = await db.select().from(leads).where(eq(leads.id, lead.id));
-    expect(l.nextFollowUpAt).toBeNull();
     expect(l.followUpBody).toBe('');
     const kinds = (await db.select().from(activities).where(eq(activities.leadId, lead.id))).map((a) => `${a.kind}:${a.stage}`);
-    expect(kinds).toEqual(['sent:Contacted', 'follow_up_drafted:', 'stage:Replied', 'note:']);
+    expect(kinds).toEqual(['sent:Contacted', 'note:', 'follow_up_drafted:', 'stage:Replied', 'note:']);
 
     // Analytics see the whole journey, even after the lead moves on.
     await applyStage(db, [lead.id], 'Lost');
@@ -278,13 +281,6 @@ describe('follow-ups, stages and analytics', () => {
     expect(a.replyRate).toBe(100);
     expect(a.weeks.at(-1)).toMatchObject({ sent: 1, replied: 1 });
     expect(a.bestSource).toMatchObject({ name: 'Lookalike of a client', hits: 1, total: 1, metric: 'replied' });
-  });
-
-  it('follow-up dates are day 3 and day 7 after the first email', () => {
-    const sent = new Date('2026-09-01T05:00:00Z');
-    expect(nextFollowUpAt(sent, 0)?.toISOString()).toBe('2026-09-04T05:00:00.000Z');
-    expect(nextFollowUpAt(sent, 1)?.toISOString()).toBe('2026-09-08T05:00:00.000Z');
-    expect(nextFollowUpAt(sent, 2)).toBeNull();
   });
 });
 

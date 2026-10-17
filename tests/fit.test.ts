@@ -461,15 +461,15 @@ describe('finding contacts is separate from the fit', () => {
 });
 
 describe('Auto Diecasting Company (ADC): a CEO found with no location shown', () => {
-  it('is kept as a candidate pending verification, not rejected as working elsewhere', async () => {
+  it('is kept and becomes the contact (anyone based in India counts), not rejected as working elsewhere', async () => {
     const hari = { title: 'Hari Viswanathan - CEO, Auto Diecasting Company | LinkedIn', link: 'https://in.linkedin.com/in/hari-viswanathan', snippet: 'Experience: 18 years of experience in high pressure diecasting, with a focus on incorporating cutting-edge technologies for improved production processes.' };
     const r = await run(await klt({ company: 'Auto Diecasting Company (ADC)', city: 'Coimbatore' }), {
       research: (user) => kltAnswer(user, { risks: [] }),
       google: (q) => (q.startsWith('site:linkedin.com/in') ? [hari] : []),
     });
     const person = r.people?.find((p) => p.name === 'Hari Viswanathan');
-    expect(person).toMatchObject({ title: 'CEO', passedReason: 'unverified' });
-    expect(person?.whyNot).toContain('Corporate contact (CEO, a company-wide role), for review; no location shown');
+    expect(r.contactName).toBe('Hari Viswanathan');
+    expect(person).toMatchObject({ title: 'CEO', isPrimary: true });
     expect(r.otherDecisionMakers).not.toContain('another company');
   });
 });
@@ -478,13 +478,11 @@ describe('Alumina India Casting: the managing partner of a small firm', () => {
   const nandini = { title: 'Nandini Easwaran - Managing Partner - Alumina India Casting Company | LinkedIn', subtitle: 'Chennai, Tamil Nadu, India · Managing Partner · Alumina India Casting Company', link: 'https://in.linkedin.com/in/nandini-easwaran', snippet: '' };
   const lead = () => klt({ company: 'Alumina India Casting', city: 'Coimbatore' });
 
-  it('with only a Chennai profile, is kept as a potential company contact pending verification', async () => {
+  it('with only a Chennai profile, becomes the contact (based in India)', async () => {
     const r = await run(await lead(), { research: (user) => kltAnswer(user, { risks: [] }), google: (q) => (q.startsWith('site:linkedin.com/in') ? [nandini] : []) });
-    expect(r.contactName ?? '').toBe('');
+    expect(r.contactName).toBe('Nandini Easwaran');
     const person = r.people?.find((p) => p.name === 'Nandini Easwaran');
-    expect(person).toMatchObject({ title: 'Managing Partner', location: 'Chennai, Tamil Nadu, India', passedReason: 'unverified' });
-    expect(person?.whyNot).toContain('Corporate contact (Managing Partner, a company-wide role), for review');
-    expect(person?.whyNot).toContain('not a Coimbatore site contact unless confirmed there');
+    expect(person).toMatchObject({ title: 'Managing Partner', location: 'Chennai, Tamil Nadu, India', isPrimary: true });
   });
 
   it('with her current job shown in Coimbatore, becomes the main contact', async () => {
@@ -495,7 +493,7 @@ describe('Alumina India Casting: the managing partner of a small firm', () => {
   });
 });
 
-describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobody is the main contact', () => {
+describe('EL Forge Limited (Hosur): corporate contacts in Chennai', () => {
   const results = [
     { title: 'Srihari K.R - Chief Executive Officer at El Forge Ltd.', subtitle: 'India · Chief Executive Officer · El Forge Ltd.', link: 'https://in.linkedin.com/in/srihari-kr', snippet: 'Experienced Chief Operating Officer with a demonstrated history of working in the steel forgings industry. Skilled in Business Planning, Operations Management, ...' },
     { title: 'NIRMAL KUMAR DEBNATH - EXECUTIVE DIRECTOR at ...', subtitle: 'Chennai, Tamil Nadu, India · EXECUTIVE DIRECTORSINCE 1999. · EL FORGE LTD.', link: 'https://in.linkedin.com/in/nirmal-debnath', snippet: 'Experience · EXECUTIVE DIRECTORSINCE 1999. EL FORGE LTD. Nov 1992 - Present 33 years 11 months · GENERAL MANAGER(QA). KELTRON,TRIVANDRUM. Apr 1980 - Oct 1992 12 ...' },
@@ -503,35 +501,20 @@ describe('EL Forge Limited (Hosur): corporate contacts in Chennai, and why nobod
     { title: 'RAMACHANDRAN TK - el forge ltd', subtitle: 'Chennai, Tamil Nadu, India · President & Chief Technical Officer · EL FORGE LTD', link: 'https://in.linkedin.com/in/ramachandran-tk', snippet: 'President & Chief Technical Officer at EL FORGE LTD · Experience: EL FORGE LTD · Location: Chennai · 1 connection on LinkedIn.' },
   ];
 
-  it('keeps the corporate contacts with the reason each is not the Hosur contact, and searches for the leadership', async () => {
+  it('keeps the corporate contacts; the best-ranked one in India is the main contact', async () => {
     const r = await run(await klt({ company: 'EL Forge Limited', city: 'Hosur' }), {
       research: (user) => kltAnswer(user, { risks: [] }),
       google: (q) => (q.startsWith('site:linkedin.com/in') ? results : []),
     });
-    // A Chennai profile never becomes the Hosur plant contact on its own.
-    expect(r.contactName ?? '').toBe('');
+    // A Chennai profile can be the contact: only people abroad are left out.
+    expect(r.contactName).toBe('Srihari K.R');
     const by = Object.fromEntries((r.people ?? []).map((p) => [p.name, p]));
     // The Executive Director isn't kept (directors, other than the MD, aren't contacted), nor is a
     // Deputy Manager with no department (off the ICP lists).
     expect(Object.keys(by).sort()).toEqual(['RAMACHANDRAN TK', 'Srihari K.R']);
-    for (const name of ['Srihari K.R', 'RAMACHANDRAN TK']) {
-      expect(by[name]).toMatchObject({ passedReason: 'unverified' });
-      expect(by[name].whyNot).toMatch(/^Corporate contact \(.+, a company-wide role\), for review/);
-    }
+    expect(by['Srihari K.R']).toMatchObject({ isPrimary: true });
     expect(by['Srihari K.R'].title).toBe('Chief Executive Officer');
     expect(by['RAMACHANDRAN TK'].title).toBe('President & Chief Technical Officer');
-    // The search also asked for the company's leadership, as nobody was found at Hosur.
-    expect(seen.google.some((q) => q.includes('"chief executive"'))).toBe(true);
-
-    const { contactAvailability } = await import('@/lib/fit-view');
-    const shown = contactAvailability({ ...r, contactName: '', contactTitle: '', contactEmail: '', emailStatus: '', contactLinkedin: '', contactVerifiedAt: null, city: 'Hosur', status: 'Needs Manual Contact', qualified: true } as never, (r.people ?? []) as never);
-    expect(shown.label).toBe('Company contacts found; no Hosur contact confirmed');
-    expect(shown.detail).toContain('Srihari K.R (Chief Executive Officer)');
-    expect(shown.detail).toMatch(/^Corporate contacts for review: /);
-    // Everyone else is counted, not listed: their reasons are under People.
-    expect(shown.detail).not.toContain('vignesh');
-    expect(shown.detail).not.toContain('NIRMAL');
-    expect(shown.detail.length).toBeLessThan(400);
   });
 });
 
@@ -568,21 +551,6 @@ describe('the company name, checked against its own website (Advance Forgings)',
 
 describe('contacts: the review of the contact pipeline', () => {
   const plantHead = (subtitle: string, snippet = '') => ({ title: 'Karthik R - Plant Head - Hosur Gears', subtitle, link: 'https://in.linkedin.com/in/karthik-r', snippet });
-
-  it('"India" is a missing location: looked up by name, and the job\'s own location (Hosur) is kept, not just the home city', async () => {
-    const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
-    const r = await run(lead, {
-      research: (user) => kltAnswer(user, { risks: [] }),
-      google: (q) =>
-        q.includes('"Karthik R"')
-          ? [plantHead('Bengaluru, Karnataka, India · Plant Head · Hosur Gears', 'Plant Head. Hosur Gears. Jan 2020 - Present 4 years. Hosur, Tamil Nadu, India')]
-          : q.startsWith('site:linkedin.com/in')
-            ? [plantHead('India · Plant Head · Hosur Gears')]
-            : [],
-    });
-    expect(r.contactName).toBe('Karthik R');
-    expect(r.people?.find((p) => p.isPrimary)).toMatchObject({ location: 'Bengaluru, Karnataka, India', jobLocation: 'Hosur, Tamil Nadu, India' });
-  });
 
   it('the AI being down still gives a contact: INVECK\'s ranking picks from the LinkedIn candidates found', async () => {
     const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
@@ -780,7 +748,7 @@ describe('Needs Review is held back from the team until decided', () => {
     const [bda] = await db.select().from(users).limit(1);
     await addLead({ company: 'Pending Fit', status: 'Needs Review', fitStatus: 'review', qualified: null });
     const owned = await addLead({ company: 'Owned Pending', status: 'Needs Review', fitStatus: 'review', qualified: null, ownerId: bda.id, contactName: 'Asha Rao' });
-    expect(await drawPool(db)).toEqual({ total: 0, withContact: 0 });
+    expect(await drawPool(db)).toMatchObject({ total: 0, withContact: 0 });
     await ensureSequences(db);
     expect(await db.select().from(tasks).where(eq(tasks.leadId, owned.id))).toEqual([]);
     expect((await loadTracker(db, bda.id)).map((r) => r.lead.company)).not.toContain('Owned Pending');

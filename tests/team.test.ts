@@ -101,7 +101,7 @@ describe('one owner per lead', () => {
 });
 
 describe('the P1 sequence', () => {
-  it('plans every channel at once on day 1, then call + WhatsApp + email each working day', () => {
+  it('plans every channel at once on day 1 only: the follow-up rounds start from a call outcome', () => {
     // 2026-09-25 is a Friday.
     expect(firstWorkingDay('2026-09-26')).toBe('2026-09-28');
     expect(addWorkingDays('2026-09-25', 1)).toBe('2026-09-28');
@@ -111,15 +111,6 @@ describe('the P1 sequence', () => {
       'whatsapp:Day 1:2026-09-25',
       'email:Day 1:2026-09-25',
       'linkedin:Day 1:2026-09-25',
-      'call:Follow-up 1:2026-09-28',
-      'whatsapp:Follow-up 1:2026-09-28',
-      'email:Follow-up 1:2026-09-28',
-      'call:Follow-up 2:2026-09-29',
-      'whatsapp:Follow-up 2:2026-09-29',
-      'email:Follow-up 2:2026-09-29',
-      'call:Follow-up 3:2026-09-30',
-      'whatsapp:Follow-up 3:2026-09-30',
-      'email:Follow-up 3:2026-09-30',
     ]);
   });
 
@@ -130,7 +121,7 @@ describe('the P1 sequence', () => {
     expect(await ensureSequences(db, '2026-09-28')).toBe(1);
     expect(await ensureSequences(db, '2026-09-28')).toBe(0);
     const made = await db.select().from(tasks);
-    expect(made).toHaveLength(13);
+    expect(made).toHaveLength(4);
     expect(new Set(made.map((t) => t.leadId)).size).toBe(1);
   });
 
@@ -299,30 +290,65 @@ describe('morning draw', () => {
     expect(rows.map((l) => l.ownerId === null)).toEqual([true, false]);
   });
 
-  it('draws the day’s leads at random, splits them evenly, and never draws a lead twice', async () => {
+  const M = 'Manufacturing';
+  const P = '3PL & Logistics';
+  const many = (n: number, segment: string, tag = segment) => Array.from({ length: n }, (_, i) => lead(`${tag} ${i}`, { segment }));
+  const handsOf = async (db: Awaited<ReturnType<typeof getDb>>) => {
+    const { handedOut } = await import('@/lib/draw');
+    return handedOut(db, '2026-09-28');
+  };
+
+  it('hands each associate 12 Manufacturing + 8 3PL & Logistics (80 for four), per segment, never a lead twice, never CA firms', async () => {
     const db = await getDb();
     const { runDailyDraw, drawPool } = await import('@/lib/draw');
-    await db.insert(leads).values(Array.from({ length: 130 }, (_, i) => lead(`Co ${i}`)));
-    await db.insert(leads).values([lead('Not researched', { status: 'New' }), lead('Ruled out', { status: 'Disqualified' })]);
+    await db.insert(leads).values([...many(60, M), ...many(40, P), ...many(15, 'CA Firms'), lead('Not researched', { status: 'New', segment: M }), lead('Ruled out', { status: 'Disqualified', segment: P })]);
     expect(await runDailyDraw(db, { now: new Date('2026-09-28T02:00:00Z') })).toBeNull(); // 07:30, too early
     const first = await runDailyDraw(db, { now: nine });
-    expect(first).toMatchObject({ day: '2026-09-28', wanted: 100, drawn: 100, short: false });
-    expect(Object.values(first!.perOwner)).toEqual([25, 25, 25, 25]);
+    expect(first).toMatchObject({ day: '2026-09-28', wanted: 80, drawn: 80, short: false, quota: { [M]: 12, [P]: 8 } });
+    expect(Object.values(first!.perOwner)).toEqual([20, 20, 20, 20]);
+    for (const hand of Object.values(first!.perOwnerSegment!)) expect(hand).toEqual({ [M]: 12, [P]: 8 });
     expect(await runDailyDraw(db, { now: nine })).toBeNull(); // once a day
-    expect((await drawPool(db)).total).toBe(30);
-
-    const owned = await db.select().from(leads).where(eq(leads.drawnOn, '2026-09-28'));
-    expect(owned).toHaveLength(100);
-    // Shuffled: the first four companies by id don't simply go to the team in order.
-    const ids = owned.map((l) => l.id).sort((a, b) => a - b);
-    expect(ids).not.toEqual(Array.from({ length: 100 }, (_, i) => ids[0] + i));
-
-    const next = await runDailyDraw(db, { now: new Date('2026-09-29T03:30:00Z') });
-    expect(next).toMatchObject({ drawn: 30, short: true });
+    // What is left: 12 Manufacturing and 8 3PL; the 15 CA firms were never touched.
+    expect((await drawPool(db)).bySegment).toEqual({ [M]: 12, [P]: 8 });
     const all = await db.select().from(leads);
-    expect(all.filter((l) => l.drawnOn).length).toBe(130);
+    expect(all.filter((l) => l.drawnOn === '2026-09-28')).toHaveLength(80);
+    expect(all.filter((l) => l.segment === 'CA Firms').every((l) => l.ownerId === null)).toBe(true);
     expect(all.find((l) => l.company === 'Not researched')!.ownerId).toBeNull();
     expect(all.find((l) => l.company === 'Ruled out')!.ownerId).toBeNull();
+    // Each associate's own leads match the mix, counted from the leads themselves.
+    for (const [owner, hand] of Object.entries(await handsOf(db))) {
+      const mine = all.filter((l) => String(l.ownerId) === owner && l.drawnOn);
+      expect(mine.filter((l) => l.segment === M)).toHaveLength(hand[M]);
+      expect(mine.filter((l) => l.segment === P)).toHaveLength(hand[P]);
+    }
+    // Shuffled: the Manufacturing leads by id don't simply go to the team in order.
+    const ids = all.filter((l) => l.drawnOn && l.segment === M).map((l) => l.id).sort((a, b) => a - b);
+    expect(ids).not.toEqual(Array.from({ length: ids.length }, (_, i) => ids[0] + i));
+  });
+
+  it('a shortage in one segment is shown per associate and segment, never filled from the other segment or CA firms, and topped up later', async () => {
+    const db = await getDb();
+    const { runDailyDraw, topUpDraw, shortfalls, quotaOf } = await import('@/lib/draw');
+    const { settingsSchema } = await import('@/lib/settings');
+    await db.insert(leads).values([...many(20, M), ...many(5, P), ...many(30, 'CA Firms')]);
+    const first = await runDailyDraw(db, { now: nine });
+    expect(first).toMatchObject({ wanted: 80, drawn: 25, short: true });
+    const hands = Object.values(first!.perOwnerSegment!);
+    // 20 Manufacturing over four associates is 5 each; 5 3PL leads are 2, 1, 1, 1 (never more than one apart).
+    expect(hands.map((h) => h[M])).toEqual([5, 5, 5, 5]);
+    expect(hands.map((h) => h[P]).sort()).toEqual([1, 1, 1, 2]);
+    // Nobody was given CA firms to make up the numbers.
+    expect((await db.select().from(leads)).filter((l) => l.segment === 'CA Firms').every((l) => l.ownerId === null)).toBe(true);
+    const team = Object.keys(first!.perOwnerSegment!).map(Number);
+    const short = shortfalls(team, quotaOf(settingsSchema.parse({})), await handsOf(db));
+    expect(short.filter((s) => s.segment === M).map((s) => s.short)).toEqual([7, 7, 7, 7]);
+    expect(short.filter((s) => s.segment === P).reduce((n, s) => n + s.short, 0)).toBe(27);
+    // More leads of each segment arrive later the same day: each associate's own deficits are filled.
+    await db.insert(leads).values([...many(100, M, 'More M'), ...many(40, P, 'More P')]);
+    const topped = await topUpDraw(db, { now: nine });
+    expect(topped).toMatchObject({ wanted: 80, drawn: 80, short: false });
+    for (const hand of Object.values(topped!.perOwnerSegment!)) expect(hand).toEqual({ [M]: 12, [P]: 8 });
+    expect(await topUpDraw(db, { now: nine })).toBeNull();
   });
 
   it('leaves the day open when the list is empty, and tops up a short draw later', async () => {
@@ -330,23 +356,34 @@ describe('morning draw', () => {
     const { runDailyDraw, topUpDraw, getDraw } = await import('@/lib/draw');
     expect(await runDailyDraw(db, { now: nine })).toMatchObject({ drawn: 0 });
     expect(await getDraw(db, '2026-09-28')).toBeNull();
-    await db.insert(leads).values(Array.from({ length: 10 }, (_, i) => lead(`Co ${i}`)));
+    await db.insert(leads).values(many(10, M));
     expect(await runDailyDraw(db, { now: nine })).toMatchObject({ drawn: 10, short: true });
-    await db.insert(leads).values(Array.from({ length: 200 }, (_, i) => lead(`More ${i}`)));
+    await db.insert(leads).values([...many(200, M, 'More M'), ...many(100, P)]);
     const topped = await topUpDraw(db, { now: nine });
-    expect(topped).toMatchObject({ drawn: 100, short: false });
-    expect(Object.values(topped!.perOwner).reduce((a, b) => a + b, 0)).toBe(100);
-    expect(await topUpDraw(db, { now: nine })).toBeNull();
+    expect(topped).toMatchObject({ drawn: 80, short: false });
+    expect(Object.values(topped!.perOwner).reduce((a, b) => a + b, 0)).toBe(80);
   });
 
   it('skips weekends, and two draws at once hand out each lead only once', async () => {
     const db = await getDb();
     const { runDailyDraw } = await import('@/lib/draw');
-    await db.insert(leads).values(Array.from({ length: 20 }, (_, i) => lead(`Co ${i}`)));
+    await db.insert(leads).values([...many(20, M), ...many(20, P)]);
     expect(await runDailyDraw(db, { now: new Date('2026-09-26T05:00:00Z') })).toBeNull(); // Saturday
     const [a, b] = await Promise.all([runDailyDraw(db, { now: nine }), runDailyDraw(db, { now: nine })]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     expect((await db.select().from(leads)).every((l) => l.ownerId !== null)).toBe(true);
+  });
+
+  it('the quota follows the settings and the number of active associates', async () => {
+    const db = await getDb();
+    const { runDailyDraw } = await import('@/lib/draw');
+    const { users } = await import('@/lib/db/schema');
+    const { saveSettings } = await import('@/lib/settings');
+    const { settingsSchema } = await import('@/lib/settings');
+    await saveSettings(db, settingsSchema.parse({ manufacturingPerAssociate: 3, logisticsPerAssociate: 2 }));
+    await db.update(users).set({ active: false }).where(eq(users.username, 'puja@inveck'));
+    await db.insert(leads).values([...many(30, M), ...many(30, P)]);
+    expect(await runDailyDraw(db, { now: nine })).toMatchObject({ wanted: 15, drawn: 15, short: false });
   });
 
   it('shuffles without losing anyone and deals the remainder from a random start', async () => {
@@ -1168,7 +1205,7 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect(people[0].location).toBe('Jaipur, Rajasthan, India');
   });
 
-  it('keeps the Jaipur site; anyone at another site is left out, whatever the role', async () => {
+  it('ranks the Jaipur site first within a tier; anyone based in India is a contact, at any site', async () => {
     const { siteOf } = await import('@/lib/pipeline/employer');
     const { atOtherSite, rankCandidates } = await import('@/lib/pipeline/contacts');
     const { nextContact } = await import('@/lib/escalate');
@@ -1180,9 +1217,8 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect(siteOf('Rajasthan, India', 'Jaipur')).toBe('unknown');
     expect(siteOf('', 'Jaipur')).toBe('unknown');
     expect(siteOf('Gurugram, Haryana, India', '')).toBe('unknown');
-    expect(atOtherSite({ title: 'Supply Chain Manager', location: 'Gurugram, Haryana, India' }, 'Jaipur')).toBe(true);
-    // No head-office exception: a lead is one site, whatever the role.
-    expect(atOtherSite({ title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' }, 'Jaipur')).toBe(true);
+    expect(atOtherSite({ title: 'Supply Chain Manager', location: 'Gurugram, Haryana, India' }, 'Jaipur')).toBe(false);
+    expect(atOtherSite({ title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' }, 'Jaipur')).toBe(false);
     expect(atOtherSite({ title: 'Supply Chain Manager', location: '' }, 'Jaipur')).toBe(false);
     const ranked = rankCandidates([
       { title: 'National Head - Supply Chain', location: 'Mumbai, Maharashtra, India' },
@@ -1196,7 +1232,7 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     expect(nextContact([person(1, 'Gurgaon Guy', 'Plant Head', 'Gurugram, Haryana, India'), person(2, 'Jaipur Lady', 'Store Manager', 'Jaipur, Rajasthan, India')], icp, 'Jaipur')?.person.name).toBe('Gurgaon Guy');
   });
 
-  it('a recheck removes a saved contact based at another site', async () => {
+  it('a recheck keeps a saved contact based at another Indian site', async () => {
     const db = await getDb();
     const { verifyContact } = await import('@/lib/verify-contacts');
     const { people } = await import('@/lib/db/schema');
@@ -1216,7 +1252,7 @@ describe('NBC Bearings, Jaipur: the right company and the right site', () => {
     const [l] = await db.insert(leads).values(lead('NBC Bearings', { city: 'Jaipur', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', contactCheckedAt: new Date() })).returning();
     await db.insert(people).values([{ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true }, { leadId: l.id, name: 'Hardik Gaur', title: 'Supply Chain Manager' }]);
     await verifyContact(db, svc, l);
-    expect((await db.select().from(people).where(eq(people.leadId, l.id))).map((p) => p.name)).toEqual(['Rohan Katara']);
+    expect((await db.select().from(people).where(eq(people.leadId, l.id))).map((p) => p.name)).toEqual(['Rohan Katara', 'Hardik Gaur']);
   });
 });
 
@@ -1391,10 +1427,10 @@ describe('only confirmed contacts go out', () => {
     const db = await getDb();
     const { runDailyDraw } = await import('@/lib/draw');
     await db.insert(leads).values([
-      lead('Confirmed Co'),
-      lead('No Contact Co', { contactName: '', contactEmail: '', contactVerifiedAt: null }),
-      lead('Unconfirmed Co', { contactVerifiedAt: null }),
-      lead('Unqualified Co', { qualified: false }),
+      lead('Confirmed Co', { segment: 'Manufacturing' }),
+      lead('No Contact Co', { segment: 'Manufacturing', contactName: '', contactEmail: '', contactVerifiedAt: null }),
+      lead('Unconfirmed Co', { segment: 'Manufacturing', contactVerifiedAt: null }),
+      lead('Unqualified Co', { segment: 'Manufacturing', qualified: false }),
     ]);
     await runDailyDraw(db, { now: new Date('2026-09-28T03:30:00Z'), force: true });
     const owned = (await db.select().from(leads)).filter((l) => l.ownerId !== null).map((l) => l.company).sort();
@@ -1414,7 +1450,7 @@ describe('Micron Sanand: staff of a site in a metro belt, under the brand they w
     // Sanand is in Ahmedabad's industrial belt; Bengaluru and Hyderabad are other sites.
     expect(inCity('Ahmedabad, Gujarat, India', 'Sanand')).toBe(true);
     expect(confirmedAtSite({ location: 'Greater Ahmedabad Area' }, 'Sanand')).toBe(true);
-    expect(atOtherSite({ title: '', location: 'Hyderabad, Telangana, India' }, 'Sanand')).toBe(true);
+    expect(atOtherSite({ title: '', location: 'Hyderabad, Telangana, India' }, 'Sanand')).toBe(false);
     expect(inCity('Pimpri Chinchwad, Maharashtra, India', 'Chakan')).toBe(true);
     // Short forms of the company's own name that keep its brand (= its website); never another name.
     expect(sameFirm('Micron Technology', company)).toBe(true);
@@ -1438,7 +1474,7 @@ describe('Micron Sanand: staff of a site in a metro belt, under the brand they w
     expect(contactPriority(byName['Jitender Pratap Singh-JP'].title, DEFAULT_ICPS[0] as never)).toBe(99);
     // A dated line in the snippet never turns the title into a place.
     expect(byName['Himesh Sarvaiya'].title).toBe('Associate - Manufacturing Operations');
-    expect(atOtherSite(byName['Hemanth kumar vemana'], 'Sanand')).toBe(true);
+    expect(atOtherSite(byName['Hemanth kumar vemana'], 'Sanand')).toBe(false);
   });
 });
 

@@ -257,19 +257,19 @@ describe('Alumina India Casting: the managing partner, and where her job is', ()
     const svc = services(seen);
     await knowPlaces(svc, ['Coimbatore', 'Chennai, Tamil Nadu, India']);
     expect(personSite({ title: 'Plant Head - Coimbatore', responsibility: 'Coimbatore', location: 'Chennai, Tamil Nadu, India' }, 'Coimbatore')).toBe('here');
-    expect(personSite({ title: 'Plant Head - Chennai', responsibility: 'Chennai', location: 'Coimbatore' }, 'Coimbatore')).toBe('elsewhere');
+    expect(personSite({ title: 'Plant Head - Chennai', responsibility: 'Chennai', location: 'Coimbatore' }, 'Coimbatore')).toBe('here');
   });
 
-  it('with only a Chennai profile location, she is kept (company-wide role) but not confirmed at the Coimbatore site', async () => {
+  it('with only a Chennai profile location, she is kept as a contact: anyone based in India counts, wherever the site is', async () => {
     const svc = services(seen, () => [nandini]);
     await knowPlaces(svc, ['Coimbatore']);
     const found = (await searchLinkedIn(svc, 'q', company)).people[0];
     expect(found).toMatchObject({ name: 'Nandini Easwaran', jobLocation: '', responsibility: '' });
-    expect(personSite(found, 'Coimbatore')).toBe('elsewhere');
+    expect(personSite(found, 'Coimbatore')).toBe('here');
     expect(atOtherSite(found, 'Coimbatore')).toBe(false);
-    expect(confirmedAtSite(found, 'Coimbatore')).toBe(false);
+    expect(confirmedAtSite(found, 'Coimbatore')).toBe(true);
     // A plant manager based in Chennai is still at another site.
-    expect(atOtherSite({ ...found, title: 'Plant Manager' }, 'Coimbatore')).toBe(true);
+    expect(atOtherSite({ ...found, title: 'Plant Manager' }, 'Coimbatore')).toBe(false);
   });
 });
 

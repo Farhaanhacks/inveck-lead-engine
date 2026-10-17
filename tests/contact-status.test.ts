@@ -52,11 +52,11 @@ describe('the status follows the contact after every change', () => {
     expect(await statusOf(l.id)).toBe('Awaiting Approval');
   });
 
-  it('someone who works at the company but is not confirmed at this site leaves the lead waiting', async () => {
+  it('someone checked at the company in another Indian city is still the contact: ready', async () => {
     const l = await addLead();
     const [p] = await db.insert(people).values({ leadId: l.id, name: 'Srihari K.R', title: 'CEO', linkedin: 'https://in.linkedin.com/in/srihari', source: 'LinkedIn', location: 'Chennai, Tamil Nadu, India', checkedAt: new Date() }).returning();
     await makePrimary(db, p.id);
-    expect(await statusOf(l.id)).toBe('Needs Manual Contact');
+    expect(await statusOf(l.id)).toBe('Awaiting Approval');
     // And with no way to reach them, nor does a name alone.
     const l2 = await addLead({ contactName: 'Nobody Reachable', contactVerifiedAt: new Date() });
     expect(await reconcileContactStatus(db, l2.id)).toBeNull();

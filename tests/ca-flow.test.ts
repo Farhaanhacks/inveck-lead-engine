@@ -95,9 +95,12 @@ describe('CA firms on Today', () => {
     const fallback = (await open(l.id)).filter((t) => t.step === CA_FALLBACK_STEP);
     await completeTaskAction(form({ id: fallback.find((t) => t.kind === 'call')!.id, outcome: 'no_answer' }));
     await completeTaskAction(form({ id: fallback.find((t) => t.kind === 'whatsapp')!.id, outcome: 'sent' }));
-    expect((await open(l.id)).map((t) => t.step).sort()).toEqual([CA_FALLBACK_STEP, CA_WAITING_STEP].sort());
+    // The unanswered call started the follow-up sequence (its own tasks); the CA flow's own steps are separate.
+    const flow = async () => (await open(l.id)).filter((t) => t.followUpRound === 0);
+    expect((await flow()).map((t) => t.step).sort()).toEqual([CA_FALLBACK_STEP, CA_WAITING_STEP].sort());
     await completeTaskAction(form({ id: fallback.find((t) => t.kind === 'email')!.id, outcome: 'done' }));
-    expect(await open(l.id)).toEqual([]);
+    expect(await flow()).toEqual([]);
+    expect((await open(l.id)).filter((t) => t.followUpRound > 0)).toHaveLength(15);
   });
 
   it('no LinkedIn: the call, WhatsApp and email come the same day, with nothing to wait for', async () => {
@@ -216,7 +219,7 @@ describe('daily counts for the people who work CA firms', () => {
   it('CA firms count on their own card; the companies card counts the rest', async () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const { worksCaFirms, DAILY_COMPANY_TARGET, DAILY_CA_TARGET } = await import('@/lib/tasks');
-    expect([DAILY_COMPANY_TARGET, DAILY_CA_TARGET]).toEqual([40, 20]);
+    expect([DAILY_COMPANY_TARGET, DAILY_CA_TARGET]).toEqual([20, 20]);
     expect(['Puja', 'Anchal', 'Parimal', 'Anuradha'].map(worksCaFirms)).toEqual([true, true, false, false]);
     const l = await caLead();
     const first = await start(l.id);
@@ -367,7 +370,7 @@ describe('a tier for any point of contact', () => {
 describe('the follow-up funnel', () => {
   it('puts each company in its stage from the same steps Today uses, and its buttons move it on', async () => {
     const { loadFunnel } = await import('@/lib/followups');
-    const { followUpAgainAction, moveFromFunnelAction } = await import('@/app/followup-actions');
+    const { moveFromFunnelAction } = await import('@/app/followup-actions');
     const { completeTaskAction } = await import('@/app/team-actions');
     const stageOf = async (id: number) => (await loadFunnel(db, me.id, today())).find((c) => c.lead.id === id)?.stage;
 
@@ -378,14 +381,10 @@ describe('the follow-up funnel', () => {
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
     expect(await stageOf(ca.id)).toBe('waiting');
 
-    // A company whose rounds are all done with no reply: no reply yet, then followed up again (back on Today).
+    // A company whose steps are all done with no reply: no reply yet.
     const quiet = await caLead({ company: 'Quiet Works', segment: 'Manufacturing', status: 'Contacted' });
     await db.insert(tasks).values({ leadId: quiet.id, ownerId: me.id, kind: 'call', step: 'Follow-up 3', title: 'call', dueDate: today(), slot: 'day', doneAt: new Date(), outcome: 'no_answer' });
     expect(await stageOf(quiet.id)).toBe('finished');
-    await followUpAgainAction(form({ id: quiet.id }));
-    await followUpAgainAction(form({ id: quiet.id }));
-    expect((await open(quiet.id)).map((t) => t.kind).sort()).toEqual(['call', 'email', 'whatsapp']);
-    expect(await stageOf(quiet.id)).toMatch(/today|upcoming/);
 
     // They replied: in conversation; then won.
     await moveFromFunnelAction(form({ id: quiet.id, stage: 'Replied' }));

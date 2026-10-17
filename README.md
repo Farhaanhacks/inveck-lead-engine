@@ -32,9 +32,8 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
 - **Same company**: their employer is the company's name, its website name, or the name on the
   company's own LinkedIn page (found once by the website it lists, so a similarly named company never
   counts). The search uses these names too.
-- **Same site**: their location is within 60 km of the lead's city, by Google Maps coordinates (each
-  place looked up once and kept in the database, about 3 Serper credits per new place). A place the
-  map doesn't know is "not known", never "another site".
+- **Based in India**: any Indian city counts; the lead's own city is no longer required. People whose profile
+  places them abroad are left out, and someone at the lead's city is ranked ahead within the same tier.
 - **A role the ICP wants**: a title on the ICP's lists, or one in a function the lists name
   (operations, supply chain, finance) at head, manager or lead level ("Senior Manager, Site
   Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no
@@ -147,7 +146,7 @@ page or its Today step.
 
 ### After the first email
 
-- **Follow-ups**: marking a lead as sent schedules follow-up 1 (day 3) and 2 (day 7). Each run drafts the ones that are due; the team approves and sends them like the first email. A reply, meeting, win or loss stops the sequence.
+- **Follow-ups**: five rounds, every other working day, started only by a call saved on Today as No answer, Busy or voicemail, or Wrong number. The day of that call is Day 1; Follow-up 1 to 5 fall 2, 4, 6, 8 and 10 working days later (Saturdays, Sundays and the holidays set in **Settings → Holidays** never count). Each round is a call, a WhatsApp and an email; the AI drafts the round's email when it is due, the team edits it and marks it sent (nothing is sent automatically). A connected call stops the sequence for good. When all five rounds are done (every step done or skipped), the lead moves to **Deleted** as junk: it is only archived, and **Leads → Deleted** lists it with a Restore button. Existing records follow the same rules, from their saved call outcomes (see `src/lib/follow-up-reconcile.ts`).
 - **Buying signals**: qualified leads get a Google News check for new plants, expansions, acquisitions, funding or audit news. The best one opens the draft, and each links to its article.
 - **Pipeline**: a board from Awaiting Approval to Won/Lost; drag cards or use their menu.
 - **Timeline**: every lead shows what happened and when, and the team can add notes, calls and meetings.
@@ -175,12 +174,15 @@ page or its Today step.
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new
 leads and runs the prospect search on the day chosen in Settings.
 
-At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands out the day's leads: 100 by
-default (Settings, "Leads handed out each morning"), picked at random from researched leads nobody has
-been given yet, shuffled and split evenly across the active team (25 each for four people). A lead is
-drawn only once. Inbound leads still go out in turn the moment they arrive, and a lead a BDA adds by
-hand stays theirs. If the schedule runs late, the first page opened after 08:00 runs the draw. The
-Team page shows today's draw and how many leads are left for tomorrow. Long runs continue
+At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate 20 leads:
+12 Manufacturing + 8 3PL & Logistics (Settings, "Manufacturing leads per associate" and "3PL & Logistics
+leads per associate"), so 80 a day for four associates (48 + 32). Each segment is drawn separately, at random,
+from researched leads nobody has been given yet and dealt round the team, so everyone gets the same mix. A
+shortage in one segment is shown per associate on the Team page and never filled from the other segment or
+from CA firms (CA firms are not part of this draw); leads that turn up later the same day top up each
+associate's missing segment. A lead is drawn only once. Inbound leads still go out in turn the moment they
+arrive, and a lead a BDA adds by hand stays theirs. If the schedule runs late, the first page opened after
+08:00 runs the draw. Long runs continue
 in the background automatically, within Vercel's 300-second function limit.
 
 ## The team
@@ -194,12 +196,12 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
 - **Inbound leads**: tick "Inbound lead" when adding companies. One nobody has touched after two hours is
   flagged at the top of the owner's Today list.
 - **Today**: each person's work list, one card per company with every step at once: call, WhatsApp,
-  email and LinkedIn request on day 1, then call + WhatsApp + email on each of the next three working
-  days. Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
+  email and LinkedIn request on day 1; the follow-up rounds come from the follow-up sequence once a
+  call is saved as no answer, busy or wrong number. Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
   an outcome: Not interested, No requirement right now or Already using a solution ticks off everything
   else for that company; any other outcome keeps today's WhatsApp, email and LinkedIn and stops the later
-  rounds. When every step is ticked the company is done for the day. Counters show companies done, calls
-  attempted (target 25 a day), connected calls, WhatsApp, emails and LinkedIn requests.
+  rounds. When every step is ticked the company is done for the day. Counters show leads assigned (20: 12 + 8), companies done (target 20), calls
+  attempted (target 20 a day, per associate), connected calls, WhatsApp, emails and LinkedIn requests.
 - **P2 flow**: after 5 unanswered calls to the point of contact, or a connected call logged as "Not the
   right person", the lead switches to the next person already found at the company (a P2 process owner
   after a P1, then P3; never HR, admin or quality), shown with a P2 badge, with a fresh plan from that day
