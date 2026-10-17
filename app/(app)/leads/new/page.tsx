@@ -1,0 +1,27 @@
+import { asc, eq } from 'drizzle-orm';
+import { getDb } from '@/lib/db';
+import { icps } from '@/lib/db/schema';
+import { PageHeader } from '@/components/page-header';
+import { AddLeadForms } from './forms';
+import { listBdas } from '@/lib/users';
+
+// Research started from this page keeps working after the response.
+export const maxDuration = 300;
+
+export default async function NewLeadsPage() {
+  const db = await getDb();
+  // Only active ICPs: a company is checked against the one its segment names.
+  const segments = (await db.select({ segment: icps.segment }).from(icps).where(eq(icps.active, true)).orderBy(asc(icps.id))).map((s) => s.segment);
+  const team = (await listBdas(db)).map((b) => ({ id: b.id, name: b.name }));
+  // A researched list may belong to an ICP switched off for the prospect search (CA firms): every ICP is offered.
+  const allSegments = (await db.select({ segment: icps.segment }).from(icps).orderBy(asc(icps.id))).map((s) => s.segment);
+  return (
+    <>
+      <PageHeader
+        title="Add companies"
+        description="Companies added here are researched straight away. You can also let the prospect search find companies for you."
+      />
+      <AddLeadForms segments={segments} allSegments={allSegments} team={team} />
+    </>
+  );
+}

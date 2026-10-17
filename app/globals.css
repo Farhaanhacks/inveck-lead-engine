@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* Colour tokens. Components use the role names (bg-surface, text-muted…), so light and
+   dark swap here in one place. Dark values are chosen for the dark surface, not inverted. */
+:root {
+  color-scheme: light;
+  --page: #f4f4f2;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --border: #e2e1dc;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #6b6a65;
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eefc;
+  --bar: #2a78d6;
+  --good-soft: #e3f5e3;
+  --good-ink: #006300;
+  --warning-soft: #fdf1d6;
+  --warning-ink: #7a5200;
+  --critical-soft: #fbe5e5;
+  --critical-ink: #a32424;
+  --neutral-soft: #ecebe7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #121211;
+    --surface: #1a1a19;
+    --surface-2: #232322;
+    --border: #33332f;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #9a998f;
+    --accent: #3987e5;
+    --accent-ink: #ffffff;
+    --accent-soft: #1b2c42;
+    --bar: #3987e5;
+    --good-soft: #15301a;
+    --good-ink: #7ad67a;
+    --warning-soft: #3a2e12;
+    --warning-ink: #f5c95e;
+    --critical-soft: #3d1c1c;
+    --critical-ink: #f09a9a;
+    --neutral-soft: #2a2a28;
+  }
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-bar: var(--bar);
+  --color-good-soft: var(--good-soft);
+  --color-good-ink: var(--good-ink);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-ink: var(--warning-ink);
+  --color-critical-soft: var(--critical-soft);
+  --color-critical-ink: var(--critical-ink);
+  --color-neutral-soft: var(--neutral-soft);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+/* Shared control styles. */
+@utility field {
+  @apply w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-2 focus:outline-accent;
+}
+@utility label {
+  @apply mb-1 block text-xs font-medium text-ink-2;
+}
+@utility btn {
+  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn bg-accent text-accent-ink hover:opacity-90;
+}
+@utility btn-secondary {
+  @apply btn border border-line bg-surface text-ink hover:bg-surface-2;
+}
+@utility btn-danger {
+  @apply btn border border-line bg-surface text-critical-ink hover:bg-critical-soft;
+}
+@utility card {
+  @apply rounded-lg border border-line bg-surface;
+}
+
+/* Dropdown lists are drawn by the browser; give the options the page's colours so they are
+   readable in dark mode (otherwise white text can land on a white list). */
+select option {
+  background-color: var(--surface);
+  color: var(--ink);
+}
