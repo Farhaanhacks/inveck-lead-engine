@@ -1,22 +1,19 @@
-import { and, eq, isNotNull, lte, lt } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lte, notInArray } from 'drizzle-orm';
 import type { Db } from '../db';
-import { leads, type Lead } from '../db/schema';
+import { leads, tasks, type Lead } from '../db/schema';
 import { logActivity } from '../activity';
+import { FOLLOW_UP_ROUNDS, nextEmailRound } from '../follow-up-sequence';
+import { emailedAlready } from '../mail/plan';
+import { istDay } from '../tasks';
 import { askJson } from './ai';
 import { readDraft } from './draft';
 import { FOLLOW_UP_PROMPT } from './prompts';
 import type { Services } from './services';
 import { signalLines } from './signals';
 
-/** Follow-ups go out this many days after the first email. */
-export const FOLLOW_UP_DAYS = [3, 7] as const;
-const DAY = 24 * 60 * 60 * 1000;
-
-/** When the next follow-up is due, given the first send and how many follow-ups have gone. */
-export function nextFollowUpAt(sentAt: Date, sentSoFar: number): Date | null {
-  const days = FOLLOW_UP_DAYS[sentSoFar];
-  return days === undefined ? null : new Date(sentAt.getTime() + days * DAY);
-}
+// When follow-ups fall due is decided by the follow-up sequence (lib/follow-up-sequence.ts), not here:
+// this file only writes the AI draft for a round's email.
+export { FOLLOW_UP_ROUNDS };
 
 const schema = {
   type: 'object',
@@ -25,9 +22,8 @@ const schema = {
   additionalProperties: false,
 };
 
-/** The AI's follow-up draft for the next step; one retry when a field is missing. */
-export async function writeFollowUp(svc: Services, lead: Lead): Promise<{ subject?: string; body?: string; error?: string }> {
-  const step = lead.followUpStep + 1;
+/** The AI's follow-up draft for a round (1-5, default the next one); one retry when a field is missing. */
+export async function writeFollowUp(svc: Services, lead: Lead, round = lead.followUpStep + 1): Promise<{ subject?: string; body?: string; error?: string }> {
   const s = svc.settings;
   const userText = [
     `## Company: ${lead.company}${lead.city ? ` (${lead.city})` : ''}`,
@@ -42,7 +38,7 @@ export async function writeFollowUp(svc: Services, lead: Lead): Promise<{ subjec
     `Subject: ${lead.emailSubject}`,
     lead.emailBody,
     '',
-    step <= FOLLOW_UP_DAYS.length ? `## This is follow-up ${step} of ${FOLLOW_UP_DAYS.length}` : `## This is follow-up ${step}: a last, short nudge`,
+    `## This is follow-up ${round} of ${FOLLOW_UP_ROUNDS}${round >= FOLLOW_UP_ROUNDS ? ': the last one' : ''}`,
     '',
     '## Sender',
     `Name: ${s.senderName}`,
@@ -65,30 +61,34 @@ export async function writeFollowUp(svc: Services, lead: Lead): Promise<{ subjec
   return { error };
 }
 
-/** Writes and stores the next follow-up for one lead. */
+/** Writes and stores the draft for a lead's next open follow-up email. It stays editable until someone marks it sent. */
 export async function draftFollowUp(db: Db, svc: Services, lead: Lead): Promise<{ ok: boolean; error?: string }> {
-  const out = await writeFollowUp(svc, lead);
+  const round = (await nextEmailRound(db, lead.id))?.followUpRound ?? lead.followUpStep + 1;
+  const out = await writeFollowUp(svc, lead, round);
   if (!out.body) return { ok: false, error: out.error };
   await db.update(leads).set({ followUpSubject: out.subject!, followUpBody: out.body, updatedAt: new Date() }).where(eq(leads.id, lead.id));
-  await logActivity(db, lead.id, 'follow_up_drafted', `Follow-up ${lead.followUpStep + 1} drafted, waiting for approval`);
+  await logActivity(db, lead.id, 'follow_up_drafted', `Follow-up ${round} drafted, waiting for approval`);
   return { ok: true };
 }
 
-/** Drafts follow-ups that are due and not written yet (runs do this before researching). */
+/** Drafts the follow-up emails that are due (an open round's email, first email already sent) and not written yet. */
 export async function draftDueFollowUps(db: Db, svc: Services, log: (m: string, level?: 'info' | 'warn' | 'error') => Promise<void>, max = 10) {
-  const due = await db
-    .select()
-    .from(leads)
+  const rows = await db
+    .select({ lead: leads })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
     .where(
       and(
-        eq(leads.status, 'Contacted'),
-        isNotNull(leads.nextFollowUpAt),
-        lte(leads.nextFollowUpAt, new Date()),
+        eq(tasks.kind, 'email'),
+        gt(tasks.followUpRound, 0),
+        isNull(tasks.doneAt),
+        lte(tasks.dueDate, istDay()),
         eq(leads.followUpBody, ''),
-        lt(leads.followUpStep, FOLLOW_UP_DAYS.length),
+        notInArray(leads.status, ['Deleted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client']),
       ),
     )
-    .limit(max);
+    .orderBy(asc(tasks.followUpRound));
+  const due = [...new Map(rows.map((r) => [r.lead.id, r.lead])).values()].filter(emailedAlready).slice(0, max);
   let drafted = 0;
   for (const lead of due) {
     const r = await draftFollowUp(db, svc, lead);

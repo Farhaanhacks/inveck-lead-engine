@@ -12,7 +12,6 @@ import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
 import { checkCompanyName } from './company-name';
 import { firmAliasesOf, vagueLocation } from './employer';
-import { knowPlaces } from './places';
 import type { Services } from './services';
 import { crawlSite, fetchWebsiteText } from './site-reader';
 import { domainOf, errorMessage, normalizeWebsite, normCompany, rootDomain } from './text';
@@ -177,7 +176,6 @@ export async function processLead(
     }
   }
   await learnFirm(svc, lead.company, website);
-  await knowPlaces(svc, [lead.city]);
   if (site.via === 'google') await log(`${lead.company}: website blocks automated reading; researched from Google's index of its pages`);
   if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
   const domain = rootDomain(website);

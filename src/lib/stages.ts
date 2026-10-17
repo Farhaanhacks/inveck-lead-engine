@@ -4,7 +4,6 @@ import { activities, ENGAGED_STAGES, leads, tasks, type LeadStatus } from './db/
 import { NOT_INTERESTED } from './tracker';
 import { istDay } from './tasks';
 import { logActivity } from './activity';
-import { nextFollowUpAt } from './pipeline/follow-ups';
 import { importClients } from './clients';
 
 const BEFORE_SENDING: LeadStatus[] = ['New', 'Awaiting Approval', 'Approved', 'Rejected'];
@@ -34,10 +33,9 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
       if (!lead.sentAt) {
         set.sentAt = now;
         set.followUpStep = 0;
-        set.nextFollowUpAt = nextFollowUpAt(now, 0);
       }
     } else {
-      // Only contacted leads get follow-ups; a reply or any later stage ends the sequence.
+      // Follow-ups are driven by the follow-up sequence, not by the stage; a draft is dropped when the lead moves on.
       set.nextFollowUpAt = null;
       set.followUpSubject = '';
       set.followUpBody = '';
@@ -53,9 +51,9 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
 
     if (status === 'Approved') await logActivity(db, lead.id, 'approved', 'Draft approved', status);
     else if (status === 'Contacted' && !lead.sentAt) {
-      await logActivity(db, lead.id, 'sent', `First email sent${lead.emailSubject ? `: “${lead.emailSubject}”` : ''}. Follow-ups scheduled for day 3 and day 7.`, status);
+      await logActivity(db, lead.id, 'sent', `First email sent${lead.emailSubject ? `: “${lead.emailSubject}”` : ''}.`, status);
     } else await logActivity(db, lead.id, 'stage', WHAT[status] ?? `Moved to ${status}`, status);
-    if (ENGAGED_STAGES.includes(status) && lead.nextFollowUpAt) await logActivity(db, lead.id, 'note', 'Follow-ups stopped');
+    if (ENGAGED_STAGES.includes(status) && lead.followUpStartedOn) await logActivity(db, lead.id, 'note', 'Follow-ups stopped');
     if (unsent) await logActivity(db, lead.id, 'note', 'Moved back before sending: no longer counted as contacted');
     // A conversation, a meeting or a decision: the later outreach rounds on Today stop (today's still show).
     if (ENGAGED_STAGES.includes(status)) {

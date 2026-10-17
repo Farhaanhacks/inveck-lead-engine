@@ -94,7 +94,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
     .select()
     .from(leads)
     // Not companies ruled out, or whose fit is still being reviewed (they aren't worked yet).
-    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), notInArray(leads.status, ['Disqualified', 'Needs Review'])))
+    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), notInArray(leads.status, ['Disqualified', 'Needs Review', 'Deleted'])))
     .orderBy(desc(leads.updatedAt))
     .limit(2000);
   if (!rows.length) return [];

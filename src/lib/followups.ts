@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
-import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, firstWorkingDay, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
+import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
 
 /**
  * The follow-up funnel: every lead in outreach, by where its follow-up stands. Built from the same
@@ -9,7 +9,7 @@ import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, firstWorkingDay, isC
  * - today: a step is due today or overdue (it's on Today);
  * - waiting: a CA firm whose LinkedIn request is out, waiting to be accepted;
  * - upcoming: the next step is due on a later day;
- * - finished: every planned step is done and nobody has replied: follow up again, or let it go;
+ * - finished: every planned step is done, nobody has replied and no follow-up sequence is running;
  * - conversation: they replied or a meeting is booked.
  */
 export const FUNNEL_STAGES = ['today', 'waiting', 'upcoming', 'finished', 'conversation'] as const;
@@ -27,7 +27,7 @@ export const FUNNEL_HELP: Record<FunnelStage, string> = {
   today: 'A step is due today or overdue. Work it on Today.',
   waiting: 'CA firms whose LinkedIn request is out. Not accepted by the next working day, a call, WhatsApp and email follow.',
   upcoming: 'The next step is planned for a later day. It appears on Today that morning.',
-  finished: 'Every follow-up round is done and nobody has replied. Follow up again, or mark it lost.',
+  finished: 'Every planned step is done and nobody has replied. Follow-ups start when a call is saved as no answer, busy or wrong number; or mark it lost.',
   conversation: 'They replied or a meeting is booked. Move it on as the conversation goes.',
 };
 
@@ -51,7 +51,7 @@ export type FunnelCard = {
   waitingTask: Task | null;
 };
 
-const ROUNDS = ['Day 1', 'Follow-up 1', 'Follow-up 2', 'Follow-up 3'];
+const ROUNDS = ['Day 1', 'Follow-up 1', 'Follow-up 2', 'Follow-up 3', 'Follow-up 4', 'Follow-up 5'];
 
 function roundOf(t: Task | null): string {
   if (!t) return '';
@@ -105,16 +105,4 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
   // Within a stage: the most urgent first (overdue, then soonest), else the longest untouched.
   const at = (c: FunnelCard) => c.next?.dueDate ?? (c.last?.doneAt ? c.last.doneAt.toISOString().slice(0, 10) : '9999');
   return cards.sort((a, b) => at(a).localeCompare(at(b)) || a.lead.company.localeCompare(b.lead.company));
-}
-
-/** A call, WhatsApp and email for a lead whose follow-up rounds are done: on Today from today (or the next working day). */
-export function followUpAgainPlan(today = istDay()) {
-  const due = firstWorkingDay(today);
-  return (['call', 'whatsapp', 'email'] as const).map((kind) => ({
-    kind,
-    step: 'Follow-up again',
-    title: `Follow-up again: ${kind === 'call' ? 'call' : kind === 'whatsapp' ? 'WhatsApp' : 'email'}`,
-    dueDate: due,
-    slot: 'day' as const,
-  }));
 }

@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
+import { asc, inArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { activities, leads, type Lead } from './db/schema';
+import { followUpsDue } from './follow-up-sequence';
 
 const REPLIED = ['Replied', 'Meeting Booked', 'Won'];
 const MEETING = ['Meeting Booked', 'Won'];
@@ -53,12 +54,7 @@ export async function getAnalytics(db: Db, now = new Date()) {
       .from(activities)
       .where(inArray(activities.kind, ['sent', 'stage']))
       .orderBy(asc(activities.at)),
-    db
-      .select()
-      .from(leads)
-      .where(and(eq(leads.status, 'Contacted'), isNotNull(leads.nextFollowUpAt), lte(leads.nextFollowUpAt, now)))
-      .orderBy(asc(leads.nextFollowUpAt))
-      .limit(8),
+    followUpsDue(db),
   ]);
 
   // Stages each lead has ever reached (it may have moved on since, e.g. Replied → Lost).
@@ -68,7 +64,7 @@ export async function getAnalytics(db: Db, now = new Date()) {
 
   // Researched and decided: not companies waiting, clients, ones whose research stopped on an error,
   // or ones whose fit is still being reviewed.
-  const researched = all.filter((l) => !['New', 'Processing', 'Existing Client', 'Error', 'Needs Review'].includes(l.status));
+  const researched = all.filter((l) => !['New', 'Processing', 'Existing Client', 'Error', 'Needs Review', 'Deleted'].includes(l.status));
   const qualified = researched.filter((l) => l.qualified);
   // Counted by where leads are now, like the pipeline board. Lost leads count for the steps
   // they reached before they were lost.

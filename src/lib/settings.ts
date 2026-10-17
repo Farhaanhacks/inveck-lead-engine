@@ -18,8 +18,9 @@ export const settingsSchema = z.object({
   dailyLimit: z.coerce.number().int().min(1).max(500).default(25),
   /** No longer used: every reachable, qualified lead gets a draft. Kept so saved settings still parse. */
   minScore: z.coerce.number().int().min(0).max(100).default(55),
-  /** Companies handed out to the team each working morning, split evenly between them. */
-  leadsPerMorning: z.coerce.number().int().min(0).max(500).default(100),
+  /** Leads each associate is handed every working morning, by segment: 12 + 8 = 20 a day (80 for four associates). */
+  manufacturingPerAssociate: z.coerce.number().int().min(0).max(100).default(12),
+  logisticsPerAssociate: z.coerce.number().int().min(0).max(100).default(8),
   /** Scan the news for new plants and warehouses on each run. */
   radarEnabled: z.boolean().default(true),
   /** Most new companies the prospect search adds per run. */

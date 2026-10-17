@@ -1,13 +1,14 @@
 import { KnownBranches } from '../branches';
 import type { Client, Icp } from '../db/schema';
 import { askJson } from './ai';
-import { PROSPECT_EXTRACT_PROMPT, PROSPECT_QUERIES_PROMPT } from './prompts';
+import { PROSPECT_EXTRACT_PROMPT, PROSPECT_QUERIES_BASE_PROMPT, PROSPECT_QUERIES_LOGISTICS, PROSPECT_QUERIES_MANUFACTURING } from './prompts';
+import { LOGISTICS, MANUFACTURING } from '../db/seed';
 import type { SerperResult, Services } from './services';
 import { googleSearch, mapLimit } from './services';
 import { asList, asText, domainOf, errorMessage, normCompany } from './text';
 import { domainScore, isBlockedDomain } from './website';
 import { normQuery, tooSimilar } from './query-history';
-import { canonicalSegment } from '../icp-match';
+import { canonicalSegment, normSegment } from '../icp-match';
 
 export type Prospect = { company: string; website: string; city: string; segment: string; source: string };
 
@@ -52,6 +53,15 @@ const companySchema = {
   additionalProperties: false,
 };
 
+
+/**
+ * The planner's system prompt: the shared rules (and the {{PRODUCT_DESCRIPTION}} that askJson fills in),
+ * plus the segment-specific section for each active ICP whose name is exactly that segment.
+ */
+export function queryPlannerPrompt(segments: string[]): string {
+  const has = (name: string) => segments.some((s) => normSegment(s) === normSegment(name));
+  return [PROSPECT_QUERIES_BASE_PROMPT, has(MANUFACTURING) ? PROSPECT_QUERIES_MANUFACTURING : '', has(LOGISTICS) ? PROSPECT_QUERIES_LOGISTICS : ''].filter(Boolean).join('\n\n');
+}
 
 /** Search rounds per run: when a round turns up too few companies not already on the list, plan new searches. */
 const MAX_ROUNDS = 3;
@@ -182,7 +192,7 @@ export async function findProspects(
     const text = (past.length
       ? `${planText}\n\n## Searches already run (do not repeat them or reword them; search elsewhere)\n${past.join('\n')}`
       : planText) + balance;
-    const plan = await askJson(svc, PROSPECT_QUERIES_PROMPT, text, querySchema);
+    const plan = await askJson(svc, queryPlannerPrompt(segmentNames), text, querySchema);
     if (plan.error !== undefined) {
       lastError = 'Planning searches failed: ' + plan.error;
       await log(lastError, 'warn');

@@ -21,7 +21,6 @@ import { contactPriority, icpFor } from './tiers';
 import { makePrimary } from './people';
 import { basedAbroad, currentEmployer, nameIsTheCompany, sameFirm } from './pipeline/employer';
 import { learnFirm, recallFirm } from './pipeline/firm-identity';
-import { knowPlaces } from './pipeline/places';
 import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
 import { istDay } from './tasks';
@@ -158,7 +157,6 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
 async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, opts: { mainOnly?: boolean }): Promise<CheckResult> {
   const icp = icpFor(lead.segment, await db.select().from(icps));
   await learnFirm(svc, lead.company, lead.website);
-  await knowPlaces(svc, [lead.city]);
   // Without any search: drop people whose stored title already shows another employer, and move off a
   // main contact who has left.
   await dropFormerEmployees(db, lead);

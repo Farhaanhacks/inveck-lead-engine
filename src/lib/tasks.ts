@@ -1,5 +1,6 @@
 import { and, eq, exists, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
+import { getHolidays } from './holidays';
 import { activities, companyDays, leads, tasks, type Lead, type Task, type TaskKind } from './db/schema';
 
 export const DAILY_LINKEDIN_LIMIT = 50;
@@ -8,9 +9,9 @@ export const FIND_NEXT_STEP = 'Find the next person';
 /** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
 export const MAX_CALL_ATTEMPTS = 5;
 /** Calls each person should attempt in a day. */
-export const DAILY_CALL_TARGET = 40;
+export const DAILY_CALL_TARGET = 20;
 /** Companies each person should complete in a day (every step done). */
-export const DAILY_COMPANY_TARGET = 40;
+export const DAILY_COMPANY_TARGET = 20;
 /** CA firms reached in a day, for the people who work CA firms (CA_TEAM). */
 export const DAILY_CA_TARGET = 20;
 /** Who works CA firms, by first name: they get their own daily CA count, apart from the companies. */
@@ -33,21 +34,25 @@ export function istDayBounds(day: string): { start: Date; end: Date } {
   return { start, end: new Date(start.getTime() + DAY_MS) };
 }
 
-const isWeekend = (d: Date) => d.getUTCDay() === 0 || d.getUTCDay() === 6;
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+/** Days the admin marked as holidays (Settings): not working days, like a weekend. */
+export type Holidays = ReadonlySet<string>;
+const NO_HOLIDAYS: Holidays = new Set();
 
-/** The day itself, or the Monday after when it falls on a weekend. */
-export function firstWorkingDay(day: string): string {
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+const isOff = (d: Date, holidays: Holidays) => d.getUTCDay() === 0 || d.getUTCDay() === 6 || holidays.has(iso(d));
+
+/** The day itself, or the next working day when it falls on a weekend or a holiday. */
+export function firstWorkingDay(day: string, holidays: Holidays = NO_HOLIDAYS): string {
   const d = new Date(`${day}T00:00:00Z`);
-  while (isWeekend(d)) d.setUTCDate(d.getUTCDate() + 1);
+  while (isOff(d, holidays)) d.setUTCDate(d.getUTCDate() + 1);
   return iso(d);
 }
 
-export function addWorkingDays(day: string, n: number): string {
+export function addWorkingDays(day: string, n: number, holidays: Holidays = NO_HOLIDAYS): string {
   const d = new Date(`${day}T00:00:00Z`);
   for (let left = n; left > 0; ) {
     d.setUTCDate(d.getUTCDate() + 1);
-    if (!isWeekend(d)) left--;
+    if (!isOff(d, holidays)) left--;
   }
   return iso(d);
 }
@@ -55,22 +60,20 @@ export function addWorkingDays(day: string, n: number): string {
 export type PlannedTask = { kind: TaskKind; step: string; title: string; dueDate: string; slot: 'morning' | 'day' | 'evening' };
 
 /**
- * The P1 sequence: everything at once. Day 1 is a call, a WhatsApp, an email and a LinkedIn
- * connection request; then call + WhatsApp + email on each of the next three working days. Every
- * step is planned even without a number or address, so the row shows what is missing.
+ * The first-contact plan: Day 1 only, a call, a WhatsApp, an email and a LinkedIn connection request.
+ * The follow-up rounds are not planned here: they start only when a call is saved as no answer, busy
+ * or wrong number (see follow-up-sequence.ts). Every step is planned even without a number or address,
+ * so the row shows what is missing.
  */
-export function planSequence(startDay: string): PlannedTask[] {
-  const d1 = firstWorkingDay(startDay);
-  const plan: PlannedTask[] = [];
-  const rounds = ['Day 1', 'Follow-up 1', 'Follow-up 2', 'Follow-up 3'];
-  rounds.forEach((step, i) => {
-    const dueDate = addWorkingDays(d1, i);
-    plan.push({ kind: 'call', step, title: `${step}: call`, dueDate, slot: 'day' });
-    plan.push({ kind: 'whatsapp', step, title: `${step}: WhatsApp`, dueDate, slot: 'day' });
-    plan.push({ kind: 'email', step, title: `${step}: email`, dueDate, slot: 'day' });
-    if (i === 0) plan.push({ kind: 'linkedin', step, title: 'Send the LinkedIn connection request', dueDate, slot: 'day' });
-  });
-  return plan;
+export function planSequence(startDay: string, holidays: Holidays = NO_HOLIDAYS): PlannedTask[] {
+  const dueDate = firstWorkingDay(startDay, holidays);
+  const step = 'Day 1';
+  return [
+    { kind: 'call', step, title: `${step}: call`, dueDate, slot: 'day' },
+    { kind: 'whatsapp', step, title: `${step}: WhatsApp`, dueDate, slot: 'day' },
+    { kind: 'email', step, title: `${step}: email`, dueDate, slot: 'day' },
+    { kind: 'linkedin', step, title: 'Send the LinkedIn connection request', dueDate, slot: 'day' },
+  ];
 }
 
 /** CA firms: their own Today flow (see planCaSequence). */
@@ -104,7 +107,7 @@ export function planCaFallback(today: string, fallbackDay: string, waiting: bool
 /** Statuses where the lead is being worked on, so outreach tasks make sense. */
 export const WORKING_STATUSES = ['Awaiting Approval', 'Approved', 'Contacted'] as const;
 /** Once a lead is here, open sequence tasks stop showing (promised callbacks still do). */
-const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Needs Review', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact'] as const;
+const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Needs Review', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact', 'Deleted'] as const;
 /**
  * Here the day's steps no longer show. A conversation or a meeting still finishes today's steps
  * (moving there already ended the later rounds).
@@ -152,7 +155,8 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
       .set({ doneAt: new Date(), outcome: 'closed' })
       .where(and(inArray(tasks.leadId, waiting.map((l) => l.id)), isNull(tasks.doneAt), eq(tasks.step, FIND_NEXT_STEP)));
   }
-  const rows = waiting.flatMap((l) => (isCaSegment(l.segment) ? planCaSequence(today) : planSequence(today)).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
+  const holidays = waiting.length ? await getHolidays(db) : undefined;
+  const rows = waiting.flatMap((l) => (isCaSegment(l.segment) ? planCaSequence(today) : planSequence(today, holidays)).map((t) => ({ ...t, leadId: l.id, ownerId: l.ownerId! })));
   for (let i = 0; i < rows.length; i += 500) await db.insert(tasks).values(rows.slice(i, i + 500));
 
   const finding = await db
@@ -439,6 +443,6 @@ export async function laterToday(db: Db, ownerId: number, today = istDay(), now 
 }
 
 /** The next working day after an Indian date. */
-export function nextWorkingDay(day = istDay()): string {
-  return addWorkingDays(day, 1);
+export function nextWorkingDay(day = istDay(), holidays: Holidays = NO_HOLIDAYS): string {
+  return addWorkingDays(day, 1, holidays);
 }

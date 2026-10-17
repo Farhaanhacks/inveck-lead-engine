@@ -501,6 +501,12 @@ export const SCHEMA_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS sent_emails_lead ON sent_emails (lead_id)`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS follow_up_from TEXT NOT NULL DEFAULT ''`,
+  // The follow-up sequence (five rounds, every other working day, started by a no answer / busy / wrong number call).
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_started_on TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_reason TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS status_before_delete TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS follow_up_round INTEGER NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS whatsapp_contacts (
     wa_id TEXT PRIMARY KEY,
     lead_id INTEGER,

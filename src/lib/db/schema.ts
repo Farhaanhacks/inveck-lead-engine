@@ -20,6 +20,7 @@ export const LEAD_STATUSES = [
   'Lost',
   'Rejected',
   'Error',
+  'Deleted',
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
@@ -66,11 +67,20 @@ export const leads = pgTable('leads', {
   linkedinMessage: text('linkedin_message').notNull().default(''),
   lastError: text('last_error').notNull().default(''),
   sentAt: timestamp('sent_at', { withTimezone: true }),
-  /** Follow-ups sent so far (0–2); the next one is due at nextFollowUpAt. */
+  /** Follow-up emails used so far (0-5). nextFollowUpAt is no longer used: the sequence's tasks carry the dates. */
   followUpStep: integer('follow_up_step').notNull().default(0),
   nextFollowUpAt: timestamp('next_follow_up_at', { withTimezone: true }),
   followUpSubject: text('follow_up_subject').notNull().default(''),
   followUpBody: text('follow_up_body').notNull().default(''),
+  /**
+   * The India day (YYYY-MM-DD) of the call that started the follow-up sequence (Day 1); '' = never
+   * enrolled. A connected call stops the sequence but leaves this set, so it never starts again.
+   */
+  followUpStartedOn: text('follow_up_started_on').notNull().default(''),
+  /** Deleted (soft): why, when, and the stage to restore it to. The lead and its history are kept. */
+  deletedReason: text('deleted_reason').notNull().default(''),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  statusBeforeDelete: text('status_before_delete').notNull().default(''),
   /** The BDA who works this lead. */
   ownerId: integer('owner_id'),
   /** Tracker sheet: what the last conversation came to, a free remark, and how email and LinkedIn outreach went. */
@@ -407,6 +417,8 @@ export const tasks = pgTable('tasks', {
   stageFrom: text('stage_from').notNull().default(''),
   /** An email follow-up marked sent by hand: the follow-up draft and count it used up (JSON), so Undo can put them back. */
   followUpFrom: text('follow_up_from').notNull().default(''),
+  /** 1-5 for a task of the follow-up sequence (Follow-up 1 to 5); 0 for any other task. */
+  followUpRound: integer('follow_up_round').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Task = typeof tasks.$inferSelect;

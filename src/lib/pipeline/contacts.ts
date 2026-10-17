@@ -7,7 +7,6 @@ import type { Services } from './services';
 import { googleSearch } from './services';
 import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, placeNamedIn, vagueLocation, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
-import { knowPlaces } from './places';
 import { asList, asText, asTextList, errorMessage, searchName } from './text';
 import { isBlockedDomain } from './website';
 
@@ -313,13 +312,11 @@ export async function searchLinkedIn(
       await log?.(message);
     } catch {}
   };
-  const place = (people: FoundPerson[]) => knowPlaces(svc, [city, ...people.flatMap((p) => [p.location, p.jobLocation, p.responsibility])]);
   const run = async (queries: string[], page?: number) => {
     const settled = await Promise.allSettled(queries.map((q) => googleSearch(svc, q, page)));
     const results = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : (failures.push(s.reason), [])));
     answered += results.length;
     for (const r of results) found.push(...toLinkedInPeople(r, company));
-    await place(found);
     return results;
   };
   /** One query: the results returned, and the LinkedIn profiles read from them (null when the search failed). */
@@ -334,7 +331,6 @@ export async function searchLinkedIn(
     answered++;
     const people = toLinkedInPeople(results, company);
     found.push(...people);
-    await place(people);
     return { results: results.length, people };
   };
   // Settled on a second look: their current job is here after all (one employer, this company).
@@ -619,7 +615,6 @@ export async function findLinkedinProfile(
   ].filter((q, i, all): q is string => !!q && all.indexOf(q) === i);
 
   const profileOf = async (pick: FoundPerson) => {
-    await knowPlaces(svc, [pick.location, pick.jobLocation, pick.responsibility, hint.city]);
     return {
       url: pick.linkedin,
       title: pick.title,
@@ -665,18 +660,13 @@ export async function findLinkedinProfile(
 type Placed = { title?: string; snippet?: string; location?: string | null; jobLocation?: string | null; responsibility?: string | null };
 
 /**
- * Where someone works, relative to the lead's site, from the most specific evidence first: the site
- * their title says they run ("Plant Head - Coimbatore"), then the location of their current job here,
- * then the location on their profile (where they live, which can be another city).
+ * Contacts are no longer matched to the lead's site (no distance check): anyone based in India counts.
+ * People abroad are filtered out separately (basedAbroad), so this is always 'here'. Kept so the
+ * ranking and standing code that calls it reads the same.
  */
-export function personSite(c: Placed, city: string): 'here' | 'elsewhere' | 'unknown' {
-  if (!city.trim()) return 'unknown';
-  const named = siteOf(c.responsibility ?? '', city);
-  if (named !== 'unknown') return named;
-  if (inCity(c.title ?? '', city)) return 'here';
-  const job = siteOf(c.jobLocation ?? '', city);
-  if (job !== 'unknown') return job;
-  return siteOf(c.location ?? '', city);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function personSite(_c: Placed, _city: string): 'here' | 'elsewhere' | 'unknown' {
+  return 'here';
 }
 
 /** How personSite decided, for the evidence shown to the team. */
@@ -688,9 +678,9 @@ export function siteEvidence(c: Placed, city: string): string {
   return c.location ? `profile location: ${c.location}` : 'no location shown';
 }
 
-/** True when the person's title or profile names the lead's city: they work at this branch. */
+/** True when the person's title or profile names the lead's city: they work at this branch (only used to rank them first; anyone in India can be a contact). */
 export function atBranch(c: Placed & { title: string }, city: string): boolean {
-  return personSite(c, city) === 'here' || inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''}`, city);
+  return inCity(`${c.title} ${c.snippet ?? ''} ${c.location ?? ''} ${c.jobLocation ?? ''} ${c.responsibility ?? ''}`, city);
 }
 
 /** Sort key: INVECK's contact priority, a head start for someone at this branch, then a number, then an email. */
@@ -764,7 +754,7 @@ export function contactStanding(p: Placed & { title: string }, icp: RankIcp, cit
         : `${title}: not a role on the ICP lists`;
     return { standing: 'off_list', reason: `${role}${city && site === 'elsewhere' ? `; ${where}, not the ${city} site` : ''}` };
   }
-  if (!city.trim() || site === 'here') return { standing: 'site', reason: city ? `At the ${city} site (${where})` : 'At the company' };
+  if (!city.trim() || site === 'here') return { standing: 'site', reason: 'Based in India' };
   if (corporate) {
     return { standing: 'corporate', reason: `Corporate contact (${title}, a company-wide role), for review; ${where}; not a ${city} site contact unless confirmed there` };
   }

@@ -6,6 +6,8 @@ import { makePrimary } from './people';
 import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
 import { personSite, rankCandidates } from './pipeline/contacts';
 import { FIND_NEXT_STEP, istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
+import { cancelFollowUpSequence } from './follow-up-sequence';
+import { getHolidays } from './holidays';
 export { FIND_NEXT_STEP };
 
 /** Call outcomes where nobody useful picked up. */
@@ -35,8 +37,10 @@ export function nextContact(candidates: Person[], icp: Parameters<typeof tierOf>
 
 /** Closes what is left of the current plan and starts the full sequence again for the new person, from today. */
 export async function restartSequence(db: Db, leadId: number, ownerId: number, now = new Date()): Promise<void> {
+  // A new person: the follow-up sequence of the last one ends, and the new person's own can start.
+  await cancelFollowUpSequence(db, leadId, 'the point of contact changed', { now, reset: true });
   await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), eq(tasks.priority, false)));
-  await db.insert(tasks).values(planSequence(istDay(now)).map((t) => ({ ...t, leadId, ownerId })));
+  await db.insert(tasks).values(planSequence(istDay(now), await getHolidays(db)).map((t) => ({ ...t, leadId, ownerId })));
 }
 
 /** `cleared`: the lead has no point of contact any more (nobody else to switch to). */

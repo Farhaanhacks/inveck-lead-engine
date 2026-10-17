@@ -8,8 +8,8 @@ export const LOGISTICS = '3PL & Logistics';
 /** INVECK's 3PL ICP: 3PL and warehousing first, then supply chain management and e-commerce logistics. */
 export const LOGISTICS_ICP = {
   description:
-    '3PL and warehousing companies (highest priority), supply chain management and e-commerce logistics providers that run warehouses or manage stock for B2B and enterprise clients across several locations.',
-  industries: 'Third-party logistics (3PL), warehousing, supply chain management, e-commerce logistics and fulfilment, cold chain, distribution',
+    '3PL, contract logistics and warehousing companies (highest priority), including multi-client warehousing operators, that run warehouses or manage stock for B2B and enterprise clients across several locations. Not consumer parcel, last-mile or B2C/D2C fulfilment.',
+  industries: 'Third-party logistics (3PL), contract logistics, warehousing and distribution, multi-client warehousing, cold chain',
   companySize: '100+ employees',
   mustHaves:
     'Runs warehouses, distribution or fulfilment centres, or manages stock on behalf of clients; Operates from multiple locations or cities; Serves B2B or enterprise clients',
@@ -67,7 +67,7 @@ export const DEFAULT_ICPS = [
     companySize: LOGISTICS_ICP.companySize,
     geography: 'India',
     mustHaves: LOGISTICS_ICP.mustHaves,
-    dealBreakers: 'Pure freight brokers or transporters with no warehousing; software-only logistics platforms; manufacturers, traders and retailers (they belong to their own ICP, not 3PL)',
+    dealBreakers: 'Pure freight brokers or transporters with no warehousing; software-only logistics platforms; consumer parcel, courier, last-mile or B2C/D2C fulfilment businesses; manufacturers, traders and retailers (they belong to their own ICP, not 3PL)',
     targetTitles: LOGISTICS_ICP.targetTitles,
     p2Titles: LOGISTICS_ICP.p2Titles,
     p3Titles: LOGISTICS_ICP.p3Titles,
@@ -156,6 +156,15 @@ export async function upgradeLogisticsIcpV2(db: Db) {
   const key = 'icpLogisticsV2';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
   await db.update(icps).set(LOGISTICS_ICP).where(eq(icps.segment, LOGISTICS));
+  await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
+}
+
+/** The 3PL ICP narrowed to B2B 3PL, contract logistics and warehousing (no B2C/e-commerce fulfilment), once. */
+export async function upgradeLogisticsIcpV3(db: Db) {
+  const key = 'icpLogisticsV3';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const [, logistics] = DEFAULT_ICPS;
+  await db.update(icps).set({ description: logistics.description, industries: logistics.industries, dealBreakers: logistics.dealBreakers }).where(eq(icps.segment, LOGISTICS));
   await db.insert(settings).values({ key, value: true }).onConflictDoNothing();
 }
 

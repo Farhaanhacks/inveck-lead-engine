@@ -1,7 +1,9 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, settings, users, type LeadStatus } from './db/schema';
-import { getSettings } from './settings';
+import { LOGISTICS, MANUFACTURING } from './db/seed';
+import { normSegment } from './icp-match';
+import { getSettings, type Settings } from './settings';
 import { istDay } from './tasks';
 
 /** The draw happens from this hour, India time, so the lists are ready before the team starts. */
@@ -11,13 +13,55 @@ export const DRAW_HOUR_IST = 8;
 export const DRAWABLE: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score'];
 
 /**
+ * The segments the morning draw hands out, each with its own quota per associate (Settings: 12
+ * Manufacturing and 8 3PL & Logistics a day by default). Every other segment, CA firms included, is left
+ * out of the draw, and never fills a shortfall in these two.
+ */
+export const DRAW_SEGMENTS = [MANUFACTURING, LOGISTICS] as const;
+export type DrawSegment = (typeof DRAW_SEGMENTS)[number];
+export type Quota = Record<DrawSegment, number>;
+
+/** Each associate's daily quota per segment, from Settings. */
+export const quotaOf = (s: Pick<Settings, 'manufacturingPerAssociate' | 'logisticsPerAssociate'>): Quota => ({
+  [MANUFACTURING]: s.manufacturingPerAssociate,
+  [LOGISTICS]: s.logisticsPerAssociate,
+});
+export const quotaTotal = (q: Quota) => q[MANUFACTURING] + q[LOGISTICS];
+
+/** A lead's segment as the draw compares it: same as normSegment, in SQL ("3PL & Logistics" is "3pl and logistics"). */
+const segmentKey = sql`btrim(regexp_replace(replace(lower(${leads.segment}), '&', ' and '), '[^a-z0-9]+', ' ', 'g'))`;
+
+/**
  * The release gate: only a researched company that qualified, whose main contact is confirmed (a
  * LinkedIn profile at this company and site, or entered by the team), or that has no contact yet for
  * the team to find. A lead whose contact isn't confirmed waits until it is, or is set aside.
  */
 const RELEASABLE = and(eq(leads.qualified, true), or(eq(leads.contactName, ''), isNotNull(leads.contactVerifiedAt)));
+const inPool = (segment?: DrawSegment) =>
+  and(
+    isNull(leads.ownerId),
+    eq(leads.inbound, false),
+    eq(leads.refetchPending, false),
+    inArray(leads.status, DRAWABLE),
+    RELEASABLE,
+    segment ? sql`${segmentKey} = ${normSegment(segment)}` : or(...DRAW_SEGMENTS.map((s) => sql`${segmentKey} = ${normSegment(s)}`)),
+  );
 
-export type DrawRecord = { day: string; at: string; wanted: number; drawn: number; perOwner: Record<string, number>; short: boolean };
+/** Handed out per associate (by id) and segment on one day. */
+export type Hands = Record<string, Record<DrawSegment, number>>;
+
+export type DrawRecord = {
+  day: string;
+  at: string;
+  /** Team-wide: the active associates times their quotas (4 x 20 = 80). */
+  wanted: number;
+  drawn: number;
+  perOwner: Record<string, number>;
+  short: boolean;
+  /** Each associate's quota per segment when the draw ran, and what each got. Absent on draws from before segments. */
+  quota?: Quota;
+  perOwnerSegment?: Hands;
+};
 
 const isWeekendDay = (day: string) => [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay());
 const drawKey = (day: string) => `draw:${day}`;
@@ -40,13 +84,62 @@ export function deal<T>(items: T[], people: number[], random = Math.random): Map
   return hands;
 }
 
-/** Researched leads nobody has been given yet: what tomorrow's draw can use. */
-export async function drawPool(db: Db): Promise<{ total: number; withContact: number }> {
+/**
+ * Deals leads one at a time round the associates who are still short, from a random start, never giving
+ * anyone more than they are short by. With too few leads, the associates end up within one lead of each other.
+ */
+export function dealToDeficits<T>(items: T[], deficits: Map<number, number>, random = Math.random): Map<number, T[]> {
+  const owners = [...deficits.keys()];
+  const hands = new Map<number, T[]>(owners.map((o) => [o, []]));
+  if (!owners.length) return hands;
+  let at = Math.floor(random() * owners.length);
+  let next = 0;
+  for (let idle = 0; next < items.length && idle < owners.length; at++) {
+    const o = owners[at % owners.length];
+    if (hands.get(o)!.length < (deficits.get(o) ?? 0)) {
+      hands.get(o)!.push(items[next++]);
+      idle = 0;
+    } else idle++;
+  }
+  return hands;
+}
+
+const emptyHand = (): Record<DrawSegment, number> => ({ [MANUFACTURING]: 0, [LOGISTICS]: 0 });
+
+/** What each associate has been handed on a day, by segment (counted from the leads themselves). */
+export async function handedOut(db: Db, day: string): Promise<Hands> {
+  const rows = await db
+    .select({ owner: leads.ownerId, key: segmentKey, n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(eq(leads.drawnOn, day), isNotNull(leads.ownerId)))
+    .groupBy(leads.ownerId, segmentKey);
+  const out: Hands = {};
+  for (const r of rows) {
+    const seg = DRAW_SEGMENTS.find((s) => normSegment(s) === r.key);
+    if (!seg) continue;
+    (out[String(r.owner)] ??= emptyHand())[seg] += Number(r.n);
+  }
+  return out;
+}
+
+/** One associate's day: leads handed out in the draw, in total and by segment, for the Today counter. */
+export async function allocationFor(db: Db, ownerId: number, day = istDay()): Promise<{ total: number; bySegment: Record<DrawSegment, number> }> {
+  const hand = (await handedOut(db, day))[String(ownerId)] ?? emptyHand();
+  return { total: hand[MANUFACTURING] + hand[LOGISTICS], bySegment: hand };
+}
+
+/** Researched leads nobody has been given yet that the draw can use, in total and by segment. */
+export async function drawPool(db: Db): Promise<{ total: number; withContact: number; bySegment: Record<DrawSegment, number> }> {
   const [row] = await db
     .select({ total: sql<number>`count(*)::int`, withContact: sql<number>`count(*) filter (where ${leads.contactName} <> '')::int` })
     .from(leads)
-    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE), RELEASABLE));
-  return { total: Number(row?.total ?? 0), withContact: Number(row?.withContact ?? 0) };
+    .where(inPool());
+  const bySegment = emptyHand();
+  for (const s of DRAW_SEGMENTS) {
+    const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(inPool(s));
+    bySegment[s] = Number(r?.n ?? 0);
+  }
+  return { total: Number(row?.total ?? 0), withContact: Number(row?.withContact ?? 0), bySegment };
 }
 
 export async function getDraw(db: Db, day = istDay()): Promise<DrawRecord | null> {
@@ -61,12 +154,31 @@ export function drawDue(now = new Date()): boolean {
   return !isWeekendDay(day) && hourIst >= DRAW_HOUR_IST;
 }
 
+/** What each associate is still short by, per segment, and in all. */
+export function shortfalls(team: number[], quota: Quota, hands: Hands): { owner: number; segment: DrawSegment; short: number }[] {
+  return team.flatMap((owner) => DRAW_SEGMENTS.map((segment) => ({ owner, segment, short: Math.max(0, quota[segment] - (hands[String(owner)]?.[segment] ?? 0)) }))).filter((s) => s.short > 0);
+}
+
+async function record(db: Db, team: number[], quota: Quota, base: Pick<DrawRecord, 'day' | 'at'>): Promise<DrawRecord> {
+  const hands = await handedOut(db, base.day);
+  const perOwner: Record<string, number> = {};
+  const perOwnerSegment: Hands = {};
+  for (const o of team) {
+    const h = hands[String(o)] ?? emptyHand();
+    perOwnerSegment[String(o)] = h;
+    perOwner[String(o)] = h[MANUFACTURING] + h[LOGISTICS];
+  }
+  const drawn = Object.values(perOwner).reduce((a, b) => a + b, 0);
+  return { ...base, wanted: team.length * quotaTotal(quota), drawn, perOwner, short: shortfalls(team, quota, hands).length > 0, quota, perOwnerSegment };
+}
+
 /**
- * The morning draw: picks up to `leadsPerMorning` researched leads that have never been handed out,
- * at random (those with a named decision-maker first), shuffles them and splits them evenly across
- * the active team. Runs once per India day; a second call the same day does nothing (unless
- * the list was empty, so a list filled later in the day still goes out). A lead, once
- * given, has an owner and is never drawn again.
+ * The morning draw. Every active associate is given their quota in each segment (12 Manufacturing and
+ * 8 3PL & Logistics by default, 20 a day; 80 for four associates), drawn per segment from the researched,
+ * releasable leads nobody has been given yet, so nobody gets the wrong mix and a shortage in one segment
+ * is never filled from another (or from CA firms). Leads are picked at random, shuffled and dealt round
+ * the team. Runs once per India day; a second call the same day does nothing (unless the list was empty,
+ * so a list filled later in the day still goes out). A lead, once given, has an owner and is never drawn again.
  */
 export async function runDailyDraw(db: Db, opts: { now?: Date; force?: boolean; random?: () => number } = {}): Promise<DrawRecord | null> {
   const now = opts.now ?? new Date();
@@ -74,27 +186,27 @@ export async function runDailyDraw(db: Db, opts: { now?: Date; force?: boolean; 
   if (!opts.force && !drawDue(now)) return null;
   if (await getDraw(db, day)) return null;
 
-  const { leadsPerMorning } = await getSettings(db);
+  const quota = quotaOf(await getSettings(db));
   const team = await activeTeam(db);
-  if (!team.length || leadsPerMorning <= 0) return null;
+  if (!team.length || quotaTotal(quota) <= 0) return null;
 
   // Claim the day first, so two calls at the same moment can't both draw.
-  const placeholder: DrawRecord = { day, at: now.toISOString(), wanted: leadsPerMorning, drawn: 0, perOwner: {}, short: false };
+  const placeholder: DrawRecord = { day, at: now.toISOString(), wanted: team.length * quotaTotal(quota), drawn: 0, perOwner: {}, short: false };
   const claimed = await db.insert(settings).values({ key: drawKey(day), value: placeholder }).onConflictDoNothing().returning({ key: settings.key });
   if (!claimed.length) return null;
 
-  const { drawn, perOwner } = await drawInto(db, team, day, leadsPerMorning, now, opts.random ?? Math.random);
+  const drawn = await drawInto(db, team, day, quota, now, opts.random ?? Math.random);
   if (!drawn) {
     // Nothing to hand out yet: leave the day open so leads added later still go out today.
     await db.delete(settings).where(eq(settings.key, drawKey(day)));
-    return { ...placeholder, short: true };
+    return { ...placeholder, short: true, quota };
   }
-  const record: DrawRecord = { ...placeholder, drawn, perOwner, short: drawn < leadsPerMorning };
-  await db.update(settings).set({ value: record }).where(eq(settings.key, drawKey(day)));
-  return record;
+  const full = await record(db, team, quota, { day, at: now.toISOString() });
+  await db.update(settings).set({ value: full }).where(eq(settings.key, drawKey(day)));
+  return full;
 }
 
-/** After a short draw, hands out more from the list (up to the day's number) once companies have been added. */
+/** After a short draw, hands out more once leads are available, filling each associate's missing segment quotas. */
 export async function topUpDraw(db: Db, opts: { now?: Date; random?: () => number } = {}): Promise<DrawRecord | null> {
   const now = opts.now ?? new Date();
   const day = istDay(now);
@@ -102,40 +214,41 @@ export async function topUpDraw(db: Db, opts: { now?: Date; random?: () => numbe
   if (!current?.short) return null;
   const team = await activeTeam(db);
   if (!team.length) return null;
-  const { drawn, perOwner } = await drawInto(db, team, day, current.wanted - current.drawn, now, opts.random ?? Math.random);
-  if (!drawn) return current;
-  const merged = { ...current.perOwner };
-  for (const [owner, n] of Object.entries(perOwner)) merged[owner] = (merged[owner] ?? 0) + n;
-  const record: DrawRecord = { ...current, drawn: current.drawn + drawn, perOwner: merged, short: current.drawn + drawn < current.wanted };
-  await db.update(settings).set({ value: record }).where(eq(settings.key, drawKey(day)));
-  return record;
+  const quota = current.quota ?? quotaOf(await getSettings(db));
+  if (!(await drawInto(db, team, day, quota, now, opts.random ?? Math.random))) return current;
+  const full = await record(db, team, quota, { day: current.day, at: current.at });
+  await db.update(settings).set({ value: full }).where(eq(settings.key, drawKey(day)));
+  return full;
 }
 
 async function activeTeam(db: Db): Promise<number[]> {
   return (await db.select({ id: users.id }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(users.id)).map((u) => u.id);
 }
 
-/** Picks `count` leads from the list (those with a named decision-maker first, at random), shuffles them and deals them out. */
-async function drawInto(db: Db, team: number[], day: string, count: number, now: Date, random: () => number) {
-  const picked = await db
-    .select({ id: leads.id })
-    .from(leads)
-    .where(and(isNull(leads.ownerId), eq(leads.inbound, false), eq(leads.refetchPending, false), inArray(leads.status, DRAWABLE), RELEASABLE))
-    .orderBy(sql`(${leads.contactName} = '')`, sql`random()`)
-    .limit(count);
-  const hands = deal(shuffle(picked.map((p) => p.id), random), team, random);
-  const perOwner: Record<string, number> = {};
+/**
+ * For each segment: works out what each associate is still short by (quota minus what they already got
+ * today), picks that many leads at random (those with a named decision-maker first), and deals them to
+ * the associates who are short. Returns how many leads were handed out.
+ */
+async function drawInto(db: Db, team: number[], day: string, quota: Quota, now: Date, random: () => number): Promise<number> {
+  const hands = await handedOut(db, day);
   let drawn = 0;
-  for (const [owner, ids] of hands) {
-    if (!ids.length) continue;
-    // Only leads still without an owner: a lead added by hand meanwhile keeps its person.
-    const given = await db
-      .update(leads)
-      .set({ ownerId: owner, drawnOn: day, updatedAt: now })
-      .where(and(inArray(leads.id, ids), isNull(leads.ownerId)))
-      .returning({ id: leads.id });
-    perOwner[owner] = given.length;
-    drawn += given.length;
+  for (const segment of DRAW_SEGMENTS) {
+    const deficits = new Map(team.map((o) => [o, Math.max(0, quota[segment] - (hands[String(o)]?.[segment] ?? 0))] as const).filter(([, n]) => n > 0));
+    const need = [...deficits.values()].reduce((a, b) => a + b, 0);
+    if (!need) continue;
+    const picked = await db
+      .select({ id: leads.id })
+      .from(leads)
+      .where(inPool(segment))
+      .orderBy(sql`(${leads.contactName} = '')`, sql`random()`)
+      .limit(need);
+    for (const [owner, ids] of dealToDeficits(shuffle(picked.map((p) => p.id), random), deficits, random)) {
+      if (!ids.length) continue;
+      // Only leads still without an owner: a lead added by hand meanwhile keeps its person.
+      const given = await db.update(leads).set({ ownerId: owner, drawnOn: day, updatedAt: now }).where(and(inArray(leads.id, ids), isNull(leads.ownerId))).returning({ id: leads.id });
+      drawn += given.length;
+    }
   }
-  return { drawn, perOwner };
+  return drawn;
 }
