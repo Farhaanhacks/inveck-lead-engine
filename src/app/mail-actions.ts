@@ -9,7 +9,7 @@ import { getSettings } from '@/lib/settings';
 import { requireUser } from '@/lib/users';
 import { disconnectMailbox, MailError, sendFromMailbox } from '@/lib/mail/outlook';
 import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
-import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
+import { draftFollowUp, FOLLOW_UP_ROUNDS } from '@/lib/pipeline/follow-ups';
 import { errorMessage } from '@/lib/pipeline/text';
 import { formatDateTime } from '@/lib/dates';
 import { liveServices } from '@/lib/run-driver';
@@ -79,10 +79,10 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   if (!plan.followUp) {
     await db.update(leads).set({ emailSubject: subject, emailBody: body, updatedAt: now }).where(eq(leads.id, lead.id));
   } else {
-    const step = Math.min(lead.followUpStep + 1, FOLLOW_UP_DAYS.length);
+    const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, FOLLOW_UP_ROUNDS);
     await db
       .update(leads)
-      .set({ followUpSubject: '', followUpBody: '', followUpStep: step, ...(lead.sentAt ? { nextFollowUpAt: nextFollowUpAt(lead.sentAt, step) } : {}), updatedAt: now })
+      .set({ followUpSubject: '', followUpBody: '', followUpStep: step, updatedAt: now })
       .where(eq(leads.id, lead.id));
   }
   await logActivity(db, lead.id, 'note', `${plan.followUp ? 'Follow-up' : 'Email'} sent from Outlook (${sent.from}) to ${to}${plan.replyTo ? ', in the same thread' : ''}: “${subject || `Re: ${prior?.subject ?? ''}`}”`);

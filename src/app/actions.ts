@@ -4,14 +4,17 @@ import { after } from 'next/server';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { activities, clients, icps, knownCompanies as ownLeadList, leads, opportunities, people, tasks, PIPELINE_STAGES, runs, type LeadStatus, type PipelineStage, whatsappContacts } from '@/lib/db/schema';
 import { addOpportunityAsLead, scanRadar } from '@/lib/pipeline/radar';
 import { applyStage } from '@/lib/stages';
 import { makePrimary } from '@/lib/people';
 import { logActivity } from '@/lib/activity';
-import { draftFollowUp, FOLLOW_UP_DAYS, nextFollowUpAt } from '@/lib/pipeline/follow-ups';
+import { draftFollowUp } from '@/lib/pipeline/follow-ups';
+import { junkIfComplete, nextEmailRound, rescheduleFollowUps, restoreLead } from '@/lib/follow-up-sequence';
+import { getHolidays, saveHolidays, validDay } from '@/lib/holidays';
+import { markCompanyDay } from '@/lib/tasks';
 import { findSignals } from '@/lib/pipeline/signals';
 import { appPassword, createSession, SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/auth';
 import { assignUnowned } from '@/lib/assign';
@@ -381,6 +384,8 @@ export async function bulkLeadAction(form: FormData) {
     await db.delete(people).where(inArray(people.leadId, ids));
     // Their planned calls and messages go too: nothing is due for a company that's gone.
     await db.delete(tasks).where(inArray(tasks.leadId, ids));
+  } else if (action === 'restore') {
+    for (const id of ids) await restoreLead(db, id, await actorName());
   } else if (action === 'reassess') {
     if (await reassessLeads(db, ids, await actorName())) await researchNow();
   } else if (STATUS_ACTIONS[action]) {
@@ -516,40 +521,55 @@ export async function addActivityAction(form: FormData) {
   refreshLeadPages(id);
 }
 
-/** Writes the next follow-up now instead of waiting for the next run. */
+/** Writes the draft for the lead's next follow-up email now instead of waiting for the next run. */
 export async function writeFollowUpAction(form: FormData) {
   if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
-  if (!lead || lead.status !== 'Contacted' || lead.followUpStep >= FOLLOW_UP_DAYS.length) return;
+  if (!lead || lead.status === 'Deleted' || !(await nextEmailRound(db, id))) return;
   const r = await draftFollowUp(db, await liveServices(), lead);
   if (!r.ok) await logActivity(db, id, 'error', `Couldn't draft the follow-up: ${r.error}`);
   refreshLeadPages(id);
 }
 
-/** The follow-up (as edited) has been sent: schedule the next one, if any. */
+/**
+ * The next follow-up email (as edited) has been sent by hand, or is skipped: its step is logged as done
+ * and the draft is used up. Nothing is ever sent from here.
+ */
 export async function sendFollowUpAction(form: FormData) {
   if (!(await mayActOn(Number(str(form, 'id'))))) return;
   const id = Number(str(form, 'id'));
   const skip = str(form, 'skip') === '1';
   const db = await getDb();
   const [lead] = await db.select().from(leads).where(eq(leads.id, id));
-  if (!lead || lead.status !== 'Contacted') return;
-  const step = lead.followUpStep + 1;
+  const task = lead && lead.status !== 'Deleted' ? await nextEmailRound(db, id) : null;
+  if (!lead || !task) return;
   const subject = str(form, 'followUpSubject') || lead.followUpSubject;
+  const now = new Date();
+  await db
+    .update(tasks)
+    .set({ doneAt: now, outcome: skip ? 'skipped' : 'done', followUpFrom: skip ? '' : JSON.stringify({ subject: lead.followUpSubject, body: lead.followUpBody, step: lead.followUpStep }) })
+    .where(and(eq(tasks.id, task.id), isNull(tasks.doneAt)));
   await db
     .update(leads)
-    .set({
-      followUpStep: step,
-      nextFollowUpAt: lead.sentAt ? nextFollowUpAt(lead.sentAt, step) : null,
-      followUpSubject: '',
-      followUpBody: '',
-      updatedAt: new Date(),
-    })
+    .set({ followUpSubject: '', followUpBody: '', ...(skip ? {} : { followUpStep: task.followUpRound, mailOutcome: ['', 'Not sent'].includes(lead.mailOutcome) ? 'Sent' : lead.mailOutcome }), updatedAt: now })
     .where(eq(leads.id, id));
-  await logActivity(db, id, skip ? 'note' : 'follow_up_sent', skip ? `Follow-up ${step} skipped` : `Follow-up ${step} sent${subject ? `: “${subject}”` : ''}`);
+  await logActivity(db, id, skip ? 'note' : 'follow_up_sent', skip ? `Follow-up ${task.followUpRound} skipped` : `Follow-up ${task.followUpRound} sent${subject ? `: “${subject}”` : ''}`);
+  await junkIfComplete(db, id, now);
+  await markCompanyDay(db, id, task.ownerId);
   refreshLeadPages(id);
+  revalidatePath('/today');
+  revalidatePath('/followups');
+}
+
+/** Puts a Deleted lead back at the stage it was in (its history was never removed). */
+export async function restoreLeadAction(form: FormData) {
+  const id = Number(str(form, 'id'));
+  if (!(await mayActOn(id))) return;
+  await restoreLead(await getDb(), id, await actorName());
+  refreshLeadPages(id);
+  revalidatePath('/followups');
 }
 
 /** Looks for fresh buying signals for one lead. */
@@ -748,7 +768,8 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   // Switching provider without touching the model: use that provider's default model.
   if (provider !== current.aiProvider && model === current.aiModel) model = DEFAULT_MODELS[provider] ?? model;
   const parsed = settingsSchema.safeParse({
-    leadsPerMorning: str(form, 'leadsPerMorning'),
+    manufacturingPerAssociate: str(form, 'manufacturingPerAssociate'),
+    logisticsPerAssociate: str(form, 'logisticsPerAssociate'),
     radarEnabled: form.get('radarEnabled') === 'on',
     prospectsPerRun: str(form, 'prospectsPerRun'),
     prospectDay: str(form, 'prospectDay'),
@@ -771,4 +792,30 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
   await saveSettings(db, parsed.data);
   revalidatePath('/settings');
   return { ok: true, message: 'Saved.' };
+}
+
+/**
+ * Marks a date as a holiday: like a weekend, it never counts as a follow-up day. Follow-ups already
+ * planned are moved on to the next working days (steps already done stay where they are).
+ */
+export async function addHolidayAction(form: FormData) {
+  await requireAdmin();
+  const day = str(form, 'day');
+  if (!validDay(day)) return;
+  const db = await getDb();
+  await saveHolidays(db, [...(await getHolidays(db)), day]);
+  await rescheduleFollowUps(db);
+  for (const p of ['/settings', '/today', '/followups']) revalidatePath(p);
+}
+
+/** Takes a holiday off the list: follow-ups planned around it go back to counting that day. */
+export async function removeHolidayAction(form: FormData) {
+  await requireAdmin();
+  const day = str(form, 'day');
+  const db = await getDb();
+  const days = await getHolidays(db);
+  days.delete(day);
+  await saveHolidays(db, days);
+  await rescheduleFollowUps(db);
+  for (const p of ['/settings', '/today', '/followups']) revalidatePath(p);
 }

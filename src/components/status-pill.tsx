@@ -18,6 +18,7 @@ const TONE: Record<LeadStatus, string> = {
   Lost: 'bg-neutral-soft text-ink-2',
   Rejected: 'bg-neutral-soft text-ink-2',
   Error: 'bg-critical-soft text-critical-ink',
+  Deleted: 'bg-neutral-soft text-ink-2',
 };
 
 export function StatusPill({ status }: { status: string }) {

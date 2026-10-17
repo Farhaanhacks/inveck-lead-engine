@@ -3,6 +3,10 @@ import { apiKeys, getSettings } from '@/lib/settings';
 import { PageHeader } from '@/components/page-header';
 import { SettingsForm } from './settings-form';
 import { adminPage } from '@/lib/access';
+import { getHolidays } from '@/lib/holidays';
+import { addHolidayAction, removeHolidayAction } from '@/app/actions';
+import { formatDate } from '@/lib/dates';
+import { istDay } from '@/lib/tasks';
 
 export default async function SettingsPage() {
   await adminPage();
@@ -10,6 +14,7 @@ export default async function SettingsPage() {
   const settings = await getSettings(db);
   const keys = apiKeys();
   const url = databaseUrl();
+  const holidays = [...(await getHolidays(db))].sort();
   const status = [
     { name: 'DEEPSEEK_API_KEY', ok: !!keys.deepseek, use: 'AI (DeepSeek)', needed: settings.aiProvider === 'deepseek' },
     { name: 'ANTHROPIC_API_KEY', ok: !!keys.anthropic, use: 'AI (Claude)', needed: settings.aiProvider === 'anthropic' },
@@ -55,6 +60,32 @@ export default async function SettingsPage() {
                 </li>
               ))}
             </ul>
+          </section>
+          <section className="card p-5">
+            <h2 className="text-sm font-semibold">Holidays</h2>
+            <p className="mb-3 text-xs text-muted">A holiday is treated like a weekend: follow-ups never fall on it, and the ones already planned move to the next working day.</p>
+            <form action={addHolidayAction} className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <label htmlFor="holiday-day" className="label">Date</label>
+                <input id="holiday-day" name="day" type="date" required min={istDay()} className="field" />
+              </div>
+              <button className="btn-primary">Mark as holiday</button>
+            </form>
+            {holidays.length > 0 ? (
+              <ul className="mt-3 divide-y divide-line text-sm">
+                {holidays.map((d) => (
+                  <li key={d} className="flex items-center justify-between gap-2 py-1.5">
+                    <span>{formatDate(new Date(`${d}T12:00:00+05:30`))}</span>
+                    <form action={removeHolidayAction}>
+                      <input type="hidden" name="day" value={d} />
+                      <button className="text-xs text-muted hover:text-ink hover:underline">Remove</button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-xs text-muted">No holidays marked.</p>
+            )}
           </section>
           <section className="card p-5 text-sm text-ink-2">
             <h2 className="mb-2 text-sm font-semibold text-ink">Schedule & database</h2>

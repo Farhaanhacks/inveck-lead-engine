@@ -8,12 +8,12 @@ import { TierBadge } from '@/components/tier-badge';
 import { basedAbroad } from '@/lib/pipeline/employer';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { notFound } from 'next/navigation';
-import { asc, desc, eq, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { activities, icps, leads, people, whatsappMessages, type Lead, type Person, type WhatsappContact, type WhatsappMessage } from '@/lib/db/schema';
+import { activities, icps, leads, people, tasks, whatsappMessages, type Lead, type Task, type Person, type WhatsappContact, type WhatsappMessage } from '@/lib/db/schema';
 import { Timeline } from '@/components/timeline';
-import { FOLLOW_UP_DAYS } from '@/lib/pipeline/follow-ups';
-import { formatDate, formatDateTime, isPast, relativeDays } from '@/lib/dates';
+import { istDay } from '@/lib/tasks';
+import { formatDate, formatDateTime } from '@/lib/dates';
 import { SendWhatsApp } from '@/components/send-whatsapp';
 import { waNumber } from '@/lib/phones';
 import { getSettings, type Settings } from '@/lib/settings';
@@ -40,6 +40,7 @@ import {
   markNotFitAction,
   deleteLeadAction,
   reassessFitAction,
+  restoreLeadAction,
   sendFollowUpAction,
   setLeadStatusAction,
   updateLeadAction,
@@ -68,37 +69,40 @@ function StatusButton({ id, action, label, primary }: { id: number; action: stri
   );
 }
 
-function FollowUpCard({ lead }: { lead: Lead }) {
-  const step = lead.followUpStep + 1;
-  const total = FOLLOW_UP_DAYS.length;
-  if (lead.followUpStep >= total) {
-    return (
-      <Section title="Follow-ups">
-        <p className="text-sm text-ink-2">
-          Sequence finished: first email and {total} follow-ups sent. Mark the lead as replied, won or lost when you hear back.
-        </p>
-      </Section>
-    );
-  }
-  const due = lead.nextFollowUpAt;
-  const overdue = !!due && isPast(due);
+function FollowUpCard({ lead, rounds }: { lead: Lead; rounds: Task[] }) {
+  const numbers = [1, 2, 3, 4, 5];
+  const stateOf = (n: number) => {
+    const mine = rounds.filter((t) => t.followUpRound === n);
+    if (!mine.length) return { label: 'Not planned', tone: 'text-muted', due: '' };
+    const due = mine.map((t) => t.dueDate).sort()[0];
+    if (mine.every((t) => t.doneAt && t.outcome !== 'closed')) return { label: 'Done', tone: 'text-good-ink', due };
+    if (mine.some((t) => t.outcome === 'closed')) return { label: 'Cancelled', tone: 'text-muted', due };
+    const done = mine.filter((t) => t.doneAt).length;
+    return { label: `${done} of ${mine.length} steps done`, tone: due < istDay() ? 'text-warning-ink' : 'text-ink-2', due };
+  };
+  const nextEmail = rounds.filter((t) => t.kind === 'email' && !t.doneAt).sort((a, b) => a.followUpRound - b.followUpRound)[0];
+  const open = lead.status !== 'Deleted' && !!nextEmail;
   return (
-    <Section
-      title={`Follow-up ${step} of ${total}`}
-      aside={
-        due && (
-          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${overdue ? 'bg-warning-soft text-warning-ink' : 'bg-neutral-soft text-ink-2'}`}>
-            Due {relativeDays(due)} · {formatDate(due)}
-          </span>
-        )
-      }
-    >
-      {lead.followUpBody ? (
-        <form action={sendFollowUpAction} className="space-y-3">
+    <Section title="Follow-up sequence" aside={<span className="rounded-full bg-neutral-soft px-2 py-0.5 text-xs font-medium text-ink-2">Day 1: {formatDate(new Date(`${lead.followUpStartedOn}T12:00:00+05:30`))}</span>}>
+      <p className="mb-3 text-xs text-muted">Five follow-ups, every other working day after the call that started it (weekends and holidays skipped). A connected call stops it; after Follow-up 5 the lead moves to Deleted.</p>
+      <ul className="divide-y divide-line text-sm">
+        {numbers.map((n) => {
+          const s = stateOf(n);
+          return (
+            <li key={n} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span className="font-medium">Follow-up {n}</span>
+              <span className="text-xs text-ink-2">{s.due ? formatDate(new Date(`${s.due}T12:00:00+05:30`)) : ''}</span>
+              <span className={`text-xs font-medium ${s.tone}`}>{s.label}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {open && lead.followUpBody ? (
+        <form action={sendFollowUpAction} className="mt-4 space-y-3 border-t border-line pt-4">
           <input type="hidden" name="id" value={lead.id} />
           <div>
             <div className="flex items-center justify-between">
-              <label htmlFor="followUpSubject" className="label">Subject</label>
+              <label htmlFor="followUpSubject" className="label">Follow-up {nextEmail.followUpRound} subject</label>
               <CopyButton text={lead.followUpSubject} />
             </div>
             <input id="followUpSubject" name="followUpSubject" defaultValue={lead.followUpSubject} className="field" />
@@ -111,26 +115,23 @@ function FollowUpCard({ lead }: { lead: Lead }) {
             <textarea id="followUpBody" name="followUpBody" defaultValue={lead.followUpBody} rows={6} className="field leading-relaxed" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <SubmitButton pendingText="Saving…">Mark follow-up {step} as sent</SubmitButton>
+            <SubmitButton pendingText="Saving…">Mark follow-up {nextEmail.followUpRound} as sent</SubmitButton>
             <button name="skip" value="1" className="btn-secondary">Skip</button>
           </div>
-          <p className="text-xs text-muted">Send it as a reply to your first email, then mark it as sent. The next follow-up is scheduled automatically.</p>
+          <p className="text-xs text-muted">Nothing is sent from here: send it from your own mailbox, then mark it as sent.</p>
         </form>
-      ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-ink-2">
-            {due ? (overdue ? 'Due now. ' : `Scheduled ${relativeDays(due)}. `) : ''}The AI writes it with the next research run, or now if you prefer.
-          </p>
+      ) : open ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+          <p className="text-sm text-ink-2">The AI writes the next follow-up email with the next research run, or now if you prefer.</p>
           <form action={writeFollowUpAction}>
             <input type="hidden" name="id" value={lead.id} />
             <SubmitButton className="btn-secondary" pendingText="Writing…">Write it now</SubmitButton>
           </form>
         </div>
-      )}
+      ) : null}
     </Section>
   );
 }
-
 
 
 function Pill({ a }: { a: Pick<Assessment, 'label' | 'tone'> }) {
@@ -523,7 +524,8 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       Number(isCorporateContact(b)) - Number(isCorporateContact(a)) ||
       candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
   );
-  const inSequence = lead.status === 'Contacted';
+  const inSequence = !!lead.followUpStartedOn;
+  const rounds = inSequence ? await db.select().from(tasks).where(and(eq(tasks.leadId, id), gt(tasks.followUpRound, 0))).orderBy(asc(tasks.followUpRound), asc(tasks.id)) : [];
   // WhatsApp with the contact: shown once there is a number, or messages.
   const waTo = waNumber(lead.contactPhone);
   const [waKnown, waMessages] = await Promise.all([
@@ -612,11 +614,23 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           {lead.status === 'Won' && (
             <Link href="/targets#clients" className="btn-secondary">View in clients</Link>
           )}
-          {!['New', 'Processing', 'Contacted', 'Replied', 'Meeting Booked', 'Won', ...REASSESSABLE].includes(lead.status) && (
+          {lead.status === 'Deleted' && (
+            <form action={restoreLeadAction}>
+              <input type="hidden" name="id" value={id} />
+              <SubmitButton className="btn-primary" pendingText="Restoring…">Restore lead</SubmitButton>
+            </form>
+          )}
+          {!['New', 'Processing', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Deleted', ...REASSESSABLE].includes(lead.status) && (
             <StatusButton id={id} action="requeue" label="Research again" />
           )}
         </div>
       </div>
+
+      {lead.status === 'Deleted' && (
+        <div className="mb-6 rounded-lg border border-line bg-neutral-soft px-4 py-3 text-sm text-ink-2" role="status">
+          <span className="font-medium">Deleted{lead.deletedAt ? ` on ${formatDate(lead.deletedAt)}` : ''}.</span> {lead.deletedReason} Its timeline, calls and research are kept; restore it to work it again.
+        </div>
+      )}
 
       {lead.lastError && (
         <div className="mb-6 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink" role="alert">
@@ -639,7 +653,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
 
       {inSequence && (
         <div className="mb-6">
-          <FollowUpCard lead={lead} />
+          <FollowUpCard lead={lead} rounds={rounds} />
         </div>
       )}
 

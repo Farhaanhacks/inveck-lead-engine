@@ -14,7 +14,7 @@ import { ensureSequences, istDay } from '@/lib/tasks';
 import { bestEffort } from '@/lib/best-effort';
 import { FUNNEL_HELP, FUNNEL_LABEL, FUNNEL_STAGES, loadFunnel, type FunnelCard, type FunnelStage } from '@/lib/followups';
 import { completeTaskAction } from '../../team-actions';
-import { followUpAgainAction, moveFromFunnelAction } from '../../followup-actions';
+import { moveFromFunnelAction } from '../../followup-actions';
 
 export const maxDuration = 300;
 
@@ -103,10 +103,6 @@ function CardView({ card, today, todayHref, canLog, owner, tier }: { card: Funne
         )}
         {card.stage === 'finished' && (
           <>
-            <form action={followUpAgainAction}>
-              <input type="hidden" name="id" value={lead.id} />
-              <button className="btn-primary px-2 py-0.5 text-xs">Follow up again</button>
-            </form>
             <Move id={lead.id} stage="Replied" label="Got a reply" />
             <Move id={lead.id} stage="Lost" label="Mark lost" />
           </>
@@ -145,8 +141,8 @@ export default async function FollowUpsPage({ searchParams }: PageProps<'/follow
   );
   const ownerIds = [...new Set(cards.map((c) => c.lead.ownerId).filter((x): x is number => !!x))];
   const names = new Map((ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : []).map((u) => [u.id, u.name]));
-  const [won, lost] = await Promise.all(
-    (['Won', 'Lost'] as const).map(async (status) =>
+  const [won, lost, deleted] = await Promise.all(
+    (['Won', 'Lost', 'Deleted'] as const).map(async (status) =>
       (await db.select({ id: leads.id, ownerId: leads.ownerId, segment: leads.segment }).from(leads).where(eq(leads.status, status))).filter(
         (l) => (viewId === null || l.ownerId === viewId) && (!seg || normSegment(l.segment) === normSegment(seg)),
       ).length,
@@ -191,7 +187,7 @@ export default async function FollowUpsPage({ searchParams }: PageProps<'/follow
       </AutoFilterForm>
 
       {/* The funnel at a glance: how many companies at each stage. */}
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         {FUNNEL_STAGES.map((s) => (
           <a key={s} href={`#${s}`} className={`card border-l-4 p-3 hover:bg-surface-2 ${STAGE_TONE[s]}`}>
             <div className="text-xs text-muted">{FUNNEL_LABEL[s]}</div>
@@ -206,6 +202,10 @@ export default async function FollowUpsPage({ searchParams }: PageProps<'/follow
           <div className="text-xs text-muted">Lost</div>
           <div className="mt-1 text-2xl font-semibold tabular-nums">{lost}</div>
         </div>
+        <Link href="/leads?status=Deleted" className="card p-3 hover:bg-surface-2" title="Junk: five unanswered follow-up rounds. Open to restore.">
+          <div className="text-xs text-muted">Deleted</div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums">{deleted}</div>
+        </Link>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
