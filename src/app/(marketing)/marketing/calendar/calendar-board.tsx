@@ -109,17 +109,19 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
           </div>
         </div>
       </header>
-    <div className="flex flex-col gap-4 lg:flex-row">
+    <div className="flex flex-col gap-4">
       {/* Content with no date yet: drag a card onto a day, or drop a scheduled one here to take its date off. */}
-      <aside className="lg:w-72 lg:shrink-0" onDragOver={over} onDrop={onDrop('')} aria-label="Content with no date">
+      <aside onDragOver={over} onDrop={onDrop('')} aria-label="Content with no date">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold">Drafts <span className="ml-1 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent tabular-nums">{unscheduled.length}</span></h2>
           <button type="button" className="btn-primary rounded-full px-3.5 py-1 text-sm" onClick={() => setEditor(blank())}>+ New content</button>
         </div>
-        <div className="glass space-y-2 rounded-2xl p-2 lg:max-h-[75vh] lg:overflow-y-auto">
-          {unscheduled.length === 0 && <p className="px-2 py-4 text-center text-xs text-muted">No unscheduled content. Create one, or drop a post here to take its date off.</p>}
+        <div className="glass flex gap-2 overflow-x-auto rounded-2xl p-2">
+          {unscheduled.length === 0 && <p className="w-full px-2 py-3 text-center text-xs text-muted">No unscheduled content. Create one, or drop a post here to take its date off.</p>}
           {unscheduled.map((p) => (
-            <Card key={p.id} post={p} onOpen={() => setEditor({ ...p })} onStatus={setStatus} onDragStart={setDragging} />
+            <div key={p.id} className="w-64 shrink-0">
+              <Card post={p} onOpen={() => setEditor({ ...p })} onStatus={setStatus} onDragStart={setDragging} />
+            </div>
           ))}
         </div>
       </aside>
