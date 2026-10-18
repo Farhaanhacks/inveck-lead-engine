@@ -7,6 +7,8 @@ import { PageHeader } from '@/components/page-header';
 import { DRAW_SEGMENTS, drawPool, getDraw, handedOut, quotaOf, quotaTotal, runDailyDraw, shortfalls, topUpDraw } from '@/lib/draw';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { istDay } from '@/lib/tasks';
+import { CA_PER_ASSOCIATE, getCaDraw, runCaDraw } from '@/lib/ca-sheet';
+import { googleCredentials } from '@/lib/google-sheet';
 import { getSettings } from '@/lib/settings';
 import { drawNowAction } from '@/app/team-actions';
 import { refetchProgress, startRefetchIfWaiting } from '@/lib/run-driver';
@@ -23,6 +25,9 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   const db = await getDb();
   await runDailyDraw(db);
   await topUpDraw(db);
+  await runCaDraw(db).catch(() => null);
+  const caConfigured = !!googleCredentials();
+  const caDraw = await getCaDraw(db);
   await startRefetchIfWaiting();
   const refetch = await refetchProgress();
   const resetRecent = refetch.recent;
@@ -157,6 +162,31 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
             The list is short of tomorrow&apos;s need ({quota[MANUFACTURING] * people.length} {MANUFACTURING} and {quota[LOGISTICS] * people.length} {LOGISTICS}). Add companies in the segment that is short to keep the draw full.
           </p>
         ) : null}
+      </section>
+
+      <section className="card mb-6 p-4">
+        <h2 className="text-sm font-semibold">CA firms from the Google Sheet</h2>
+        <p className="text-xs text-muted">
+          Every working day Anchal and Puja are each given {CA_PER_ASSOCIATE} CA firms picked at random from the master sheet, {CA_PER_ASSOCIATE * 2} in all, never a firm given before. They are separate from the Manufacturing and 3PL draw above, and never fill it.
+        </p>
+        {!caConfigured ? (
+          <p className="mt-2 text-xs text-warning-ink">The sheet isn&apos;t connected yet: add the service-account key as GOOGLE_SERVICE_ACCOUNT_JSON on the server (see the README).</p>
+        ) : caDraw ? (
+          <>
+            <p className="mt-3 text-sm">
+              Today: <span className="font-medium tabular-nums">{caDraw.drawn}</span> of {caDraw.wanted} given ({caDraw.perAssociate.map((a) => `${a.name} ${a.drawn} of ${a.wanted}`).join(', ')}).{' '}
+              {caDraw.remaining !== null && <span className="text-ink-2">Left in the sheet for the next draw: <span className="tabular-nums">{caDraw.remaining}</span>.</span>}
+            </p>
+            {caDraw.short && !caDraw.problem && (
+              <p className="mt-2 text-xs text-warning-ink">
+                Shortfall: {caDraw.perAssociate.filter((a) => a.drawn < a.wanted).map((a) => `${a.name} ${a.wanted - a.drawn} short`).join('; ')}. The sheet has no more eligible firms; the draw checks again about every half hour today.
+              </p>
+            )}
+            {caDraw.problem && <p className="mt-2 text-xs text-warning-ink">{caDraw.problem}.</p>}
+          </>
+        ) : (
+          <p className="mt-3 text-sm text-ink-2">Not drawn yet today (it runs from 8:00 am on working days).</p>
+        )}
       </section>
 
       <section className="card mb-6 overflow-x-auto">

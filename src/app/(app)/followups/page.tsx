@@ -37,6 +37,7 @@ const OUTCOME: Record<string, string> = {
   sent: 'sent',
   done: 'sent',
   accepted: 'accepted',
+  already_sent: 'request already sent',
   skipped: 'skipped',
 };
 const KIND: Record<string, string> = { call: 'Call', whatsapp: 'WhatsApp', email: 'Email', linkedin: 'LinkedIn' };

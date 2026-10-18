@@ -185,6 +185,30 @@ arrive, and a lead a BDA adds by hand stays theirs. If the schedule runs late, t
 08:00 runs the draw. Long runs continue
 in the background automatically, within Vercel's 300-second function limit.
 
+### CA firms from the Google Sheet
+
+CA firms come from one master Google Sheet (tab **Firms**; columns Firm, Phone, Email, Services, Website, a
+location column headed `.`, and ICAI profile URL). Every working day (from 08:00 IST) **Anchal and Puja are
+each given 10 firms**, 20 in all, picked at random among firms never given before that aren't already a lead or
+a client. Only those firms become leads (the sheet is read, never copied in); they are researched like any other
+CA firm and don't go through the company-discovery search. With fewer than 20 eligible firms the ones there are
+go out and the shortfall is shown per associate on the **Team** page; it is checked again about every half hour
+that day, and the admin's **Top up the shortfalls** button runs it at once. A firm is identified by its ICAI firm
+number (the profile URL), recorded in the `sheet_firms` table with who got it and when, so a retried run can't pick
+it again.
+
+Setup: share the sheet with the service account as Viewer, then add the key on the server (never in the repo):
+
+- Vercel: `GOOGLE_SERVICE_ACCOUNT_JSON` = the whole contents of the key file (Project → Settings → Environment Variables), then redeploy.
+- Local: `GOOGLE_SERVICE_ACCOUNT_FILE` = the path to the key file, in `.env.local` (ignored on Vercel).
+- Optional: `CA_SHEET_ID` and `CA_SHEET_TAB` (default to the master sheet and `Firms`).
+
+A CA firm starts with a LinkedIn request on day 1: **Request sent**, **Already sent a request** (no new request; the
+wait for acceptance starts and round 1 shows today), or **Not on LinkedIn: call instead**. Then three follow-up
+rounds, each a call, a WhatsApp and an email, on consecutive working days (round 1 the next working day after a
+request sent now, or today otherwise); weekends and the holidays in Settings are skipped. Accepted ends it; when all
+three rounds are done the firm is done.
+
 ## The team
 
 Each BDA has their own login: `name@inveck` (for example `parimal@inveck`) with the starting password

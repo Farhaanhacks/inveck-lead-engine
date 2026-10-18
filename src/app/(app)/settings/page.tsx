@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/page-header';
 import { SettingsForm } from './settings-form';
 import { adminPage } from '@/lib/access';
 import { getHolidays } from '@/lib/holidays';
+import { googleCredentials } from '@/lib/google-sheet';
 import { addHolidayAction, removeHolidayAction } from '@/app/actions';
 import { formatDate } from '@/lib/dates';
 import { istDay } from '@/lib/tasks';
@@ -19,6 +20,7 @@ export default async function SettingsPage() {
     { name: 'DEEPSEEK_API_KEY', ok: !!keys.deepseek, use: 'AI (DeepSeek)', needed: settings.aiProvider === 'deepseek' },
     { name: 'ANTHROPIC_API_KEY', ok: !!keys.anthropic, use: 'AI (Claude)', needed: settings.aiProvider === 'anthropic' },
     { name: 'SERPER_API_KEY', ok: !!keys.serper, use: 'Google search: LinkedIn profiles & prospects', needed: true },
+    { name: 'GOOGLE_SERVICE_ACCOUNT_JSON', ok: !!googleCredentials(), use: 'CA firms: the service-account key (whole JSON file) that reads the master Google Sheet; read-only', needed: false },
     { name: 'JINA_API_KEY', ok: !!keys.jina, use: 'Optional: higher limits for reading JavaScript-heavy websites', needed: false },
     { name: 'APP_PASSWORD', ok: !!process.env.APP_PASSWORD, use: 'Team login', needed: true },
     { name: 'CRON_SECRET', ok: !!process.env.CRON_SECRET, use: 'Scheduled runs on Vercel', needed: !!process.env.VERCEL },

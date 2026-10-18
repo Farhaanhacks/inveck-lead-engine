@@ -4,7 +4,7 @@ import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema
 import { logActivity } from './activity';
 import { formatDate } from './dates';
 import { getHolidays } from './holidays';
-import { addWorkingDays, istDay, type Holidays } from './tasks';
+import { addWorkingDays, firstWorkingDay, isCaSegment, istDay, type Holidays } from './tasks';
 
 /**
  * The follow-up sequence: the one source of truth for who is in it, where they are in it and when the
@@ -61,7 +61,8 @@ export async function hasConnectedCall(db: Db, lead: Pick<Lead, 'id' | 'contactS
  */
 export async function startFollowUpSequence(db: Db, leadId: number, now = new Date()): Promise<string[] | null> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
-  if (!lead?.ownerId || lead.followUpStartedOn) return null;
+  // CA firms have their own three rounds after the LinkedIn request: never this sequence.
+  if (!lead?.ownerId || lead.followUpStartedOn || isCaSegment(lead.segment)) return null;
   if (!ENROLLABLE.includes(lead.status) || (await hasConnectedCall(db, lead))) return null;
   const day1 = istDay(now);
   const holidays = await getHolidays(db);
@@ -199,6 +200,36 @@ export async function rescheduleFollowUps(db: Db): Promise<number> {
       await db.update(tasks).set({ dueDate: due }).where(eq(tasks.id, t.id));
       moved++;
     }
+  }
+  return moved + (await rescheduleCaRounds(db, holidays));
+}
+
+/**
+ * A CA firm's open rounds that now fall on a holiday (or a weekend) move to the next working day, and
+ * each round stays after the one before it. Done steps never move.
+ */
+async function rescheduleCaRounds(db: Db, holidays: Holidays): Promise<number> {
+  const open = await db
+    .select({ id: tasks.id, leadId: tasks.leadId, round: tasks.caRound, dueDate: tasks.dueDate })
+    .from(tasks)
+    .where(and(gt(tasks.caRound, 0), isNull(tasks.doneAt)))
+    .orderBy(asc(tasks.leadId), asc(tasks.caRound), asc(tasks.id));
+  let moved = 0;
+  // One firm at a time, one round at a time (a round's call, WhatsApp and email share a day).
+  const groups = new Map<string, typeof open>();
+  for (const t of open) groups.set(`${t.leadId}:${t.round}`, [...(groups.get(`${t.leadId}:${t.round}`) ?? []), t]);
+  const prev = new Map<number, string>();
+  for (const list of groups.values()) {
+    const { leadId } = list[0];
+    let due = firstWorkingDay(list[0].dueDate, holidays);
+    const before = prev.get(leadId);
+    if (before && due <= before) due = addWorkingDays(before, 1, holidays);
+    const ids = list.filter((t) => t.dueDate !== due).map((t) => t.id);
+    if (ids.length) {
+      await db.update(tasks).set({ dueDate: due }).where(inArray(tasks.id, ids));
+      moved += ids.length;
+    }
+    prev.set(leadId, due);
   }
   return moved;
 }

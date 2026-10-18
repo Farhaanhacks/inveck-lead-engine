@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { leads, people, tasks, users } from '@/lib/db/schema';
-import { CA_FALLBACK_STEP, CA_WAITING_STEP, companyProgress, ensureSequences, istDay, loadTodayTasks, nextWorkingDay } from '@/lib/tasks';
+import { addWorkingDays, CA_FALLBACK_STEP, CA_WAITING_STEP, companyProgress, dayCounts, ensureSequences, firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay } from '@/lib/tasks';
 import { KnownBranches } from '@/lib/branches';
 import { importContactSheet, parseContactSheet } from '@/lib/contact-import';
 
@@ -49,23 +49,30 @@ describe('CA firms on Today', () => {
     expect(plan.map((t) => t.kind)).toEqual(['linkedin']);
   });
 
-  it('request sent: waits for acceptance; accepted ends the firm, and Undo brings everything back', async () => {
+  const rounds = (list: { caRound: number; kind: string; dueDate: string }[]) => list.filter((t) => t.caRound > 0);
+  const r1 = () => nextWorkingDay(today());
+
+  it('request sent: waits for acceptance; three rounds follow; accepted ends the firm, and Undo brings everything back', async () => {
     const { completeTaskAction, undoTaskAction } = await import('@/app/team-actions');
     const l = await caLead();
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
     let left = await open(l.id);
     expect(left.find((t) => t.step === CA_WAITING_STEP)?.dueDate).toBe(today());
-    expect(left.filter((t) => t.step === CA_FALLBACK_STEP).map((t) => [t.kind, t.dueDate]).sort()).toEqual(
-      [['call', nextWorkingDay(today())], ['email', nextWorkingDay(today())], ['whatsapp', nextWorkingDay(today())]].sort(),
+    // Exactly three rounds of call, WhatsApp and email: the first on the next working day, then one working day apart.
+    const two = addWorkingDays(r1(), 1);
+    const three = addWorkingDays(r1(), 2);
+    expect(rounds(left).map((t) => `${t.caRound}:${t.kind}:${t.dueDate}`).sort()).toEqual(
+      [1, 2, 3].flatMap((n) => ['call', 'whatsapp', 'email'].map((k) => `${n}:${k}:${[r1(), two, three][n - 1]}`)).sort(),
     );
+    for (const t of rounds(left)) expect([0, 6]).not.toContain(new Date(`${t.dueDate}T00:00:00Z`).getUTCDay());
     // Sending the request is the day's work: the firm counts as done today, still waiting on LinkedIn.
     expect(await companyProgress(db, me.id, today())).toEqual({ done: 1, total: 1, backlog: 0 });
     expect((await loadTodayTasks(db, me.id, today())).map((t) => t.task.step)).toEqual([CA_WAITING_STEP]);
 
     // "accepted" fits only the waiting step.
     await completeTaskAction(form({ id: left.find((t) => t.kind === 'call')!.id, outcome: 'accepted' }));
-    expect((await open(l.id)).length).toBe(4);
+    expect((await open(l.id)).length).toBe(10);
 
     const waiting = left.find((t) => t.step === CA_WAITING_STEP)!;
     await completeTaskAction(form({ id: waiting.id, outcome: 'accepted' }));
@@ -73,43 +80,113 @@ describe('CA firms on Today', () => {
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].linkedinOutcome).toBe('Accepted');
 
     await undoTaskAction(form({ id: waiting.id }));
-    expect((await open(l.id)).length).toBe(4);
+    expect((await open(l.id)).length).toBe(10);
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].linkedinOutcome).toBe('Request sent');
 
-    // Undoing the request takes away the wait and the call, WhatsApp and email it set up.
+    // Undoing the request takes away the wait and the rounds it set up.
     await undoTaskAction(form({ id: first.id }));
     left = await open(l.id);
     expect(left.map((t) => t.id)).toEqual([first.id]);
     // Sent again: set up once, not twice.
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
-    expect((await open(l.id)).length).toBe(4);
+    expect((await open(l.id)).length).toBe(10);
   });
 
-  it('not accepted: the call, WhatsApp and email the next day finish the firm (no call-again days)', async () => {
+  it('not accepted: all three rounds of call, WhatsApp and email finish the firm (no call-again days)', async () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const l = await caLead();
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
-    // The next working day has come.
+    // Each round's day has come.
     await db.update(tasks).set({ dueDate: today() }).where(and(eq(tasks.leadId, l.id), eq(tasks.step, CA_FALLBACK_STEP)));
-    const fallback = (await open(l.id)).filter((t) => t.step === CA_FALLBACK_STEP);
-    await completeTaskAction(form({ id: fallback.find((t) => t.kind === 'call')!.id, outcome: 'no_answer' }));
-    await completeTaskAction(form({ id: fallback.find((t) => t.kind === 'whatsapp')!.id, outcome: 'sent' }));
-    // The unanswered call started the follow-up sequence (its own tasks); the CA flow's own steps are separate.
-    const flow = async () => (await open(l.id)).filter((t) => t.followUpRound === 0);
-    expect((await flow()).map((t) => t.step).sort()).toEqual([CA_FALLBACK_STEP, CA_WAITING_STEP].sort());
-    await completeTaskAction(form({ id: fallback.find((t) => t.kind === 'email')!.id, outcome: 'done' }));
-    expect(await flow()).toEqual([]);
-    expect((await open(l.id)).filter((t) => t.followUpRound > 0)).toHaveLength(15);
+    const flow = async () => (await open(l.id)).filter((t) => t.step === CA_FALLBACK_STEP);
+    for (const round of [1, 2]) {
+      const mine = (await flow()).filter((t) => t.caRound === round);
+      await completeTaskAction(form({ id: mine.find((t) => t.kind === 'call')!.id, outcome: 'no_answer' }));
+      await completeTaskAction(form({ id: mine.find((t) => t.kind === 'whatsapp')!.id, outcome: 'sent' }));
+      await completeTaskAction(form({ id: mine.find((t) => t.kind === 'email')!.id, outcome: 'done' }));
+      // Still in the sequence: the next round and the wait for acceptance are open, never the general 5-round sequence.
+      expect((await open(l.id)).some((t) => t.step === CA_WAITING_STEP)).toBe(true);
+      expect((await flow()).every((t) => t.caRound > round)).toBe(true);
+    }
+    const last = (await flow()).filter((t) => t.caRound === 3);
+    await completeTaskAction(form({ id: last.find((t) => t.kind === 'call')!.id, outcome: 'no_answer' }));
+    await completeTaskAction(form({ id: last.find((t) => t.kind === 'whatsapp')!.id, outcome: 'sent' }));
+    expect((await open(l.id)).map((t) => t.step).sort()).toEqual([CA_FALLBACK_STEP, CA_WAITING_STEP].sort());
+    await completeTaskAction(form({ id: last.find((t) => t.kind === 'email')!.id, outcome: 'done' }));
+    // Sequence complete: the wait ends and the firm is done.
+    expect(await open(l.id)).toEqual([]);
+    const row = (await db.select().from(leads).where(eq(leads.id, l.id)))[0];
+    expect(row.followUpStartedOn).toBe('');
+    expect((await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), gt(tasks.followUpRound, 0)))).length).toBe(0);
   });
 
-  it('no LinkedIn: the call, WhatsApp and email come the same day, with nothing to wait for', async () => {
+  it('"Already sent a request": no new request, round 1 shows today with the call, WhatsApp and email; safe to click twice', async () => {
+    const { completeTaskAction, undoTaskAction } = await import('@/app/team-actions');
+    const l = await caLead();
+    const first = await start(l.id);
+    await completeTaskAction(form({ id: first.id, outcome: 'already_sent' }));
+    await completeTaskAction(form({ id: first.id, outcome: 'already_sent' })); // a second click does nothing
+    const left = await open(l.id);
+    expect(left.some((t) => t.kind === 'linkedin' && t.step !== CA_WAITING_STEP)).toBe(false);
+    const todayOne = rounds(left).filter((t) => t.caRound === 1);
+    expect(todayOne.map((t) => t.kind).sort()).toEqual(['call', 'email', 'whatsapp']);
+    expect(todayOne.every((t) => t.dueDate === firstWorkingDay(today()))).toBe(true);
+    expect(left.filter((t) => t.step === CA_WAITING_STEP)).toHaveLength(1);
+    expect(left).toHaveLength(10);
+    // It records the request as sent, but is not a new LinkedIn request on the day's count.
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].linkedinOutcome).toBe('Request sent');
+    expect((await dayCounts(db, me.id, today())).linkedinSent).toBe(0);
+    // Not for anyone but a CA firm's first-day request.
+    const other = await caLead({ company: 'Gear Works', segment: 'Manufacturing' });
+    await ensureSequences(db, today());
+    const gearReq = (await open(other.id)).find((t) => t.kind === 'linkedin');
+    if (gearReq) {
+      await completeTaskAction(form({ id: gearReq.id, outcome: 'already_sent' }));
+      expect((await open(other.id)).some((t) => t.id === gearReq.id)).toBe(true);
+    }
+    // Undo takes the rounds away with it.
+    await undoTaskAction(form({ id: first.id }));
+    expect((await open(l.id)).map((t) => t.id)).toEqual([first.id]);
+  });
+
+  it('a call saved as no answer does not start the general 5-round follow-up sequence for a CA firm', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await caLead({ contactLinkedin: '' });
+    const first = await start(l.id);
+    await completeTaskAction(form({ id: first.id, outcome: 'skipped' }));
+    const call = (await open(l.id)).find((t) => t.kind === 'call' && t.caRound === 1)!;
+    await completeTaskAction(form({ id: call.id, outcome: 'no_answer' }));
+    expect((await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), gt(tasks.followUpRound, 0)))).length).toBe(0);
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].followUpStartedOn).toBe('');
+  });
+
+  it('a holiday moves a CA firm\'s open rounds to the next working days, keeping them on separate days', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { saveHolidays } = await import('@/lib/holidays');
+    const { rescheduleFollowUps } = await import('@/lib/follow-up-sequence');
+    const l = await caLead();
+    const first = await start(l.id);
+    await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
+    const two = addWorkingDays(r1(), 1);
+    await saveHolidays(db, [two]);
+    await rescheduleFollowUps(db);
+    const by = new Map((await open(l.id)).filter((t) => t.caRound > 0).map((t) => [t.caRound, t.dueDate]));
+    expect(by.get(1)).toBe(r1());
+    expect(by.get(2)).toBe(addWorkingDays(two, 1, new Set([two])));
+    expect(by.get(3)! > by.get(2)!).toBe(true);
+  });
+
+  it('no LinkedIn: round 1 is the same day, with nothing to wait for; three rounds in all', async () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const l = await caLead({ contactLinkedin: '' });
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'skipped' }));
     const left = await open(l.id);
-    expect(left.map((t) => [t.kind, t.dueDate]).sort()).toEqual([['call', today()], ['email', today()], ['whatsapp', today()]].sort());
+    expect(left.some((t) => t.step === CA_WAITING_STEP)).toBe(false);
+    expect(left).toHaveLength(9);
+    const one = rounds(left).filter((t) => t.caRound === 1);
+    expect(one.map((t) => [t.kind, t.dueDate]).sort()).toEqual([['call', firstWorkingDay(today())], ['email', firstWorkingDay(today())], ['whatsapp', firstWorkingDay(today())]].sort());
   });
 
   it('other companies keep the full plan', async () => {
@@ -143,7 +220,7 @@ describe('importing a researched list with its points of contact', () => {
     const { rows } = parseContactSheet(sheet);
     const known = new KnownBranches([], []);
     const r = await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: me.id, known, by: 'Puja' });
-    expect(r).toEqual({ added: 2, skipped: [] });
+    expect(r).toMatchObject({ added: 2, skipped: [] });
     const [alpha] = await db.select().from(leads).where(eq(leads.company, 'ALPHA & CO'));
     expect(alpha).toMatchObject({ contactName: 'Ravi Kumar', contactPhone: '9800000002', contactEmail: 'alpha@example.com', fitOverride: '', ownerId: me.id });
     expect(alpha.contactVerifiedAt).not.toBeNull();
@@ -155,9 +232,10 @@ describe('importing a researched list with its points of contact', () => {
     // The second number is kept as a point of contact of its own.
     expect((await db.select().from(people).where(eq(people.leadId, beta.id))).some((p) => p.phone === '080 2222 3333')).toBe(true);
     // The same list again adds nothing.
-    expect(await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: me.id, known: new KnownBranches(await db.select().from(leads), []), by: 'Puja' })).toEqual({
+    expect(await importContactSheet(db, rows, { segment: 'CA Firms', ownerId: me.id, known: new KnownBranches(await db.select().from(leads), []), by: 'Puja' })).toMatchObject({
       added: 0,
       skipped: ['ALPHA & CO', 'BETA ASSOCIATES'],
+      ids: [],
     });
   });
 
@@ -305,9 +383,13 @@ describe('a CA reach-out is a firm someone was actually reached at', () => {
     const l = await caLead({ contactLinkedin: '' });
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'skipped' }));
+    await db.update(tasks).set({ dueDate: today() }).where(eq(tasks.leadId, l.id));
     const left = await open(l.id);
-    await completeTaskAction(form({ id: left.find((t) => t.kind === 'call')!.id, outcome: 'no_contact' }));
-    await completeTaskAction(form({ id: left.find((t) => t.kind === 'email')!.id, outcome: 'skipped' }));
+    for (const round of [1, 2, 3]) {
+      const mine = left.filter((t) => t.caRound === round);
+      await completeTaskAction(form({ id: mine.find((t) => t.kind === 'call')!.id, outcome: 'no_contact' }));
+      await completeTaskAction(form({ id: mine.find((t) => t.kind === 'email')!.id, outcome: 'skipped' }));
+    }
     expect(await open(l.id)).toEqual([]);
     expect(await companyProgress(db, me.id, today(), { ca: true })).toEqual({ done: 0, total: 0, backlog: 0 });
   });

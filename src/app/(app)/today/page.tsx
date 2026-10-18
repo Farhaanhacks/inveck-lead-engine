@@ -5,7 +5,7 @@ import { TierBadge } from '@/components/tier-badge';
 import { SubmitButton } from '@/components/submit-button';
 import Link from 'next/link';
 import { after } from 'next/server';
-import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
+import { ensureResearch, liveServices, requestOrigin, startRefetchIfWaiting } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
@@ -15,6 +15,7 @@ import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
+import { runCaDraw } from '@/lib/ca-sheet';
 import { allocationFor, quotaOf, quotaTotal, runDailyDraw, topUpDraw } from '@/lib/draw';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { getAttendance } from '@/lib/attendance';
@@ -27,6 +28,7 @@ import {
   DAILY_LINKEDIN_LIMIT,
   dayCounts,
   CA_FALLBACK_STEP,
+  CA_ROUNDS,
   CA_WAITING_STEP,
   ensureLinkedinSteps,
   ensureSequences,
@@ -80,6 +82,7 @@ const OUTCOME_LABEL: Record<string, string> = {
   wrong_number: 'Wrong number',
   sent: 'Sent',
   accepted: 'Accepted',
+  already_sent: 'Request already sent',
   no_contact: 'No contact found',
   done: 'Sent',
   skipped: 'Skipped',
@@ -187,7 +190,7 @@ const laterRound = (a: Task, b: Task) => a.dueDate > b.dueDate || (a.dueDate ===
 function roundLabel(task: Task): string {
   if (task.priority) return 'Promised callback';
   if (task.step === CA_WAITING_STEP) return 'Waiting for LinkedIn';
-  if (task.step === CA_FALLBACK_STEP) return 'Not accepted on LinkedIn: call, WhatsApp and email';
+  if (task.step === CA_FALLBACK_STEP) return `Follow-up round ${task.caRound || 1} of ${CA_ROUNDS} (call, WhatsApp and email)`;
   if (task.step.startsWith('Day 1')) return 'First contact';
   return task.step;
 }
@@ -302,7 +305,7 @@ function Step({
               ) : (
                 <>
                   {lead.contactLinkedin ? <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open LinkedIn profile</a> : null}
-                  <Outcome id={task.id} buttons={[['sent', 'Request sent'], ['skipped', isCaSegment(lead.segment) ? 'Not on LinkedIn: call instead' : 'Skip']]} />
+                  <Outcome id={task.id} buttons={isCaSegment(lead.segment) ? [['sent', 'Request sent'], ['already_sent', 'Already sent a request'], ['skipped', 'Not on LinkedIn: call instead']] : [['sent', 'Request sent'], ['skipped', 'Skip']]} />
                 </>
               ))}
           </div>
@@ -588,6 +591,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     await bestEffort('the morning draw', () => runDailyDraw(db), null);
     // Leads that turned up since a short draw go to the associates still short, in the segment they were short in.
     await bestEffort('topping up the draw', () => topUpDraw(db), null);
+    // CA firms from the Google Sheet (Anchal and Puja); new ones are researched like any other new lead.
+    await bestEffort('the CA firm draw', async () => ((await runCaDraw(db))?.added ? ensureResearch(await requestOrigin()) : undefined), undefined);
     await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
     await bestEffort('planning Today steps', () => ensureSequences(db), 0);
   }, undefined);

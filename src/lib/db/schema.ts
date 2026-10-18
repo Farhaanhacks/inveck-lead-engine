@@ -419,6 +419,8 @@ export const tasks = pgTable('tasks', {
   followUpFrom: text('follow_up_from').notNull().default(''),
   /** 1-5 for a task of the follow-up sequence (Follow-up 1 to 5); 0 for any other task. */
   followUpRound: integer('follow_up_round').notNull().default(0),
+  /** 1-3 for a task of a CA firm's follow-up rounds (after its LinkedIn request); 0 for any other task. */
+  caRound: integer('ca_round').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Task = typeof tasks.$inferSelect;
@@ -539,3 +541,23 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   statusAt: timestamp('status_at', { withTimezone: true }),
 });
 export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+
+/**
+ * CA firms taken from the master Google Sheet, one row per firm (never the whole sheet): which firm
+ * (sourceKey, from its ICAI profile), who it was given to and on which India day. A firm in this table is
+ * never picked again, so a retried allocation can't give the same firm out twice. ownerId is null for a
+ * firm that was set aside (it was already a lead or a client).
+ */
+export const sheetFirms = pgTable('sheet_firms', {
+  sourceKey: text('source_key').primaryKey(),
+  spreadsheetId: text('spreadsheet_id').notNull().default(''),
+  tab: text('tab').notNull().default(''),
+  company: text('company').notNull().default(''),
+  /** The row it was on when taken (rows can move, so this is for reference only). */
+  rowNumber: integer('row_number').notNull().default(0),
+  ownerId: integer('owner_id'),
+  leadId: integer('lead_id'),
+  assignedOn: text('assigned_on').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type SheetFirm = typeof sheetFirms.$inferSelect;

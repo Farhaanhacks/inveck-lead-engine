@@ -507,6 +507,20 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS status_before_delete TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS follow_up_round INTEGER NOT NULL DEFAULT 0`,
+  // CA firms: three follow-up rounds after the LinkedIn request, and the firms taken from the Google Sheet.
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS ca_round INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS sheet_firms (
+    source_key TEXT PRIMARY KEY,
+    spreadsheet_id TEXT NOT NULL DEFAULT '',
+    tab TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    row_number INTEGER NOT NULL DEFAULT 0,
+    owner_id INTEGER,
+    lead_id INTEGER,
+    assigned_on TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS sheet_firms_day_idx ON sheet_firms (assigned_on)`,
   `CREATE TABLE IF NOT EXISTS whatsapp_contacts (
     wa_id TEXT PRIMARY KEY,
     lead_id INTEGER,

@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
-import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
+import { CA_FALLBACK_STEP, CA_ROUNDS, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
 
 /**
  * The follow-up funnel: every lead in outreach, by where its follow-up stands. Built from the same
@@ -57,7 +57,7 @@ function roundOf(t: Task | null): string {
   if (!t) return '';
   if (t.priority) return 'Promised callback';
   if (t.step === CA_WAITING_STEP) return 'Waiting for LinkedIn';
-  if (t.step === CA_FALLBACK_STEP) return 'Not accepted on LinkedIn';
+  if (t.step === CA_FALLBACK_STEP) return `Follow-up round ${t.caRound || 1} of ${CA_ROUNDS}`;
   if (t.step === 'Day 1') return 'First contact';
   return t.step || t.title;
 }
@@ -98,7 +98,7 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
       last: real[0] ?? done[0] ?? null,
       logged: done.length,
       attempts: real.filter((t) => t.kind !== 'call' || isCallAttempt(t.outcome)).length,
-      round: next ? roundOf(next) : waitingTask ? roundOf(waitingTask) : reached.length ? `${reached.length} of ${isCaSegment(lead.segment) ? 1 : ROUNDS.length} rounds done` : roundOf(done[0] ?? null),
+      round: next ? roundOf(next) : waitingTask ? roundOf(waitingTask) : reached.length ? (isCaSegment(lead.segment) ? `${new Set(done.filter((t) => t.caRound > 0).map((t) => t.caRound)).size} of ${CA_ROUNDS} follow-up rounds done` : `${reached.length} of ${ROUNDS.length} rounds done`) : roundOf(done[0] ?? null),
       waitingTask,
     });
   }

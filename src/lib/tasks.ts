@@ -57,7 +57,7 @@ export function addWorkingDays(day: string, n: number, holidays: Holidays = NO_H
   return iso(d);
 }
 
-export type PlannedTask = { kind: TaskKind; step: string; title: string; dueDate: string; slot: 'morning' | 'day' | 'evening' };
+export type PlannedTask = { kind: TaskKind; step: string; title: string; dueDate: string; slot: 'morning' | 'day' | 'evening'; caRound?: number };
 
 /**
  * The first-contact plan: Day 1 only, a call, a WhatsApp, an email and a LinkedIn connection request.
@@ -81,7 +81,7 @@ export const CA_SEGMENT = /\b(ca|chartered|audit|accountant)/i;
 export const isCaSegment = (segment: string) => CA_SEGMENT.test(segment);
 /** A CA firm's LinkedIn request is out: this step waits for it to be accepted (not a to-do for the day). */
 export const CA_WAITING_STEP = 'Request accepted?';
-/** A CA firm whose request wasn't accepted (or that has no LinkedIn): reached by call, WhatsApp and email. */
+/** A CA firm whose request wasn't accepted (or that has no LinkedIn): reached by call, WhatsApp and email, in three rounds. */
 export const CA_FALLBACK_STEP = 'Not accepted on LinkedIn';
 /** Marks the steps a CA firm's LinkedIn request (or skipping it) set up, so Undo can take them away. */
 export const CA_AFTER_NOTE = 'ca-after:';
@@ -89,17 +89,29 @@ export const CA_AFTER_NOTE = 'ca-after:';
 /**
  * A CA firm starts with only a LinkedIn connection request. Once it is sent, Today shows "Request
  * accepted" until someone clicks it; not accepted by the next working day, the firm gets a call, a
- * WhatsApp and an email that day (see planCaFallback). Accepted, or all three done: the firm is done.
+ * WhatsApp and an email that day, then the same on the next two working days: three rounds in all (see
+ * planCaFallback). Accepted, or all three rounds done: the firm is done.
  */
 export function planCaSequence(startDay: string): PlannedTask[] {
   return [{ kind: 'linkedin', step: 'Day 1', title: 'Send the LinkedIn connection request', dueDate: firstWorkingDay(startDay), slot: 'day' }];
 }
 
-/** After a CA firm's request: the waiting step (from today) and, if it isn't accepted, the call, WhatsApp and email on `fallbackDay`. */
-export function planCaFallback(today: string, fallbackDay: string, waiting: boolean): PlannedTask[] {
+/** A CA firm gets exactly this many follow-up rounds (call, WhatsApp and email each) after its LinkedIn request. */
+export const CA_ROUNDS = 3;
+
+/**
+ * After a CA firm's request: the waiting step (from today) and, if it isn't accepted, three follow-up
+ * rounds, each a call, a WhatsApp and an email. Round 1 is on `fallbackDay`; rounds 2 and 3 follow on the
+ * next working days (the same one-working-day spacing, never a weekend or a holiday).
+ */
+export function planCaFallback(today: string, fallbackDay: string, waiting: boolean, holidays: Holidays = NO_HOLIDAYS): PlannedTask[] {
   const plan: PlannedTask[] = waiting ? [{ kind: 'linkedin', step: CA_WAITING_STEP, title: 'Waiting for the LinkedIn request to be accepted', dueDate: today, slot: 'day' }] : [];
-  for (const [kind, label] of [['call', 'call'], ['whatsapp', 'WhatsApp'], ['email', 'email']] as const) {
-    plan.push({ kind, step: CA_FALLBACK_STEP, title: `${CA_FALLBACK_STEP}: ${label}`, dueDate: fallbackDay, slot: 'day' });
+  const first = firstWorkingDay(fallbackDay, holidays);
+  for (let round = 1; round <= CA_ROUNDS; round++) {
+    const dueDate = addWorkingDays(first, round - 1, holidays);
+    for (const [kind, label] of [['call', 'call'], ['whatsapp', 'WhatsApp'], ['email', 'email']] as const) {
+      plan.push({ kind, step: CA_FALLBACK_STEP, title: `Round ${round} of ${CA_ROUNDS}: ${label}`, dueDate, slot: 'day', caRound: round });
+    }
   }
   return plan;
 }

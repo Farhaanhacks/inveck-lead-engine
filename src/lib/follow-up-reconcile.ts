@@ -4,7 +4,7 @@ import { leads, settings, tasks, type LeadStatus, type Task } from './db/schema'
 import { logActivity } from './activity';
 import { followUpPlan, isQualifyingOutcome } from './follow-up-sequence';
 import { getHolidays } from './holidays';
-import { isSameDayRetry, istDay } from './tasks';
+import { isCaSegment, isSameDayRetry, istDay } from './tasks';
 
 /** Where an existing lead can be enrolled; any other stage with a qualifying call is left for a person to look at. */
 const ENROLLABLE: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Contacted'];
@@ -54,7 +54,8 @@ export async function reconcileFollowUps(db: Db, now = new Date()): Promise<Reco
   for (const t of rows) byLead.set(t.leadId, [...(byLead.get(t.leadId) ?? []), t]);
 
   for (const lead of all) {
-    if (lead.followUpStartedOn) continue;
+    // CA firms are not part of this sequence (they have their own three rounds).
+    if (lead.followUpStartedOn || isCaSegment(lead.segment)) continue;
     const mine = byLead.get(lead.id) ?? [];
     const calls = mine.filter((t) => t.kind === 'call' && t.doneAt && (!lead.contactSince || t.doneAt > lead.contactSince));
     const connected = calls.some((t) => t.outcome === 'connected');

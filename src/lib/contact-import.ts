@@ -16,6 +16,8 @@ export type ContactRow = {
   phones: string[];
   emails: string[];
   people: { name: string; title: string; linkedin: string }[];
+  /** Anything else worth keeping on the lead (its remark): services, the profile it came from. */
+  remark?: string;
 };
 
 const find = (header: string[], re: RegExp) => header.findIndex((h) => re.test(h));
@@ -88,8 +90,9 @@ export async function importContactSheet(
   db: Db,
   parsed: ContactRow[],
   opts: { segment: string; ownerId: number | null; known: KnownBranches; by: string },
-): Promise<{ added: number; skipped: string[] }> {
+): Promise<{ added: number; skipped: string[]; ids: number[] }> {
   let added = 0;
+  const ids: number[] = [];
   const skipped: string[] = [];
   const now = new Date();
   for (const row of parsed) {
@@ -115,6 +118,7 @@ export async function importContactSheet(
         contactEmail: row.emails[0] ?? '',
         contactLinkedin: main.linkedin,
         contactVerifiedAt: main.name ? now : null,
+        remark: row.remark ?? '',
       })
       .returning({ id: leads.id });
     const contacts = [
@@ -129,6 +133,7 @@ export async function importContactSheet(
     // The team chose this person: never replaced automatically by someone research finds.
     if (main.name) await logActivity(db, lead.id, 'contact', `Point of contact updated: ${main.name}${main.title ? `, ${main.title}` : ''} (from the imported list)`);
     added++;
+    ids.push(lead.id);
   }
-  return { added, skipped };
+  return { added, skipped, ids };
 }

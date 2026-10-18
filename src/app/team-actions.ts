@@ -5,17 +5,19 @@ import { after } from 'next/server';
 import { escalate, type Escalation } from '@/lib/escalate';
 import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
-import { liveServices } from '@/lib/run-driver';
+import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
 import { emailedAlready } from '@/lib/mail/plan';
+import { getHolidays } from '@/lib/holidays';
 import { cancelFollowUpSequence, FOLLOW_UP_ROUNDS, isQualifyingOutcome, JUNK_REASON, junkIfComplete, restoreLead, startFollowUpSequence } from '@/lib/follow-up-sequence';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
+import { runCaDraw } from '@/lib/ca-sheet';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
@@ -29,7 +31,7 @@ const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const OUTCOMES: Record<TaskKind, string[]> = {
   call: ['connected', 'no_answer', 'busy', 'wrong_number', 'no_contact', 'skipped'],
   whatsapp: ['sent', 'skipped'],
-  linkedin: ['sent', 'skipped', 'accepted'],
+  linkedin: ['sent', 'skipped', 'accepted', 'already_sent'],
   email: ['done', 'skipped'],
 };
 
@@ -78,6 +80,8 @@ export async function completeTaskAction(form: FormData) {
   // A wrong number is taken off the lead (and kept on the task, so Undo can put it back).
   const [lead] = await db.select({ phone: leads.contactPhone, segment: leads.segment }).from(leads).where(eq(leads.id, task.leadId));
   const ca = isCaSegment(lead?.segment ?? '');
+  // "Already sent a request" is only for a CA firm's first-day LinkedIn step.
+  if (outcome === 'already_sent' && (!ca || task.step === CA_WAITING_STEP)) return refreshToday();
   // With several numbers, the first is the one dialled: only that one goes; the next is tried after.
   const dropped = dropFirstPhone(lead?.phone ?? '');
   const wrong = task.kind === 'call' && outcome === 'wrong_number' && !!dropped.removed;
@@ -109,7 +113,7 @@ export async function completeTaskAction(form: FormData) {
     await followUpSentByHand(db, task);
     await db.update(leads).set({ mailOutcome: 'Sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.mailOutcome, ['', 'Not sent'])));
   }
-  if (task.kind === 'linkedin' && outcome === 'sent') {
+  if (task.kind === 'linkedin' && (outcome === 'sent' || outcome === 'already_sent')) {
     await db.update(leads).set({ linkedinOutcome: 'Request sent' }).where(and(eq(leads.id, task.leadId), inArray(leads.linkedinOutcome, ['', 'Not sent'])));
   }
   if (ca) await caNextSteps(db, task, outcome, now);
@@ -132,7 +136,9 @@ export async function completeTaskAction(form: FormData) {
       : task.kind === 'whatsapp'
         ? 'WhatsApp message sent'
         : task.kind === 'linkedin'
-          ? 'LinkedIn connection request sent'
+          ? outcome === 'already_sent'
+            ? 'LinkedIn request had already been sent (no new request)'
+            : 'LinkedIn connection request sent'
           : 'Email sent';
   const skipped = outcome === 'skipped';
   await logActivity(db, task.leadId, task.kind === 'call' && !skipped ? 'call' : 'note', skipped ? `${task.title}: skipped` : `${what}${task.step ? ` (${task.step})` : ''}${note ? `. ${note}` : ''}`);
@@ -264,7 +270,7 @@ async function undoEmailSent(db: Awaited<ReturnType<typeof getDb>>, task: Task) 
 /**
  * One message per channel catches the person up: logging a WhatsApp, email or call also ticks off the
  * other ones of that kind still open for the company from earlier rounds, so a missed day never leaves
- * a backlog to send twice. The follow-up rounds are never ticked off this way: each round is done (or
+ * a backlog to send twice. The follow-up rounds (and a CA firm's three rounds) are never ticked off this way: each round is done (or
  * skipped) by a person. This evening's round still comes in the evening.
  */
 async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, now: Date) {
@@ -272,7 +278,7 @@ async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks
   const open = await db
     .select({ id: tasks.id, dueDate: tasks.dueDate, slot: tasks.slot })
     .from(tasks)
-    .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, task.kind), isNull(tasks.doneAt), eq(tasks.priority, false), eq(tasks.followUpRound, 0), lte(tasks.dueDate, today)));
+    .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, task.kind), isNull(tasks.doneAt), eq(tasks.priority, false), eq(tasks.followUpRound, 0), eq(tasks.caRound, 0), lte(tasks.dueDate, today)));
   const laterToday = (t: { dueDate: string; slot: string }) => t.dueDate === today && t.slot === 'evening' && !(task.dueDate === today && task.slot === 'evening');
   const ids = open.filter((t) => t.id !== task.id && !laterToday(t)).map((t) => t.id);
   // Same time as the logged task, so Undo can bring them back together.
@@ -281,19 +287,26 @@ async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks
 
 /**
  * A CA firm's flow (see planCaSequence):
- * - request sent: wait for it to be accepted from today; not accepted, a call, WhatsApp and email on
- *   the next working day;
- * - no request (skipped, no LinkedIn): the call, WhatsApp and email today;
+ * - request sent: wait for it to be accepted from today; not accepted, three rounds of call, WhatsApp
+ *   and email, the first on the next working day and the others on the two working days after it;
+ * - request already sent earlier ("Already sent a request"): no new request; the wait for acceptance
+ *   starts and round 1 is today, so the call, WhatsApp and email show at once;
+ * - no request (skipped, no LinkedIn): round 1 today, no wait;
  * - accepted: the firm is done (everything still open is ticked off);
- * - the call, WhatsApp and email all logged: the firm is done (the wait ends too).
+ * - all three rounds logged (every call, WhatsApp and email done or skipped): the firm is done (the wait ends too).
  * Everything ticked off here shares the logged step's time, so Undo brings it back with it.
  */
 async function caNextSteps(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, outcome: string, now: Date) {
-  if (task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && (outcome === 'sent' || outcome === 'skipped')) {
+  if (task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && (outcome === 'sent' || outcome === 'skipped' || outcome === 'already_sent')) {
     const today = istDay();
-    // Never twice: a request logged again after an Undo replaces what the first one set up.
+    // Never twice, not even on a repeated click: what this step set up is set up once.
+    const [already] = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.note, `${CA_AFTER_NOTE}${task.id}`))).limit(1);
+    if (already) return;
+    // A request logged again after an Undo replaces what the first one set up.
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), inArray(tasks.step, [CA_WAITING_STEP, CA_FALLBACK_STEP])));
-    const plan = planCaFallback(today, outcome === 'sent' ? nextWorkingDay(today) : today, outcome === 'sent');
+    const holidays = await getHolidays(db);
+    // Sent now: round 1 on the next working day. Sent earlier, or no LinkedIn: round 1 today.
+    const plan = planCaFallback(today, outcome === 'sent' ? nextWorkingDay(today, holidays) : today, outcome !== 'skipped', holidays);
     await db.insert(tasks).values(plan.map((t) => ({ ...t, leadId: task.leadId, ownerId: task.ownerId, note: `${CA_AFTER_NOTE}${task.id}` })));
     return;
   }
@@ -458,9 +471,9 @@ export async function undoTaskAction(form: FormData) {
     if (l?.status === 'Deleted' && l.reason === JUNK_REASON) await restoreLead(db, task.leadId, user.name);
   }
   // A CA firm's request (or skipping it) set up a wait and a call, WhatsApp and email: they go with it.
-  if (task.kind === 'linkedin' && (task.outcome === 'sent' || task.outcome === 'skipped')) {
+  if (task.kind === 'linkedin' && (task.outcome === 'sent' || task.outcome === 'skipped' || task.outcome === 'already_sent')) {
     await db.delete(tasks).where(and(eq(tasks.note, `${CA_AFTER_NOTE}${task.id}`), or(isNull(tasks.doneAt), eq(tasks.outcome, 'closed'))));
-    if (task.outcome === 'sent') await db.update(leads).set({ linkedinOutcome: '' }).where(and(eq(leads.id, task.leadId), eq(leads.linkedinOutcome, 'Request sent')));
+    if (task.outcome === 'sent' || task.outcome === 'already_sent') await db.update(leads).set({ linkedinOutcome: '' }).where(and(eq(leads.id, task.leadId), eq(leads.linkedinOutcome, 'Request sent')));
   }
   if (task.kind === 'email' && task.outcome === 'done') await undoEmailSent(db, task);
   if (task.outcome === 'accepted') {
@@ -563,6 +576,12 @@ export async function drawNowAction() {
   if (user.role !== 'admin') return;
   const db = await getDb();
   if (!(await runDailyDraw(db, { force: true }))) await topUpDraw(db);
+  // The CA firms from the Google Sheet: whatever Anchal and Puja are still short of today.
+  try {
+    if ((await runCaDraw(db, { force: true }))?.added) await ensureResearch(await requestOrigin());
+  } catch (e) {
+    console.error('[ca-sheet] draw failed:', e instanceof Error ? e.message : e);
+  }
   for (const p of ['/team', '/today', '/tracker', '/leads']) revalidatePath(p);
 }
 
