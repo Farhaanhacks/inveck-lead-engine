@@ -541,6 +541,18 @@ export const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS whatsapp_messages_lead ON whatsapp_messages (lead_id)`,
   `CREATE INDEX IF NOT EXISTS whatsapp_messages_wa ON whatsapp_messages (wa_id)`,
   `ALTER TABLE whatsapp_contacts ADD COLUMN IF NOT EXISTS last_template_at TIMESTAMPTZ`,
+  `CREATE TABLE IF NOT EXISTS sourcing_tests (
+    id SERIAL PRIMARY KEY,
+    segment TEXT NOT NULL,
+    companies INTEGER NOT NULL DEFAULT 30,
+    status TEXT NOT NULL DEFAULT 'running',
+    progress TEXT NOT NULL DEFAULT '',
+    report JSONB,
+    error TEXT NOT NULL DEFAULT '',
+    started_by INTEGER,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ
+  )`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

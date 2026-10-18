@@ -539,3 +539,22 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   statusAt: timestamp('status_at', { withTimezone: true }),
 });
 export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+
+/**
+ * A sourcing test: companies found through their LinkedIn pages, screened, and checked for reachable
+ * people. Only the report is kept: no lead, no prospect history, nothing sent.
+ */
+export const sourcingTests = pgTable('sourcing_tests', {
+  id: serial('id').primaryKey(),
+  segment: text('segment').notNull(),
+  /** Companies to check for people. */
+  companies: integer('companies').notNull().default(30),
+  status: text('status').$type<'running' | 'done' | 'failed'>().notNull().default('running'),
+  progress: text('progress').notNull().default(''),
+  report: jsonb('report'),
+  error: text('error').notNull().default(''),
+  startedBy: integer('started_by'),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+});
+export type SourcingTest = typeof sourcingTests.$inferSelect;

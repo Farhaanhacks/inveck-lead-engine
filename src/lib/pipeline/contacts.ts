@@ -307,7 +307,10 @@ export type SearchLog = (message: string) => unknown;
  * it is acceptable when its profile shows the company as the one current employer (no conflicting
  * job), the person is in India, the role is on the ICP's P1/P2/P3 lists, and they can be the main
  * contact for this site (at this site, or on the lists at another Indian site). The same profile from
- * several searches is merged. Without an ICP, `query` and a broad search are run instead.
+ * several searches is merged. Without an ICP, `query` and a broad search are run instead. `staffOnly`
+ * runs only the staff searches (no designations, no second looks, no leadership search): a quick check
+ * of whether anyone reachable works there, for the sourcing test. `accepted` are the acceptable people
+ * on the ICP's P1/P2/P3 lists, best first.
  */
 export async function searchLinkedIn(
   svc: Services,
@@ -316,7 +319,8 @@ export async function searchLinkedIn(
   city = '',
   icp?: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>,
   log?: SearchLog,
-): Promise<{ people: LinkedInPerson[]; error: string }> {
+  opts: { staffOnly?: boolean } = {},
+): Promise<{ people: LinkedInPerson[]; accepted: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const firm = firmQuery(company);
   const found: FoundPerson[] = [];
@@ -398,7 +402,7 @@ export async function searchLinkedIn(
     const [, broadResults] = await run([query, broad].filter(Boolean));
     if (broad && (broadResults?.length ?? 0) >= 10) await run([broad], 2);
   } else {
-    const plan = contactSearchPlan(company, city, icp);
+    const plan = opts.staffOnly ? [] : contactSearchPlan(company, city, icp);
     let left: number = CONTACT_SEARCH_BUDGET.designationQueries;
     const started = Date.now();
     // One failed search is skipped; two in a row mean the search is down (out of credits, no network).
@@ -407,7 +411,8 @@ export async function searchLinkedIn(
     // designations one at a time for whoever that didn't show.
     const staff = staffSearches(company, city);
     let staffLeft: number = CONTACT_SEARCH_BUDGET.staff;
-    await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${CONTACT_SEARCH_BUDGET.contacts} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    if (opts.staffOnly) await say(`contact search: the company's staff on LinkedIn only (${staff.length} search${staff.length === 1 ? '' : 'es'})`);
+    else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${CONTACT_SEARCH_BUDGET.contacts} acceptable contacts with a P1 among them, or when the P1 designations are done`);
     for (const q of staff) {
       if (failedInRow >= 2) break;
       for (const page of [1, 2]) {
@@ -463,7 +468,7 @@ export async function searchLinkedIn(
     const unclear = mergeSameProfile(found)
       .filter((p) => !p.abroad && (p.employer === 'unknown' || !!p.conflict) && contactPriority(p.title, icp) < 99 && !settledHere.has(keyOf(p)))
       .sort((x, y) => candidateRank(x, icp, city) - candidateRank(y, icp, city))
-      .slice(0, CONTACT_SEARCH_BUDGET.resolve);
+      .slice(0, opts.staffOnly ? 0 : CONTACT_SEARCH_BUDGET.resolve);
     for (const p of unclear) {
       if (enough() || searchDown()) break;
       const q = `site:linkedin.com/in "${p.name}" ${firm}`;
@@ -477,7 +482,7 @@ export async function searchLinkedIn(
     }
   }
   // Last resort, once: nobody passed, so the company's owners and partners (small, owner-run firms).
-  if (name && !done() && !searchDown()) {
+  if (name && !opts.staffOnly && !done() && !searchDown()) {
     const q = `site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR proprietor OR CEO OR "chief executive" OR president)`;
     if (icp) await say(`no acceptable contact from the ICP's designations; last resort, the company's leadership: ${q}`);
     const before = found.length;
@@ -493,7 +498,7 @@ export async function searchLinkedIn(
         : `contact search done: no acceptable contact found${searchDown() ? ' (the search failed)' : ''}`,
     );
   }
-  return { people, error: failures.length && !people.length ? errorMessage(failures[0]) : '' };
+  return { people, accepted: icp ? rankCandidates(accepted(), icp, city) : [], error: failures.length && !people.length ? errorMessage(failures[0]) : '' };
 }
 
 const leaderSchema = {
