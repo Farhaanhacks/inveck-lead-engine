@@ -5,7 +5,7 @@ import { leads, prospectResults, sourcingTests } from '@/lib/db/schema';
 import { DEFAULT_ICPS, LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema } from '@/lib/settings';
 import type { Services } from '@/lib/pipeline/services';
-import { bandsFor, companyPageUrl, planQueries, readCompanyPage, screenPage, type Known } from '@/lib/sourcing/linkedin-pages';
+import { bandsFor, companyPageUrl, factsQuery, hqAbroad, pageName, planQueries, readCompanyPage, screenPage, withFacts, type Known } from '@/lib/sourcing/linkedin-pages';
 import { activeSourcingTest, funnelOf, runSourcingTest, type SourcingReport } from '@/lib/sourcing/test-run';
 import { employeeTarget } from '@/lib/pipeline/fit';
 
@@ -33,6 +33,32 @@ describe('reading a LinkedIn company page from Google', () => {
     const p = readCompanyPage(page('processblast', 'Processblast Engineering', 'Serving the steel industry since 1990. Industry Machinery Manufacturing, Company size 201-500 employees, Headquarters Kolkata, West Bengal'));
     expect(p).toMatchObject({ industry: 'Machinery Manufacturing', size: '201-500 employees', hq: 'Kolkata, West Bengal' });
     expect(readCompanyPage(page('quiet', 'Quiet Gears', 'We serve the auto industry with gears.'))).toMatchObject({ industry: '', hq: '', size: '' });
+  });
+
+  it("drops what Google cut off a long name, and reads LinkedIn's header line", () => {
+    expect(pageName('Prospira India Automotive Products Pvt. Ltd., (Ex. ...')).toEqual({ name: 'Prospira India Automotive Products Pvt. Ltd.', cut: true });
+    expect(pageName('Bharat Forge Limited | LinkedIn')).toEqual({ name: 'Bharat Forge Limited', cut: false });
+    const p = readCompanyPage({ title: 'MEI Brakes | LinkedIn', link: 'https://uk.linkedin.com/company/mei-brakes', snippet: 'Brakes For The Long Haul. Motor Vehicle Parts Manufacturing · Sheffield, South Yorkshire · 794 followers · 501-1,000 employees' });
+    expect(p).toMatchObject({ industry: 'Motor Vehicle Parts Manufacturing', hq: 'Sheffield, South Yorkshire', size: '501-1,000 employees', followers: 794 });
+  });
+
+  it("MEI Brakes: Google's first text leaves out the size; the second search, for the page's facts, brings it", () => {
+    const first = readCompanyPage({
+      title: 'MEI Brakes | LinkedIn',
+      link: 'https://in.linkedin.com/company/mei-brakes',
+      snippet: 'MEI Brakes | 794 followers on LinkedIn. Brakes For The Long Haul | MEI Brakes is a specialist Commercial Vehicle brake part manufacturer and distributor based in Sheffield, United Kingdom and Chennai, India.',
+    })!;
+    expect(first).toMatchObject({ size: '', hq: '', industry: '' });
+    expect(factsQuery(first)).toBe('site:linkedin.com/company/mei-brakes "Company size"');
+    const facts = { title: 'MEI Brakes', link: 'https://uk.linkedin.com/company/mei-brakes', snippet: 'Industry Motor Vehicle Parts Manufacturing Company size 501-1,000 employees Headquarters Sheffield, South Yorkshire Type Privately Held' };
+    const other = { title: 'MEI Group | LinkedIn', link: 'https://in.linkedin.com/company/mei-group', snippet: 'Company size: 11-50 employees. Headquarters: Bengaluru, Karnataka' };
+    const full = withFacts(first, [other, facts]);
+    expect(full).toMatchObject({ name: 'MEI Brakes', size: '501-1,000 employees', industry: 'Motor Vehicle Parts Manufacturing', hq: 'Sheffield, South Yorkshire' });
+    // Based in England, with a plant in Chennai: a prospect for the Chennai site.
+    expect(hqAbroad(full.hq)).toBe(true);
+    expect(screenPage(full, MANUFACTURING, MFG_SIZE, none)).toEqual({ pass: true, note: 'headquartered abroad (Sheffield, South Yorkshire), with a site in Chennai; size 501-1,000 employees' });
+    // Nothing found for the page: it stays as it was.
+    expect(withFacts(first, [other])).toEqual(first);
   });
 
   it('only company pages count: not posts, jobs, showcase pages or people', () => {
@@ -72,6 +98,9 @@ describe('the screen', () => {
 
   it('rules out a company abroad, one far too small, and one outside the industries; keeps a borderline one', () => {
     expect(screenPage(p('Company size: 1,001-5,000 employees. Headquarters: Gothenburg, Sweden'), MANUFACTURING, MFG_SIZE, none)).toMatchObject({ pass: false, reason: 'abroad' });
+    expect(screenPage(p('Company size: 501-1,000 employees. Headquarters: Sheffield, South Yorkshire'), MANUFACTURING, MFG_SIZE, none)).toMatchObject({ pass: false, reason: 'abroad' });
+    expect(hqAbroad('Jamnagar, Gujarat')).toBe(false);
+    expect(hqAbroad('Pune')).toBe(false);
     expect(screenPage(p('Company size: 11-50 employees. Headquarters: Rajkot, Gujarat'), MANUFACTURING, MFG_SIZE, none)).toMatchObject({ pass: false, reason: 'small', note: `too small: 11-50 employees against ${MFG_SIZE}` });
     expect(screenPage(p('Industry: Pharmaceutical Manufacturing. Company size: 501-1,000 employees'), MANUFACTURING, MFG_SIZE, none)).toMatchObject({ pass: false, reason: 'industry' });
     expect(screenPage(p('Industry: Industrial Machinery Manufacturing. Company size: 51-200 employees. Headquarters: Pune'), MANUFACTURING, MFG_SIZE, none)).toEqual({ pass: true, note: `borderline size: 51-200 employees against ${MFG_SIZE}` });
@@ -115,13 +144,16 @@ describe('a test run', () => {
     'Solo Engineering': [{ title: 'Harish Patel - Managing Director - Solo Engineering | LinkedIn', subtitle: 'Rajkot, Gujarat, India · Managing Director · Solo Engineering', link: 'https://in.linkedin.com/in/harish-p', snippet: '' }],
   };
 
-  function fakeSerper(searches: string[]): Services {
+  function fakeSerper(searches: string[], pages: unknown[] = PAGES, staffOf: Record<string, unknown[]> = STAFF, facts: Record<string, unknown[]> = {}): Services {
     const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
     const fetchFn = (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
       const q = String(JSON.parse(String(init.body)).q);
       searches.push(q);
-      if (q.startsWith('site:linkedin.com/company')) return json({ organic: PAGES });
-      const staff = Object.entries(STAFF).find(([name]) => q.includes(`"${name}`))?.[1] ?? [];
+      // A second look at one page: site:linkedin.com/company/<its address> "Company size".
+      const one = /^site:linkedin\.com\/company\/(\S+) /.exec(q)?.[1];
+      if (one) return json({ organic: facts[one] ?? [] });
+      if (q.startsWith('site:linkedin.com/company')) return json({ organic: pages });
+      const staff = Object.entries(staffOf).find(([name]) => q.includes(`"${name}`))?.[1] ?? [];
       return json({ organic: staff });
     }) as typeof fetch;
     return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
@@ -159,6 +191,41 @@ describe('a test run', () => {
     // Nothing else written.
     expect((await db.select().from(leads)).length).toBe(leadsBefore);
     expect(await db.select().from(prospectResults)).toEqual([]);
+  });
+
+  it('looks up the size and headquarters Google left out, screens again, and checks a company based abroad at its Indian site', async () => {
+    const pages = [
+      { title: 'MEI Brakes | LinkedIn', link: 'https://in.linkedin.com/company/mei-brakes', snippet: 'MEI Brakes | 794 followers on LinkedIn. Brakes For The Long Haul | MEI Brakes is a specialist Commercial Vehicle brake part manufacturer based in Sheffield, United Kingdom and Chennai, India.' },
+      { title: 'Prospira India Automotive Products Pvt. Ltd., (Ex. ...', link: 'https://in.linkedin.com/company/prospira-india', snippet: 'Anti-vibration components for vehicles.' },
+      { title: 'Little Gears | LinkedIn', link: 'https://in.linkedin.com/company/little-gears', snippet: 'Gears for tractors, Rajkot.' },
+    ];
+    const facts = {
+      'mei-brakes': [{ title: 'MEI Brakes', link: 'https://uk.linkedin.com/company/mei-brakes', snippet: 'Industry Motor Vehicle Parts Manufacturing Company size 501-1,000 employees Headquarters Sheffield, South Yorkshire Type Privately Held' }],
+      'prospira-india': [{ title: 'Prospira India Automotive Products Pvt. Ltd., (Ex. ...', link: 'https://in.linkedin.com/company/prospira-india', snippet: 'Industry: Motor Vehicle Parts Manufacturing; Company size: 1,001-5,000 employees; Headquarters: Pune, Maharashtra' }],
+      'little-gears': [{ title: 'Little Gears | LinkedIn', link: 'https://in.linkedin.com/company/little-gears', snippet: 'Company size: 11-50 employees. Headquarters: Rajkot, Gujarat' }],
+    };
+    const staff = {
+      'MEI Brakes': [{ title: 'Suresh Kumar - Plant Head - MEI Brakes | LinkedIn', subtitle: 'Chennai, Tamil Nadu, India · Plant Head · MEI Brakes', link: 'https://in.linkedin.com/in/suresh-k', snippet: '' }],
+    };
+    const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, companies: 10 }).returning();
+    const searches: string[] = [];
+    await runSourcingTest(db, fakeSerper(searches, pages, staff, facts), test.id);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+    const report = row.report as SourcingReport;
+    const byName = Object.fromEntries(report.companies.map((c) => [c.name, c]));
+    expect(byName['MEI Brakes']).toMatchObject({ size: '501-1,000 employees', hq: 'Sheffield, South Yorkshire', screen: 'pass', facts: '501-1,000 employees, Motor Vehicle Parts Manufacturing, HQ Sheffield, South Yorkshire' });
+    expect(byName['MEI Brakes'].people).toMatchObject({ outcome: 'reachable', p1: 1 });
+    expect(searches).toContain('site:linkedin.com/in "MEI Brakes" Chennai');
+    expect(searches.some((q) => q.includes('Sheffield'))).toBe(false);
+    // The name Google cut short is searched as far as it goes.
+    expect(byName['Prospira India Automotive Products Pvt. Ltd.']).toMatchObject({ size: '1,001-5,000 employees', hq: 'Pune, Maharashtra', screen: 'pass' });
+    expect(searches.some((q) => q.startsWith('site:linkedin.com/in "Prospira India Automotive Products" Pune'))).toBe(true);
+    // Too small once its size is known: out, and not searched for people.
+    expect(byName['Little Gears']).toMatchObject({ screen: 'small' });
+    expect(byName['Little Gears'].people).toBeUndefined();
+    expect(report.searches.facts).toBe(3);
+    expect(report.searches.find + report.searches.facts! + report.searches.people).toBe(searches.length);
+    expect(report.queries.reduce((n, q) => n + q.passed, 0)).toBe(2);
   });
 
   it('fails with a reason when search is down, and a test left running too long is marked stopped', async () => {

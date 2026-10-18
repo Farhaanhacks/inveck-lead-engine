@@ -267,6 +267,11 @@ export function placeNamedIn(title: string): string {
   return '';
 }
 
+/** Names a place in India: a state, a city or the country. */
+export function namesIndianPlace(text: string): boolean {
+  return INDIA_PLACES.test(text);
+}
+
 /** A place rather than a job ("Ahmedabad, Gujarat, India"): names an Indian place and no role word. */
 export function isPlace(text: string): boolean {
   return INDIA_PLACES.test(text) && !ROLE.test(text);

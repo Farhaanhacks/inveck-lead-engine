@@ -4,10 +4,10 @@ import { clients, icps, knownCompanies, leads, sourcingTests, type Icp, type Sou
 import { DEFAULT_ICPS } from '../db/seed';
 import { googleSearch, mapLimit, type SerperResult, type Services } from '../pipeline/services';
 import { searchLinkedIn } from '../pipeline/contacts';
-import { registerFirmWebsite } from '../pipeline/employer';
+import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { tierOf } from '../tiers';
-import { planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
+import { factsQuery, hqAbroad, needsFacts, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
 
 /**
  * The sourcing test: finds companies through their LinkedIn pages, screens them on what the page
@@ -21,6 +21,8 @@ export const SOURCING_LIMITS = {
   /** Google searches for company pages, and second pages of those that came back full of new pages. */
   searches: 24,
   secondPages: 8,
+  /** Second looks at pages that passed with their size or headquarters not in Google's text. */
+  facts: 40,
   /** Companies checked for people: the default, and the range allowed. */
   companies: 30,
   minCompanies: 5,
@@ -36,6 +38,9 @@ export type PeopleOutcome = 'reachable' | 'top_only' | 'staff_only' | 'nobody' |
 export type PersonFound = { name: string; title: string; tier: string; linkedin: string };
 export type CompanyReport = CompanyPage & {
   query: string;
+  queryPage?: number;
+  /** The search for the page's facts: what it added ('' when it found nothing new), absent when not run. */
+  facts?: string;
   screen: 'pass' | 'abroad' | 'small' | 'industry' | 'known';
   note: string;
   people?: { outcome: PeopleOutcome; staff: number; acceptable: number; p1: number; best: PersonFound[]; top: PersonFound[]; searches: number; error?: string; log: string[] };
@@ -45,7 +50,8 @@ export type SourcingReport = {
   companySize: string;
   queries: QueryReport[];
   companies: CompanyReport[];
-  searches: { find: number; people: number };
+  /** Google searches: for company pages, for their facts (absent on early reports), for people. */
+  searches: { find: number; facts?: number; people: number };
   seconds: number;
   stoppedEarly?: string;
 };
@@ -130,7 +136,7 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
   const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
   if (!test || test.status !== 'running') return;
   const segment = validSegment(test.segment);
-  const report: SourcingReport = { segment: test.segment, companySize: '', queries: [], companies: [], searches: { find: 0, people: 0 }, seconds: 0 };
+  const report: SourcingReport = { segment: test.segment, companySize: '', queries: [], companies: [], searches: { find: 0, facts: 0, people: 0 }, seconds: 0 };
   // Saves one at a time, so a slower save never overwrites a newer one.
   let saving: Promise<unknown> = Promise.resolve();
   const save = (set: Partial<typeof sourcingTests.$inferInsert>) => {
@@ -153,9 +159,9 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
     await save({ progress: `Searching Google for ${segment} company pages on LinkedIn (${plan.length} searches)…` });
     const byUrl = new Map<string, CompanyReport>();
     const names = new Set<string>();
-    const search = async (q: string, page: number): Promise<{ results: SerperResult[]; error?: string }> => {
+    const search = async (q: string, page: number, via = finder): Promise<{ results: SerperResult[]; error?: string }> => {
       try {
-        return { results: await googleSearch(finder, q, page) };
+        return { results: await googleSearch(via, q, page) };
       } catch (e) {
         return { results: [], error: errorMessage(e) };
       }
@@ -172,8 +178,7 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
         names.add(key);
         const s = screenPage(p, segment, icp.companySize, known);
         if (s.pass) passed++;
-        const note = s.pass && !p.size && pq.form === 'band' ? "size not in Google's text, though the page matched a size band searched for" : s.note;
-        byUrl.set(p.url, { ...p, query: pq.q, screen: s.pass ? 'pass' : s.reason, note });
+        byUrl.set(p.url, { ...p, query: pq.q, queryPage: page, screen: s.pass ? 'pass' : s.reason, note: s.note });
       }
       const r: QueryReport = { q: pq.q, form: pq.form, page, results: got.results.length, pages: pages.length, newPages, passed, ...(got.error ? { error: got.error } : {}) };
       report.queries.push(r);
@@ -188,6 +193,29 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
     more.forEach((pq, i) => absorb(pq, 2, second[i]));
     report.companies = [...byUrl.values()];
     report.searches.find = findSearches;
+
+    // Google's text for a page often leaves out its size and headquarters ("MEI Brakes | 794 followers
+    // on LinkedIn. Brakes For The Long Haul…"): one more search for the page's About facts, then the
+    // screen again with them.
+    const lacking = report.companies.filter((c) => c.screen === 'pass' && needsFacts(c)).slice(0, SOURCING_LIMITS.facts);
+    if (lacking.length) await save({ progress: `Found ${report.companies.length} company pages; looking up the size and headquarters of ${lacking.length} whose search result didn't show them…` });
+    let factSearches = 0;
+    const factFinder: Services = { ...svc, fetch: ((input, init) => (isSerper(input) && factSearches++, svc.fetch(input, init))) as typeof fetch };
+    const looked = await mapLimit(lacking, 4, (c) => search(factsQuery(c), 1, factFinder));
+    lacking.forEach((c, i) => {
+      const before = { size: c.size, industry: c.industry, hq: c.hq };
+      Object.assign(c, withFacts(c, looked[i].results));
+      const added = [c.size !== before.size && c.size, c.industry !== before.industry && c.industry, c.hq !== before.hq && `HQ ${c.hq}`].filter(Boolean).join(', ');
+      c.facts = looked[i].error ? `search failed: ${looked[i].error}` : added;
+      const s = screenPage(c, segment, icp.companySize, known);
+      c.screen = s.pass ? 'pass' : s.reason;
+      c.note = s.note;
+    });
+    report.searches.facts = factSearches;
+    for (const c of report.companies) {
+      if (c.screen === 'pass' && !c.size && c.query.includes(' employees"')) c.note = c.note.replace(/size not shown$/, "size not in Google's text, though the page matched a size band searched for");
+    }
+    for (const q of report.queries) q.passed = report.companies.filter((c) => c.query === q.q && (c.queryPage ?? 1) === q.page && c.screen === 'pass').length;
 
     // Phase 2: anyone reachable at the companies that passed, surest size first.
     const passing = report.companies.filter((c) => c.screen === 'pass');
@@ -204,7 +232,8 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
       const checker: Services = { ...svc, fetch: ((input, init) => (isSerper(input) && (mine++, peopleSearches++), svc.fetch(input, init))) as typeof fetch };
       const log: string[] = [];
       if (c.website) registerFirmWebsite(c.name, c.website);
-      const town = c.hq.split(',')[0].trim();
+      // A company based abroad is checked at its Indian site (MEI Brakes: Chennai, not Sheffield).
+      const town = c.hq && hqAbroad(c.hq) ? placeNamedIn(c.text) : c.hq.split(',')[0].trim();
       const r = await searchLinkedIn(checker, '', c.name, town, icp, (m) => void (log.length < 30 && log.push(m)), { staffOnly: true });
       const asFound = (p: { name: string; title: string; linkedin: string }): PersonFound => ({ name: p.name, title: p.title, tier: tierOf(p.title, icp), linkedin: p.linkedin });
       const top = r.people.filter((p) => tierOf(p.title, icp) === 'Top').map(asFound);
@@ -229,7 +258,7 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
     await save({
       status: 'done',
       finishedAt: new Date(),
-      progress: `${f.found} company pages found, ${f.passed} passed the screen, ${f.checked} checked: ${f.reachable} with a reachable contact (${f.withP1} with a P1). ${report.searches.find + report.searches.people} Google searches.`,
+      progress: `${f.found} company pages found, ${f.passed} passed the screen, ${f.checked} checked: ${f.reachable} with a reachable contact (${f.withP1} with a P1). ${report.searches.find + factSearches + report.searches.people} Google searches.`,
     });
   } catch (e) {
     await save({ status: 'failed', finishedAt: new Date(), error: errorMessage(e), progress: '' });

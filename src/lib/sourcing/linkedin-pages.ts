@@ -1,7 +1,7 @@
 import { LOGISTICS, MANUFACTURING } from '../db/seed';
 import { linkedinPageFacts } from '../pipeline/firm-identity';
 import { employeeTarget, sizeBandTop } from '../pipeline/fit';
-import { basedAbroad } from '../pipeline/employer';
+import { basedAbroad, namesIndianPlace, placeNamedIn } from '../pipeline/employer';
 import { normCompany, rootDomain } from '../pipeline/text';
 import type { SerperResult } from '../pipeline/services';
 
@@ -99,6 +99,8 @@ export function planQueries(segment: SourcingSegment, companySize: string, count
 /** A company page as Google shows it. */
 export type CompanyPage = {
   name: string;
+  /** Google cut the name short ("Prospira India Automotive Products Pvt. Ltd., (Ex. ..."). */
+  nameCut?: boolean;
   url: string;
   /** LinkedIn's band as shown ("201-500 employees"), '' when the result doesn't show it. */
   size: string;
@@ -123,19 +125,80 @@ export function companyPageUrl(link: string | undefined): string {
   return m ? `https://www.linkedin.com/company/${m[1].toLowerCase()}` : '';
 }
 
+/**
+ * The page's name from Google's title, without " | LinkedIn" and without the part Google cut off
+ * ("Prospira India Automotive Products Pvt. Ltd., (Ex. ..." gives "Prospira India Automotive Products Pvt. Ltd.").
+ */
+export function pageName(title: string | undefined): { name: string; cut: boolean } {
+  let name = String(title || '')
+    .replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '')
+    .replace(/\s*\|\s*[\d,.]+[km]?\s+followers.*$/i, '')
+    .trim();
+  const cut = /(\.\.\.|…)$/.test(name);
+  // A bracket opened and never closed: the rest was cut off.
+  name = name.replace(/\s*(\.\.\.|…)$/, '').replace(/\s*[([][^)\]]*$/, '');
+  return { name: name.replace(/[\s,;:|\-–]+$/, '').trim(), cut };
+}
+
+/**
+ * LinkedIn's header line, when Google shows it: "Motor Vehicle Parts Manufacturing · Sheffield, South
+ * Yorkshire · 794 followers" (the industry, then the headquarters).
+ */
+const HEADER = /([A-Z][^·•|\n.]{2,80}?)\s+[·•]\s+([^·•|\n.]{2,60}?)\s+[·•]\s+[\d,.]+\s*[KkMm]?\s+followers/;
+
 /** A company page from a Google result, or null when the result is not one. */
 export function readCompanyPage(r: SerperResult): CompanyPage | null {
   const url = companyPageUrl(r.link);
   if (!url) return null;
-  const name = String(r.title || '')
-    .replace(/\s*[|\-–]\s*LinkedIn\s*$/i, '')
-    .replace(/\s*\|\s*[\d,.]+[km]?\s+followers.*$/i, '')
-    .trim();
+  const { name, cut } = pageName(r.title);
   if (!name) return null;
   const text = [name, r.snippet || '', r.subtitle || ''].filter(Boolean).join('. ');
   const facts = linkedinPageFacts(text);
   const website = /\bWebsite:?\s+(https?:\/\/\S+|www\.\S+|[a-z0-9-]+\.[a-z.]{2,}\S*)/.exec(text)?.[1].replace(/[.,;)]+$/, '') ?? '';
-  return { name, url, size: facts.size, industry: field('Industry', text), hq: field('Headquarters', text), website, followers: facts.followers, text };
+  const header = HEADER.exec(text);
+  return {
+    name,
+    ...(cut ? { nameCut: true } : {}),
+    url,
+    size: facts.size,
+    industry: field('Industry', text) || header?.[1].trim() || '',
+    hq: field('Headquarters', text) || header?.[2].trim() || '',
+    website,
+    followers: facts.followers,
+    text,
+  };
+}
+
+/** Size or headquarters missing from Google's text: worth a second search for the page's facts. */
+export const needsFacts = (p: CompanyPage) => !p.size || !p.hq;
+
+/**
+ * The search that brings a page's About facts into Google's text: the page's own address, and
+ * "Company size" (Google shows the part of the page with the words searched for).
+ */
+export function factsQuery(p: Pick<CompanyPage, 'url'>): string {
+  return `site:${p.url.replace(/^https?:\/\/(www\.)?/, '')} "Company size"`;
+}
+
+/** The page with what the second search showed: size, industry, headquarters and website where they were missing. */
+export function withFacts(p: CompanyPage, results: SerperResult[]): CompanyPage {
+  const again = results.map(readCompanyPage).find((r) => r?.url === p.url);
+  if (!again) return p;
+  return {
+    ...p,
+    ...(p.nameCut && !again.nameCut && again.name.length > p.name.length ? { name: again.name, nameCut: undefined } : {}),
+    size: p.size || again.size,
+    industry: p.industry || again.industry,
+    hq: p.hq || again.hq,
+    website: p.website || again.website,
+    followers: p.followers || again.followers,
+    text: again.text === p.text ? p.text : `${p.text}\n${again.text}`,
+  };
+}
+
+/** Headquarters outside India: a foreign place, or a "Town, Region" that names no Indian place ("Sheffield, South Yorkshire"). */
+export function hqAbroad(hq: string): boolean {
+  return basedAbroad(hq) || (hq.includes(',') && !namesIndianPlace(hq));
 }
 
 /** Industries out of the ICP by LinkedIn's own label (what the company is, not what it serves). */
@@ -161,7 +224,14 @@ export type Screen =
  * (not a lead in any state, a client or on INVECK's own lists).
  */
 export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize: string, known: Known): Screen {
-  if (p.hq && basedAbroad(p.hq)) return { pass: false, reason: 'abroad', note: `headquartered abroad (${p.hq})` };
+  // Based abroad with a site in India (MEI Brakes: Sheffield and Chennai) is a prospect for that site;
+  // with none named, it isn't.
+  let abroad = '';
+  if (p.hq && hqAbroad(p.hq)) {
+    const site = placeNamedIn(p.text);
+    if (!site) return { pass: false, reason: 'abroad', note: `headquartered abroad (${p.hq}), no site in India named` };
+    abroad = `headquartered abroad (${p.hq}), with a site in ${site}; `;
+  }
   const target = employeeTarget(companySize);
   const top = p.size ? sizeBandTop(p.size) : null;
   if (target && top != null && top <= target / 2) return { pass: false, reason: 'small', note: `too small: ${p.size} against ${companySize}` };
@@ -174,7 +244,7 @@ export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize
     : target && top != null && top <= target
       ? `borderline size: ${p.size} against ${companySize}`
       : `size ${p.size}`;
-  return { pass: true, note };
+  return { pass: true, note: abroad + note };
 }
 
 /** Big enough for certain (a band above the target), borderline, or not shown: the order companies are checked for people. */

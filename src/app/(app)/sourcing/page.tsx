@@ -44,6 +44,17 @@ function Tile({ label, value, note }: { label: string; value: number | string; n
   );
 }
 
+/** What Google showed for the page, and what the second search for its facts added. */
+function GoogleText({ c }: { c: CompanyReport }) {
+  return (
+    <details className="mt-1 text-xs font-normal text-muted">
+      <summary className="cursor-pointer">Google&apos;s text</summary>
+      <p className="mt-1 max-w-md whitespace-pre-wrap break-words">{c.text}</p>
+      {c.facts !== undefined && <p className="mt-1">Second search for size and headquarters: {c.facts ? `added ${c.facts}` : 'found nothing more'}</p>}
+    </details>
+  );
+}
+
 const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : '–');
 
 export default async function SourcingPage({ searchParams }: PageProps<'/sourcing'>) {
@@ -59,7 +70,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
   const [test] = wanted ? await db.select().from(sourcingTests).where(eq(sourcingTests.id, wanted)) : [];
   const report = (test?.report ?? null) as SourcingReport | null;
   const f = report ? funnelOf(report) : null;
-  const searches = report ? report.searches.find + report.searches.people : 0;
+  const searches = report ? report.searches.find + (report.searches.facts ?? 0) + report.searches.people : 0;
   const checkedList = report?.companies.filter((c) => c.people) ?? [];
   const otherList = report?.companies.filter((c) => !c.people) ?? [];
   const noSerper = !apiKeys().serper;
@@ -90,7 +101,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
           <SubmitButton pendingText="Starting…" disabled={!!running || noSerper}>Run the test</SubmitButton>
         </form>
         <p className="mt-3 text-xs text-muted">
-          Uses up to {SOURCING_LIMITS.searches + SOURCING_LIMITS.secondPages} Google searches to find company pages and up to 4 per company checked (about {SOURCING_LIMITS.searches + SOURCING_LIMITS.secondPages + SOURCING_LIMITS.companies * 4} for {SOURCING_LIMITS.companies} companies), and takes a minute or two. No AI is used.
+          Uses up to {SOURCING_LIMITS.searches + SOURCING_LIMITS.secondPages} Google searches to find company pages, up to {SOURCING_LIMITS.facts} more for sizes and headquarters Google&apos;s first result left out, and up to 4 per company checked for people. It takes a minute or two. No AI is used.
           {running && ' A test is running: wait for it to finish before starting another.'}
           {noSerper && ' SERPER_API_KEY is not set, so the test cannot search.'}
         </p>
@@ -119,7 +130,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
           {f && report && (
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
-                <Tile label="Company pages found" value={f.found} note={`from ${report.searches.find} searches`} />
+                <Tile label="Company pages found" value={f.found} note={`from ${report.searches.find} searches${report.searches.facts ? `, ${report.searches.facts} more for missing sizes` : ''}`} />
                 <Tile label="Passed the screen" value={f.passed} note={`${f.abroad} abroad, ${f.small} too small, ${f.industry} industry, ${f.known} already known`} />
                 <Tile label="Checked for people" value={f.checked} note={`${report.searches.people} searches`} />
                 <Tile label="Reachable contact" value={f.reachable} note={`${pct(f.reachable, f.checked)} of those checked; ${f.withP1} with a P1`} />
@@ -164,6 +175,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
                     <td className={`${td} font-medium`}>
                       <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a>
                       {c.website && <span className="block text-xs font-normal text-muted">{c.website}</span>}
+                      <GoogleText c={c} />
                     </td>
                     <td className={`${td} whitespace-nowrap`}>
                       {c.size || <span className="text-muted">not shown</span>}
@@ -232,6 +244,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
                 <tr key={c.url}>
                   <td className={`${td} font-medium`}>
                     <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a>
+                    <GoogleText c={c} />
                   </td>
                   <td className={`${td} whitespace-nowrap`}>{c.size || <span className="text-muted">not shown</span>}</td>
                   <td className={td}>
