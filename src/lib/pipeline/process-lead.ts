@@ -3,7 +3,7 @@ import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
 import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, canBeMain, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
-import { buildSources } from './fit';
+import { buildSources, tooSmall } from './fit';
 import { scoreLead } from './scoring';
 import { contactPriority, icpFor } from '../tiers';
 import { resolveIcp } from '../icp-match';
@@ -151,7 +151,7 @@ export async function processLead(
   // corrected (the first one kept as nameAsFound); one that can't be settled goes to review. A name the
   // team typed in, or a lead whose fit a person confirmed, is left as it is.
   if (lead.nameEvidence !== 'set by the team' && lead.fitOverride !== 'qualified' && site.text) {
-    await learnFirm(svc, lead.company, website);
+    await learnFirm(svc, lead.company, website, { city: lead.city });
     const check = checkCompanyName(lead.company, rootDomain(website), site.text, firmAliasesOf(lead.company));
     if (check.status === 'corrected') {
       await log(`${lead.company}: name corrected to "${check.name}": ${check.evidence}`, 'warn');
@@ -175,7 +175,8 @@ export async function processLead(
       corrected.nameEvidence = check.evidence;
     }
   }
-  await learnFirm(svc, lead.company, website);
+  // Its LinkedIn page: the name its staff write, and its size (evidence for the ICP's size target).
+  const firmPage = await learnFirm(svc, lead.company, website, { city: lead.city });
   if (site.via === 'google') await log(`${lead.company}: website blocks automated reading; researched from Google's index of its pages`);
   if (site.error) await log(`${lead.company}: website not readable (${site.error})`, 'warn');
   const domain = rootDomain(website);
@@ -191,6 +192,8 @@ export async function processLead(
       : site.text
         ? [{ url: site.url || website, title: 'company website', text: site.text }]
         : []),
+    // Short, and put early so the page budget doesn't crowd it out: the size band and followers on its LinkedIn page.
+    ...(firmPage && (firmPage.size || firmPage.followers) ? [{ url: firmPage.url, title: "the company's LinkedIn page", text: firmPage.text }] : []),
     ...pages.map((p) => ({ url: p.url, title: '', text: p.text })),
   ], undefined, undefined, lead.company);
 
@@ -226,6 +229,11 @@ export async function processLead(
   if (a?.status === 'review' && lead.source === IMPORTED_SOURCE && onlyUnconfirmed(a.reason)) {
     a = { ...a, status: 'qualified', reason: `On the team's researched list; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
   }
+  // Clearly too small (its own LinkedIn page at half the ICP's size or less): ruled out with that
+  // reason, rather than a review for a person or a contact search with nobody to find. Never a firm
+  // on the team's own list.
+  const small = a && a.status !== 'not_fit' && lead.source !== IMPORTED_SOURCE ? tooSmall(a.evidence, firmPage, icp.companySize) : '';
+  if (a && small) a = { ...a, status: 'not_fit', reason: `Not a fit: ${small}` };
   if (keepFit) {
     // The fit a person confirmed stands; research done now only adds the company description.
     if (!reused && research.text) base.researchSummary = research.text;

@@ -228,6 +228,23 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(r.status).toBe('cancelled');
   });
 
+  it("rules out a company its own LinkedIn page shows far below the ICP's size, quoting the page; a big enough one goes on", async () => {
+    await db.insert(leads).values([
+      { company: 'Tiny Brass Components', website: 'tinybrass.in', city: 'Jamnagar', segment: M },
+      { company: 'Big Brass Components', website: 'bigbrass.in', city: 'Jamnagar', segment: M },
+    ]);
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
+    await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY);
+    const L = await byCompany();
+    expect(L['Tiny Brass Components'].status).toBe('Disqualified');
+    expect(L['Tiny Brass Components'].fitDecision).toBe(
+      "Not a fit: too small for the ICP's size target (200+ employees or Rs 100 Cr+ revenue): its LinkedIn page shows “Company size: 11-50 employees” (https://in.linkedin.com/company/tiny-brass-components)",
+    );
+    // 201-500 employees: not too small; it goes on to the contact search like any other.
+    expect(L['Big Brass Components'].status).not.toBe('Disqualified');
+    expect(L['Big Brass Components'].fitDecision).not.toContain('too small');
+  });
+
   it('reports a missing API key clearly instead of crashing', async () => {
     await db.insert(leads).values(TEST_LEADS.slice(0, 1));
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });

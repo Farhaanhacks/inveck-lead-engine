@@ -216,6 +216,13 @@ const handlers: Record<string, Handler> = {
         ],
       });
     }
+    // Two brass makers' LinkedIn pages, listing their websites: 11-50 employees, and 201-500.
+    for (const [domain, name, size] of [['tinybrass.in', 'Tiny Brass Components', '11-50'], ['bigbrass.in', 'Big Brass Components', '201-500']]) {
+      if (q === `site:linkedin.com/company "${domain}"`) {
+        const slug = name.toLowerCase().replace(/ /g, '-');
+        return json({ organic: [{ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet: `${name} | 412 followers on LinkedIn. Website: http://www.${domain}. Industry: Machinery Manufacturing. Company size: ${size} employees. Headquarters: Jamnagar, Gujarat` }] });
+      }
+    }
     if (/Tata Motors/.test(q)) {
       return json({
         organic: [
