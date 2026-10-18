@@ -23,7 +23,7 @@ import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTracke
 import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack, waNumber } from '@/lib/phones';
 import { ON_A_CALL, recordConsent, undoCallConsent, WA_DETAILS_STEP } from '@/lib/whatsapp/contacts';
-import { checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, requireUser } from '@/lib/users';
+import { checkPassword, DEFAULT_PASSWORD, hashPassword, MARKETING_PASSWORD, MIN_PASSWORD_LENGTH, requireSessionUser, requireUser } from '@/lib/users';
 import { callAgainAt, CA_AFTER_NOTE, CA_FALLBACK_STEP, CA_WAITING_STEP, dayCounts, DAILY_LINKEDIN_LIMIT, isCaSegment, istDay, markCompanyDay, nextWorkingDay, planCaFallback } from '@/lib/tasks';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -352,7 +352,8 @@ export async function clockOutAction() {
 export type PasswordState = { ok: boolean; message: string } | undefined;
 
 export async function changePasswordAction(_prev: PasswordState, form: FormData): Promise<PasswordState> {
-  const user = await requireUser();
+  // Every profile changes its own password, the Marketing one included.
+  const user = await requireSessionUser();
   if (!user.id) return { ok: false, message: 'The admin password is set in the server settings (APP_PASSWORD), not here.' };
   const current = String(form.get('current') ?? '');
   const next = String(form.get('next') ?? '');
@@ -361,7 +362,7 @@ export async function changePasswordAction(_prev: PasswordState, form: FormData)
   const [row] = await db.select().from(users).where(eq(users.id, user.id));
   if (!row || !(await checkPassword(current, row.passwordHash))) return { ok: false, message: 'Your current password is wrong.' };
   if (next.length < MIN_PASSWORD_LENGTH) return { ok: false, message: `Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.` };
-  if (next === DEFAULT_PASSWORD) return { ok: false, message: 'Choose a password other than the starting one.' };
+  if (next === DEFAULT_PASSWORD || next === MARKETING_PASSWORD) return { ok: false, message: 'Choose a password other than the starting one.' };
   if (next !== confirm) return { ok: false, message: 'The two new passwords are different.' };
   await db.update(users).set({ passwordHash: await hashPassword(next), mustChangePassword: false }).where(eq(users.id, user.id));
   revalidatePath('/', 'layout');

@@ -7,7 +7,7 @@ import { users, type User } from './db/schema';
 import { authDisabled, readSession, SESSION_COOKIE } from './auth';
 import { checkPassword, normaliseUsername } from './passwords';
 
-export { BDA_NAMES, checkPassword, DEFAULT_PASSWORD, hashPassword, MIN_PASSWORD_LENGTH, normaliseUsername } from './passwords';
+export { BDA_NAMES, checkPassword, DEFAULT_PASSWORD, hashPassword, MARKETING_PASSWORD, MIN_PASSWORD_LENGTH, normaliseUsername } from './passwords';
 
 export async function verifyLogin(db: Db, username: string, password: string): Promise<User | null> {
   const [user] = await db.select().from(users).where(and(eq(users.username, normaliseUsername(username)), eq(users.active, true)));
@@ -16,16 +16,21 @@ export async function verifyLogin(db: Db, username: string, password: string): P
   return user && ok ? user : null;
 }
 
-export type SessionUser = { id: number; name: string; username: string; role: 'admin' | 'bda'; mustChangePassword: boolean };
+/** Anyone logged in: an administrator, a BDA, or the Marketing profile. */
+export type SessionUser = { id: number; name: string; username: string; role: 'admin' | 'bda' | 'marketing'; mustChangePassword: boolean };
+/** Someone who works the Lead Engine / CRM. The Marketing profile is never one: it only has the content calendar. */
+export type CrmUser = SessionUser & { role: 'admin' | 'bda' };
 
 /** The shared-password login (and local development without one): sees everything. */
 export const ADMIN_USER: SessionUser = { id: 0, name: 'Admin', username: 'admin', role: 'admin', mustChangePassword: false };
 
-export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
+/** Whoever is logged in, whatever their role (the Marketing profile included). */
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   if (authDisabled()) return ADMIN_USER;
   const subject = await readSession((await cookies()).get(SESSION_COOKIE)?.value);
   if (!subject) return null;
   if (subject === 'admin') return ADMIN_USER;
+  // u<id>: a BDA; m<id>: the Marketing profile. The role is read from the database either way.
   const id = Number(subject.slice(1));
   if (!Number.isInteger(id)) return null;
   const db = await getDb();
@@ -33,8 +38,24 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   return u ? { id: u.id, name: u.name, username: u.username, role: u.role, mustChangePassword: u.mustChangePassword } : null;
 });
 
-export async function requireUser(): Promise<SessionUser> {
+/**
+ * The Lead Engine / CRM's view of who is logged in: the Marketing profile counts as nobody here, so every
+ * page, action and API route built on this refuses it, on the server, whatever link it is given.
+ */
+export const getCurrentUser = cache(async (): Promise<CrmUser | null> => {
+  const user = await getSessionUser();
+  return user && user.role !== 'marketing' ? (user as CrmUser) : null;
+});
+
+export async function requireUser(): Promise<CrmUser> {
   const user = await getCurrentUser();
+  if (!user) throw new Error('Not logged in');
+  return user;
+}
+
+/** Anyone logged in, for what every profile has (changing its own password). */
+export async function requireSessionUser(): Promise<SessionUser> {
+  const user = await getSessionUser();
   if (!user) throw new Error('Not logged in');
   return user;
 }

@@ -1,5 +1,6 @@
 import { boolean, integer, jsonb, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
 import type { FitEvidence, FitStatus, RiskFlag } from '../pipeline/fit';
+import type { ContentPlatform, ContentStatus } from '../content-meta';
 
 // Keep in sync with the CREATE statements in ./migrate.ts.
 
@@ -376,7 +377,7 @@ export const enrichmentCache = pgTable('enrichment_cache', {
 });
 export type NewPerson = typeof people.$inferInsert;
 
-export const USER_ROLES = ['admin', 'bda'] as const;
+export const USER_ROLES = ['admin', 'bda', 'marketing'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /** Team members. Usernames look like parimal@inveck. */
@@ -580,3 +581,28 @@ export const sourcingTests = pgTable('sourcing_tests', {
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });
 export type SourcingTest = typeof sourcingTests.$inferSelect;
+
+export type { ContentPlatform, ContentStatus };
+
+/**
+ * A post on the Marketing content calendar. The date and the status are two separate facts and neither
+ * overwrites the other: scheduledOn ('' = not on the calendar yet, a draft in the side list) and status.
+ */
+export const contentPosts = pgTable('content_posts', {
+  id: serial('id').primaryKey(),
+  title: text('title').notNull(),
+  platform: text('platform').$type<ContentPlatform>().notNull(),
+  /** post, carousel, reel, story, video or article (which ones depends on the platform). */
+  format: text('format').notNull().default('post'),
+  caption: text('caption').notNull().default(''),
+  /** India day (YYYY-MM-DD) it is planned for; '' while it is only a draft with no date. */
+  scheduledOn: text('scheduled_on').notNull().default(''),
+  status: text('status').$type<ContentStatus>().notNull().default('draft'),
+  /** What it is waiting for; kept when the status changes, shown while it is waiting. */
+  dependencyNote: text('dependency_note').notNull().default(''),
+  /** When it was marked Posted; empty while it isn't. */
+  postedAt: timestamp('posted_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type ContentPost = typeof contentPosts.$inferSelect;

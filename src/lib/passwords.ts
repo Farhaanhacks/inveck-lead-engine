@@ -1,12 +1,15 @@
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { users } from './db/schema';
 
 const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 
 export const DEFAULT_PASSWORD = 'inveck123';
+/** The Marketing profile (a separate role: the content calendar only), starting like everyone else on a password it must change. */
+export const MARKETING_USERNAME = 'marketing@inveck';
+export const MARKETING_PASSWORD = 'marketinginveck';
 export const BDA_NAMES = ['Parimal', 'Anuradha', 'Anchal', 'Puja'];
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -39,3 +42,15 @@ export async function seedUsers(db: Db) {
   }
 }
 
+/**
+ * Makes sure the Marketing profile exists (its own role, asked to change the starting password at first
+ * login). Idempotent, and never touches a profile that already exists: a changed password stays changed.
+ */
+export async function ensureMarketingUser(db: Db) {
+  const [found] = await db.select({ id: users.id }).from(users).where(eq(users.username, MARKETING_USERNAME));
+  if (found) return;
+  await db
+    .insert(users)
+    .values({ username: MARKETING_USERNAME, name: 'Marketing', role: 'marketing', passwordHash: await hashPassword(MARKETING_PASSWORD), mustChangePassword: true })
+    .onConflictDoNothing();
+}

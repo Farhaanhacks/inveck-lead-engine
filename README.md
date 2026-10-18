@@ -219,6 +219,24 @@ rounds, each a call, a WhatsApp and an email, on consecutive working days (round
 request sent now, or today otherwise); weekends and the holidays in Settings are skipped. Accepted ends it; when all
 three rounds are done the firm is done.
 
+### Marketing: the content calendar
+
+Marketing has its own login, separate from the sales team: **marketing@inveck**, with the starting password
+`marketinginveck` (it asks to change it at first login; do that on **Account**). It has its own role, created
+automatically on first start, and sees only three pages: **Content Calendar** (its landing page), **Overview** and
+**Account**. Every other page, action and API is refused for it on the server (the proxy, the pages and each
+action check), so typing a Lead Engine address does nothing. Administrators can open the Marketing pages too.
+
+- **Calendar:** month or week view with previous/next and Today. Unscheduled drafts are in the side list: drag a
+  card onto a day to schedule it, drag a card to another day to move it, or open it and pick a date (the keyboard
+  and screen-reader way). **New content** (or the + on a day) opens the editor: title, platform (Instagram or
+  LinkedIn), format, caption, status, date, and a dependency note.
+- **Statuses:** Draft, Pending approval, Approved, Scheduled, Waiting for dependency, Posted. The date and the status are
+  separate: moving a post never changes its status, and changing its status never removes its date. Scheduled needs a date;
+  Posted records when (and takes today's date if it had none), and a posted post's date is fixed until it is marked not posted.
+- **Overview:** posted in total and per platform, scheduled, draft, pending approval and waiting for dependency.
+- Everything is saved in the database (`content_posts`), not in the browser.
+
 ## The team
 
 Each BDA has their own login: `name@inveck` (for example `parimal@inveck`) with the starting password

@@ -33,7 +33,8 @@ const lead = (company: string, extra: Partial<typeof leads.$inferInsert> = {}) =
 describe('logins', () => {
   it('creates the four team members with the starting password, case-insensitively', async () => {
     const db = await getDb();
-    const rows = await db.select().from(users).orderBy(users.id);
+    // The four BDAs (the Marketing profile is a separate role, covered in marketing.test.ts).
+    const rows = (await db.select().from(users).orderBy(users.id)).filter((u) => u.role === 'bda');
     expect(rows.map((u) => u.username)).toEqual(['parimal@inveck', 'anuradha@inveck', 'anchal@inveck', 'puja@inveck']);
     expect(rows.every((u) => u.mustChangePassword && u.role === 'bda')).toBe(true);
     expect((await verifyLogin(db, 'Parimal@inveck', 'inveck123'))?.name).toBe('Parimal');

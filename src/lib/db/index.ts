@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 import { SCHEMA_STATEMENTS } from './migrate';
 import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingDealBreakersV5, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
-import { seedUsers } from '../passwords';
+import { ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -61,6 +61,7 @@ async function connect(): Promise<Db> {
     await upgradeManufacturingHeavyV4(db);
     await upgradeManufacturingDealBreakersV5(db);
     await seedUsers(db);
+    await ensureMarketingUser(db);
     await reconcileFollowUpsOnce(db);
   } catch (e) {
     const cause = (e as { cause?: unknown })?.cause;

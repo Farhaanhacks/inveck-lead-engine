@@ -57,8 +57,9 @@ export async function login(_prev: { error: string } | undefined, form: FormData
     const db = await getDb();
     const user = await verifyLogin(db, username, password);
     if (user) {
-      subject = `u${user.id}`;
-      await recordPresence(db, user.id);
+      // The Marketing profile's session is marked m<id>: the proxy keeps it to the content calendar.
+      subject = `${user.role === 'marketing' ? 'm' : 'u'}${user.id}`;
+      if (user.role === 'bda') await recordPresence(db, user.id);
     }
   }
   if (!subject) return { error: 'Wrong username or password.' };
@@ -72,7 +73,10 @@ export async function login(_prev: { error: string } | undefined, form: FormData
   // Team members start on their list for the day, unless they were sent to a page before logging in.
   const next = str(form, 'next');
   const wanted = next.startsWith('/') && !next.startsWith('//') && next !== '/' ? next : '';
-  redirect(wanted || (subject === 'admin' ? '/' : '/today'));
+  // Marketing always lands on its content calendar; nobody else is sent to the Marketing pages by a link.
+  if (subject.startsWith('m')) redirect(wanted.startsWith('/marketing') ? wanted : '/marketing/calendar');
+  const allowed = wanted && (subject === 'admin' || !wanted.startsWith('/marketing')) ? wanted : '';
+  redirect(allowed || (subject === 'admin' ? '/' : '/today'));
 }
 
 export async function logout() {
@@ -143,6 +147,7 @@ async function actorName(): Promise<string> {
 }
 
 export async function addLeadAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
+  await requireUser();
   const company = str(form, 'company');
   if (!company) return { ok: false, message: 'Company name is required.' };
   const known = await knownCompanies();
@@ -190,6 +195,7 @@ const chosenTier = (v: string) => (['P1', 'P2', 'P3'].includes(v) ? v : '');
 
 /** Bulk add: one company per line, "Company, website, city, segment" (comma or tab separated). */
 export async function addLeadsBulkAction(_prev: { message: string; ok: boolean } | undefined, form: FormData) {
+  await requireUser();
   const lines = str(form, 'bulk').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const inbound = str(form, 'inbound') === 'yes';
   // Lines that name no segment use the one chosen for the whole paste.

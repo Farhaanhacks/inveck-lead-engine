@@ -509,6 +509,21 @@ export const SCHEMA_STATEMENTS = [
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS follow_up_round INTEGER NOT NULL DEFAULT 0`,
   // CA firms: three follow-up rounds after the LinkedIn request, and the firms taken from the Google Sheet.
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS ca_round INTEGER NOT NULL DEFAULT 0`,
+  // Marketing's content calendar.
+  `CREATE TABLE IF NOT EXISTS content_posts (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    format TEXT NOT NULL DEFAULT 'post',
+    caption TEXT NOT NULL DEFAULT '',
+    scheduled_on TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',
+    dependency_note TEXT NOT NULL DEFAULT '',
+    posted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS content_posts_day_idx ON content_posts (scheduled_on)`,
   `CREATE TABLE IF NOT EXISTS sheet_firms (
     source_key TEXT PRIMARY KEY,
     spreadsheet_id TEXT NOT NULL DEFAULT '',

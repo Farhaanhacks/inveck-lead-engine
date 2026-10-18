@@ -22,6 +22,13 @@
   --critical-soft: #fbe5e5;
   --critical-ink: #a32424;
   --neutral-soft: #ecebe7;
+  --rose: #d6457a;
+  --rose-soft: #fde6ee;
+  --rose-ink: #a3214f;
+  --violet: #7a5af0;
+  --violet-soft: #ece8fd;
+  --teal: #14998a;
+  --teal-soft: #dcf5f1;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -45,6 +52,13 @@
     --critical-soft: #3d1c1c;
     --critical-ink: #f09a9a;
     --neutral-soft: #2a2a28;
+    --rose: #ef6b9a;
+    --rose-soft: #3d1a28;
+    --rose-ink: #f5a3c0;
+    --violet: #9b84f5;
+    --violet-soft: #271f45;
+    --teal: #3cc9b8;
+    --teal-soft: #13302c;
   }
 }
 
@@ -67,6 +81,13 @@
   --color-critical-soft: var(--critical-soft);
   --color-critical-ink: var(--critical-ink);
   --color-neutral-soft: var(--neutral-soft);
+  --color-rose: var(--rose);
+  --color-rose-soft: var(--rose-soft);
+  --color-rose-ink: var(--rose-ink);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-teal: var(--teal);
+  --color-teal-soft: var(--teal-soft);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -103,4 +124,19 @@ body {
 select option {
   background-color: var(--surface);
   color: var(--ink);
+}
+
+/* Frosted glass for the Marketing screens: a translucent surface that blurs what is behind it, with a soft light edge. */
+.glass {
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  backdrop-filter: blur(16px) saturate(1.5);
+  border: 1px solid color-mix(in srgb, var(--surface) 80%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent), 0 12px 32px -20px rgb(0 0 0 / 0.28);
+}
+.glass-tint {
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  border: 1px solid color-mix(in srgb, var(--surface) 70%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 45%, transparent), 0 6px 16px -12px rgb(0 0 0 / 0.3);
 }

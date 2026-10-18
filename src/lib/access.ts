@@ -3,10 +3,10 @@ import { redirect } from 'next/navigation';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from './db';
 import { leads } from './db/schema';
-import { getCurrentUser, requireUser, type SessionUser } from './users';
+import { getCurrentUser, getSessionUser, requireSessionUser, requireUser, type CrmUser, type SessionUser } from './users';
 
 /** For pages only administrators see. Team members are sent back to their own list. */
-export async function adminPage(): Promise<SessionUser> {
+export async function adminPage(): Promise<CrmUser> {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
   if (user.role !== 'admin') redirect('/today');
@@ -14,14 +14,32 @@ export async function adminPage(): Promise<SessionUser> {
 }
 
 /** For server actions that only administrators may run. */
-export async function requireAdmin(): Promise<SessionUser> {
+export async function requireAdmin(): Promise<CrmUser> {
   const user = await requireUser();
   if (user.role !== 'admin') throw new Error('Administrators only');
   return user;
 }
 
+/**
+ * For the Marketing pages: the Marketing profile, or an administrator (who can see everything). Anyone
+ * else is sent back to their own list; nobody logged in goes to the login page.
+ */
+export async function marketingPage(): Promise<SessionUser> {
+  const user = await getSessionUser();
+  if (!user) redirect('/login');
+  if (user.role !== 'marketing' && user.role !== 'admin') redirect('/today');
+  return user;
+}
+
+/** For the Marketing server actions: the same rule, enforced on the server whatever page the call came from. */
+export async function requireMarketing(): Promise<SessionUser> {
+  const user = await requireSessionUser();
+  if (user.role !== 'marketing' && user.role !== 'admin') throw new Error('Marketing only');
+  return user;
+}
+
 /** The owner a person's lists are limited to: a team member sees only their own leads, an administrator sees all (null). */
-export function ownerScope(user: Pick<SessionUser, 'id' | 'role'>): number | null {
+export function ownerScope(user: Pick<CrmUser, 'id' | 'role'>): number | null {
   return user.role === 'admin' ? null : user.id;
 }
 
