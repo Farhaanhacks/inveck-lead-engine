@@ -152,6 +152,16 @@ page or its Today step.
 - **Timeline**: every lead shows what happened and when, and the team can add notes, calls and meetings.
 - **Dashboard**: the funnel with conversion rates, weekly emails and replies, the best segment and lead source, and follow-ups due.
 
+### Sourcing test
+
+**Dashboard → Sourcing test** (administrators) tries a different way of finding companies, without
+touching the pipeline. It searches Google for companies' LinkedIn pages in a segment's industries and
+clusters, screens each on what the page shows (headquarters in India, size against the ICP, an
+industry the ICP covers, not already a lead, client or on INVECK's lists), then searches the staff of
+the ones that pass on LinkedIn to see whether anyone on the ICP's P1/P2/P3 lists works there. It uses
+Serper only (no AI), saves nothing but its report (no leads, no prospect history, nothing sent) and
+shows the funnel, every company with its outcome, and each search with what it found.
+
 ## Deploy on Vercel
 
 1. Import this repository at [vercel.com/new](https://vercel.com/new).

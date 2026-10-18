@@ -4,7 +4,7 @@ import type { EnrichmentCache, Services } from '@/lib/pipeline/services';
 import { distanceKm, forgetPlaces, knowPlaces, placeKey, pointOf } from '@/lib/pipeline/places';
 import { learnFirm, linkedinPageName, recallFirm } from '@/lib/pipeline/firm-identity';
 import { firmAliasesOf, sameFirm, siteOf } from '@/lib/pipeline/employer';
-import { atOtherSite, confirmedAtSite, contactSearchPlan, personSite, searchLinkedIn } from '@/lib/pipeline/contacts';
+import { atOtherSite, confirmedAtSite, contactSearchPlan, personSite, searchLinkedIn, staffSearches } from '@/lib/pipeline/contacts';
 import { cleanTitle, companyWide, contactPriority, noDepartment, tierOf } from '@/lib/tiers';
 import { DEFAULT_ICPS } from '@/lib/db/seed';
 
@@ -311,7 +311,8 @@ describe('search evidence is read in full before deciding (contact pipeline revi
     const svc = services(seen, (q) => (q === first ? [vague] : [placed]));
     await knowPlaces(svc, ['Hosur']);
     const { people } = await searchLinkedIn(svc, '', company, 'Hosur', mfg);
-    expect(seen.searches[0]).toBe(first);
+    // The company's staff first, then the designations.
+    expect(seen.searches.slice(0, 3)).toEqual([...staffSearches(company, 'Hosur'), first]);
     expect(people).toHaveLength(1);
     expect(people[0].location).toBe('Hosur, Tamil Nadu, India');
   });
@@ -360,7 +361,9 @@ describe('search evidence is read in full before deciding (contact pipeline revi
     expect(people.map((p) => p.name)).toEqual(['Vikram P', 'Asha R']);
     // Every P1 designation was searched before the first P2 one; one acceptable contact is not four,
     // so the rest of P2 and P3 were searched too.
-    const searched = seen.searches.filter((q) => q.startsWith('site:linkedin.com/in'));
+    const staff = staffSearches(company, 'Hosur');
+    expect(seen.searches.slice(0, staff.length)).toEqual(staff);
+    const searched = seen.searches.filter((q) => q.startsWith('site:linkedin.com/in') && !staff.includes(q));
     expect(searched.findIndex((q) => q.includes('"Supply Chain Manager"'))).toBe(9);
     expect(searched.at(-1)).toBe('site:linkedin.com/in "Hosur Gears" "Logistics Manager" Hosur');
   });
@@ -403,6 +406,111 @@ describe('only people based in India are contacts (Windwalker Logistics)', () =>
   });
 });
 
+describe('small manufacturers (the run of 18 Oct: Servocontrols, Brasstech, Jay Ashapura)', () => {
+  const mfg = DEFAULT_ICPS[0];
+
+  it('reads the size band and followers from Google\'s text for a LinkedIn page', async () => {
+    const { linkedinPageFacts } = await import('@/lib/pipeline/firm-identity');
+    const { sizeBandTop } = await import('@/lib/pipeline/fit');
+    expect(linkedinPageFacts('Acme | 1,234 followers on LinkedIn. Industry: Machinery. Company size: 201-500 employees. Headquarters: Pune')).toEqual({ size: '201-500 employees', followers: 1234 });
+    expect(linkedinPageFacts('Acme | 2.5K followers on LinkedIn · 10,001+ employees')).toEqual({ size: '10,001+ employees', followers: 2500 });
+    expect(linkedinPageFacts('Acme makes gears.')).toEqual({ size: '', followers: 0 });
+    expect(sizeBandTop('11-50 employees')).toBe(50);
+    expect(sizeBandTop('1,001-5,000 employees')).toBe(5000);
+    expect(sizeBandTop('10,001+ employees')).toBeNull();
+  });
+
+  it("Servocontrols: a LinkedIn page that doesn't list the website is found by name and town; its staff are then matched under that name", async () => {
+    const company = 'Servocontrols Aerospace And Technologies Pvt Ltd';
+    const page = {
+      title: 'Servocontrols Aerospace India Pvt Ltd | LinkedIn',
+      link: 'https://in.linkedin.com/company/servocontrols-aerospace-india',
+      snippet: 'Servocontrols Aerospace India Pvt Ltd | 3,120 followers on LinkedIn. Design and manufacture of flight control actuators. Company size: 201-500 employees. Headquarters: Belagavi, Karnataka',
+    };
+    const kiran = { title: 'Kiran Patil - Works Manager - Servocontrols Aerospace India', subtitle: 'Belagavi, Karnataka, India · Works Manager · Servocontrols Aerospace India', link: 'https://in.linkedin.com/in/kiran-patil', snippet: '' };
+    const svc = services(seen, (q) =>
+      q === 'site:linkedin.com/company "servocontrols.com"' ? [] : q.startsWith('site:linkedin.com/company "servocontrols"') ? [page] : q === 'site:linkedin.com/in "Servocontrols Aerospace India"' ? [kiran] : [],
+    );
+    const found = await learnFirm(svc, company, 'servocontrols.com', { city: 'Belagavi' });
+    expect(found).toMatchObject({ name: 'Servocontrols Aerospace India Pvt Ltd', size: '201-500 employees', followers: 3120 });
+    expect(seen.searches).toContain('site:linkedin.com/company "servocontrols" belagavi');
+    expect(sameFirm('Servocontrols Aerospace India', company)).toBe(true);
+    expect(staffSearches(company, 'Belagavi')).toContain('site:linkedin.com/in "Servocontrols Aerospace India"');
+    // His title is on no designation list word for word, but the staff search shows him.
+    const { people } = await searchLinkedIn(svc, '', company, 'Belagavi', mfg);
+    expect(people.map((p) => [p.name, p.title, tierOf(p.title, mfg)])).toEqual([['Kiran Patil', 'Works Manager', 'P1']]);
+  });
+
+  it('Brasstech: a similarly named page elsewhere is never taken; the right one gives the size', async () => {
+    const company = 'Brasstech Engineering Pvt Ltd';
+    const usa = { title: 'Brasstech, Inc. | LinkedIn', link: 'https://www.linkedin.com/company/brasstech-inc', snippet: 'Brasstech, Inc. | 5,000 followers on LinkedIn. Faucets and bath fixtures. Company size: 201-500 employees. Headquarters: Santa Ana, California' };
+    const india = { title: 'Brasstech Engineering Pvt Ltd | LinkedIn', link: 'https://in.linkedin.com/company/brasstech-engineering', snippet: 'Brasstech Engineering | 210 followers on LinkedIn. CNC brass components. Company size: 11-50 employees. Headquarters: Jamnagar, Gujarat' };
+    const svc = services(seen, (q) => (q.startsWith('site:linkedin.com/company "brasstech"') ? [usa, india] : []));
+    expect(await learnFirm(svc, company, 'brasstechengineering.com', { city: 'Jamnagar' })).toMatchObject({ url: india.link, size: '11-50 employees' });
+    // In another town, neither is taken.
+    const elsewhere = await learnFirm(services(seen, (q) => (q.startsWith('site:linkedin.com/company') ? [usa] : [])), 'Brasstech Fittings', 'brasstechfittings.in', { city: 'Rajkot' });
+    expect(elsewhere).toBeNull();
+  });
+
+  it("too small only when its LinkedIn page is at half the ICP's size or less, and the assessment didn't find the size met", async () => {
+    const { tooSmall, employeeTarget } = await import('@/lib/pipeline/fit');
+    const page = { size: '11-50 employees', url: 'https://in.linkedin.com/company/brasstech-engineering' };
+    const size = (status: 'met' | 'not_met' | 'unknown') => [{ id: 'SIZE', kind: 'size' as const, criterion: '100+ employees', status, evidence: '', source: '', url: '', verified: status !== 'unknown' }];
+    expect(tooSmall(size('not_met'), page, '100+ employees')).toBe("too small for the ICP's size target (100+ employees): its LinkedIn page shows “Company size: 11-50 employees” (https://in.linkedin.com/company/brasstech-engineering)");
+    expect(tooSmall(size('unknown'), page, '100+ employees')).not.toBe('');
+    // The website shows a bigger workforce: the page is out of date.
+    expect(tooSmall(size('met'), page, '100+ employees')).toBe('');
+    // Borderline (51-200 against 100+), or no band: left to the assessment.
+    expect(tooSmall(size('not_met'), { ...page, size: '51-200 employees' }, '100+ employees')).toBe('');
+    expect(tooSmall(size('not_met'), { ...page, size: '' }, '100+ employees')).toBe('');
+    // A revenue alternative is judged by the assessment (it finds the size met when revenue shows it);
+    // another alternative can't be judged from a headcount (three partners can be a small firm).
+    expect(employeeTarget('100+ employees')).toBe(100);
+    expect(employeeTarget('200+ employees or Rs 100 Cr+ revenue')).toBe(200);
+    expect(employeeTarget('3+ partners or 25+ audit staff')).toBeNull();
+    expect(tooSmall(size('not_met'), page, '200+ employees or Rs 100 Cr+ revenue')).toContain('too small');
+    expect(tooSmall(size('met'), page, '200+ employees or Rs 100 Cr+ revenue')).toBe('');
+    expect(tooSmall(size('not_met'), { ...page, size: '51-200 employees' }, '200+ employees or Rs 100 Cr+ revenue')).toBe('');
+    expect(tooSmall(size('unknown'), { ...page, size: '2-10 employees' }, '3+ partners or 25+ audit staff')).toBe('');
+  });
+
+  it('Jay Ashapura: staff with titles no list types word for word are found by the staff search, and the P1 designations are still searched', async () => {
+    const company = 'Jay Ashapura Precision Metals';
+    const at = (name: string, title: string) => ({ title: `${name} - ${title} - ${company}`, subtitle: `Jamnagar, Gujarat, India · ${title} · ${company}`, link: `https://in.linkedin.com/in/${name.toLowerCase().replace(/ /g, '-')}`, snippet: '' });
+    const staff = [at('Mehul Shah', 'Factory Manager'), at('Nilesh Vora', 'Warehouse Incharge'), at('Asha Joshi', 'HR Executive')];
+    const svc = services(seen, (q) => (q === 'site:linkedin.com/in "Jay Ashapura Precision Metals" Jamnagar' ? staff : []));
+    await knowPlaces(svc, ['Jamnagar']);
+    const logs: string[] = [];
+    const { people } = await searchLinkedIn(svc, '', company, 'Jamnagar', mfg, (m) => void logs.push(m));
+    // Everyone at the company is listed, best first; only the listed roles count as contacts.
+    expect(people.map((p) => [p.name, tierOf(p.title, mfg)])).toEqual([
+      ['Mehul Shah', 'P1'],
+      ['Nilesh Vora', 'P1'],
+      ['Asha Joshi', 'Avoid'],
+    ]);
+    expect(logs).toContain('staff: site:linkedin.com/in "Jay Ashapura Precision Metals" Jamnagar → 3 LinkedIn profiles');
+    expect(logs.some((l) => l.startsWith('  rejected: Asha Joshi (HR Executive)'))).toBe(true);
+    // Fewer than four: the designations were searched too, starting with the plant heads.
+    expect(seen.searches).toContain('site:linkedin.com/in "Jay Ashapura Precision Metals" "Plant Head" Jamnagar');
+  });
+
+  it('a full first page of staff gets a second page; a short one does not', async () => {
+    const company = 'Hosur Gears';
+    const ten = Array.from({ length: 10 }, (_, i) => ({ title: `Person ${i} - Engineer - Hosur Gears`, subtitle: `Hosur, Tamil Nadu, India · Engineer · Hosur Gears`, link: `https://in.linkedin.com/in/p${i}`, snippet: '' }));
+    const pages: number[] = [];
+    const svc = services(seen, (q) => (q === 'site:linkedin.com/in "Hosur Gears" Hosur' ? ten : []));
+    const fetchFn = svc.fetch;
+    svc.fetch = (async (u: RequestInfo | URL, init: RequestInit = {}) => {
+      const body = JSON.parse(String(init.body));
+      if (body.q === 'site:linkedin.com/in "Hosur Gears" Hosur') pages.push(body.page ?? 1);
+      return fetchFn(u, init);
+    }) as typeof fetch;
+    await knowPlaces(svc, ['Hosur']);
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg);
+    expect(pages).toEqual([1, 2]);
+  });
+});
+
 describe('contact search, one designation at a time (Hosur Gears, manufacturing)', () => {
   const company = 'Hosur Gears';
   const mfg = DEFAULT_ICPS[0];
@@ -420,7 +528,10 @@ describe('contact search, one designation at a time (Hosur Gears, manufacturing)
     await knowPlaces(svc, ['Hosur']);
     const logs: string[] = [];
     const result = await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m));
-    return { ...result, logs, searched: seen.searches.filter((s) => s.startsWith('site:linkedin.com/in')) };
+    // The staff searches always come first; the designations after them are what most tests look at.
+    const staff = staffSearches(company, 'Hosur');
+    expect(seen.searches.slice(0, staff.length)).toEqual(staff);
+    return { ...result, logs, staff, searched: seen.searches.filter((s) => s.startsWith('site:linkedin.com/in') && !staff.includes(s)) };
   };
 
   it('builds one query per designation from the ICP: P1 (plant heads first), then P2, then P3, never an OR of roles', () => {
@@ -542,7 +653,13 @@ describe('contact search, one designation at a time (Hosur Gears, manufacturing)
     await knowPlaces(svc, ['Sanand']);
     seen.searches.length = 0;
     const { people } = await searchLinkedIn(svc, '', micron, 'Sanand', mfg);
-    expect(seen.searches.slice(0, 3)).toEqual([
+    // The staff searches use both names too: the legal name (with the town, and without) and the LinkedIn name.
+    expect(staffSearches(micron, 'Sanand')).toEqual([
+      'site:linkedin.com/in "Micron Semiconductor Technology" Sanand',
+      'site:linkedin.com/in "Micron Semiconductor Technology"',
+      'site:linkedin.com/in "Micron Technology"',
+    ]);
+    expect(seen.searches.slice(3, 6)).toEqual([
       'site:linkedin.com/in "Micron Semiconductor Technology" "Plant Head" Sanand',
       'site:linkedin.com/in "Micron Technology" "Plant Head" Sanand',
       'site:linkedin.com/in "Micron Semiconductor Technology" "Plant Manager" Sanand',
@@ -557,7 +674,7 @@ describe('contact search, one designation at a time (Hosur Gears, manufacturing)
     flaky.fetch = (async (u: RequestInfo | URL, init?: RequestInit) => (String(u).endsWith('/search') && n++ === 0 ? new Response('busy', { status: 503 }) : fetchOk(u, init))) as typeof fetch;
     const logs: string[] = [];
     const { people } = await searchLinkedIn(flaky, '', company, 'Hosur', mfg, (m) => void logs.push(m));
-    expect(logs[1]).toMatch(/"Plant Head": .* → search failed: 503/);
+    expect(logs[1]).toMatch(/^staff: .* → search failed: 503/);
     expect(people.map((p) => p.name)).toEqual(['Bina B']);
     // Down from the start: two failures, then nothing more is searched, and the error is reported.
     seen.searches.length = 0;

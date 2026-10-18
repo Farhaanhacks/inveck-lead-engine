@@ -81,6 +81,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   return (
     <>
       <PageHeader title="Dashboard" description="Prospects found, researched and ready for outreach.">
+        <Link href="/sourcing" className="btn-secondary">Sourcing test</Link>
         <RunButtons running={!!running} runId={running?.id} team={team.map((u) => ({ id: u.id, name: u.name }))} />
       </PageHeader>
 

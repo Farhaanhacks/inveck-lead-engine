@@ -427,6 +427,40 @@ export function decideFit(evidence: FitEvidence[], risks: RiskFlag[]): FitDecisi
   return { status: 'qualified', reason, conflict: false, unconfirmed: [] };
 }
 
+/** The most employees a LinkedIn size band allows ("11-50 employees" gives 50; "10,001+" has no top). */
+export function sizeBandTop(size: string): number | null {
+  const m = /(\d[\d,]*)\s*[-–]\s*(\d[\d,]*)/.exec(size);
+  return m ? Number(m[2].replace(/,/g, '')) : null;
+}
+
+/**
+ * The headcount an ICP's size target asks for ("200+ employees or Rs 100 Cr+ revenue" gives 200), or
+ * null when the target can be met another way a headcount says nothing about ("3+ partners or 25+
+ * audit staff": a small firm can have three partners). A revenue alternative is fine: the assessment
+ * reads revenue from the sources and finds the size met when it is shown.
+ */
+export function employeeTarget(companySize: string): number | null {
+  const parts = companySize.split(/\bor\b|\//i).map((p) => p.trim()).filter(Boolean);
+  const HEADCOUNT = /(\d[\d,]*)\s*\+?\s*(?:[a-z]+\s+)?(?:employees|staff|people|workers|workforce)\b/i;
+  const heads = parts.filter((p) => HEADCOUNT.test(p));
+  if (heads.length !== 1 || parts.some((p) => !HEADCOUNT.test(p) && !/\b(revenue|turnover|sales|cr|crore|lakh|inr|rs\.?)\b|₹/i.test(p))) return null;
+  return Number(HEADCOUNT.exec(heads[0])![1].replace(/,/g, ''));
+}
+
+/**
+ * Clearly too small for the ICP: the company's own LinkedIn page puts it at half the size target or
+ * less ("11-50 employees" against "100+ employees"), and the assessment didn't find the size met
+ * (a website showing a bigger workforce outweighs an outdated page). Why, quoting the page; '' when
+ * it isn't. A borderline band ("51-200" against 100+) is left to the assessment.
+ */
+export function tooSmall(evidence: FitEvidence[], page: { size: string; url: string } | null | undefined, companySize: string): string {
+  const target = employeeTarget(companySize);
+  const top = page?.size ? sizeBandTop(page.size) : null;
+  if (!page || !target || top == null || top > target / 2) return '';
+  if (evidence.find((e) => e.kind === 'size')?.status === 'met') return '';
+  return `too small for the ICP's size target (${companySize.trim()}): its LinkedIn page shows “Company size: ${page.size}” (${page.url})`;
+}
+
 /** The evidence a rejection rests on: must-haves shown not met and deal-breakers shown to apply. */
 export function decisiveEvidence(evidence: FitEvidence[]): FitEvidence[] {
   return evidence.filter((e) => e.verified && ((e.kind === 'requirement' && e.status === 'not_met') || (e.kind === 'deal_breaker' && e.status === 'met')));

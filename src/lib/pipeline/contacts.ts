@@ -54,6 +54,22 @@ export const EMPTY_CONTACT: Contact = { name: '', title: '', email: '', phone: '
 /** One designation from the ICP's lists, searched on its own, and the Google queries it may take. */
 export type DesignationStep = { tier: 'P1' | 'P2' | 'P3'; designation: string; queries: string[] };
 
+/**
+ * `site:linkedin.com/in "Company" Town`: the company's staff on LinkedIn, whatever their titles. A
+ * small company has few profiles, and their titles rarely match a list word for word ("Works
+ * Manager", "Head - Production"): one search shows most of them.
+ */
+export function staffQuery(firm: string, town = ''): string {
+  return ['site:linkedin.com/in', `"${firm.replace(/"/g, '').trim()}"`, town.replace(/"/g, '')].filter(Boolean).join(' ');
+}
+
+/** The staff searches, before any designation: the company's name with its town and without it, and its LinkedIn page's name. */
+export function staffSearches(company: string, city: string): string[] {
+  const [name, ...aliases] = firmNames(company);
+  const town = city.split(',')[0].trim();
+  return [...new Set([town ? staffQuery(name, town) : '', staffQuery(name), ...aliases.slice(0, 1).map((a) => staffQuery(a))].filter(Boolean))];
+}
+
 /** `site:linkedin.com/in "Company" "Designation" Town`: one company name, one designation, the town when there is one. */
 export function designationQuery(firm: string, designation: string, town = ''): string {
   // A quote typed into a name or designation would end the quoted phrase early.
@@ -262,13 +278,14 @@ function firmQuery(company: string): string {
 }
 
 /**
- * The contact search's limits per company. Designations are searched one at a time until
- * `contacts` acceptable people are found: at most `designationQueries` Google searches and `seconds`
- * for them (a lead's research must finish inside one run invocation), then `resolve` more searches
- * to settle candidates whose current employer is unclear. Then, only if nobody passed, one search
- * for the owners and partners.
+ * The contact search's limits per company. First at most `staff` searches for the company's staff
+ * (whatever their titles, a second page included). Then designations one at a time until `contacts`
+ * acceptable people are found: at most `designationQueries` Google searches and `seconds` for them
+ * (a lead's research must finish inside one run invocation), then `resolve` more searches to settle
+ * candidates whose current employer is unclear. Then, only if nobody passed, one search for the
+ * owners and partners.
  */
-export const CONTACT_SEARCH_BUDGET = { contacts: 4, designationQueries: 40, seconds: 75, resolve: 4 } as const;
+export const CONTACT_SEARCH_BUDGET = { contacts: 4, staff: 4, designationQueries: 40, seconds: 75, resolve: 6 } as const;
 
 /** The ICP's designations for a tier, most wanted first (plant heads first for manufacturers). */
 function tierRoles(icp: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>, tier: 'P1' | 'P2' | 'P3'): string[] {
@@ -290,7 +307,10 @@ export type SearchLog = (message: string) => unknown;
  * it is acceptable when its profile shows the company as the one current employer (no conflicting
  * job), the person is in India, the role is on the ICP's P1/P2/P3 lists, and they can be the main
  * contact for this site (at this site, or on the lists at another Indian site). The same profile from
- * several searches is merged. Without an ICP, `query` and a broad search are run instead.
+ * several searches is merged. Without an ICP, `query` and a broad search are run instead. `staffOnly`
+ * runs only the staff searches (no designations, no second looks, no leadership search): a quick check
+ * of whether anyone reachable works there, for the sourcing test. `accepted` are the acceptable people
+ * on the ICP's P1/P2/P3 lists, best first.
  */
 export async function searchLinkedIn(
   svc: Services,
@@ -299,7 +319,8 @@ export async function searchLinkedIn(
   city = '',
   icp?: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>,
   log?: SearchLog,
-): Promise<{ people: LinkedInPerson[]; error: string }> {
+  opts: { staffOnly?: boolean } = {},
+): Promise<{ people: LinkedInPerson[]; accepted: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const firm = firmQuery(company);
   const found: FoundPerson[] = [];
@@ -320,10 +341,10 @@ export async function searchLinkedIn(
     return results;
   };
   /** One query: the results returned, and the LinkedIn profiles read from them (null when the search failed). */
-  const searchOnce = async (q: string): Promise<{ results: number; people: FoundPerson[] } | null> => {
+  const searchOnce = async (q: string, page?: number): Promise<{ results: number; people: FoundPerson[] } | null> => {
     let results: Awaited<ReturnType<typeof googleSearch>>;
     try {
-      results = await googleSearch(svc, q);
+      results = await googleSearch(svc, q, page);
     } catch (e) {
       failures.push(e);
       return null;
@@ -357,6 +378,8 @@ export async function searchLinkedIn(
   // the way is kept, but isn't one of the contacts searched for.
   const accepted = () => current().filter((p) => passes(p) && (!icp || TIERED.has(tierOf(p.title, icp))));
   const enough = () => accepted().length >= CONTACT_SEARCH_BUDGET.contacts;
+  // Enough people found is not enough while no P1 is among them: the P1 designations are still searched.
+  const hasP1 = () => !!icp && accepted().some((p) => tierOf(p.title, icp) === 'P1');
   const searchDown = () => failures.length > 0 && !answered;
   // Each person's verdict is logged once, and again only if more evidence changes it.
   const reported = new Map<string, string>();
@@ -379,14 +402,40 @@ export async function searchLinkedIn(
     const [, broadResults] = await run([query, broad].filter(Boolean));
     if (broad && (broadResults?.length ?? 0) >= 10) await run([broad], 2);
   } else {
-    const plan = contactSearchPlan(company, city, icp);
+    const plan = opts.staffOnly ? [] : contactSearchPlan(company, city, icp);
     let left: number = CONTACT_SEARCH_BUDGET.designationQueries;
     const started = Date.now();
     // One failed search is skipped; two in a row mean the search is down (out of credits, no network).
     let failedInRow = 0;
-    await say(`contact search: ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${CONTACT_SEARCH_BUDGET.contacts} acceptable contacts`);
+    // First the company's staff, whatever their titles (a page more when the first is full); then the
+    // designations one at a time for whoever that didn't show.
+    const staff = staffSearches(company, city);
+    let staffLeft: number = CONTACT_SEARCH_BUDGET.staff;
+    if (opts.staffOnly) await say(`contact search: the company's staff on LinkedIn only (${staff.length} search${staff.length === 1 ? '' : 'es'})`);
+    else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${CONTACT_SEARCH_BUDGET.contacts} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    for (const q of staff) {
+      if (failedInRow >= 2) break;
+      for (const page of [1, 2]) {
+        if (staffLeft <= 0) break;
+        staffLeft--;
+        const got = await searchOnce(q, page === 1 ? undefined : page);
+        const searched = `staff${page === 2 ? ' (page 2)' : ''}: ${q}`;
+        if (!got) {
+          await say(`${searched} → search failed: ${errorMessage(failures[failures.length - 1])}`);
+          failedInRow++;
+          break;
+        }
+        failedInRow = 0;
+        const n = got.people.length;
+        await say(`${searched} → ${n ? `${n} LinkedIn profile${n === 1 ? '' : 's'}` : `no LinkedIn profiles${got.results ? ` (${got.results} other result${got.results === 1 ? '' : 's'})` : ''}`}`);
+        await reportAll(got.people);
+        // A page with fewer than ten results is the last one.
+        if (got.results < 10) break;
+      }
+    }
     designations: for (const [i, step] of plan.entries()) {
-      if (enough() || failedInRow >= 2) break;
+      if (failedInRow >= 2) break;
+      if (enough() && (step.tier !== 'P1' || hasP1())) break;
       for (const q of step.queries) {
         if (left <= 0) {
           await say(`search limit of ${CONTACT_SEARCH_BUDGET.designationQueries} designation searches reached; ${plan.length - i} designation${plan.length - i === 1 ? '' : 's'} not searched (from "${step.designation}")`);
@@ -419,7 +468,7 @@ export async function searchLinkedIn(
     const unclear = mergeSameProfile(found)
       .filter((p) => !p.abroad && (p.employer === 'unknown' || !!p.conflict) && contactPriority(p.title, icp) < 99 && !settledHere.has(keyOf(p)))
       .sort((x, y) => candidateRank(x, icp, city) - candidateRank(y, icp, city))
-      .slice(0, CONTACT_SEARCH_BUDGET.resolve);
+      .slice(0, opts.staffOnly ? 0 : CONTACT_SEARCH_BUDGET.resolve);
     for (const p of unclear) {
       if (enough() || searchDown()) break;
       const q = `site:linkedin.com/in "${p.name}" ${firm}`;
@@ -433,7 +482,7 @@ export async function searchLinkedIn(
     }
   }
   // Last resort, once: nobody passed, so the company's owners and partners (small, owner-run firms).
-  if (name && !done() && !searchDown()) {
+  if (name && !opts.staffOnly && !done() && !searchDown()) {
     const q = `site:linkedin.com/in ${firm} (owner OR founder OR "managing partner" OR partner OR "managing director" OR proprietor OR CEO OR "chief executive" OR president)`;
     if (icp) await say(`no acceptable contact from the ICP's designations; last resort, the company's leadership: ${q}`);
     const before = found.length;
@@ -449,7 +498,7 @@ export async function searchLinkedIn(
         : `contact search done: no acceptable contact found${searchDown() ? ' (the search failed)' : ''}`,
     );
   }
-  return { people, error: failures.length && !people.length ? errorMessage(failures[0]) : '' };
+  return { people, accepted: icp ? rankCandidates(accepted(), icp, city) : [], error: failures.length && !people.length ? errorMessage(failures[0]) : '' };
 }
 
 const leaderSchema = {
