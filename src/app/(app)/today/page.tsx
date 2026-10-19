@@ -10,7 +10,7 @@ import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { icps, leads, people, type Lead, type Person, type Task, type WhatsappContact } from '@/lib/db/schema';
+import { icps, leads, people, users, type Lead, type Person, type Task, type WhatsappContact } from '@/lib/db/schema';
 import { contactPriority, icpFor, tierOf, type Tier } from '@/lib/tiers';
 import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
@@ -42,7 +42,7 @@ import {
   UNATTENDED_AFTER_HOURS,
   type TodayTask,
 } from '@/lib/tasks';
-import { callOpener, discoveryQuestions, linkedinNote, whatsappIntro, whatsappLink } from '@/lib/talk';
+import { callOpener, discoveryQuestions, linkedinNote } from '@/lib/talk';
 import { formatDate, formatDateTime, formatTime } from '@/lib/dates';
 import { FIND_NEXT_STEP } from '@/lib/escalate';
 import { PageHeader } from '@/components/page-header';
@@ -60,7 +60,8 @@ import { getMailbox, mailConfig } from '@/lib/mail/outlook';
 import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
 import { getSettings } from '@/lib/settings';
 import type { SentEmail } from '@/lib/db/schema';
-import { SendWhatsApp } from '@/components/send-whatsapp';
+import { OpenWhatsApp } from '@/components/open-whatsapp';
+import { buildWhatsApp, type WhatsAppOutreach } from '@/lib/whatsapp-outreach';
 import { waConfig } from '@/lib/whatsapp/cloud';
 import { canMessage, planWhatsApp, waContacts, waitingReplies, type WaPlan } from '@/lib/whatsapp/contacts';
 import { waNumber } from '@/lib/phones';
@@ -196,7 +197,7 @@ function roundLabel(task: Task): string {
 }
 
 /** WhatsApp for the company's contact: their number, whether they agreed or asked to stop, and what INVECK's number can send them. */
-type WaContext = { to: string; agreed: boolean; optedOut: boolean; plan: WaPlan | null };
+type WaContext = { to: string; agreed: boolean; optedOut: boolean; plan: WaPlan | null; outreach: WhatsAppOutreach };
 
 /** Sending from Outlook: the viewer's connected mailbox (if any) and what was already sent to this company. */
 type MailContext = { configured: boolean; from: string; senderName: string; sent?: SentEmail[] };
@@ -224,9 +225,8 @@ function Step({
   const { task, lead } = item;
   // The P2 flow ran out of people: this row asks for the next person rather than a call.
   const finding = task.step === FIND_NEXT_STEP;
-  const wa = task.kind === 'whatsapp' ? whatsappLink(lead.contactPhone, whatsappIntro(lead, bda)) : '';
-  // They agreed: it goes from INVECK's number (when that is set up and a template approved).
-  const fromInveck = task.kind === 'whatsapp' && whatsapp?.plan && !whatsapp.plan.problem ? whatsapp.plan : null;
+  // The BDA's own WhatsApp: the template for the company's segment, filled in, opened as a wa.me chat.
+  const outreach = task.kind === 'whatsapp' ? whatsapp?.outreach : undefined;
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
   const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
   const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda }) : null;
@@ -254,23 +254,10 @@ function Step({
                   <span className="self-center text-xs text-warning-ink">Asked not to get WhatsApp messages from INVECK.</span>
                   <Outcome id={task.id} buttons={[['skipped', 'Skip']]} />
                 </>
-              ) : fromInveck ? (
-                <>
-                  <SendWhatsApp
-                    taskId={task.id}
-                    to={`+${fromInveck.to}`}
-                    template={fromInveck.template}
-                    text={fromInveck.text}
-                    freeUntil={fromInveck.freeUntil ? `until ${formatDateTime(fromInveck.freeUntil)}` : undefined}
-                  />
-                  <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
-                </>
               ) : (
                 <>
-                  {wa ? <a href={wa} target="_blank" rel="noreferrer" className={SMALL}>Open WhatsApp</a> : null}
+                  <OpenWhatsApp taskId={task.id} url={outreach?.ok ? outreach.url : ''} problem={outreach && !outreach.ok ? outreach.error : undefined} />
                   <Outcome id={task.id} buttons={[['sent', 'Mark sent'], ['skipped', 'Skip']]} />
-                  {/* They agreed, but nothing can go from INVECK's number now: say why. */}
-                  {whatsapp?.agreed && whatsapp.plan?.problem && <p className="basis-full text-xs text-muted">{whatsapp.plan.problem}</p>}
                 </>
               ))}
             {task.kind === 'email' && (
@@ -354,15 +341,16 @@ function Step({
                 </ul>
               </>
             )}
-            {task.kind === 'whatsapp' &&
-              (fromInveck ? (
-                <p className="whitespace-pre-line">{fromInveck.text}</p>
-              ) : (
+            {task.kind === 'whatsapp' && (
+              outreach?.ok ? (
                 <>
-                  <p>{whatsappIntro(lead, bda)}</p>
-                  <CopyButton text={whatsappIntro(lead, bda)} label="Copy message" />
+                  <p className="whitespace-pre-line">{outreach.text}</p>
+                  <CopyButton text={outreach.text} label="Copy message" />
                 </>
-              ))}
+              ) : (
+                <p className="text-ink-2">{outreach?.error ?? 'No message for this step.'}</p>
+              )
+            )}
             {task.kind === 'email' &&
               (plan ? (
                 <p className="whitespace-pre-line">{plan.subject ? `Subject: ${plan.subject}\n\n` : ''}{plan.body || (plan.followUp ? 'No follow-up written yet.' : 'No draft yet.')}</p>
@@ -710,13 +698,16 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     emailLeadIds.length || waIds.length ? getSettings(db) : null,
     waContacts(db, waIds),
   ]);
+  // The BDA named in a WhatsApp is the company's owner, looked up from the owner record.
+  const ownerIds = [...new Set(visible.map((g) => g.lead.ownerId).filter((o): o is number => o != null))];
+  const ownerNames = new Map((ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : []).map((u) => [u.id, u.name]));
   const senderName = settings?.senderName ?? '';
   const mailFor = (leadId: number): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, sent: sentMail.get(leadId) } : undefined);
   const waFor = (l: Lead): WaContext | undefined => {
     if (!own) return undefined;
     const to = waNumber(l.contactPhone);
     const c: WhatsappContact | undefined = waKnown.get(to);
-    return { to, agreed: canMessage(c), optedOut: !!c?.optedOutAt, plan: waReady && settings && to ? planWhatsApp(l, bda, settings, c) : null };
+    return { to, agreed: canMessage(c), optedOut: !!c?.optedOutAt, plan: waReady && settings && to ? planWhatsApp(l, bda, settings, c) : null, outreach: buildWhatsApp(l, l.ownerId != null ? ownerNames.get(l.ownerId) : null) };
   };
   // WhatsApp messages waiting for an answer: the list's own, and for administrators, ones from numbers not on any company.
   const { replies, strangers } = waReady ? await waitingReplies(db, viewId, me.role === 'admin') : { replies: [], strangers: [] };
