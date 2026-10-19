@@ -4,11 +4,13 @@ import { usePathname } from 'next/navigation';
 
 const LINKS = [
   { href: '/marketing/calendar', label: 'Content Calendar' },
+  { href: '/marketing/content-bank', label: 'Content Bank' },
+  { href: '/marketing/people', label: 'People' },
   { href: '/marketing/overview', label: 'Overview' },
   { href: '/marketing/account', label: 'Account' },
 ];
 
-/** The Marketing profile's whole menu: the calendar, its overview, and its own password. */
+/** The Marketing profile's whole menu: the calendar, the content bank, the people, the overview, and its own password. */
 export function MarketingNav() {
   const path = usePathname();
   return (

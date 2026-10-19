@@ -606,7 +606,29 @@ export const contentPosts = pgTable('content_posts', {
   dependencyNote: text('dependency_note').notNull().default(''),
   /** When it was marked Posted; empty while it isn't. */
   postedAt: timestamp('posted_at', { withTimezone: true }),
+  /** Who it is assigned to (a content_people row); null = nobody. */
+  assigneeId: integer('assignee_id'),
+  /** Google Drive link to the uploaded content; '' = none. */
+  driveLink: text('drive_link').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type ContentPost = typeof contentPosts.$inferSelect;
+
+/** People content can be assigned to (the Marketing area's People tab). */
+export const contentPeople = pgTable('content_people', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type ContentPerson = typeof contentPeople.$inferSelect;
+
+/** A one-line to-do on the content calendar: scheduledOn '' while it is only in the side list. Completed ones are deleted for good. */
+export const contentTodos = pgTable('content_todos', {
+  id: serial('id').primaryKey(),
+  text: text('text').notNull(),
+  scheduledOn: text('scheduled_on').notNull().default(''),
+  done: boolean('done').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type ContentTodo = typeof contentTodos.$inferSelect;

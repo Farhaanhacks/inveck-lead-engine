@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState, useTransition } from 'react';
-import { createPostAction, deletePostAction, movePostAction, updatePostAction } from '@/app/marketing-actions';
-import { addDays, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMAT_LABEL, FORMATS, monthWeeks, PLATFORM_LABEL, STATUS_LABEL, weekOf, type ContentPlatform, type ContentStatus, type PostView } from '@/lib/content-meta';
+import { addTodoAction, completeTodoAction, createPostAction, deletePostAction, deleteTodoAction, movePostAction, moveTodoAction, updatePostAction } from '@/app/marketing-actions';
+import { PlatformLogo } from '@/components/platform-logo';
+import { addDays, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMAT_LABEL, FORMATS, monthWeeks, PLATFORM_LABEL, STATUS_LABEL, weekOf, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from '@/lib/content-meta';
 
 const STATUS_TONE: Record<ContentStatus, string> = {
   draft: 'bg-neutral-soft text-ink-2',
@@ -12,19 +13,22 @@ const STATUS_TONE: Record<ContentStatus, string> = {
   posted: 'bg-good-soft text-good-ink',
 };
 const STATUS_DOT: Record<ContentStatus, string> = { draft: 'bg-muted', pending_approval: 'bg-warning-ink', approved: 'bg-teal', scheduled: 'bg-violet', waiting_dependency: 'bg-critical-ink', posted: 'bg-good-ink' };
-const PLATFORM_TONE: Record<ContentPlatform, string> = { instagram: 'bg-rose text-accent-ink', linkedin: 'bg-accent text-accent-ink' };
 /** Each card is tinted by its platform, with a coloured edge. */
 const CARD_TONE: Record<ContentPlatform, string> = { instagram: 'border-l-rose bg-rose-soft/75', linkedin: 'border-l-accent bg-accent-soft/75' };
-const PLATFORM_SHORT: Record<ContentPlatform, string> = { instagram: 'IG', linkedin: 'in' };
 
 const fmt = (day: string, opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', ...opts }).format(new Date(`${day}T12:00:00Z`));
 const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-type Draft = { id: number | null; title: string; platform: ContentPlatform; format: string; caption: string; scheduledOn: string; status: ContentStatus; dependencyNote: string; postedAt: string | null };
-const blank = (scheduledOn = ''): Draft => ({ id: null, title: '', platform: 'instagram', format: 'post', caption: '', scheduledOn, status: 'draft', dependencyNote: '', postedAt: null });
+type Draft = { id: number | null; title: string; platform: ContentPlatform; format: string; caption: string; scheduledOn: string; status: ContentStatus; dependencyNote: string; postedAt: string | null; assigneeId: number | null; driveLink: string };
+const TODO_TYPE = 'application/x-marketing-todo';
+const blank = (scheduledOn = ''): Draft => ({ id: null, title: '', platform: 'instagram', format: 'post', caption: '', scheduledOn, status: 'draft', dependencyNote: '', postedAt: null, assigneeId: null, driveLink: '' });
 
-export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[]; today: string }) {
+export function CalendarBoard({ initialPosts, people, initialTodos, today }: { initialPosts: PostView[]; people: PersonView[]; initialTodos: TodoView[]; today: string }) {
   const [posts, setPosts] = useState(initialPosts);
+  const [todos, setTodos] = useState(initialTodos);
+  const [todoText, setTodoText] = useState('');
+  /** To-dos ticked off and shown for a moment before they are deleted. */
+  const [finishing, setFinishing] = useState<number[]>([]);
   const [cursor, setCursor] = useState(today);
   const [view, setView] = useState<'month' | 'week'>('month');
   const [editor, setEditor] = useState<Draft | null>(null);
@@ -61,8 +65,59 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
     });
   };
 
+  const addTodo = () => {
+    const text = todoText;
+    setNotice('');
+    start(async () => {
+      const r = await addTodoAction(text);
+      if (r.ok) {
+        setTodos((all) => [...all, r.todo]);
+        setTodoText('');
+      } else setNotice(r.error);
+    });
+  };
+  const moveTodo = (id: number, date: string) => {
+    const todo = todos.find((t) => t.id === id);
+    if (!todo || todo.scheduledOn === date) return;
+    setTodos((all) => all.map((t) => (t.id === id ? { ...t, scheduledOn: date } : t)));
+    start(async () => {
+      const r = await moveTodoAction(id, date);
+      if (!r.ok) {
+        setTodos((all) => all.map((t) => (t.id === id ? todo : t)));
+        setNotice(r.error);
+      }
+    });
+  };
+  /** Ticked: marked complete at once, shown for two seconds, then deleted for good and taken off the calendar. */
+  const finishTodo = (id: number) => {
+    if (finishing.includes(id)) return;
+    setFinishing((f) => [...f, id]);
+    start(async () => {
+      await completeTodoAction(id);
+    });
+    setTimeout(() => {
+      setTodos((all) => all.filter((t) => t.id !== id));
+      setFinishing((f) => f.filter((x) => x !== id));
+      start(async () => {
+        await deleteTodoAction(id);
+      });
+    }, 2000);
+  };
+  const removeTodo = (id: number) => {
+    setTodos((all) => all.filter((t) => t.id !== id));
+    start(async () => {
+      await deleteTodoAction(id);
+    });
+  };
+
   const onDrop = (date: string) => (e: React.DragEvent) => {
     e.preventDefault();
+    const todoId = Number(e.dataTransfer.getData(TODO_TYPE));
+    if (todoId) {
+      setOverDay('');
+      moveTodo(todoId, date);
+      return;
+    }
     const id = Number(e.dataTransfer.getData('text/plain') || dragging);
     setDragging(null);
     setOverDay('');
@@ -79,11 +134,11 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
   };
   const unscheduled = posts.filter((p) => !p.scheduledOn);
   const count = (st: ContentStatus) => posts.filter((p) => p.status === st).length;
-  const stats: { label: string; value: number; tone: string }[] = [
-    { label: 'Posted', value: count('posted'), tone: 'bg-good-soft/70 text-good-ink' },
-    { label: 'Scheduled', value: count('scheduled'), tone: 'bg-violet-soft/70 text-violet' },
-    { label: 'In review', value: count('pending_approval') + count('approved'), tone: 'bg-teal-soft/70 text-teal' },
-    { label: 'Drafts', value: count('draft') + count('waiting_dependency'), tone: 'bg-warning-soft/70 text-warning-ink' },
+  const stats: { label: string; value: number }[] = [
+    { label: 'Posted', value: count('posted') },
+    { label: 'Scheduled', value: count('scheduled') },
+    { label: 'In review', value: count('pending_approval') + count('approved') },
+    { label: 'Drafts', value: count('draft') + count('waiting_dependency') },
   ];
   const title = view === 'month' ? fmt(cursor, { month: 'long', year: 'numeric' }) : `${fmt(weeks[0][0], { day: 'numeric', month: 'short' })} – ${fmt(weeks[0][6], { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
@@ -95,13 +150,14 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
             <h1 className="text-2xl font-semibold tracking-tight">Content Calendar</h1>
             <p className="mt-1 text-sm text-ink-2">Plan, approve and post across Instagram and LinkedIn.</p>
             <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium">
-              <span className="glass-tint inline-flex items-center gap-1.5 rounded-full bg-surface/60 px-2.5 py-1"><span className="h-2 w-2 rounded-full bg-rose" />Instagram</span>
-              <span className="glass-tint inline-flex items-center gap-1.5 rounded-full bg-surface/60 px-2.5 py-1"><span className="h-2 w-2 rounded-full bg-accent" />LinkedIn</span>
+              {CONTENT_PLATFORMS.map((p) => (
+                <span key={p} className="glass-tint inline-flex items-center gap-1.5 rounded-full bg-surface/60 px-2.5 py-1"><PlatformLogo platform={p} size={14} />{PLATFORM_LABEL[p]}</span>
+              ))}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {stats.map((x) => (
-              <div key={x.label} className={`glass-tint min-w-24 rounded-xl px-3 py-2 ${x.tone}`}>
+              <div key={x.label} className="glass-tint min-w-24 rounded-xl bg-surface/60 px-3 py-2 text-ink">
                 <div className="text-2xl font-bold tabular-nums leading-none">{x.value}</div>
                 <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide opacity-80">{x.label}</div>
               </div>
@@ -116,11 +172,30 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
           <h2 className="text-sm font-semibold">Drafts <span className="ml-1 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent tabular-nums">{unscheduled.length}</span></h2>
           <button type="button" className="btn-primary rounded-full px-3.5 py-1 text-sm" onClick={() => setEditor(blank())}>+ New content</button>
         </div>
+        {/* A one-line to-do: write it here, then drag it onto a day. */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            addTodo();
+          }}
+          className="mb-2 flex items-center gap-2"
+        >
+          <label htmlFor="todo-text" className="sr-only">To-do</label>
+          <input id="todo-text" value={todoText} onChange={(e) => setTodoText(e.target.value.replace(/\n/g, ' '))} maxLength={120} placeholder="To-do: a short line, then drag it to a date" className="field h-9 flex-1 py-1.5" />
+          <button className="btn-secondary px-3 py-1 text-sm" disabled={!todoText.trim()}>Add to-do</button>
+        </form>
+        {todos.some((t) => !t.scheduledOn) && (
+          <ul className="mb-2 flex flex-wrap gap-2" aria-label="To-dos without a date">
+            {todos.filter((t) => !t.scheduledOn).map((t) => (
+              <TodoRow key={t.id} todo={t} finishing={finishing.includes(t.id)} onToggle={finishTodo} onRemove={removeTodo} />
+            ))}
+          </ul>
+        )}
         <div className="glass flex gap-2 overflow-x-auto rounded-2xl p-2">
           {unscheduled.length === 0 && <p className="w-full px-2 py-3 text-center text-xs text-muted">No unscheduled content. Create one, or drop a post here to take its date off.</p>}
           {unscheduled.map((p) => (
             <div key={p.id} className="w-64 shrink-0">
-              <Card post={p} onOpen={() => setEditor({ ...p })} onStatus={setStatus} onDragStart={setDragging} />
+              <Card post={p} people={people} onOpen={() => setEditor({ ...p })} onStatus={setStatus} onDragStart={setDragging} />
             </div>
           ))}
         </div>
@@ -182,7 +257,10 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
                         </button>
                       </div>
                       {list.map((p) => (
-                        <Card key={p.id} post={p} compact onOpen={() => setEditor({ ...p })} onStatus={setStatus} onDragStart={setDragging} />
+                        <Card key={p.id} post={p} people={people} compact onOpen={() => setEditor({ ...p })} onStatus={setStatus} onDragStart={setDragging} />
+                      ))}
+                      {todos.filter((t) => t.scheduledOn === day).map((t) => (
+                        <TodoRow key={t.id} todo={t} finishing={finishing.includes(t.id)} onToggle={finishTodo} onRemove={removeTodo} compact />
                       ))}
                     </div>
                   );
@@ -198,6 +276,7 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
         <Editor
           key={editor.id ?? `new-${editor.scheduledOn}`}
           draft={editor}
+          people={people}
           onClose={() => setEditor(null)}
           onSaved={(p) => {
             put(p);
@@ -216,7 +295,7 @@ export function CalendarBoard({ initialPosts, today }: { initialPosts: PostView[
 }
 
 /** A post on the calendar or in the drafts list: platform, format, title, its status (changeable here) and, in the drafts list, that it has no date. */
-function Card({ post, compact, onOpen, onStatus, onDragStart }: { post: PostView; compact?: boolean; onOpen: () => void; onStatus: (id: number, s: ContentStatus) => void; onDragStart: (id: number | null) => void }) {
+function Card({ post, people, compact, onOpen, onStatus, onDragStart }: { post: PostView; people: PersonView[]; compact?: boolean; onOpen: () => void; onStatus: (id: number, s: ContentStatus) => void; onDragStart: (id: number | null) => void }) {
   const posted = post.status === 'posted';
   return (
     <div
@@ -230,15 +309,19 @@ function Card({ post, compact, onOpen, onStatus, onDragStart }: { post: PostView
       className={`glass-tint rounded-lg border-l-4 p-2 text-xs transition hover:-translate-y-0.5 ${CARD_TONE[post.platform]} ${posted ? 'opacity-90' : 'cursor-grab active:cursor-grabbing'}`}
     >
       <div className="flex flex-wrap items-center gap-1">
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tracking-wide ${PLATFORM_TONE[post.platform]}`} title={PLATFORM_LABEL[post.platform]}>
-          {PLATFORM_SHORT[post.platform]}
-        </span>
+        <PlatformLogo platform={post.platform} size={16} />
         <span className="text-[11px] text-muted">{PLATFORM_LABEL[post.platform]} · {FORMAT_LABEL(post.format)}</span>
       </div>
       <button type="button" onClick={onOpen} className="mt-1 block w-full text-left text-sm font-medium hover:underline">
         {post.title}
       </button>
       {!compact && <p className="mt-0.5 text-[11px] text-muted">{post.scheduledOn ? fmt(post.scheduledOn, { day: 'numeric', month: 'short' }) : 'No date yet'}</p>}
+      {(post.assigneeId !== null || post.driveLink) && (
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
+          {post.assigneeId !== null && <span>{people.find((x) => x.id === post.assigneeId)?.name ?? ''}</span>}
+          {post.driveLink && <a href={post.driveLink} target="_blank" rel="noreferrer" className="text-accent hover:underline" onClick={(e) => e.stopPropagation()}>Drive ↗</a>}
+        </p>
+      )}
       {post.status === 'waiting_dependency' && post.dependencyNote && <p className="mt-0.5 text-[11px] text-critical-ink">Waiting: {post.dependencyNote}</p>}
       <label className="mt-1.5 flex items-center gap-1.5">
         <span className="sr-only">Status of {post.title}</span>
@@ -253,7 +336,25 @@ function Card({ post, compact, onOpen, onStatus, onDragStart }: { post: PostView
   );
 }
 
-function Editor({ draft, onClose, onSaved, onDeleted }: { draft: Draft; onClose: () => void; onSaved: (p: PostView) => void; onDeleted: (id: number) => void }) {
+/** A one-line to-do: drag it to a date; the checkbox completes it (shown for two seconds, then deleted for good). */
+function TodoRow({ todo, finishing, onToggle, onRemove, compact }: { todo: TodoView; finishing: boolean; onToggle: (id: number) => void; onRemove: (id: number) => void; compact?: boolean }) {
+  return (
+    <li
+      draggable={!finishing}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(TODO_TYPE, String(todo.id));
+        e.dataTransfer.effectAllowed = 'move';
+      }}
+      className={`glass-tint flex items-center gap-1.5 rounded-md border border-line/60 bg-surface/70 px-2 py-1 text-xs ${finishing ? 'opacity-60' : 'cursor-grab active:cursor-grabbing'} ${compact ? 'w-full' : ''}`}
+    >
+      <input type="checkbox" checked={finishing} onChange={() => onToggle(todo.id)} disabled={finishing} aria-label={`Complete: ${todo.text}`} className="h-3.5 w-3.5 shrink-0" />
+      <span className={`min-w-0 flex-1 truncate ${finishing ? 'text-muted line-through' : ''}`} title={todo.text}>{todo.text}</span>
+      {!finishing && !compact && <button type="button" onClick={() => onRemove(todo.id)} className="text-muted hover:text-ink" aria-label={`Remove: ${todo.text}`}>×</button>}
+    </li>
+  );
+}
+
+function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; people: PersonView[]; onClose: () => void; onSaved: (p: PostView) => void; onDeleted: (id: number) => void }) {
   const [f, setF] = useState(draft);
   const [error, setError] = useState('');
   const [busy, start] = useTransition();
@@ -269,7 +370,7 @@ function Editor({ draft, onClose, onSaved, onDeleted }: { draft: Draft; onClose:
 
   const save = () => {
     setError('');
-    const body = { title: f.title, platform: f.platform, format: f.format, caption: f.caption, scheduledOn: f.scheduledOn, status: f.status, dependencyNote: f.dependencyNote };
+    const body = { title: f.title, platform: f.platform, format: f.format, caption: f.caption, scheduledOn: f.scheduledOn, status: f.status, dependencyNote: f.dependencyNote, assigneeId: f.assigneeId, driveLink: f.driveLink };
     start(async () => {
       const r = f.id === null ? await createPostAction(body) : await updatePostAction(f.id, body);
       if (r.ok) onSaved(r.post);
@@ -296,7 +397,7 @@ function Editor({ draft, onClose, onSaved, onDeleted }: { draft: Draft; onClose:
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label htmlFor="c-platform" className="label">Platform</label>
+            <label htmlFor="c-platform" className="label flex items-center gap-1.5">Platform <PlatformLogo platform={f.platform} size={14} /></label>
             <select
               id="c-platform"
               value={f.platform}
@@ -337,6 +438,23 @@ function Editor({ draft, onClose, onSaved, onDeleted }: { draft: Draft; onClose:
             <label htmlFor="c-date" className="label">Scheduled date</label>
             <input id="c-date" type="date" value={f.scheduledOn} onChange={(e) => set('scheduledOn', e.target.value)} disabled={posted} className="field" />
             <p className="mt-1 text-xs text-muted">{posted ? 'Posted: mark it as not posted to change the date.' : 'Empty keeps it in Drafts. The status stays as it is.'}</p>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="c-assignee" className="label">Assigned to</label>
+            <select id="c-assignee" value={f.assigneeId ?? ''} onChange={(e) => set('assigneeId', e.target.value === '' ? null : Number(e.target.value))} className="field">
+              <option value="">Nobody</option>
+              {people.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {people.length === 0 && <p className="mt-1 text-xs text-muted">Add people on the People tab to assign content.</p>}
+          </div>
+          <div>
+            <label htmlFor="c-drive" className="label">Google Drive link</label>
+            <input id="c-drive" type="url" value={f.driveLink} onChange={(e) => set('driveLink', e.target.value)} maxLength={500} placeholder="https://drive.google.com/…" className="field" />
+            {f.driveLink && /^https:\/\//.test(f.driveLink) && <a href={f.driveLink} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-accent hover:underline">Open the link</a>}
           </div>
         </div>
         {(f.status === 'waiting_dependency' || f.dependencyNote) && (

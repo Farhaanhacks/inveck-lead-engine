@@ -234,3 +234,74 @@ describe('the content rules', () => {
     expect(addDays('2026-10-31', 1)).toBe('2026-11-01');
   });
 });
+
+describe('people, Drive links and to-dos', () => {
+  it('keeps a People list; content is assigned from it, and removing someone leaves their content unassigned', async () => {
+    const { addPerson, renamePerson, removePerson, listPeople } = await import('@/lib/content-calendar');
+    expect((await addPerson(db, '  ')).ok).toBe(false);
+    const a = await addPerson(db, '  Priya   Nair ');
+    expect(a.ok && a.person.name).toBe('Priya Nair');
+    expect((await addPerson(db, 'priya nair')).ok).toBe(false);
+    const b = await addPerson(db, 'Arun');
+    if (!a.ok || !b.ok) throw new Error('setup');
+    expect((await renamePerson(db, b.person.id, 'Priya Nair')).ok).toBe(false);
+    expect((await renamePerson(db, b.person.id, 'Arun K')).ok).toBe(true);
+
+    const made = await createPost(db, { title: 'Reel', platform: 'instagram', format: 'reel', status: 'draft', assigneeId: a.person.id, driveLink: 'https://drive.google.com/file/d/abc/view' });
+    if (!made.ok) throw new Error('create');
+    expect(made.post).toMatchObject({ assigneeId: a.person.id, driveLink: 'https://drive.google.com/file/d/abc/view' });
+    // Someone not on the list can't be assigned.
+    expect((await createPost(db, { title: 'X', platform: 'linkedin', format: 'post', status: 'draft', assigneeId: 999 })).ok).toBe(false);
+    // A later change of status keeps the assignee and the link.
+    const moved = await updatePost(db, made.post.id, { status: 'approved' });
+    expect(moved.ok && moved.post).toMatchObject({ assigneeId: a.person.id, driveLink: 'https://drive.google.com/file/d/abc/view' });
+    await removePerson(db, a.person.id);
+    expect((await db.select().from(contentPosts).where(eq(contentPosts.id, made.post.id)))[0].assigneeId).toBeNull();
+    expect((await listPeople(db)).map((p) => p.name)).toEqual(['Arun K']);
+  });
+
+  it('accepts only a Google Drive address for the link (or none)', async () => {
+    const { checkDriveLink } = await import('@/lib/content-calendar');
+    expect(checkDriveLink('')).toEqual({ ok: true, value: '' });
+    expect(checkDriveLink('https://drive.google.com/drive/folders/xyz')).toMatchObject({ ok: true });
+    expect(checkDriveLink('https://docs.google.com/document/d/1/edit')).toMatchObject({ ok: true });
+    for (const bad of ['http://drive.google.com/x', 'https://evil.com/drive.google.com', 'https://notgoogle.com/x', 'javascript:alert(1)', 'drive']) expect(checkDriveLink(bad).ok).toBe(false);
+  });
+
+  it('to-dos: added, dragged to a date, completed and then deleted for good', async () => {
+    const { addTodo, moveTodo, completeTodo, deleteTodo, listTodos } = await import('@/lib/content-calendar');
+    expect((await addTodo(db, '')).ok).toBe(false);
+    expect((await addTodo(db, 'x'.repeat(121))).ok).toBe(false);
+    const t = await addTodo(db, 'Book the studio\nfor Friday');
+    if (!t.ok) throw new Error('todo');
+    expect(t.todo).toMatchObject({ text: 'Book the studio for Friday', scheduledOn: '', done: false });
+    expect((await moveTodo(db, t.todo.id, 'not-a-date')).ok).toBe(false);
+    expect((await moveTodo(db, t.todo.id, '2026-10-23')).ok).toBe(true);
+    expect((await listTodos(db))[0]).toMatchObject({ scheduledOn: '2026-10-23' });
+    expect(await completeTodo(db, t.todo.id)).toBe(true);
+    // A completed one is gone the next time the list is read, even if the page never deleted it.
+    expect(await listTodos(db)).toEqual([]);
+    const u = await addTodo(db, 'Another');
+    if (!u.ok) throw new Error('todo');
+    await deleteTodo(db, u.todo.id);
+    expect(await listTodos(db)).toEqual([]);
+  });
+
+  it('what is due on a day is its content that is not posted yet', async () => {
+    const { dueOn } = await import('@/lib/content-calendar');
+    await createPost(db, { title: 'Today IG', platform: 'instagram', format: 'post', status: 'scheduled', scheduledOn: '2026-10-20' });
+    await createPost(db, { title: 'Today done', platform: 'linkedin', format: 'post', status: 'posted', scheduledOn: '2026-10-20' });
+    await createPost(db, { title: 'Tomorrow', platform: 'linkedin', format: 'post', status: 'scheduled', scheduledOn: '2026-10-21' });
+    expect((await dueOn(db, ['2026-10-20'])).map((p) => p.title)).toEqual(['Today IG']);
+  });
+
+  it('the people and to-do actions are Marketing-only too', async () => {
+    const { addPersonAction, addTodoAction, deleteTodoAction } = await import('@/app/marketing-actions');
+    expect((await addPersonAction('Sam')).ok).toBe(true);
+    expect((await addTodoAction('Check the banner')).ok).toBe(true);
+    who.current = { ...who.current, role: 'bda', id: 7 };
+    await expect(addPersonAction('Nope')).rejects.toThrow('Marketing only');
+    await expect(addTodoAction('Nope')).rejects.toThrow('Marketing only');
+    await expect(deleteTodoAction(1)).rejects.toThrow('Marketing only');
+  });
+});

@@ -3,6 +3,11 @@ import Link from 'next/link';
 import { AppShell } from '@/components/app-shell';
 import { Logo } from '@/components/logo';
 import { MarketingNav } from '@/components/marketing-nav';
+import { MarketingReminder } from '@/components/marketing-reminder';
+import { addDays } from '@/lib/content-meta';
+import { dueOn } from '@/lib/content-calendar';
+import { getDb } from '@/lib/db';
+import { istDay } from '@/lib/tasks';
 import { SIDEBAR_COOKIE } from '@/components/sidebar-cookie';
 import { marketingPage } from '@/lib/access';
 import { authDisabled } from '@/lib/auth';
@@ -42,6 +47,9 @@ export default async function MarketingLayout({ children }: { children: React.Re
       )}
     </>
   );
+  // Content to post today. The browser picks the ones for its own date, so the days either side of India's are sent too.
+  const today = istDay();
+  const due = (await dueOn(await getDb(), [addDays(today, -1), today, addDays(today, 1)])).map((p) => ({ id: p.id, title: p.title, platform: p.platform, scheduledOn: p.scheduledOn }));
   return (
     <AppShell initialHidden={hidden} sidebar={sidebar} showRunStatus={false}>
       {user.mustChangePassword && (
@@ -49,6 +57,7 @@ export default async function MarketingLayout({ children }: { children: React.Re
           You are still on the starting password. <Link href="/marketing/account" className="font-medium underline">Change it now</Link>.
         </div>
       )}
+      <MarketingReminder posts={due} />
       {children}
     </AppShell>
   );

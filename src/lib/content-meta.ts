@@ -33,7 +33,13 @@ export type PostView = {
   status: ContentStatus;
   dependencyNote: string;
   postedAt: string | null;
+  assigneeId: number | null;
+  driveLink: string;
 };
+
+/** A person content can be assigned to, and a to-do, as the browser gets them. */
+export type PersonView = { id: number; name: string };
+export type TodoView = { id: number; text: string; scheduledOn: string; done: boolean };
 
 // ─── Calendar dates (India days as YYYY-MM-DD) ───
 

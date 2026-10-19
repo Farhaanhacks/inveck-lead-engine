@@ -524,6 +524,20 @@ export const SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS content_posts_day_idx ON content_posts (scheduled_on)`,
+  `ALTER TABLE content_posts ADD COLUMN IF NOT EXISTS assignee_id INTEGER`,
+  `ALTER TABLE content_posts ADD COLUMN IF NOT EXISTS drive_link TEXT NOT NULL DEFAULT ''`,
+  `CREATE TABLE IF NOT EXISTS content_people (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS content_todos (
+    id SERIAL PRIMARY KEY,
+    text TEXT NOT NULL,
+    scheduled_on TEXT NOT NULL DEFAULT '',
+    done BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
   `CREATE TABLE IF NOT EXISTS sheet_firms (
     source_key TEXT PRIMARY KEY,
     spreadsheet_id TEXT NOT NULL DEFAULT '',
