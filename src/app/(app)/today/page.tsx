@@ -200,7 +200,7 @@ function roundLabel(task: Task): string {
 type WaContext = { to: string; agreed: boolean; optedOut: boolean; plan: WaPlan | null; outreach: WhatsAppOutreach };
 
 /** Sending from Outlook: the viewer's connected mailbox (if any) and what was already sent to this company. */
-type MailContext = { configured: boolean; from: string; senderName: string; sent?: SentEmail[] };
+type MailContext = { configured: boolean; from: string; senderName: string; ownerName: string; sent?: SentEmail[] };
 
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
 function Step({
@@ -229,7 +229,7 @@ function Step({
   const outreach = task.kind === 'whatsapp' ? whatsapp?.outreach : undefined;
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
   const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
-  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda }) : null;
+  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda, owner: mail.ownerName }) : null;
   // This step's email already went from Outlook (and the step was undone since): only to be logged.
   const went = task.kind === 'email' ? mail?.sent?.find((e) => e.taskId === task.id) : undefined;
   return (
@@ -274,6 +274,7 @@ function Step({
                     subject={plan.subject}
                     body={plan.body}
                     followUp={plan.followUp}
+                    problem={plan.problem}
                   />
                 )}
                 <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />
@@ -701,7 +702,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const ownerIds = [...new Set(visible.map((g) => g.lead.ownerId).filter((o): o is number => o != null))];
   const ownerNames = new Map((ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : []).map((u) => [u.id, u.name]));
   const senderName = settings?.senderName ?? '';
-  const mailFor = (leadId: number): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, sent: sentMail.get(leadId) } : undefined);
+  const mailFor = (l: Lead): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, ownerName: l.ownerId != null ? ownerNames.get(l.ownerId) ?? '' : '', sent: sentMail.get(l.id) } : undefined);
   const waFor = (l: Lead): WaContext | undefined => {
     if (!own) return undefined;
     const to = waNumber(l.contactPhone);
@@ -1000,7 +1001,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead.id)} whatsapp={waFor(g.lead)} />
+              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead)} whatsapp={waFor(g.lead)} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

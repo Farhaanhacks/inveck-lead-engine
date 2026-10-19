@@ -2,6 +2,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db';
 import { sentEmails, type Lead, type SentEmail } from '../db/schema';
 import { formatDateTime } from '../dates';
+import { firstEmailFor } from './first-email';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -34,6 +35,10 @@ export type EmailPlan = {
   /** What the sender writes; for a follow-up, the earlier email is quoted below it when sent. */
   body: string;
   quote: string;
+  /** Manufacturing / 3PL first email: its template (and PDF) apply. */
+  template?: 'manufacturing' | '3pl';
+  /** Why it can't be sent yet (a name missing for the template), else ''. */
+  problem: string;
 };
 
 /**
@@ -41,7 +46,7 @@ export type EmailPlan = {
  * emailed, a follow-up (the follow-up draft, with the last email quoted below it). Drafts are signed
  * with the sender name in Settings; sent from someone's own mailbox, they are signed with theirs.
  */
-export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string }): EmailPlan {
+export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string; owner?: string | null }): EmailPlan {
   // Emailed from the app before, or by hand on any earlier step (marked sent): never the first email twice.
   const followUp = !!prior || emailedAlready(lead);
   const from = sign.from.trim();
@@ -51,13 +56,19 @@ export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from
     const i = text.lastIndexOf(from);
     return from.length >= 3 && as && from !== as && i >= 0 && i >= text.length - from.length - 200 ? text.slice(0, i) + as + text.slice(i + from.length) : text;
   };
-  if (!followUp) return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '' };
+  if (!followUp) {
+    // Manufacturing and 3PL: the fixed first email, with the contact's name and the owner's. Others keep the draft.
+    const first = firstEmailFor(lead, sign.owner);
+    if (first) return { followUp, subject: first.subject, body: first.body, quote: '', template: first.template, problem: first.problem };
+    return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '', problem: '' };
+  }
   const original = (prior?.subject || lead.emailSubject).replace(/^\s*re:\s*/i, '');
   return {
     followUp,
     subject: lead.followUpSubject || (original ? `Re: ${original}` : ''),
     body: signed(lead.followUpBody),
     quote: prior ? quoteOf(prior) : '',
+    problem: '',
   };
 }
 

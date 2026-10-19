@@ -3,12 +3,22 @@ import { and, eq } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { activities, leads, mailboxes, people, sentEmails, tasks, users } from '@/lib/db/schema';
 import { istDay } from '@/lib/tasks';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Server actions outside Next: the signed-in person and the cache hooks are stand-ins.
 const me = { id: 0, role: 'bda' as const, name: 'Puja', username: 'puja@inveck', mustChangePassword: false };
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('next/server', () => ({ after: () => {} }));
 vi.mock('@/lib/users', async (orig) => ({ ...(await orig<typeof import('@/lib/users')>()), requireUser: async () => me, getCurrentUser: async () => me }));
+
+// The real profile PDFs live in assets/; tests read small stand-ins from a temp folder instead.
+const assets = vi.hoisted(() => ({ dir: '' }));
+vi.mock('@/lib/mail/profile-pdf', async (orig) => {
+  const m = await orig<typeof import('@/lib/mail/profile-pdf')>();
+  return { ...m, loadProfilePdf: (segment: string, dir?: string) => m.loadProfilePdf(segment, dir ?? assets.dir) };
+});
 
 const SECRET = 'test-client-secret-value';
 const TOKEN_KEY = 'test-mail-token-key-0123456789-abcdefghij';
@@ -61,6 +71,9 @@ beforeEach(async () => {
   failSend = false;
   hang = null;
   vi.stubGlobal('fetch', vi.fn(fakeMicrosoft));
+  assets.dir = await mkdtemp(join(tmpdir(), 'assets-'));
+  await writeFile(join(assets.dir, 'inveck-profile-manufacturing.pdf'), Buffer.from('%PDF-1.4 manufacturing'));
+  await writeFile(join(assets.dir, 'inveck-profile-3pl.pdf'), Buffer.from('%PDF-1.4 3pl'));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -82,7 +95,7 @@ const lead = async (extra: Partial<typeof leads.$inferInsert> = {}) =>
       .insert(leads)
       .values({
         company: 'Hosur Gears',
-        segment: 'Manufacturing',
+        segment: 'Other',
         status: 'Awaiting Approval',
         ownerId: me.id,
         contactName: 'Ravi Kumar',
@@ -448,5 +461,80 @@ describe('Microsoft 365 rules', () => {
     const att = JSON.parse(graphCalls()[0].body).message.attachments[0];
     expect(att).toMatchObject({ '@odata.type': '#microsoft.graph.fileAttachment', name: 'INVECK Product Profile.pdf', contentType: 'application/pdf' });
     expect(Buffer.from(att.contentBytes, 'base64').length).toBe(pdf!.bytes.length);
+  });
+});
+
+describe('first emails for Manufacturing and 3PL', () => {
+  const sentMessage = () => JSON.parse(graphCalls().find((c) => c.url.endsWith('/me/sendMail'))!.body).message;
+
+  it('Manufacturing: the fixed email with the contact and the owner filled in, and its own PDF', async () => {
+    await connect();
+    const l = await lead({ segment: 'Manufacturing', contactName: 'Mr. Ravi Kumar' });
+    const t = await emailTask(l.id);
+    calls = [];
+    expect((await send({ id: t.id })).error).toBe('');
+    const m = sentMessage();
+    expect(m.subject).toBe('Inventory verification and reconciliation application');
+    expect(m.body.content.startsWith('Hello Mr. Ravi Kumar,\n\nI hope you\'re doing well.\n\nI am Parimal, leading Business Development at Inveck.')).toBe(true);
+    expect(m.body.content).toContain('* Achieve an ROI of 30–40% by automating key verification steps');
+    expect(m.body.content.endsWith('Looking forward to hearing from you.')).toBe(true);
+    expect(m.body.content).not.toMatch(/\{\{|INVECK Sales Team/);
+    expect(Buffer.from(m.attachments[0].contentBytes, 'base64').toString()).toContain('manufacturing');
+    expect(m.toRecipients[0].emailAddress.address).toBe('ravi@hosurgears.in');
+  });
+
+  it('3PL and warehousing: the 3PL email and the 3PL PDF', async () => {
+    await connect();
+    const l = await lead({ segment: '3PL & Logistics', contactName: 'Asha Rao' });
+    const t = await emailTask(l.id);
+    calls = [];
+    expect((await send({ id: t.id })).error).toBe('');
+    const m = sentMessage();
+    expect(m.subject).toBe('Inveck - Digitalizing Physical Inventory Verification for 3PL Operations');
+    expect(m.body.content.startsWith('Dear Mr. Asha Rao,\n\nThank you for connecting with us on LinkedIn.\n\nI’m Parimal, leading Business Development.')).toBe(true);
+    expect(m.body.content.endsWith('Looking forward to connecting.')).toBe(true);
+    expect(Buffer.from(m.attachments[0].contentBytes, 'base64').toString()).toContain('3pl');
+  });
+
+  it('CA firms keep their own draft and get no Manufacturing or 3PL template or PDF', async () => {
+    await connect();
+    const l = await lead({ segment: 'CA Firms' });
+    const t = await emailTask(l.id);
+    calls = [];
+    expect((await send({ id: t.id })).error).toBe('');
+    const m = sentMessage();
+    expect(m.subject).toBe('Stock checks at Hosur Gears');
+    expect(m.attachments).toBeUndefined();
+  });
+
+  it('a missing contact name or owner stops the send with a clear message, even from the review form', async () => {
+    await connect();
+    const noName = await lead({ segment: 'Manufacturing', contactName: '  ' });
+    calls = [];
+    expect((await send({ id: (await emailTask(noName.id)).id })).error).toMatch(/main contact's name is missing/);
+    const t2 = await emailTask(noName.id, 'Day 2');
+    expect((await send({ id: t2.id, subject: 'x', body: 'Hello Mr. ,' })).error).toMatch(/missing in the CRM/);
+    expect(graphCalls()).toEqual([]);
+    const { firstEmailFor } = await import('@/lib/mail/first-email');
+    expect(firstEmailFor({ segment: '3PL & Logistics', contactName: 'Asha' }, '')).toMatchObject({ problem: expect.stringContaining("owner's name is missing") });
+    expect(firstEmailFor({ segment: '3PL & Logistics', contactName: '' }, null)).toMatchObject({ problem: expect.stringContaining('are missing') });
+    expect(firstEmailFor({ segment: 'CA Firms', contactName: '' }, null)).toBeNull();
+  });
+
+  it('the name comes from the lead owner record', async () => {
+    const { firstEmailFor } = await import('@/lib/mail/first-email');
+    expect(firstEmailFor({ segment: 'Manufacturing', contactName: 'Ravi Kumar' }, 'Anuradha')!.body).toContain('I am Anuradha, leading');
+  });
+
+  it('refuses to send a templated email without its PDF, and keeps the step open', async () => {
+    await connect();
+    const { rm } = await import('node:fs/promises');
+    await rm(join(assets.dir, 'inveck-profile-manufacturing.pdf'));
+    const l = await lead({ segment: 'Manufacturing' });
+    const t = await emailTask(l.id);
+    calls = [];
+    expect((await send({ id: t.id })).error).toMatch(/Manufacturing profile PDF isn't on the server/);
+    expect(graphCalls()).toEqual([]);
+    expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].doneAt).toBeNull();
   });
 });

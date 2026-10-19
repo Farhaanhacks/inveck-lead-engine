@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { leads, people, sentEmails, tasks } from '@/lib/db/schema';
+import { leads, people, sentEmails, tasks, users } from '@/lib/db/schema';
 import { logActivity } from '@/lib/activity';
 import { getSettings } from '@/lib/settings';
 import { requireUser } from '@/lib/users';
@@ -60,12 +60,16 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
 
   const settings = await getSettings(db);
   const prior = lastSentTo((await sentByLead(db, [lead.id])).get(lead.id), to);
-  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name });
+  // The BDA named in the email is the company's owner, from the owner record.
+  const [owner] = await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId));
+  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name, owner: owner?.name });
+  if (plan.problem) return { error: plan.problem };
   const reviewed = form.has('body');
   const subject = (reviewed ? str(form, 'subject') : plan.subject).trim();
   const body = (reviewed ? String(form.get('body') ?? '') : plan.body).trim();
   if (!body) return { error: plan.followUp ? 'No follow-up written yet: write it, or use Write it for me.' : 'There is no email draft yet: write it first.' };
   if (!subject) return { error: 'Add a subject.' };
+  if (/\{\{.*?\}\}/.test(`${subject}\n${body}`)) return { error: 'The email still has a {{placeholder}} in it: fill it in before sending.' };
 
   // One send per step, even with two clicks or two tabs open.
   const [claim] = await db
@@ -78,6 +82,8 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   let profile: Awaited<ReturnType<typeof loadProfilePdf>> = null;
   try {
     profile = await loadProfilePdf(lead.segment);
+    // The Manufacturing and 3PL emails say the profile is attached: never send them without it.
+    if (plan.template && !profile) throw new MailError(`The ${plan.template === '3pl' ? '3PL' : 'Manufacturing'} profile PDF isn't on the server (assets/), so this email can't be sent.`);
     sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body: plan.quote ? `${body}\n\n${plan.quote}` : body, attachments: profile ? [profile] : undefined });
   } catch (e) {
     if (e instanceof MailError && e.unconfirmed) {

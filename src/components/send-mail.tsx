@@ -39,6 +39,7 @@ export function SendMail({
   subject,
   body,
   followUp,
+  problem,
 }: {
   taskId: number;
   /** The connected mailbox it goes from; empty: it opens their email app instead. */
@@ -49,6 +50,8 @@ export function SendMail({
   subject: string;
   body: string;
   followUp: boolean;
+  /** Why it can't be sent yet (a name the template needs is missing). */
+  problem?: string;
 }) {
   const [state, send, pending] = useActionState<SendMailState, FormData>(sendEmailAction, { error: '' });
   const [open, setOpen] = useState(false);
@@ -63,7 +66,7 @@ export function SendMail({
   };
   // Set up on the server: Send mail always goes through the person's own connected Outlook (or says to connect it), never a stand-in.
   const outlook = configured;
-  const ready = !!body.trim();
+  const ready = !!body.trim() && !problem;
   const reviewId = `review-mail-${taskId}`;
   const toMailApp = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -77,7 +80,11 @@ export function SendMail({
     <div className={`flex flex-col items-start gap-2 ${open ? 'basis-full' : ''}`}>
       <div className="inline-flex">
         {/* Nothing written yet: the button opens the email to write instead. */}
-        {!ready ? (
+        {problem ? (
+          <button type="button" disabled className={MAIN}>
+            Send mail
+          </button>
+        ) : !ready ? (
           <button type="button" onClick={() => setOpen(true)} disabled={pending} className={MAIN}>
             Write and send
           </button>
@@ -157,6 +164,7 @@ export function SendMail({
           {copied && " The message is long, so it's also copied: if your email app shows it cut short, paste it in."}
         </p>
       )}
+      {problem && <p role="alert" className="max-w-md text-xs text-warning-ink">{problem}</p>}
       {state.error && (
         <p role="alert" className="max-w-md text-xs text-critical-ink">
           {state.error}
