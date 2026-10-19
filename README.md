@@ -65,8 +65,14 @@ with "Re:" and the last email quoted below it (Graph's `Mail.Send` permission ca
 if no follow-up is written yet, **Write it for me** drafts one. "Mark sent" is still there for emails
 sent by hand.
 
-The product profile PDF is attached to every email when the file `assets/inveck-product-profile.pdf`
-exists (up to 3 MB); until it is added, emails go without an attachment.
+The product profile PDF is attached to every email, chosen by the company's segment, from the
+`assets/` folder (up to 3 MB each):
+
+- `assets/inveck-profile-manufacturing.pdf` for Manufacturing
+- `assets/inveck-profile-3pl.pdf` for 3PL & Logistics / warehousing
+- `assets/inveck-product-profile.pdf` (optional) for any other segment, CA firms included
+
+With no file for a segment, that email goes without an attachment.
 
 One-time setup by an administrator:
 

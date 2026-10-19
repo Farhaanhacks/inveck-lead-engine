@@ -424,14 +424,21 @@ describe('Microsoft 365 rules', () => {
     const { mkdtemp, writeFile } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    const { loadProfilePdf, PROFILE_PDF_FILE } = await import('@/lib/mail/profile-pdf');
+    const { loadProfilePdf, PROFILE_FILES, GENERAL_PROFILE_FILE } = await import('@/lib/mail/profile-pdf');
     const dir = await mkdtemp(join(tmpdir(), 'profile-'));
-    expect(await loadProfilePdf(dir)).toBeNull();
-    await writeFile(join(dir, PROFILE_PDF_FILE), Buffer.from('%PDF-1.4 test'));
-    const pdf = await loadProfilePdf(dir);
+    expect(await loadProfilePdf('Manufacturing', dir)).toBeNull();
+    await writeFile(join(dir, PROFILE_FILES.manufacturing), Buffer.from('%PDF-1.4 manufacturing'));
+    await writeFile(join(dir, PROFILE_FILES['3pl']), Buffer.from('%PDF-1.4 3pl'));
+    const pdf = await loadProfilePdf('Manufacturing', dir);
     expect(pdf).toMatchObject({ name: 'INVECK Product Profile.pdf', contentType: 'application/pdf' });
-    await writeFile(join(dir, PROFILE_PDF_FILE), Buffer.alloc(3 * 1024 * 1024 + 1));
-    await expect(loadProfilePdf(dir)).rejects.toThrow(/too large/);
+    expect(pdf!.bytes.toString()).toContain('manufacturing');
+    expect((await loadProfilePdf('3PL & Logistics', dir))!.bytes.toString()).toContain('3pl');
+    // No file for CA firms (or another segment) until the general one is added.
+    expect(await loadProfilePdf('CA Firms', dir)).toBeNull();
+    await writeFile(join(dir, GENERAL_PROFILE_FILE), Buffer.from('%PDF-1.4 general'));
+    expect((await loadProfilePdf('CA Firms', dir))!.bytes.toString()).toContain('general');
+    await writeFile(join(dir, PROFILE_FILES.manufacturing), Buffer.alloc(3 * 1024 * 1024 + 1));
+    await expect(loadProfilePdf('Manufacturing', dir)).rejects.toThrow(/too large/);
 
     // In the request Graph gets: base64 file attachment.
     const { sendFromMailbox } = await import('@/lib/mail/outlook');

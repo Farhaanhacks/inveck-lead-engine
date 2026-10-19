@@ -77,7 +77,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   let sent: Awaited<ReturnType<typeof sendFromMailbox>>;
   let profile: Awaited<ReturnType<typeof loadProfilePdf>> = null;
   try {
-    profile = await loadProfilePdf();
+    profile = await loadProfilePdf(lead.segment);
     sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body: plan.quote ? `${body}\n\n${plan.quote}` : body, attachments: profile ? [profile] : undefined });
   } catch (e) {
     if (e instanceof MailError && e.unconfirmed) {
