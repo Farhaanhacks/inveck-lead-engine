@@ -264,7 +264,9 @@ describe('a test run', () => {
     expect(row).toMatchObject({ status: 'failed' });
     expect(row.error).toContain('Not enough credits');
 
-    const [old] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, startedAt: new Date(Date.now() - 20 * 60_000) }).returning();
+    // Stale means nothing saved for a while (a test carried on across invocations runs longer than one).
+    const longAgo = new Date(Date.now() - 20 * 60_000);
+    const [old] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, startedAt: longAgo, updatedAt: longAgo }).returning();
     expect(await activeSourcingTest(db)).toBeNull();
     const [stale] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, old.id));
     expect(stale.status).toBe('failed');
@@ -389,8 +391,86 @@ describe('people first', () => {
       // The known company isn't looked up; MEI Brakes' size needed a second search.
       expect(searches.some((q) => q.includes('"Known Forge"'))).toBe(false);
       expect(report.searches).toMatchObject({ companies: 5, facts: 1 });
+      // Ten wanted, two to be had: it searched on until searches stopped finding anyone new.
+      expect(report).toMatchObject({ target: 10, stopped: 'dry' });
+      expect(row.progress).toMatch(/^Stopped with 2 of 10 prospects: the last \d+ searches found nobody new on your lists/);
       expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
       expect((await db.select().from(leads)).length).toBe(leadsBefore);
     });
+  });
+});
+
+describe('people first: as many prospects as asked for', () => {
+  let db: Db;
+  beforeEach(async () => {
+    process.env.DATABASE_URL = 'memory://';
+    resetDbForTests();
+    db = await getDb();
+  });
+
+  /** Every people search finds three new plant heads at three new companies; odd-numbered companies fit, even ones are hotels. */
+  function endless(searches: string[]): Services {
+    let n = 0;
+    const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+    const fetchFn = (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
+      const q = String(JSON.parse(String(init.body)).q);
+      searches.push(q);
+      if (q.startsWith('site:linkedin.com/in ')) {
+        return json({
+          organic: [1, 2, 3].map(() => {
+            n++;
+            return { title: `Person ${n} - Plant Head - Forge ${n} | LinkedIn`, link: `https://in.linkedin.com/in/person-${n}`, subtitle: `Pune, Maharashtra, India · Plant Head · Forge ${n}`, snippet: '' };
+          }),
+        });
+      }
+      const k = Number(/^site:linkedin\.com\/company "Forge (\d+)"/.exec(q)?.[1] ?? 0);
+      if (!k) return json({ organic: [] });
+      const industry = k % 2 ? 'Machinery Manufacturing' : 'Hospitality';
+      return json({ organic: [{ title: `Forge ${k} | LinkedIn`, link: `https://in.linkedin.com/company/forge-${k}`, snippet: `Industry: ${industry}. Company size: 201-500 employees. Headquarters: Pune, Maharashtra` }] });
+    }) as typeof fetch;
+    return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+  }
+
+  it('stops as soon as it has the prospects wanted, without checking companies it no longer needs', async () => {
+    const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 3 }).returning();
+    const searches: string[] = [];
+    expect(await runSourcingTest(db, endless(searches), test.id)).toBe('done');
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+    const report = row.report as PeopleReport;
+    const f = peopleFunnelOf(report);
+    expect(row.status).toBe('done');
+    expect(report.stopped).toBe('target');
+    expect(f.ready).toBe(3);
+    expect(f.industry).toBe(f.checked - 3);
+    // One round of people searches was plenty; most companies found were never looked up.
+    expect(report.searches.people).toBe(8);
+    expect(f.unchecked).toBeGreaterThan(10);
+    expect(report.searches.companies).toBe(f.checked);
+    expect(row.progress).toMatch(/^Found 3 prospects with a contact, as asked\./);
+  });
+
+  it('carries on from where it got to when an invocation runs out of time, until it has them all', async () => {
+    const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 20 }).returning();
+    const searches: string[] = [];
+    const svc = endless(searches);
+    let invocations = 0;
+    // No time at all: each invocation does one step, saves, and hands over.
+    while ((await runSourcingTest(db, svc, test.id, 0)) === 'continue') {
+      invocations++;
+      const [mid] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+      expect(mid.status).toBe('running');
+      expect(mid.progress).toMatch(/^Still looking: \d+ of 20 prospects so far/);
+      expect(invocations).toBeLessThan(200);
+    }
+    expect(invocations).toBeGreaterThan(5);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+    const report = row.report as PeopleReport;
+    expect(row.status).toBe('done');
+    expect(report.stopped).toBe('target');
+    expect(peopleFunnelOf(report).ready).toBe(20);
+    // Nothing done twice across invocations: every person and every company once.
+    expect(new Set(report.people.map((p) => p.linkedin)).size).toBe(report.people.length);
+    expect(new Set(searches).size).toBe(searches.length);
+    expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
   });
 });

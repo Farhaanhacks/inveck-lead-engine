@@ -572,7 +572,7 @@ export const sourcingTests = pgTable('sourcing_tests', {
   segment: text('segment').notNull(),
   /** 'companies': company pages first, then their people; 'people': people with the ICP's titles first, then their companies. */
   mode: text('mode').$type<'companies' | 'people'>().notNull().default('companies'),
-  /** Companies to check (for people, or on LinkedIn when people come first). */
+  /** People first: prospects wanted. Companies first: companies checked for people. */
   companies: integer('companies').notNull().default(30),
   status: text('status').$type<'running' | 'done' | 'failed'>().notNull().default('running'),
   progress: text('progress').notNull().default(''),
@@ -580,6 +580,8 @@ export const sourcingTests = pgTable('sourcing_tests', {
   error: text('error').notNull().default(''),
   startedBy: integer('started_by'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  /** Last saved: a running test that stops saving was stopped by the server's time limit. */
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });
 export type SourcingTest = typeof sourcingTests.$inferSelect;

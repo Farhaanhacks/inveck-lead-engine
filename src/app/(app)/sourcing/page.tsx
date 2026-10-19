@@ -107,13 +107,13 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
             </select>
           </div>
           <div>
-            <label htmlFor="companies" className="label">Companies to check</label>
-            <input id="companies" name="companies" type="number" min={SOURCING_LIMITS.minCompanies} max={SOURCING_LIMITS.maxCompanies} defaultValue={SOURCING_LIMITS.companies} className="field w-28" />
+            <label htmlFor="companies" className="label">Prospects wanted</label>
+            <input id="companies" name="companies" type="number" min={SOURCING_LIMITS.minProspects} max={SOURCING_LIMITS.maxProspects} defaultValue={SOURCING_LIMITS.prospects} className="field w-28" />
           </div>
           <SubmitButton pendingText="Starting…" disabled={!!running || noSerper}>Run the test</SubmitButton>
         </form>
         <p className="mt-3 text-xs text-muted">
-          Uses up to {SOURCING_LIMITS.searches + SOURCING_LIMITS.secondPages} Google searches to find people (or company pages), then up to 2 per company checked on LinkedIn when people come first, or up to 4 per company checked for people when companies come first. It takes a minute or two. No AI is used.
+          People first keeps searching until it has the prospects wanted (companies that fit, each with a contact&apos;s LinkedIn), however many companies that takes. It stops short only at {SOURCING_LIMITS.maxSearches.toLocaleString('en-IN')} Google searches, or when {SOURCING_LIMITS.quietSearches} searches in a row find nobody new on your lists. Companies first checks that many companies for people. No AI is used.
           {running && ' A test is running: wait for it to finish before starting another.'}
           {noSerper && ' SERPER_API_KEY is not set, so the test cannot search.'}
         </p>

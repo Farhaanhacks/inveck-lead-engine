@@ -163,8 +163,12 @@ history, nothing sent.
   employer is read as strictly as the contact search reads it (current job there, in India, title on
   the P1/P2/P3 lists); then each of those companies' LinkedIn pages is screened on size, industry,
   headquarters and whether INVECK already has it. A company that passes comes with its contacts.
+  You say how many prospects you want, and it keeps searching until it has exactly that many, however
+  many companies it has to look through (carrying on in a new server invocation when one runs out of
+  time). It stops short only at 1,500 Google searches, or when 120 searches in a row find nobody new
+  on the lists, and says so.
 - **Companies first**: searches for companies' LinkedIn pages, screens them the same way, then searches
-  the staff of those that pass to see whether anyone on the lists works there.
+  the staff of that many companies that pass to see whether anyone on the lists works there.
 
 In both, a company passes only when it is shown to be in the ICP's industries: its LinkedIn industry
 is one the ICP covers (for Manufacturing: auto components, machinery, engines and power transmission,

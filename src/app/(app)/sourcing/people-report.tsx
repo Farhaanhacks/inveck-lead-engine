@@ -59,7 +59,7 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
           <Tile label="People found" value={f.profiles} note={`from ${report.searches.people} searches`} />
           <Tile label="On your lists" value={f.contacts} note={`P1/P2/P3, in India, at ${f.companies} companies`} />
           <Tile label="Companies checked" value={f.checked} note={`${f.known} already known${f.unchecked ? `, ${f.unchecked} not checked` : ''}; ${report.searches.companies + report.searches.facts} searches`} />
-          <Tile label="Ready with a contact" value={f.ready} note={`${pct(f.ready, f.checked)} of those checked; ${f.readyWithP1} with a P1`} />
+          <Tile label="Ready with a contact" value={report.target ? `${f.ready} of ${report.target}` : f.ready} note={`${pct(f.ready, f.checked)} of those checked; ${f.readyWithP1} with a P1`} />
           <Tile label="Ruled out" value={f.abroad + f.small + f.industry} note={`${f.small} too small, ${f.industry} industry, ${f.abroad} abroad`} />
           <Tile label="No LinkedIn page" value={f.nopage} note="company page not found by name" />
         </div>
@@ -67,7 +67,7 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
           <p className="mt-3 text-sm text-ink-2">
             {searches} Google searches gave {f.ready} new, right-sized {f.ready === 1 ? 'company' : 'companies'} with a named contact
             {f.ready > 0 && <> (one per {Math.round(searches / f.ready)} searches)</>}
-            {f.unchecked > 0 && <>; {f.unchecked} more companies with contacts weren&apos;t checked</>}.
+            {f.unchecked > 0 && <>; {f.unchecked} more companies with contacts weren&apos;t needed</>}.
           </p>
         )}
       </section>

@@ -583,6 +583,7 @@ export const SCHEMA_STATEMENTS = [
     finished_at TIMESTAMPTZ
   )`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'companies'`,
+  `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.
