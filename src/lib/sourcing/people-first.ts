@@ -15,10 +15,13 @@ import { readCompanyPage, SEGMENT_SEARCH, shuffled, type CompanyPage, type Sourc
 
 type TitleIcp = Pick<Icp, 'segment' | 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'>;
 
-/** Words people write in their own profiles about what their company makes or does (not LinkedIn's industry labels). */
+/**
+ * Words for what the company makes or does, from INVECK's ICP list, as people write them in their own
+ * profiles. Every people search has one: a title and a place alone bring every hotel and app company.
+ */
 export const PEOPLE_KEYWORDS: Record<SourcingSegment, string[]> = {
-  [MANUFACTURING]: ['forging', 'casting', 'foundry', 'bearings', 'auto components', 'automotive', 'machine tools', 'precision engineering', 'heavy engineering', 'industrial equipment', 'aerospace', 'defence', 'electrical equipment', 'gears', 'pumps', 'valves'],
-  [LOGISTICS]: ['3PL', 'warehousing', 'contract logistics', 'supply chain solutions', 'cold chain', 'logistics'],
+  [MANUFACTURING]: ['bearings', 'auto components', 'automotive components', 'forging', 'foundry', 'castings', 'heavy engineering', 'industrial machinery', 'machine tools', 'industrial equipment', 'precision engineering', 'defence manufacturing', 'aerospace components'],
+  [LOGISTICS]: ['3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain'],
 };
 
 const listOf = (s: string) => s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
@@ -34,7 +37,7 @@ export function searchTitles(icp: TitleIcp): string[] {
 
 export type PeopleQuery = {
   q: string;
-  /** 'industry': the title with a word for what the company does; 'open': the title and the place only. */
+  /** Always 'industry': the title with a word for what the company makes or does (tests from before kept 'open' ones). */
   form: 'industry' | 'open';
   title: string;
   keyword: string;
@@ -42,9 +45,8 @@ export type PeopleQuery = {
 };
 
 /**
- * The searches for one test. Titles go round in the ICP's order (P1 first), places and words in an
- * order that changes from one test to the next; every third search is open (title and place only) so
- * the two can be compared.
+ * The searches for one test: a title, a word for the industry and a place. Titles go round in the
+ * ICP's order (P1 first), words and places in an order that changes from one test to the next.
  */
 export function planPeopleQueries(segment: SourcingSegment, icp: TitleIcp, count: number, seed = 0): PeopleQuery[] {
   const titles = searchTitles(icp);
@@ -56,9 +58,8 @@ export function planPeopleQueries(segment: SourcingSegment, icp: TitleIcp, count
     const title = titles[i % titles.length];
     const keyword = ks[i % ks.length];
     const place = ps[(i + Math.floor(i / ps.length)) % ps.length];
-    const form = i % 3 === 2 ? 'open' : 'industry';
-    const q = ['site:linkedin.com/in', `"${title.replace(/"/g, '')}"`, form === 'industry' ? `"${keyword}"` : '', place].filter(Boolean).join(' ');
-    if (!out.some((o) => o.q === q)) out.push({ q, form, title, keyword: form === 'industry' ? keyword : '', place });
+    const q = ['site:linkedin.com/in', `"${title.replace(/"/g, '')}"`, `"${keyword}"`, place].join(' ');
+    if (!out.some((o) => o.q === q)) out.push({ q, form: 'industry', title, keyword, place });
   }
   return out;
 }

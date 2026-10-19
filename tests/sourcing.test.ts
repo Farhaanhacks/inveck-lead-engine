@@ -108,6 +108,33 @@ describe('the screen', () => {
     expect(screenPage(p('Industry: Industrial Machinery Manufacturing'), MANUFACTURING, MFG_SIZE, none)).toEqual({ pass: true, note: 'size not shown' });
   });
 
+  it("only companies shown to be in the ICP's industries pass (test 4, 19 Oct: OYO, Justdial, BigBasket…)", () => {
+    const size = 'Company size: 5,001-10,000 employees. Headquarters: Gurugram, Haryana';
+    const out = (facts: string, name: string) => screenPage(p(`${facts}. ${size}`, name), MANUFACTURING, MFG_SIZE, none);
+    for (const [label, name] of [
+      ['Hospitality', 'OYO'],
+      ['Information Services', 'Justdial'],
+      ['Staffing and Recruiting', 'Live Connections'],
+      ['Glass, Ceramics and Concrete Manufacturing', 'RAK Ceramics'],
+      ['Electrical Equipment Manufacturing', 'S&S Power Switchgear Equipment'],
+      ['Medical Equipment Manufacturing', 'vTitan Corporation'],
+      ['Renewable Energy Equipment Manufacturing', 'Suzlon Group'],
+    ]) {
+      expect(out(`Industry: ${label}`, name)).toMatchObject({ pass: false, reason: 'industry', note: `industry not in the ICP: ${label}` });
+    }
+    // No industry shown: out unless the page itself says what it makes in the ICP's words.
+    expect(out('Online grocery delivered to your door', 'BIG BASKET (BB)')).toMatchObject({ pass: false, reason: 'industry', note: 'industry not shown, and its page mentions "grocery"' });
+    expect(out('We build better teams', 'TRYANO')).toMatchObject({ pass: false, reason: 'industry', note: "industry not shown on its LinkedIn page, and nothing on it shows it's in the ICP" });
+    expect(out('Precision castings and machined parts for tractors', 'Acme Castings')).toMatchObject({ pass: true });
+    // "Manufacturing" alone says nothing: the page decides.
+    expect(out('Industry: Manufacturing. Leading maker of closed-die forgings', 'Acme Forge')).toMatchObject({ pass: true });
+    expect(out('Industry: Manufacturing. India\'s favourite FMCG brands', 'Acme Foods')).toMatchObject({ pass: false, reason: 'industry' });
+    // The ICP's own industries pass, by LinkedIn's current and older labels.
+    for (const label of ['Railroad Equipment Manufacturing', 'Engines and Power Transmission Equipment Manufacturing', 'Mechanical Or Industrial Engineering', 'Defense and Space Manufacturing', 'Automotive', 'Primary Metal Manufacturing']) {
+      expect(out(`Industry: ${label}`, 'Some Works')).toMatchObject({ pass: true });
+    }
+  });
+
   it('3PL: consumer delivery is out, a B2B warehousing company is in', () => {
     expect(screenPage(p('Industry: Freight and Package Transportation. Company size: 1,001-5,000 employees. Fast courier and last-mile delivery', 'Zoom Couriers'), LOGISTICS, LOG_SIZE, none)).toMatchObject({ pass: false, reason: 'industry' });
     expect(screenPage(p('Industry: Warehousing and Storage. Company size: 201-500 employees. Multi-client warehousing for manufacturers', 'Stockwell 3PL'), LOGISTICS, LOG_SIZE, none)).toMatchObject({ pass: true });
@@ -256,7 +283,7 @@ describe('people first', () => {
     snippet: '',
   });
 
-  it('searches the titles on the ICP lists, plant heads first, never a bare level, and keeps every third search open', () => {
+  it('searches the titles on the ICP lists, plant heads first, never a bare level, always with a word for the industry', () => {
     const titles = searchTitles(mfg);
     expect(titles.slice(0, 2)).toEqual(['Plant Head', 'Plant Manager']);
     expect(titles).toContain('Head of Supply Chain');
@@ -266,9 +293,10 @@ describe('people first', () => {
     const plan = planPeopleQueries(MANUFACTURING, mfg, 24, 1);
     expect(plan).toHaveLength(24);
     expect(new Set(plan.map((p) => p.q)).size).toBe(24);
-    expect(plan.filter((p) => p.form === 'open')).toHaveLength(8);
-    expect(plan[0].q).toMatch(/^site:linkedin\.com\/in "Plant Head" "[^"]+" \S/);
-    expect(plan[2].q).toMatch(/^site:linkedin\.com\/in "[^"]+" [A-Z]/);
+    // A title and a place alone brought hotels and app companies (test 4, 19 Oct): every search names the industry.
+    for (const p of plan) expect(p.q).toMatch(/^site:linkedin\.com\/in "[^"]+" "[^"]+" \S/);
+    expect(plan.every((p) => p.form === 'industry')).toBe(true);
+    expect(plan[0].q.startsWith('site:linkedin.com/in "Plant Head" ')).toBe(true);
   });
 
   it("reads each person's current employer, and keeps only people on the lists, in India, with a current job", () => {

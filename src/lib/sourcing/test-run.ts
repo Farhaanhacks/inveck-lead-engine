@@ -259,10 +259,11 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
     report.companies = [...byUrl.values()];
     report.searches.find = findSearches;
 
-    // Google's text for a page often leaves out its size and headquarters ("MEI Brakes | 794 followers
-    // on LinkedIn. Brakes For The Long Haul…"): one more search for the page's About facts, then the
-    // screen again with them.
-    const lacking = report.companies.filter((c) => c.screen === 'pass' && needsFacts(c)).slice(0, SOURCING_LIMITS.facts);
+    // Google's text for a page often leaves out its size, industry and headquarters ("MEI Brakes | 794
+    // followers on LinkedIn. Brakes For The Long Haul…"): one more search for the page's About facts,
+    // then the screen again with them.
+    // Pages that passed, or failed only because their industry wasn't shown, with a fact missing.
+    const lacking = report.companies.filter((c) => needsFacts(c) && (c.screen === 'pass' || (c.screen === 'industry' && !c.industry))).slice(0, SOURCING_LIMITS.facts);
     if (lacking.length) await save({ progress: `Found ${report.companies.length} company pages; looking up the size and headquarters of ${lacking.length} whose search result didn't show them…` });
     let factSearches = 0;
     const factFinder: Services = { ...svc, fetch: ((input, init) => (isSerper(input) && factSearches++, svc.fetch(input, init))) as typeof fetch };

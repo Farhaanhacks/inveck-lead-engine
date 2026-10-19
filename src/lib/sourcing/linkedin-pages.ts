@@ -28,7 +28,7 @@ export const SEGMENT_SEARCH: Record<SourcingSegment, { keywords: string[]; place
       'Automation Machinery Manufacturing',
       'Defense and Space Manufacturing',
       'Aviation and Aerospace Component Manufacturing',
-      'Electrical Equipment Manufacturing',
+      'Engines and Power Transmission Equipment Manufacturing',
       'forgings',
       'castings',
       'foundry',
@@ -170,7 +170,7 @@ export function readCompanyPage(r: SerperResult): CompanyPage | null {
 }
 
 /** Size or headquarters missing from Google's text: worth a second search for the page's facts. */
-export const needsFacts = (p: CompanyPage) => !p.size || !p.hq;
+export const needsFacts = (p: CompanyPage) => !p.size || !p.hq || !p.industry;
 
 /**
  * The search that brings a page's About facts into Google's text: the page's own address, and
@@ -201,22 +201,49 @@ export function hqAbroad(hq: string): boolean {
   return basedAbroad(hq) || (hq.includes(',') && !namesIndianPlace(hq));
 }
 
-/** Industries out of the ICP by LinkedIn's own label (what the company is, not what it serves). */
-const EXCLUDED_INDUSTRY: Record<SourcingSegment, RegExp> = {
+/**
+ * The industries the ICP covers, by LinkedIn's own label (current and older names). Manufacturing is
+ * INVECK's list: bearings, auto components, forgings, foundries, heavy engineering, industrial
+ * machinery and machine tools, industrial equipment, precision engineering, defence and aerospace
+ * components. Every other label is out: hotels, internet, retail, staffing, ceramics, electrical...
+ */
+const ICP_INDUSTRY: Record<SourcingSegment, RegExp> = {
   [MANUFACTURING]:
-    /\b(pharmaceutical|biotechnology|medical (?:equipment|device)|food|beverage|dairy|tobacco|chemical|plastics?|packaging|textile|apparel|fashion|cosmetics|personal care|paper|printing|furniture|consumer|retail|wholesale|software|it services|internet|staffing|recruiting|education|hospital|real estate|construction|civil engineering|architecture|marketing|advertising|financial|banking|insurance|accounting|law|government)\b/i,
-  [LOGISTICS]:
-    /\b(software|it services|internet|staffing|recruiting|education|real estate|leasing|construction|marketing|advertising|financial|banking|insurance|retail|government|airlines?|travel|hospitality)\b/i,
+    /\b(motor vehicle|automotive|machinery|mechanical or industrial engineering|industrial automation|engines and power transmission|fabricated metal|primary metal|metal treatments|defen[cs]e|aerospace|railroad equipment|transportation equipment|shipbuilding)\b/i,
+  [LOGISTICS]: /\b(logistics|supply chain|warehous\w*|storage|freight|truck\w*)\b/i,
+};
+
+/** LinkedIn's catch-all labels: they say nothing of what the company makes. */
+const GENERIC_INDUSTRY = /^(industrial\s+)?manufacturing$/i;
+
+/** What a company in the ICP says about itself, for a page with no label or a catch-all one. */
+const ICP_WORDS: Record<SourcingSegment, RegExp> = {
+  [MANUFACTURING]:
+    /\b(bearings?|auto(?:motive)?[\s-]?(?:components?|parts|ancillar\w*)|forg(?:e|ed|ings?|ers?)|foundr(?:y|ies)|castings?|die[\s-]?cast\w*|machine tools?|machinery|heavy engineering|precision engineering|precision components?|industrial equipment|defen[cs]e|aerospace|gears?|gearbox\w*|crankshafts?|axles?)\b/i,
+  [LOGISTICS]: /\b(3pl|third[\s-]party logistics|contract logistics|warehous\w*|supply chain solutions|cold chain|freight|logistics)\b/i,
+};
+
+/** Words that mark a company as something else, whatever else its page says. */
+const OTHER_WORDS: Record<SourcingSegment, RegExp> = {
+  [MANUFACTURING]:
+    /\b(pharma\w*|food|beverages?|fmcg|chemicals?|plastics?|packaging|textiles?|apparel|garments?|cosmetics?|software|it services|saas|staffing|recruit\w*|hospitals?|healthcare|hotels?|hospitality|retail|e-?commerce|grocery|real estate|ceramics?|tiles|cement)\b/i,
+  [LOGISTICS]: /\b(software|it services|saas|staffing|recruit\w*|hospitals?|healthcare|hotels?|hospitality|real estate|travel)\b/i,
 };
 
 /**
- * Industries the ICP covers, by LinkedIn's label (current and older names): a company in another one
- * (cement, oil and gas, mining, trading) isn't in the segment, whatever its people do.
+ * Whether the company is in the segment's industries: its LinkedIn label is one the ICP covers; or the
+ * label is a catch-all ("Manufacturing") or missing, and its page says what it makes in the ICP's
+ * words, with nothing marking it as something else. '' when it is; why not when it isn't.
  */
-const INCLUDED_INDUSTRY: Record<SourcingSegment, RegExp> = {
-  [MANUFACTURING]: /\b(manufactur\w*|machinery|automotive|motor vehicle|industrial|mechanical|electrical|aviation|aerospace|defen[cs]e|metals?|automation|railroad|shipbuilding|transportation equipment|appliances)\b/i,
-  [LOGISTICS]: /\b(logistics|supply chain|warehous\w*|storage|transportation|freight|truck\w*|shipping|maritime|package)\b/i,
-};
+export function industryProblem(p: CompanyPage, segment: SourcingSegment): string {
+  const label = p.industry.trim();
+  if (label && !GENERIC_INDUSTRY.test(label)) return ICP_INDUSTRY[segment].test(label) ? '' : `industry not in the ICP: ${label}`;
+  const text = `${p.name}. ${p.text}`;
+  const other = OTHER_WORDS[segment].exec(text)?.[0];
+  if (other) return `${label ? `LinkedIn says only "${label}"` : 'industry not shown'}, and its page mentions "${other}"`;
+  if (!ICP_WORDS[segment].test(text)) return label ? `LinkedIn says only "${label}", and nothing on its page shows it's in the ICP` : "industry not shown on its LinkedIn page, and nothing on it shows it's in the ICP";
+  return '';
+}
 
 /** Consumer delivery, out for 3PL: courier, parcel, last mile, B2C or D2C fulfilment. */
 const CONSUMER_DELIVERY = /\b(courier|parcel|last[\s-]?mile|hyperlocal|quick commerce|b2c|d2c|e-?commerce delivery|express delivery|food delivery|packers? (?:and|&) movers)\b/i;
@@ -229,8 +256,8 @@ export type Screen =
 
 /**
  * The first checks, from the page alone: based in India, big enough (a band at half the target or
- * less is out; up to the target is borderline and kept), an industry the ICP covers, and new to INVECK
- * (not a lead in any state, a client or on INVECK's own lists).
+ * less is out; up to the target is borderline and kept), new to INVECK (not a lead in any state, a
+ * client or on INVECK's own lists), and shown to be in an industry the ICP covers (see industryProblem).
  */
 export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize: string, known: Known): Screen {
   // Based abroad with a site in India (MEI Brakes: Sheffield and Chennai) is a prospect for that site;
@@ -244,11 +271,11 @@ export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize
   const target = employeeTarget(companySize);
   const top = p.size ? sizeBandTop(p.size) : null;
   if (target && top != null && top <= target / 2) return { pass: false, reason: 'small', note: `too small: ${p.size} against ${companySize}` };
-  if (p.industry && EXCLUDED_INDUSTRY[segment].test(p.industry)) return { pass: false, reason: 'industry', note: `industry out of the ICP: ${p.industry}` };
-  if (p.industry && !INCLUDED_INDUSTRY[segment].test(p.industry)) return { pass: false, reason: 'industry', note: `industry not one the ICP covers: ${p.industry}` };
-  if (segment === LOGISTICS && CONSUMER_DELIVERY.test(`${p.name} ${p.industry} ${p.text}`)) return { pass: false, reason: 'industry', note: `consumer delivery (courier, parcel, last mile or B2C), out of the 3PL ICP` };
   const domain = rootDomain(p.website);
   if (known.names.has(normCompany(p.name)) || (domain && known.domains.has(domain))) return { pass: false, reason: 'known', note: 'already known to INVECK (a lead, a client or on its own lists)' };
+  const industry = industryProblem(p, segment);
+  if (industry) return { pass: false, reason: 'industry', note: industry };
+  if (segment === LOGISTICS && CONSUMER_DELIVERY.test(`${p.name} ${p.industry} ${p.text}`)) return { pass: false, reason: 'industry', note: `consumer delivery (courier, parcel, last mile or B2C), out of the 3PL ICP` };
   const note = !p.size
     ? 'size not shown'
     : target && top != null && top <= target

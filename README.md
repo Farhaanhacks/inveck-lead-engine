@@ -166,6 +166,12 @@ history, nothing sent.
 - **Companies first**: searches for companies' LinkedIn pages, screens them the same way, then searches
   the staff of those that pass to see whether anyone on the lists works there.
 
+In both, a company passes only when it is shown to be in the ICP's industries: its LinkedIn industry
+is one the ICP covers (for Manufacturing: auto components, machinery, engines and power transmission,
+metals, defence and aerospace, railroad and transportation equipment), or, when LinkedIn shows none or
+only "Manufacturing", its own page describes what it makes in the ICP's words (forgings, castings,
+bearings, machine tools...). A missing industry is looked up once more; still missing, the company is out.
+
 Each report shows the funnel, every company with its outcome, and each search with what it found.
 
 ## Deploy on Vercel
