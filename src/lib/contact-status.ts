@@ -3,6 +3,7 @@ import type { Db } from './db';
 import { icps, leads, people } from './db/schema';
 import { canBeMain } from './pipeline/contacts';
 import { icpFor } from './tiers';
+import { isCaSegment } from './tasks';
 
 /** Before outreach, waiting on a contact or on approval: the statuses a contact change can move between. */
 const WAITING_FOR_CONTACT = 'Needs Manual Contact' as const;
@@ -23,6 +24,8 @@ export async function reconcileContactStatus(db: Db, leadId: number): Promise<st
   const name = lead.contactName.trim();
   if (!name) {
     if (!(READY as readonly string[]).includes(lead.status)) return null;
+    // A CA firm from the database is reached on the firm's own phone or email: it stays Approved with no person named.
+    if (isCaSegment(lead.segment) && (lead.contactPhone || lead.contactEmail)) return null;
     await db.update(leads).set({ status: WAITING_FOR_CONTACT, updatedAt: new Date() }).where(eq(leads.id, leadId));
     return WAITING_FOR_CONTACT;
   }

@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { clients, icps, leads, settings, sheetFirms, users } from './db/schema';
 import { logActivity } from './activity';
@@ -100,7 +100,7 @@ export function toContactRow(f: CaFirm): ContactRow {
     city,
     phones: f.phones,
     emails: f.emails,
-    // The sheet names no partners: the existing CA research finds the people to contact.
+    // The sheet names no partners: the person stays blank (nothing is researched); the firm's own phone is what is called.
     people: [],
     remark: [f.services && `Services: ${f.services}`, f.profileUrl && `ICAI profile: ${f.profileUrl}`, f.location && `Location: ${f.location}`].filter(Boolean).join(' · ').slice(0, 900),
   };
@@ -266,14 +266,30 @@ async function save(db: Db, day: string, record: CaDrawRecord): Promise<CaDrawRe
 /** Makes the lead for a firm already recorded as given, and records its id. Null when it couldn't be made (it is retried). */
 async function makeLead(db: Db, firm: CaFirm, owner: number, segment: string, known: KnownBranches): Promise<number | null> {
   try {
-    const r = await importContactSheet(db, [toContactRow(firm)], { segment, ownerId: owner, known, by: 'the Google Sheet' });
+    // Database only: Approved at once (never Awaiting Approval, never researched); nothing is searched to fill a blank.
+    const r = await importContactSheet(db, [toContactRow(firm)], { segment, ownerId: owner, known, by: 'the Google Sheet', status: 'Approved' });
     const id = r.ids[0] ?? null;
     if (id === null) return null;
     await db.update(sheetFirms).set({ leadId: id }).where(eq(sheetFirms.sourceKey, firm.key));
-    await logActivity(db, id, 'note', `Taken from the CA firms Google Sheet (${firm.key}) and given to its owner by the daily allocation`);
+    await logActivity(db, id, 'note', `Taken from the CA firms Google Sheet (${firm.key}) and given to its owner by the daily allocation. Approved straight away: its details are the sheet's only, with no research`);
     return id;
   } catch (e) {
     console.error('[ca-sheet] could not make the lead for a firm:', e instanceof Error ? e.message : e);
     return null;
   }
+}
+
+/**
+ * CA firms already taken from the sheet before this rule (still New or Awaiting Approval) are approved once, so they
+ * show as fresh leads and are not researched. Runs once per database; what it did is kept under settings.caApprovedV1.
+ */
+export async function approveSheetLeadsOnce(db: Db): Promise<void> {
+  const key = 'caApprovedV1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const rows = await db.select({ id: leads.id, status: leads.status }).from(leads).innerJoin(sheetFirms, eq(sheetFirms.leadId, leads.id)).where(inArray(leads.status, ['New', 'Awaiting Approval']));
+  for (const r of rows) {
+    await db.update(leads).set({ status: 'Approved', updatedAt: new Date() }).where(eq(leads.id, r.id));
+    await logActivity(db, r.id, 'stage', `Approved: CA firms from the Google Sheet are database-only and need no research or approval (was ${r.status})`, 'Approved');
+  }
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), approved: rows.map((r) => r.id) } }).onConflictDoNothing();
 }

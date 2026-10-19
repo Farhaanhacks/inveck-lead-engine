@@ -5,7 +5,7 @@ import { after } from 'next/server';
 import { escalate, type Escalation } from '@/lib/escalate';
 import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
-import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
+import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
@@ -579,7 +579,7 @@ export async function drawNowAction() {
   if (!(await runDailyDraw(db, { force: true }))) await topUpDraw(db);
   // The CA firms from the Google Sheet: whatever Anchal and Puja are still short of today.
   try {
-    if ((await runCaDraw(db, { force: true }))?.added) await ensureResearch(await requestOrigin());
+    await runCaDraw(db, { force: true });
   } catch (e) {
     console.error('[ca-sheet] draw failed:', e instanceof Error ? e.message : e);
   }

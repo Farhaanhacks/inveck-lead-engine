@@ -60,7 +60,7 @@ describe('the daily CA allocation', () => {
     expect(record!.perAssociate.map((a) => [a.name, a.drawn])).toEqual([['Anchal', 10], ['Puja', 10]]);
     const made = await db.select().from(leads);
     expect(made).toHaveLength(20); // 20 leads, not the 60 rows
-    expect(made.every((l) => l.segment === 'CA Firms' && l.status === 'New' && l.source.startsWith('Imported list'))).toBe(true);
+    expect(made.every((l) => l.segment === 'CA Firms' && l.status === 'Approved' && l.source.startsWith('Imported list'))).toBe(true);
     const [anchal, puja] = [await ownerOf('Anchal'), await ownerOf('Puja')];
     expect(made.filter((l) => l.ownerId === anchal)).toHaveLength(10);
     expect(made.filter((l) => l.ownerId === puja)).toHaveLength(10);

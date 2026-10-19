@@ -87,6 +87,9 @@ export function planSequence(startDay: string, holidays: Holidays = NO_HOLIDAYS)
 /** CA firms: their own Today flow (see planCaSequence). */
 export const CA_SEGMENT = /\b(ca|chartered|audit|accountant)/i;
 export const isCaSegment = (segment: string) => CA_SEGMENT.test(segment);
+/** The same test in SQL (Postgres word-start), for queries over leads. */
+export const caFirmSql = sql`${leads.segment} ~* ${String.raw`\m(ca|chartered|audit|accountant)`}`;
+export const notCaFirmSql = sql`${leads.segment} !~* ${String.raw`\m(ca|chartered|audit|accountant)`}`;
 /** A CA firm's LinkedIn request is out: this step waits for it to be accepted (not a to-do for the day). */
 export const CA_WAITING_STEP = 'Request accepted?';
 /** A CA firm whose request wasn't accepted (or that has no LinkedIn): reached by call, WhatsApp and email, in three rounds. */
@@ -164,7 +167,8 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
       and(
         isNotNull(leads.ownerId),
         inArray(leads.status, [...WORKING_STATUSES]),
-        ne(leads.contactName, ''),
+        // A CA firm from the database has no person named, only the firm's own phone or email: that is its contact.
+        or(ne(leads.contactName, ''), and(caFirmSql, or(ne(leads.contactPhone, ''), ne(leads.contactEmail, '')))),
         or(notExists(db.select({ one: sql`1` }).from(tasks).where(eq(tasks.leadId, leads.id))), and(exists(openFind), notExists(openOther))),
       ),
     )

@@ -4,6 +4,7 @@ import { listKnownCompanies } from './known-companies';
 import { KnownBranches } from './branches';
 import { clients, icps, leads, prospectResults, prospectSearches, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
+import { isCaSegment } from './tasks';
 import { findProspects, type ProspectHistory } from './pipeline/prospects';
 import { normQuery } from './pipeline/query-history';
 import { contactFromTeam } from './team-contact';
@@ -199,7 +200,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       try {
         // Every lead, and the companies in INVECK's own lead lists: never offered again.
         const known = [...(await db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads)), ...(await listKnownCompanies(db))];
-        const found = await findProspects(svc, activeIcps, clientList, known, (m, l) => log(m, l), await prospectHistory(db, runId));
+        // CA firms come from the database: no prospect search for them.
+        const found = await findProspects(svc, activeIcps.filter((i) => !isCaSegment(i.segment)), clientList, known, (m, l) => log(m, l), await prospectHistory(db, runId));
         if (found.length) {
           const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
           for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);

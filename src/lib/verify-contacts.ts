@@ -23,7 +23,7 @@ import { basedAbroad, currentEmployer, nameIsTheCompany, sameFirm } from './pipe
 import { learnFirm, recallFirm } from './pipeline/firm-identity';
 import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
-import { istDay } from './tasks';
+import { istDay, notCaFirmSql } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
 
@@ -44,8 +44,9 @@ const staleBefore = (now = new Date()) => new Date(now.getTime() - RECHECK_AFTER
 
 /** Which leads a tidy-up covers: one lead, one person's leads, or (empty) all. */
 export type Scope = { leadId?: number; ownerId?: number };
+// CA firms come from the database only: their contacts are never looked up, tidied or replaced.
 const inScope = (scope: Scope) =>
-  and(scope.leadId ? eq(leads.id, scope.leadId) : undefined, scope.ownerId ? eq(leads.ownerId, scope.ownerId) : undefined);
+  and(scope.leadId ? eq(leads.id, scope.leadId) : undefined, scope.ownerId ? eq(leads.ownerId, scope.ownerId) : undefined, notCaFirmSql);
 
 /**
  * A "designation" that is only the company's name ("CIE Automotive India Ltd") says nothing about the
@@ -315,6 +316,7 @@ export async function verifyContacts(
     .where(
       and(
         inArray(leads.status, [...LIVE]),
+        notCaFirmSql,
         opts.dueToday ? onToday : undefined,
         or(
           // No point of contact, and someone set aside as unconfirmed is due another look.

@@ -1,5 +1,5 @@
 import type { Db } from './db';
-import { leads, people } from './db/schema';
+import { leads, people, type LeadStatus } from './db/schema';
 import { logActivity } from './activity';
 import type { KnownBranches } from './branches';
 import { domainOf } from './pipeline/text';
@@ -89,7 +89,8 @@ function normLinkedin(v: string): string {
 export async function importContactSheet(
   db: Db,
   parsed: ContactRow[],
-  opts: { segment: string; ownerId: number | null; known: KnownBranches; by: string },
+  /** `status`: the lead starts here instead of waiting to be researched (the CA firms database goes straight to Approved). */
+  opts: { segment: string; ownerId: number | null; known: KnownBranches; by: string; status?: LeadStatus },
 ): Promise<{ added: number; skipped: string[]; ids: number[] }> {
   let added = 0;
   const ids: number[] = [];
@@ -119,6 +120,7 @@ export async function importContactSheet(
         contactLinkedin: main.linkedin,
         contactVerifiedAt: main.name ? now : null,
         remark: row.remark ?? '',
+        ...(opts.status ? { status: opts.status } : {}),
       })
       .returning({ id: leads.id });
     const contacts = [

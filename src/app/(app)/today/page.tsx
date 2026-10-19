@@ -6,7 +6,7 @@ import { StepActions, TaskButton, TaskForm } from '@/components/step-actions';
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
-import { ensureResearch, liveServices, requestOrigin, startRefetchIfWaiting } from '@/lib/run-driver';
+import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
@@ -587,7 +587,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     // Leads that turned up since a short draw go to the associates still short, in the segment they were short in.
     await bestEffort('topping up the draw', () => topUpDraw(db), null);
     // CA firms from the Google Sheet (Anchal and Puja); new ones are researched like any other new lead.
-    await bestEffort('the CA firm draw', async () => ((await runCaDraw(db))?.added ? ensureResearch(await requestOrigin()) : undefined), undefined);
+    await bestEffort('the CA firm draw', () => runCaDraw(db), null);
     await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
     await bestEffort('planning Today steps', () => ensureSequences(db), 0);
   }, undefined);
