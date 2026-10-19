@@ -6,7 +6,8 @@ import { DEFAULT_ICPS, LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema } from '@/lib/settings';
 import type { Services } from '@/lib/pipeline/services';
 import { bandsFor, companyPageUrl, factsQuery, hqAbroad, pageName, planQueries, readCompanyPage, screenPage, withFacts, type Known } from '@/lib/sourcing/linkedin-pages';
-import { activeSourcingTest, funnelOf, runSourcingTest, type SourcingReport } from '@/lib/sourcing/test-run';
+import { activeSourcingTest, funnelOf, isPeopleReport, peopleFunnelOf, runSourcingTest, type PeopleReport, type SourcingReport } from '@/lib/sourcing/test-run';
+import { companyQuery, matchingPage, planPeopleQueries, readPerson, searchTitles } from '@/lib/sourcing/people-first';
 import { employeeTarget } from '@/lib/pipeline/fit';
 
 const MFG_SIZE = DEFAULT_ICPS.find((i) => i.segment === MANUFACTURING)!.companySize;
@@ -105,6 +106,33 @@ describe('the screen', () => {
     expect(screenPage(p('Industry: Pharmaceutical Manufacturing. Company size: 501-1,000 employees'), MANUFACTURING, MFG_SIZE, none)).toMatchObject({ pass: false, reason: 'industry' });
     expect(screenPage(p('Industry: Industrial Machinery Manufacturing. Company size: 51-200 employees. Headquarters: Pune'), MANUFACTURING, MFG_SIZE, none)).toEqual({ pass: true, note: `borderline size: 51-200 employees against ${MFG_SIZE}` });
     expect(screenPage(p('Industry: Industrial Machinery Manufacturing'), MANUFACTURING, MFG_SIZE, none)).toEqual({ pass: true, note: 'size not shown' });
+  });
+
+  it("only companies shown to be in the ICP's industries pass (test 4, 19 Oct: OYO, Justdial, BigBasket…)", () => {
+    const size = 'Company size: 5,001-10,000 employees. Headquarters: Gurugram, Haryana';
+    const out = (facts: string, name: string) => screenPage(p(`${facts}. ${size}`, name), MANUFACTURING, MFG_SIZE, none);
+    for (const [label, name] of [
+      ['Hospitality', 'OYO'],
+      ['Information Services', 'Justdial'],
+      ['Staffing and Recruiting', 'Live Connections'],
+      ['Glass, Ceramics and Concrete Manufacturing', 'RAK Ceramics'],
+      ['Electrical Equipment Manufacturing', 'S&S Power Switchgear Equipment'],
+      ['Medical Equipment Manufacturing', 'vTitan Corporation'],
+      ['Renewable Energy Equipment Manufacturing', 'Suzlon Group'],
+    ]) {
+      expect(out(`Industry: ${label}`, name)).toMatchObject({ pass: false, reason: 'industry', note: `industry not in the ICP: ${label}` });
+    }
+    // No industry shown: out unless the page itself says what it makes in the ICP's words.
+    expect(out('Online grocery delivered to your door', 'BIG BASKET (BB)')).toMatchObject({ pass: false, reason: 'industry', note: 'industry not shown, and its page mentions "grocery"' });
+    expect(out('We build better teams', 'TRYANO')).toMatchObject({ pass: false, reason: 'industry', note: "industry not shown on its LinkedIn page, and nothing on it shows it's in the ICP" });
+    expect(out('Precision castings and machined parts for tractors', 'Acme Castings')).toMatchObject({ pass: true });
+    // "Manufacturing" alone says nothing: the page decides.
+    expect(out('Industry: Manufacturing. Leading maker of closed-die forgings', 'Acme Forge')).toMatchObject({ pass: true });
+    expect(out('Industry: Manufacturing. India\'s favourite FMCG brands', 'Acme Foods')).toMatchObject({ pass: false, reason: 'industry' });
+    // The ICP's own industries pass, by LinkedIn's current and older labels.
+    for (const label of ['Railroad Equipment Manufacturing', 'Engines and Power Transmission Equipment Manufacturing', 'Mechanical Or Industrial Engineering', 'Defense and Space Manufacturing', 'Automotive', 'Primary Metal Manufacturing']) {
+      expect(out(`Industry: ${label}`, 'Some Works')).toMatchObject({ pass: true });
+    }
   });
 
   it('3PL: consumer delivery is out, a B2B warehousing company is in', () => {
@@ -236,11 +264,213 @@ describe('a test run', () => {
     expect(row).toMatchObject({ status: 'failed' });
     expect(row.error).toContain('Not enough credits');
 
-    const [old] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, startedAt: new Date(Date.now() - 20 * 60_000) }).returning();
+    // Stale means nothing saved for a while (a test carried on across invocations runs longer than one).
+    const longAgo = new Date(Date.now() - 20 * 60_000);
+    const [old] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, startedAt: longAgo, updatedAt: longAgo }).returning();
     expect(await activeSourcingTest(db)).toBeNull();
     const [stale] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, old.id));
     expect(stale.status).toBe('failed');
     const [fresh] = await db.insert(sourcingTests).values({ segment: MANUFACTURING }).returning();
     expect((await activeSourcingTest(db))?.id).toBe(fresh.id);
+  });
+});
+
+describe('people first', () => {
+  const mfg = DEFAULT_ICPS.find((i) => i.segment === MANUFACTURING)!;
+  const log = DEFAULT_ICPS.find((i) => i.segment === LOGISTICS)!;
+  const person = (name: string, role: string, company: string, place: string, slug = name.toLowerCase().replace(/\s+/g, '-')) => ({
+    title: `${name} - ${role} - ${company} | LinkedIn`,
+    link: `https://in.linkedin.com/in/${slug}`,
+    subtitle: `${place} · ${role} · ${company}`,
+    snippet: '',
+  });
+
+  it('searches the titles on the ICP lists, plant heads first, never a bare level, always with a word for the industry', () => {
+    const titles = searchTitles(mfg);
+    expect(titles.slice(0, 2)).toEqual(['Plant Head', 'Plant Manager']);
+    expect(titles).toContain('Head of Supply Chain');
+    expect(titles).not.toContain('General Manager');
+    expect(titles).not.toContain('DGM');
+    expect(searchTitles(log)).toContain('National Head');
+    const plan = planPeopleQueries(MANUFACTURING, mfg, 24, 1);
+    expect(plan).toHaveLength(24);
+    expect(new Set(plan.map((p) => p.q)).size).toBe(24);
+    // A title and a place alone brought hotels and app companies (test 4, 19 Oct): every search names the industry.
+    for (const p of plan) expect(p.q).toMatch(/^site:linkedin\.com\/in "[^"]+" "[^"]+" \S/);
+    expect(plan.every((p) => p.form === 'industry')).toBe(true);
+    expect(plan[0].q.startsWith('site:linkedin.com/in "Plant Head" ')).toBe(true);
+  });
+
+  it("reads each person's current employer, and keeps only people on the lists, in India, with a current job", () => {
+    expect(readPerson(person('Ravi Kulkarni', 'Plant Head', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'), mfg)).toMatchObject({ name: 'Ravi Kulkarni', title: 'Plant Head', tier: 'P1', employer: 'Acme Forgings Pvt Ltd', why: '' });
+    expect(readPerson(person('John Smith', 'Plant Manager', 'Acme Corp', 'Detroit, Michigan, United States'), mfg)?.why).toMatch(/outside India/);
+    expect(readPerson(person('Hari Rao', 'HR Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'), mfg)).toMatchObject({ tier: '', why: "HR Manager: not on the ICP's lists" });
+    expect(readPerson(person('Asha Nair', 'Consultant', 'Self-employed', 'Pune, Maharashtra, India'), mfg)?.why).toBe('no current employer shown');
+    expect(readPerson({ title: 'Acme Forgings | LinkedIn', link: 'https://in.linkedin.com/company/acme-forgings' }, mfg)).toBeNull();
+    // Profiles the contact search leaves out (another country's LinkedIn, no name) are reported, not a crash (test 3, 19 Oct).
+    expect(readPerson({ ...person('Tom Hill', 'Plant Manager', 'Acme UK Ltd', 'Sheffield, England, United Kingdom'), link: 'https://uk.linkedin.com/in/tom-hill' }, mfg)).toMatchObject({ employer: 'Acme UK Ltd', why: 'based outside India (a profile on uk.linkedin.com)' });
+    expect(readPerson({ title: ' - Plant Head - Acme Forgings | LinkedIn', link: 'https://in.linkedin.com/in/x', subtitle: 'Pune, Maharashtra, India · Plant Head · Acme Forgings' }, mfg)).toMatchObject({ why: 'no name shown' });
+  });
+
+  it("finds the company's own page by the name its people write, never a longer name that only starts the same", () => {
+    const page = (slug: string, name: string) => ({ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet: 'Company size: 201-500 employees' });
+    expect(matchingPage([page('acme-forgings-india', 'Acme Forgings India')], 'Acme Forgings Pvt Ltd')?.name).toBe('Acme Forgings India');
+    expect(matchingPage([page('bharat-gears-ltd', 'Bharat Gears Limited Faridabad')], 'Bharat Gears')?.name).toBe('Bharat Gears Limited Faridabad');
+    expect(matchingPage([page('tata-motors', 'Tata Motors')], 'Tata')).toBeNull();
+    expect(companyQuery('Acme Forgings Pvt Ltd')).toBe('site:linkedin.com/company "Acme Forgings"');
+  });
+
+  describe('a run', () => {
+    let db: Db;
+    beforeEach(async () => {
+      process.env.DATABASE_URL = 'memory://';
+      resetDbForTests();
+      db = await getDb();
+    });
+
+    const PEOPLE = [
+      person('Ravi Kulkarni', 'Plant Head', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
+      person('Meena Joshi', 'Store Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
+      person('Suresh Kumar', 'Plant Head', 'MEI Brakes', 'Chennai, Tamil Nadu, India'),
+      person('Kiran Patil', 'Plant Head', 'Tiny Works', 'Ludhiana, Punjab, India'),
+      person('Anil Shah', 'Plant Head', 'Known Forge', 'Rajkot, Gujarat, India'),
+      person('Priya Rao', 'Plant Head', 'Pharma Co', 'Hyderabad, Telangana, India'),
+      person('Sam Das', 'Plant Head', 'Ghost Gears', 'Kolkata, West Bengal, India'),
+      person('Hari Rao', 'HR Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
+      person('John Smith', 'Plant Manager', 'Acme Corp', 'Detroit, Michigan, United States'),
+      { ...person('Tom Hill', 'Plant Manager', 'Acme UK Ltd', 'Sheffield, England, United Kingdom'), link: 'https://uk.linkedin.com/in/tom-hill' },
+    ];
+    const pageOf = (slug: string, name: string, snippet: string) => [{ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet }];
+    const BY_NAME: Record<string, unknown[]> = {
+      'Acme Forgings': pageOf('acme-forgings', 'Acme Forgings Pvt Ltd', 'Industry: Motor Vehicle Parts Manufacturing. Company size: 201-500 employees. Headquarters: Pune, Maharashtra'),
+      'MEI Brakes': pageOf('mei-brakes', 'MEI Brakes', 'MEI Brakes | 794 followers on LinkedIn. Brakes For The Long Haul.'),
+      'Tiny Works': pageOf('tiny-works', 'Tiny Works', 'Industry: Machinery Manufacturing. Company size: 11-50 employees. Headquarters: Ludhiana, Punjab'),
+      'Pharma Co': pageOf('pharma-co', 'Pharma Co', 'Industry: Pharmaceutical Manufacturing. Company size: 1,001-5,000 employees. Headquarters: Hyderabad, Telangana'),
+    };
+    const FACTS: Record<string, unknown[]> = {
+      'mei-brakes': pageOf('mei-brakes', 'MEI Brakes', 'Industry Motor Vehicle Parts Manufacturing Company size 501-1,000 employees Headquarters Sheffield, South Yorkshire Type Privately Held'),
+    };
+
+    function fake(searches: string[]): Services {
+      const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+      const fetchFn = (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
+        const q = String(JSON.parse(String(init.body)).q);
+        searches.push(q);
+        if (q.startsWith('site:linkedin.com/in ')) return json({ organic: PEOPLE });
+        const one = /^site:linkedin\.com\/company\/(\S+) /.exec(q)?.[1];
+        if (one) return json({ organic: FACTS[one] ?? [] });
+        const name = /^site:linkedin\.com\/company "([^"]+)"/.exec(q)?.[1] ?? '';
+        return json({ organic: BY_NAME[name] ?? [] });
+      }) as typeof fetch;
+      return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    }
+
+    it('finds people, checks their companies, and keeps only the fitting new ones, each with its contacts; nothing else is saved', async () => {
+      await db.insert(leads).values({ company: 'Known Forge Ltd', segment: MANUFACTURING, source: 'test' });
+      const leadsBefore = (await db.select().from(leads)).length;
+      const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 10 }).returning();
+      const searches: string[] = [];
+      await runSourcingTest(db, fake(searches), test.id);
+      const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+      expect(row.status).toBe('done');
+      const report = row.report as PeopleReport;
+      expect(isPeopleReport(report)).toBe(true);
+      const by = Object.fromEntries(report.companies.map((c) => [c.employer, c]));
+      expect(by['Acme Forgings Pvt Ltd']).toMatchObject({ screen: 'pass' });
+      expect(by['Acme Forgings Pvt Ltd'].contacts.map((p) => [p.name, p.tier])).toEqual([
+        ['Ravi Kulkarni', 'P1'],
+        ['Meena Joshi', 'P3'],
+      ]);
+      // Based in England, its plant head in Chennai: a prospect for that site.
+      expect(by['MEI Brakes']).toMatchObject({ screen: 'pass', note: 'headquartered abroad (Sheffield, South Yorkshire), with a site in Chennai; size 501-1,000 employees' });
+      expect(by['Tiny Works']).toMatchObject({ screen: 'small' });
+      expect(by['Pharma Co']).toMatchObject({ screen: 'industry' });
+      expect(by['Known Forge']).toMatchObject({ screen: 'known' });
+      expect(by['Ghost Gears']).toMatchObject({ screen: 'nopage' });
+      expect(peopleFunnelOf(report)).toEqual({ profiles: 10, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 1, abroad: 0, small: 1, industry: 1, ready: 2, readyWithP1: 2, unchecked: 0 });
+      // The known company isn't looked up; MEI Brakes' size needed a second search.
+      expect(searches.some((q) => q.includes('"Known Forge"'))).toBe(false);
+      expect(report.searches).toMatchObject({ companies: 5, facts: 1 });
+      // Ten wanted, two to be had: it searched on until searches stopped finding anyone new.
+      expect(report).toMatchObject({ target: 10, stopped: 'dry' });
+      expect(row.progress).toMatch(/^Stopped with 2 of 10 prospects: the last \d+ searches found nobody new on your lists/);
+      expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
+      expect((await db.select().from(leads)).length).toBe(leadsBefore);
+    });
+  });
+});
+
+describe('people first: as many prospects as asked for', () => {
+  let db: Db;
+  beforeEach(async () => {
+    process.env.DATABASE_URL = 'memory://';
+    resetDbForTests();
+    db = await getDb();
+  });
+
+  /** Every people search finds three new plant heads at three new companies; odd-numbered companies fit, even ones are hotels. */
+  function endless(searches: string[]): Services {
+    let n = 0;
+    const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+    const fetchFn = (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
+      const q = String(JSON.parse(String(init.body)).q);
+      searches.push(q);
+      if (q.startsWith('site:linkedin.com/in ')) {
+        return json({
+          organic: [1, 2, 3].map(() => {
+            n++;
+            return { title: `Person ${n} - Plant Head - Forge ${n} | LinkedIn`, link: `https://in.linkedin.com/in/person-${n}`, subtitle: `Pune, Maharashtra, India · Plant Head · Forge ${n}`, snippet: '' };
+          }),
+        });
+      }
+      const k = Number(/^site:linkedin\.com\/company "Forge (\d+)"/.exec(q)?.[1] ?? 0);
+      if (!k) return json({ organic: [] });
+      const industry = k % 2 ? 'Machinery Manufacturing' : 'Hospitality';
+      return json({ organic: [{ title: `Forge ${k} | LinkedIn`, link: `https://in.linkedin.com/company/forge-${k}`, snippet: `Industry: ${industry}. Company size: 201-500 employees. Headquarters: Pune, Maharashtra` }] });
+    }) as typeof fetch;
+    return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+  }
+
+  it('stops as soon as it has the prospects wanted, without checking companies it no longer needs', async () => {
+    const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 3 }).returning();
+    const searches: string[] = [];
+    expect(await runSourcingTest(db, endless(searches), test.id)).toBe('done');
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+    const report = row.report as PeopleReport;
+    const f = peopleFunnelOf(report);
+    expect(row.status).toBe('done');
+    expect(report.stopped).toBe('target');
+    expect(f.ready).toBe(3);
+    expect(f.industry).toBe(f.checked - 3);
+    // One round of people searches was plenty; most companies found were never looked up.
+    expect(report.searches.people).toBe(8);
+    expect(f.unchecked).toBeGreaterThan(10);
+    expect(report.searches.companies).toBe(f.checked);
+    expect(row.progress).toMatch(/^Found 3 prospects with a contact, as asked\./);
+  });
+
+  it('carries on from where it got to when an invocation runs out of time, until it has them all', async () => {
+    const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 20 }).returning();
+    const searches: string[] = [];
+    const svc = endless(searches);
+    let invocations = 0;
+    // No time at all: each invocation does one step, saves, and hands over.
+    while ((await runSourcingTest(db, svc, test.id, 0)) === 'continue') {
+      invocations++;
+      const [mid] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+      expect(mid.status).toBe('running');
+      expect(mid.progress).toMatch(/^Still looking: \d+ of 20 prospects so far/);
+      expect(invocations).toBeLessThan(200);
+    }
+    expect(invocations).toBeGreaterThan(5);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+    const report = row.report as PeopleReport;
+    expect(row.status).toBe('done');
+    expect(report.stopped).toBe('target');
+    expect(peopleFunnelOf(report).ready).toBe(20);
+    // Nothing done twice across invocations: every person and every company once.
+    expect(new Set(report.people.map((p) => p.linkedin)).size).toBe(report.people.length);
+    expect(new Set(searches).size).toBe(searches.length);
+    expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
   });
 });

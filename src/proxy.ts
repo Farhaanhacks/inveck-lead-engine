@@ -3,7 +3,7 @@ import { authDisabled, isValidSession, readSession, SESSION_COOKIE } from '@/lib
 
 // Every page and API route needs the shared-password session, except the login page
 // and the machine endpoints, which check their own secret (WhatsApp's: Meta's signature).
-const PUBLIC_PATHS = [/^\/login$/, /^\/api\/health$/, /^\/api\/cron(\/draw)?$/, /^\/api\/runs\/\d+\/continue$/, /^\/api\/whatsapp\/webhook$/];
+const PUBLIC_PATHS = [/^\/login$/, /^\/api\/health$/, /^\/api\/cron(\/draw)?$/, /^\/api\/runs\/\d+\/continue$/, /^\/api\/sourcing\/\d+\/continue$/, /^\/api\/whatsapp\/webhook$/];
 
 export async function proxy(request: NextRequest) {
   if (PUBLIC_PATHS.some((p) => p.test(request.nextUrl.pathname))) return NextResponse.next();

@@ -166,7 +166,7 @@ export function mergeSameProfile<T extends FoundPerson>(list: T[]): T[] {
   return [...byKey.values()];
 }
 
-function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): FoundPerson[] {
+export function toLinkedInPeople(results: { title?: string; link?: string; snippet?: string; subtitle?: string }[], company = ''): FoundPerson[] {
   return results
     .filter((r) => /linkedin\.com\/in\//i.test(r.link || ''))
     .map((r) => {

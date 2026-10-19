@@ -175,13 +175,29 @@ page or its Today step.
 
 ### Sourcing test
 
-**Dashboard → Sourcing test** (administrators) tries a different way of finding companies, without
-touching the pipeline. It searches Google for companies' LinkedIn pages in a segment's industries and
-clusters, screens each on what the page shows (headquarters in India, size against the ICP, an
-industry the ICP covers, not already a lead, client or on INVECK's lists), then searches the staff of
-the ones that pass on LinkedIn to see whether anyone on the ICP's P1/P2/P3 lists works there. It uses
-Serper only (no AI), saves nothing but its report (no leads, no prospect history, nothing sent) and
-shows the funnel, every company with its outcome, and each search with what it found.
+**Dashboard → Sourcing test** (administrators) tries new ways of finding companies, without touching
+the pipeline. It uses Serper only (no AI) and saves nothing but its report: no leads, no prospect
+history, nothing sent.
+
+- **People first** (the default): searches LinkedIn, through Google, for people with the ICP's P1/P2
+  titles in the segment's industries and clusters ("Plant Head" "forging" Pune). Each person's current
+  employer is read as strictly as the contact search reads it (current job there, in India, title on
+  the P1/P2/P3 lists); then each of those companies' LinkedIn pages is screened on size, industry,
+  headquarters and whether INVECK already has it. A company that passes comes with its contacts.
+  You say how many prospects you want, and it keeps searching until it has exactly that many, however
+  many companies it has to look through (carrying on in a new server invocation when one runs out of
+  time). It stops short only at 1,500 Google searches, or when 120 searches in a row find nobody new
+  on the lists, and says so.
+- **Companies first**: searches for companies' LinkedIn pages, screens them the same way, then searches
+  the staff of that many companies that pass to see whether anyone on the lists works there.
+
+In both, a company passes only when it is shown to be in the ICP's industries: its LinkedIn industry
+is one the ICP covers (for Manufacturing: auto components, machinery, engines and power transmission,
+metals, defence and aerospace, railroad and transportation equipment), or, when LinkedIn shows none or
+only "Manufacturing", its own page describes what it makes in the ICP's words (forgings, castings,
+bearings, machine tools...). A missing industry is looked up once more; still missing, the company is out.
+
+Each report shows the funnel, every company with its outcome, and each search with what it found.
 
 ## Deploy on Vercel
 

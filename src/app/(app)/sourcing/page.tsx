@@ -10,7 +10,8 @@ import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { startSourcingTestAction } from '@/app/sourcing-actions';
 import { SOURCING_SEGMENTS } from '@/lib/sourcing/linkedin-pages';
-import { activeSourcingTest, funnelOf, SOURCING_LIMITS, type CompanyReport, type PeopleOutcome, type SourcingReport } from '@/lib/sourcing/test-run';
+import { activeSourcingTest, funnelOf, isPeopleReport, SOURCING_LIMITS, type CompanyReport, type PeopleOutcome, type SourcingReport } from '@/lib/sourcing/test-run';
+import { PeopleReportView } from './people-report';
 
 // The test runs after the response, inside this page's time limit.
 export const maxDuration = 300;
@@ -62,13 +63,17 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
   const db = await getDb();
   const running = await activeSourcingTest(db);
   const recent = await db
-    .select({ id: sourcingTests.id, segment: sourcingTests.segment, status: sourcingTests.status, startedAt: sourcingTests.startedAt })
+    .select({ id: sourcingTests.id, segment: sourcingTests.segment, mode: sourcingTests.mode, status: sourcingTests.status, startedAt: sourcingTests.startedAt })
     .from(sourcingTests)
     .orderBy(desc(sourcingTests.id))
     .limit(10);
   const wanted = Number((await searchParams).test) || recent[0]?.id || 0;
   const [test] = wanted ? await db.select().from(sourcingTests).where(eq(sourcingTests.id, wanted)) : [];
-  const report = (test?.report ?? null) as SourcingReport | null;
+  const raw = test?.report ?? null;
+  const peopleReport = isPeopleReport(raw) ? raw : null;
+  // A companies-first report (tests from before the people-first mode are all this kind).
+  const report = peopleReport ? null : (raw as SourcingReport | null);
+  const shared = raw as { seconds?: number; stoppedEarly?: string } | null;
   const f = report ? funnelOf(report) : null;
   const searches = report ? report.searches.find + (report.searches.facts ?? 0) + report.searches.people : 0;
   const checkedList = report?.companies.filter((c) => c.people) ?? [];
@@ -79,13 +84,20 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
     <>
       <PageHeader
         title="Sourcing test"
-        description="Finds companies through their LinkedIn pages, screens them on what the page shows (size, industry, headquarters, already known to INVECK), then checks whether anyone reachable works there. Nothing is saved as a lead and nothing is sent: only this report is kept."
+        description="Two ways to find new companies. People first: searches LinkedIn for people with your ICP's titles, then checks their companies (size, industry, headquarters, already known to INVECK). Companies first: finds company pages, screens them, then looks for people there. Nothing is saved as a lead and nothing is sent: only this report is kept."
       >
         <Link href="/" className="btn-secondary">Dashboard</Link>
       </PageHeader>
 
       <section className="card mb-6 p-5">
         <form action={startSourcingTestAction} className="flex flex-wrap items-end gap-4">
+          <div>
+            <label htmlFor="mode" className="label">How</label>
+            <select id="mode" name="mode" defaultValue="people" className="field">
+              <option value="people">People first</option>
+              <option value="companies">Companies first</option>
+            </select>
+          </div>
           <div>
             <label htmlFor="segment" className="label">Segment</label>
             <select id="segment" name="segment" defaultValue={SOURCING_SEGMENTS[0]} className="field">
@@ -95,13 +107,13 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
             </select>
           </div>
           <div>
-            <label htmlFor="companies" className="label">Companies to check for people</label>
-            <input id="companies" name="companies" type="number" min={SOURCING_LIMITS.minCompanies} max={SOURCING_LIMITS.maxCompanies} defaultValue={SOURCING_LIMITS.companies} className="field w-28" />
+            <label htmlFor="companies" className="label">Prospects wanted</label>
+            <input id="companies" name="companies" type="number" min={SOURCING_LIMITS.minProspects} max={SOURCING_LIMITS.maxProspects} defaultValue={SOURCING_LIMITS.prospects} className="field w-28" />
           </div>
           <SubmitButton pendingText="Starting…" disabled={!!running || noSerper}>Run the test</SubmitButton>
         </form>
         <p className="mt-3 text-xs text-muted">
-          Uses up to {SOURCING_LIMITS.searches + SOURCING_LIMITS.secondPages} Google searches to find company pages, up to {SOURCING_LIMITS.facts} more for sizes and headquarters Google&apos;s first result left out, and up to 4 per company checked for people. It takes a minute or two. No AI is used.
+          People first keeps searching until it has the prospects wanted (companies that fit, each with a contact&apos;s LinkedIn), however many companies that takes. It stops short only at {SOURCING_LIMITS.maxSearches.toLocaleString('en-IN')} Google searches, or when {SOURCING_LIMITS.quietSearches} searches in a row find nobody new on your lists. Companies first checks that many companies for people. No AI is used.
           {running && ' A test is running: wait for it to finish before starting another.'}
           {noSerper && ' SERPER_API_KEY is not set, so the test cannot search.'}
         </p>
@@ -111,8 +123,8 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
         <section className="mb-6">
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-semibold">
-              Test {test.id}: {test.segment}
-              <span className="ml-2 font-normal text-muted">started {formatDateTime(test.startedAt)}{report?.seconds ? `, ${report.seconds}s` : ''}</span>
+              Test {test.id}: {test.segment}, {test.mode === 'people' ? 'people first' : 'companies first'}
+              <span className="ml-2 font-normal text-muted">started {formatDateTime(test.startedAt)}{shared?.seconds ? `, ${shared.seconds}s` : ''}</span>
             </h2>
             <span
               className={`inline-flex h-5 items-center rounded px-1.5 text-[11px] font-medium ${
@@ -125,7 +137,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
           {test.status === 'running' && <AutoRefresh />}
           {test.progress && <p className="mb-3 text-sm text-ink-2" role="status">{test.progress}</p>}
           {test.error && <p className="mb-3 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink">{test.error}</p>}
-          {report?.stoppedEarly && <p className="mb-3 text-sm text-warning-ink">{report.stoppedEarly}</p>}
+          {shared?.stoppedEarly && <p className="mb-3 text-sm text-warning-ink">{shared.stoppedEarly}</p>}
 
           {f && report && (
             <>
@@ -148,6 +160,8 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
           )}
         </section>
       )}
+
+      {peopleReport && test && <PeopleReportView report={peopleReport} done={test.status === 'done'} />}
 
       {checkedList.length > 0 && (
         <section className="card mb-6 overflow-x-auto">
@@ -306,7 +320,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
             {recent.map((r) => (
               <li key={r.id}>
                 <Link href={`/sourcing?test=${r.id}`} className={r.id === test?.id ? 'font-medium' : 'text-accent hover:underline'}>
-                  Test {r.id}: {r.segment}
+                  Test {r.id}: {r.segment}, {r.mode === 'people' ? 'people first' : 'companies first'}
                 </Link>
                 <span className="ml-2 text-xs text-muted">{formatDateTime(r.startedAt)}, {r.status}</span>
               </li>
