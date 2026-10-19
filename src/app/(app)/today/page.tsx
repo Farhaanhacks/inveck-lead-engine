@@ -2,8 +2,9 @@ import { bestEffort } from '@/lib/best-effort';
 import { atMostEvery } from '@/lib/throttle';
 
 import { TierBadge } from '@/components/tier-badge';
-import { SubmitButton } from '@/components/submit-button';
+import { StepActions, TaskButton, TaskForm } from '@/components/step-actions';
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { ensureResearch, liveServices, requestOrigin, startRefetchIfWaiting } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
@@ -32,6 +33,7 @@ import {
   CA_WAITING_STEP,
   ensureLinkedinSteps,
   ensureSequences,
+  isFirstContact,
   isCaSegment,
   istDay,
   laterToday,
@@ -50,7 +52,7 @@ import { normSegment } from '@/lib/icp-match';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, completeTaskAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
+import { clockInAction, clockOutAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { PhoneLinks } from '@/components/phone-links';
@@ -124,12 +126,12 @@ function Reach({ lead, emails = [] }: { lead: Lead; emails?: string[] }) {
 
 function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
   return (
-    <form action={completeTaskAction} className="flex flex-wrap gap-2">
+    <TaskForm className="flex flex-wrap gap-2">
       <input type="hidden" name="id" value={id} />
       {buttons.map(([value, label]) => (
-        <SubmitButton key={value} name="outcome" value={value} className={SMALL} pendingText={label}>{label}</SubmitButton>
+        <TaskButton key={value} name="outcome" value={value} className={SMALL} pendingText="Saving…">{label}</TaskButton>
       ))}
-    </form>
+    </TaskForm>
   );
 }
 
@@ -140,7 +142,7 @@ function CallActions({ task, waTo, waAgreed }: { task: Task; waTo: string; waAgr
       {/* Opens in place, under the buttons, so nothing can cut it off on any screen. */}
       <details className="group open:basis-full">
         <summary className="btn-primary list-none px-2.5 py-1 text-xs group-open:ring-2 group-open:ring-accent/30 [&::-webkit-details-marker]:hidden">Connected</summary>
-        <form action={completeTaskAction} className="mt-3 w-[min(28rem,calc(100vw-5rem))] space-y-2 rounded-lg border border-line bg-surface-2 p-4">
+        <TaskForm className="mt-3 w-[min(28rem,calc(100vw-5rem))] space-y-2 rounded-lg border border-line bg-surface-2 p-4">
           <input type="hidden" name="id" value={task.id} />
           <label htmlFor={`note-${task.id}`} className="label">What was discussed *</label>
           <textarea id={`note-${task.id}`} name="note" rows={3} required className="field" placeholder="Spoke with the Plant Head about their current stock count process." />
@@ -161,8 +163,8 @@ function CallActions({ task, waTo, waAgreed }: { task: Task; waTo: string; waAgr
           <p className="text-xs text-muted">
             {NOT_INTERESTED.join(', ')}: the WhatsApp, email and LinkedIn for this company are ticked off, nothing more goes out. {CLIENT_OUTCOMES.join(', ')}: the same, and the company goes on the clients sheet (Won, or Existing Client). Demo completed: moves it to Meeting Booked. Any other outcome: still send today&apos;s WhatsApp, email and LinkedIn request; the later follow-up rounds stop. A date adds a callback to the top of your list on that day; today&apos;s date means this evening at 5 pm (from 2 pm, the next working morning).
           </p>
-          <SubmitButton name="outcome" value="connected" pendingText="Saving…">Save call</SubmitButton>
-        </form>
+          <TaskButton name="outcome" value="connected" className="btn-primary">Save call</TaskButton>
+        </TaskForm>
       </details>
     </div>
   );
@@ -245,7 +247,7 @@ function Step({
         {readOnly ? (
           <span className="text-xs text-muted">Only {bda} can log this</span>
         ) : (
-          <div className="flex flex-wrap items-start gap-2">
+          <StepActions className="flex flex-wrap items-start gap-2">
             {task.kind === 'call' &&
               (finding ? <Outcome id={task.id} buttons={[['skipped', 'Skip for today']]} /> : <CallActions task={task} waTo={whatsapp?.to ?? ''} waAgreed={!!whatsapp?.agreed} />)}
             {task.kind === 'whatsapp' &&
@@ -295,7 +297,7 @@ function Step({
                   <Outcome id={task.id} buttons={isCaSegment(lead.segment) ? [['sent', 'Request sent'], ['already_sent', 'Already sent a request'], ['skipped', 'Not on LinkedIn: call instead']] : [['sent', 'Request sent'], ['skipped', 'Skip']]} />
                 </>
               ))}
-          </div>
+          </StepActions>
         )}
         {!readOnly && askPhone && !finding && (
           <FoundDetail
@@ -564,6 +566,8 @@ const PREVIEW = 10;
 
 const TABS = [
   { key: 'all', label: 'To do' },
+  { key: 'fresh', label: 'Fresh leads' },
+  { key: 'followup', label: 'Follow-up' },
   { key: 'done', label: 'Done today' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
@@ -571,10 +575,13 @@ type TabKey = (typeof TABS)[number]['key'];
 export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const me = (await getCurrentUser())!;
   const db = await getDb();
+  // Logging a step redraws this page in the same request as the click. None of the housekeeping below is needed to
+  // show what was just saved, so that redraw skips it (it runs on the next visit, as before).
+  const fromAction = (await headers()).has('next-action');
   // Housekeeping before the list is drawn; none of it can stop the page from showing.
   // Run every couple of minutes, not before every click: Show all, a filter or a logged step redraws
   // the page, and none of these need to run again for it.
-  await atMostEvery('today:housekeeping', HOUSEKEEPING_EVERY, async () => {
+  if (!fromAction) await atMostEvery('today:housekeeping', HOUSEKEEPING_EVERY, async () => {
     await bestEffort('assigning inbound leads', () => assignUnowned(db), 0);
     await bestEffort('the morning draw', () => runDailyDraw(db), null);
     // Leads that turned up since a short draw go to the associates still short, in the segment they were short in.
@@ -592,7 +599,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // The right person on every card before it's drawn (a plant head over someone off the lists, nobody
   // who has left); anything not yet checked on LinkedIn is checked right after the page is sent.
   // Like the housekeeping above: once every couple of minutes per person, not on every click.
-  const tidyNow = !!viewId && (await atMostEvery(`today:tidy:${viewId}`, HOUSEKEEPING_EVERY, async () => true, false));
+  const tidyNow = !fromAction && !!viewId && (await atMostEvery(`today:tidy:${viewId}`, HOUSEKEEPING_EVERY, async () => true, false));
   const switched = tidyNow ? await bestEffort('tidying contacts', () => tidyContacts(db, { ownerId: viewId }), [] as number[]) : [];
   // A LinkedIn request for anyone on today's list whose current contact hasn't been sent one.
   if (viewId) await bestEffort('planning LinkedIn requests', () => ensureLinkedinSteps(db, viewId), 0);
@@ -669,7 +676,13 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const doneOf = (leadId: number) => doneAll.filter((d) => d.lead.id === leadId).map((d) => d.task);
   const linkedinFull = counts.linkedinSent >= DAILY_LINKEDIN_LIMIT;
   const done = doneAll.filter((d) => inSeg(d.lead) && (!needle || [d.lead.company, d.lead.contactName].some((v) => v.toLowerCase().includes(needle))));
-  const tabCount = (k: TabKey) => (k === 'done' ? done.length : groups.length);
+  // Fresh leads: companies on their first contact that were allocated today (drawn today, or whose first steps are due
+  // today). Follow-up: companies on a follow-up or CA round, a promised callback or a call again. Same task definitions as
+  // the rest of Today; nothing about allocation or scheduling changes.
+  const isFresh = (g: CompanyGroup) => !g.priority && g.items.every((i) => isFirstContact(i.task)) && (g.lead.drawnOn === day || g.items.some((i) => i.task.dueDate === day));
+  const isFollowUp = (g: CompanyGroup) => g.priority || g.items.some((i) => !isFirstContact(i.task));
+  const inTab = (g: CompanyGroup) => (tab === 'fresh' ? isFresh(g) : tab === 'followup' ? isFollowUp(g) : true);
+  const tabCount = (k: TabKey) => (k === 'done' ? done.length : k === 'fresh' ? groups.filter(isFresh).length : k === 'followup' ? groups.filter(isFollowUp).length : groups.length);
   const link = (next: Record<string, string>) => {
     const p = new URLSearchParams({
       ...(me.role === 'admin' && viewId ? { user: String(viewId) } : {}),
@@ -682,7 +695,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     return `/today${p.size ? `?${p}` : ''}`;
   };
   const showDone = tab === 'done';
-  const shownGroups = groups;
+  const shownGroups = groups.filter(inTab);
   const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];

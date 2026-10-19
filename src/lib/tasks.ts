@@ -7,6 +7,13 @@ import { activities, companyDays, icps, leads, people, tasks, type Lead, type Ta
 export const DAILY_LINKEDIN_LIMIT = 50;
 /** The step that asks the team for a person to contact (nobody confirmed at the company's site yet). */
 export const FIND_NEXT_STEP = 'Find the next person';
+
+/**
+ * A step of a company's first contact (its Day 1 plan, a LinkedIn request awaiting acceptance, choosing a contact):
+ * not a follow-up or CA round, a promised callback, or a call again.
+ */
+export const isFirstContact = (t: Pick<Task, 'step' | 'priority' | 'followUpRound' | 'caRound'>) =>
+  !t.priority && t.followUpRound === 0 && t.caRound === 0 && (t.step === 'Day 1' || t.step === FIND_NEXT_STEP || t.step === CA_WAITING_STEP);
 /** After this many unanswered calls to one person, stop the automatic call-again reminders: try the next person (P2). */
 export const MAX_CALL_ATTEMPTS = 5;
 /** Calls each person should attempt in a day. */

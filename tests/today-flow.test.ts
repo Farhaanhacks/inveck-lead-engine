@@ -139,3 +139,17 @@ describe('calls attempted', () => {
     expect(c.connectedCalls).toBe(1);
   });
 });
+
+describe('Fresh leads and Follow-up on Today', () => {
+  it('first-contact steps are told apart from follow-up rounds, CA rounds, callbacks and calls again', async () => {
+    const { isFirstContact, CA_WAITING_STEP } = await import('@/lib/tasks');
+    const t = (extra: Partial<{ step: string; priority: boolean; followUpRound: number; caRound: number }>) => ({ step: 'Day 1', priority: false, followUpRound: 0, caRound: 0, ...extra });
+    expect(isFirstContact(t({}))).toBe(true);
+    expect(isFirstContact(t({ step: FIND_NEXT_STEP }))).toBe(true);
+    expect(isFirstContact(t({ step: CA_WAITING_STEP }))).toBe(true);
+    expect(isFirstContact(t({ step: 'Follow-up 2', followUpRound: 2 }))).toBe(false);
+    expect(isFirstContact(t({ step: 'Not accepted on LinkedIn', caRound: 1 }))).toBe(false);
+    expect(isFirstContact(t({ step: 'Promised callback', priority: true }))).toBe(false);
+    expect(isFirstContact(t({ step: 'Call again' }))).toBe(false);
+  });
+});
