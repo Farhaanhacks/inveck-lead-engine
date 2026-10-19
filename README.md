@@ -154,13 +154,19 @@ page or its Today step.
 
 ### Sourcing test
 
-**Dashboard → Sourcing test** (administrators) tries a different way of finding companies, without
-touching the pipeline. It searches Google for companies' LinkedIn pages in a segment's industries and
-clusters, screens each on what the page shows (headquarters in India, size against the ICP, an
-industry the ICP covers, not already a lead, client or on INVECK's lists), then searches the staff of
-the ones that pass on LinkedIn to see whether anyone on the ICP's P1/P2/P3 lists works there. It uses
-Serper only (no AI), saves nothing but its report (no leads, no prospect history, nothing sent) and
-shows the funnel, every company with its outcome, and each search with what it found.
+**Dashboard → Sourcing test** (administrators) tries new ways of finding companies, without touching
+the pipeline. It uses Serper only (no AI) and saves nothing but its report: no leads, no prospect
+history, nothing sent.
+
+- **People first** (the default): searches LinkedIn, through Google, for people with the ICP's P1/P2
+  titles in the segment's industries and clusters ("Plant Head" "forging" Pune). Each person's current
+  employer is read as strictly as the contact search reads it (current job there, in India, title on
+  the P1/P2/P3 lists); then each of those companies' LinkedIn pages is screened on size, industry,
+  headquarters and whether INVECK already has it. A company that passes comes with its contacts.
+- **Companies first**: searches for companies' LinkedIn pages, screens them the same way, then searches
+  the staff of those that pass to see whether anyone on the lists works there.
+
+Each report shows the funnel, every company with its outcome, and each search with what it found.
 
 ## Deploy on Vercel
 

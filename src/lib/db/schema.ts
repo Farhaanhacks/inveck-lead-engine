@@ -570,7 +570,9 @@ export type SheetFirm = typeof sheetFirms.$inferSelect;
 export const sourcingTests = pgTable('sourcing_tests', {
   id: serial('id').primaryKey(),
   segment: text('segment').notNull(),
-  /** Companies to check for people. */
+  /** 'companies': company pages first, then their people; 'people': people with the ICP's titles first, then their companies. */
+  mode: text('mode').$type<'companies' | 'people'>().notNull().default('companies'),
+  /** Companies to check (for people, or on LinkedIn when people come first). */
   companies: integer('companies').notNull().default(30),
   status: text('status').$type<'running' | 'done' | 'failed'>().notNull().default('running'),
   progress: text('progress').notNull().default(''),

@@ -18,7 +18,8 @@ export async function startSourcingTestAction(form: FormData) {
   const db = await getDb();
   const running = await activeSourcingTest(db);
   if (running) redirect(`/sourcing?test=${running.id}`);
-  const [test] = await db.insert(sourcingTests).values({ segment, companies, startedBy: user.id, progress: 'Starting…' }).returning({ id: sourcingTests.id });
+  const mode = form.get('mode') === 'companies' ? 'companies' : 'people';
+  const [test] = await db.insert(sourcingTests).values({ segment, mode, companies, startedBy: user.id, progress: 'Starting…' }).returning({ id: sourcingTests.id });
   after(async () => runSourcingTest(await getDb(), await liveServices(), test.id));
   redirect(`/sourcing?test=${test.id}`);
 }

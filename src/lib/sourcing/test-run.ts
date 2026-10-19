@@ -6,8 +6,9 @@ import { googleSearch, mapLimit, type SerperResult, type Services } from '../pip
 import { searchLinkedIn } from '../pipeline/contacts';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
-import { tierOf } from '../tiers';
+import { contactPriority, tierOf } from '../tiers';
 import { factsQuery, hqAbroad, needsFacts, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
+import { companyQuery, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
 
 /**
  * The sourcing test: finds companies through their LinkedIn pages, screens them on what the page
@@ -94,6 +95,69 @@ export function funnelOf(report: Pick<SourcingReport, 'companies'>): Funnel {
   };
 }
 
+export type PeopleQueryReport = { q: string; form: PeopleQuery['form']; page: number; results: number; profiles: number; onLists: number; newCompanies: number; error?: string };
+export type PeopleCompany = {
+  /** The company as its people write it. */
+  employer: string;
+  /** Its LinkedIn page, once found. */
+  page: CompanyPage | null;
+  screen: CompanyReport['screen'] | 'nopage' | 'unchecked';
+  note: string;
+  facts?: string;
+  /** The people found there who can be contacts, best first. */
+  contacts: FoundContact[];
+};
+/** A people-first test: people with the ICP's titles, then their companies. */
+export type PeopleReport = {
+  mode: 'people';
+  segment: string;
+  companySize: string;
+  queries: PeopleQueryReport[];
+  /** Everyone the searches found, with why each can't be a contact ('' when they can). */
+  people: FoundContact[];
+  companies: PeopleCompany[];
+  searches: { people: number; companies: number; facts: number };
+  seconds: number;
+  stoppedEarly?: string;
+};
+
+export const isPeopleReport = (r: unknown): r is PeopleReport => (r as PeopleReport | null)?.mode === 'people';
+
+export type PeopleFunnel = {
+  profiles: number;
+  contacts: number;
+  companies: number;
+  known: number;
+  checked: number;
+  nopage: number;
+  abroad: number;
+  small: number;
+  industry: number;
+  ready: number;
+  readyWithP1: number;
+  unchecked: number;
+};
+
+/** The counts at each step: people found, those who can be contacts, their companies, and the companies that pass. */
+export function peopleFunnelOf(r: Pick<PeopleReport, 'people' | 'companies'>): PeopleFunnel {
+  const by = (s: PeopleCompany['screen']) => r.companies.filter((c) => c.screen === s).length;
+  const ready = r.companies.filter((c) => c.screen === 'pass');
+  return {
+    profiles: r.people.length,
+    contacts: r.people.filter((p) => !p.why).length,
+    companies: r.companies.length,
+    known: by('known'),
+    checked: r.companies.filter((c) => c.screen !== 'known' && c.screen !== 'unchecked').length,
+    nopage: by('nopage'),
+    abroad: by('abroad'),
+    small: by('small'),
+    industry: by('industry'),
+    ready: ready.length,
+    readyWithP1: ready.filter((c) => c.contacts.some((p) => p.tier === 'P1')).length,
+    unchecked: by('unchecked'),
+  };
+}
+
 type SearchIcp = Pick<Icp, 'segment' | 'industries' | 'companySize' | 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'>;
 
 /** The segment's ICP as INVECK has it now (the starting one when it was never saved). */
@@ -135,6 +199,7 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
   const started = Date.now();
   const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
   if (!test || test.status !== 'running') return;
+  if (test.mode === 'people') return runPeopleFirst(db, svc, test, started);
   const segment = validSegment(test.segment);
   const report: SourcingReport = { segment: test.segment, companySize: '', queries: [], companies: [], searches: { find: 0, facts: 0, people: 0 }, seconds: 0 };
   // Saves one at a time, so a slower save never overwrites a newer one.
@@ -259,6 +324,133 @@ export async function runSourcingTest(db: Db, svc: Services, id: number): Promis
       status: 'done',
       finishedAt: new Date(),
       progress: `${f.found} company pages found, ${f.passed} passed the screen, ${f.checked} checked: ${f.reachable} with a reachable contact (${f.withP1} with a P1). ${report.searches.find + factSearches + report.searches.people} Google searches.`,
+    });
+  } catch (e) {
+    await save({ status: 'failed', finishedAt: new Date(), error: errorMessage(e), progress: '' });
+  }
+  await saving;
+}
+
+/**
+ * People first: Google searches for LinkedIn profiles with the ICP's titles (plant heads, supply chain
+ * heads…) in the segment's industries and clusters; each person's current employer, read as strictly
+ * as the contact search does; then each company's LinkedIn page, screened on size, industry,
+ * headquarters and whether INVECK already has it. A company that passes comes with its contacts.
+ */
+async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started: number): Promise<void> {
+  const segment = validSegment(test.segment);
+  const report: PeopleReport = { mode: 'people', segment: test.segment, companySize: '', queries: [], people: [], companies: [], searches: { people: 0, companies: 0, facts: 0 }, seconds: 0 };
+  let saving: Promise<unknown> = Promise.resolve();
+  const save = (set: Partial<typeof sourcingTests.$inferInsert>) => {
+    report.seconds = Math.round((Date.now() - started) / 1000);
+    const values = { ...set, report: JSON.parse(JSON.stringify(report)) };
+    saving = saving.then(() => db.update(sourcingTests).set(values).where(eq(sourcingTests.id, test.id))).catch(() => {});
+    return saving;
+  };
+  const searches = report.searches;
+  const counting = (phase: keyof PeopleReport['searches']): Services => ({ ...svc, fetch: ((input, init) => (isSerper(input) && searches[phase]++, svc.fetch(input, init))) as typeof fetch });
+  const search = async (via: Services, q: string, page = 1): Promise<{ results: SerperResult[]; error?: string }> => {
+    try {
+      return { results: await googleSearch(via, q, page) };
+    } catch (e) {
+      return { results: [], error: errorMessage(e) };
+    }
+  };
+  try {
+    if (!segment) throw new Error(`Not a segment the test can search: ${test.segment}`);
+    if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set: the test searches Google through Serper.');
+    const icp = await icpFor(db, segment);
+    report.companySize = icp.companySize;
+    const known = await knownToInveck(db);
+    const plan = planPeopleQueries(segment, icp, SOURCING_LIMITS.searches, test.id);
+    if (!plan.length) throw new Error(`The ${segment} ICP has no P1 or P2 titles to search for (ICPs & clients).`);
+
+    // Phase 1: people with the titles, and their companies.
+    const peopleSvc = counting('people');
+    await save({ progress: `Searching LinkedIn for ${segment} people with your titles (${plan.length} searches)…` });
+    const seen = new Set<string>();
+    const byCompany = new Map<string, PeopleCompany>();
+    const profileKey = (url: string) => url.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '').replace(/\/+$/, '');
+    const absorb = (pq: PeopleQuery, page: number, got: { results: SerperResult[]; error?: string }): PeopleQueryReport => {
+      let profiles = 0;
+      let onLists = 0;
+      let newCompanies = 0;
+      for (const r of got.results) {
+        const person = readPerson(r, icp);
+        if (!person) continue;
+        profiles++;
+        if (seen.has(profileKey(person.linkedin))) continue;
+        seen.add(profileKey(person.linkedin));
+        report.people.push(person);
+        const key = normCompany(person.employer);
+        if (person.why || !key) continue;
+        onLists++;
+        let c = byCompany.get(key);
+        if (!c) {
+          c = { employer: person.employer, page: null, screen: 'unchecked', note: '', contacts: [] };
+          byCompany.set(key, c);
+          newCompanies++;
+        }
+        c.contacts.push(person);
+      }
+      const r: PeopleQueryReport = { q: pq.q, form: pq.form, page, results: got.results.length, profiles, onLists, newCompanies, ...(got.error ? { error: got.error } : {}) };
+      report.queries.push(r);
+      return r;
+    };
+    const first = await mapLimit(plan, 4, (pq) => search(peopleSvc, pq.q));
+    if (first.every((g) => g.error)) throw new Error(`Google search failed: ${first[0]?.error ?? 'no searches'}`);
+    const firstReports = plan.map((pq, i) => absorb(pq, 1, first[i]));
+    // A full page with several people on the lists: the next page is worth a search.
+    const more = plan.filter((_, i) => firstReports[i].results >= 10 && firstReports[i].onLists >= 4).slice(0, SOURCING_LIMITS.secondPages);
+    const second = await mapLimit(more, 4, (pq) => search(peopleSvc, pq.q, 2));
+    more.forEach((pq, i) => absorb(pq, 2, second[i]));
+
+    // Best contact first in each company; the companies with the best contacts are checked first.
+    const rank = (p: FoundContact) => contactPriority(p.title, icp);
+    for (const c of byCompany.values()) c.contacts.sort((a, b) => rank(a) - rank(b));
+    report.companies = [...byCompany.values()].sort((a, b) => rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
+    for (const c of report.companies) {
+      if (known.names.has(normCompany(c.employer))) Object.assign(c, { screen: 'known', note: 'already known to INVECK (a lead, a client or on its own lists)' });
+    }
+
+    // Phase 2: each company's LinkedIn page, and the screen.
+    const toCheck = report.companies.filter((c) => c.screen === 'unchecked').slice(0, test.companies);
+    const f0 = peopleFunnelOf(report);
+    await save({ progress: `Found ${f0.profiles} people, ${f0.contacts} on your lists at ${f0.companies} companies. Checking ${toCheck.length} of those companies on LinkedIn…` });
+    const companySvc = counting('companies');
+    const factSvc = counting('facts');
+    let checked = 0;
+    await mapLimit(toCheck, 4, async (c) => {
+      if (Date.now() - started > SOURCING_LIMITS.seconds * 1000) {
+        report.stoppedEarly = `Stopped checking companies after ${SOURCING_LIMITS.seconds}s; ${toCheck.length - checked} were not checked.`;
+        return;
+      }
+      const got = await search(companySvc, companyQuery(c.employer));
+      let page = got.error ? null : matchingPage(got.results, c.employer);
+      if (!page) {
+        Object.assign(c, { screen: 'nopage', note: got.error ? `search failed: ${got.error}` : `no LinkedIn company page found for "${c.employer}"` });
+      } else {
+        if (needsFacts(page)) {
+          const before = { size: page.size, industry: page.industry, hq: page.hq };
+          const again = await search(factSvc, factsQuery(page));
+          page = withFacts(page, again.results);
+          c.facts = again.error
+            ? `search failed: ${again.error}`
+            : [page.size !== before.size && page.size, page.industry !== before.industry && page.industry, page.hq !== before.hq && `HQ ${page.hq}`].filter(Boolean).join(', ');
+        }
+        c.page = page;
+        // Its people work in India, so it has a site here whatever its headquarters.
+        const s = screenPage({ ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` }, segment, icp.companySize, known);
+        Object.assign(c, { screen: s.pass ? 'pass' : s.reason, note: s.note });
+      }
+      checked++;
+      await save({ progress: `Checked ${checked} of ${toCheck.length} companies on LinkedIn…` });
+    });
+    const f = peopleFunnelOf(report);
+    await save({
+      status: 'done',
+      finishedAt: new Date(),
+      progress: `${f.profiles} people found, ${f.contacts} on your lists at ${f.companies} companies; ${f.checked} checked: ${f.ready} ready with a named contact (${f.readyWithP1} with a P1). ${searches.people + searches.companies + searches.facts} Google searches.`,
     });
   } catch (e) {
     await save({ status: 'failed', finishedAt: new Date(), error: errorMessage(e), progress: '' });

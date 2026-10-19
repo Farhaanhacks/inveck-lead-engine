@@ -6,7 +6,8 @@ import { DEFAULT_ICPS, LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema } from '@/lib/settings';
 import type { Services } from '@/lib/pipeline/services';
 import { bandsFor, companyPageUrl, factsQuery, hqAbroad, pageName, planQueries, readCompanyPage, screenPage, withFacts, type Known } from '@/lib/sourcing/linkedin-pages';
-import { activeSourcingTest, funnelOf, runSourcingTest, type SourcingReport } from '@/lib/sourcing/test-run';
+import { activeSourcingTest, funnelOf, isPeopleReport, peopleFunnelOf, runSourcingTest, type PeopleReport, type SourcingReport } from '@/lib/sourcing/test-run';
+import { companyQuery, matchingPage, planPeopleQueries, readPerson, searchTitles } from '@/lib/sourcing/people-first';
 import { employeeTarget } from '@/lib/pipeline/fit';
 
 const MFG_SIZE = DEFAULT_ICPS.find((i) => i.segment === MANUFACTURING)!.companySize;
@@ -242,5 +243,122 @@ describe('a test run', () => {
     expect(stale.status).toBe('failed');
     const [fresh] = await db.insert(sourcingTests).values({ segment: MANUFACTURING }).returning();
     expect((await activeSourcingTest(db))?.id).toBe(fresh.id);
+  });
+});
+
+describe('people first', () => {
+  const mfg = DEFAULT_ICPS.find((i) => i.segment === MANUFACTURING)!;
+  const log = DEFAULT_ICPS.find((i) => i.segment === LOGISTICS)!;
+  const person = (name: string, role: string, company: string, place: string, slug = name.toLowerCase().replace(/\s+/g, '-')) => ({
+    title: `${name} - ${role} - ${company} | LinkedIn`,
+    link: `https://in.linkedin.com/in/${slug}`,
+    subtitle: `${place} · ${role} · ${company}`,
+    snippet: '',
+  });
+
+  it('searches the titles on the ICP lists, plant heads first, never a bare level, and keeps every third search open', () => {
+    const titles = searchTitles(mfg);
+    expect(titles.slice(0, 2)).toEqual(['Plant Head', 'Plant Manager']);
+    expect(titles).toContain('Head of Supply Chain');
+    expect(titles).not.toContain('General Manager');
+    expect(titles).not.toContain('DGM');
+    expect(searchTitles(log)).toContain('National Head');
+    const plan = planPeopleQueries(MANUFACTURING, mfg, 24, 1);
+    expect(plan).toHaveLength(24);
+    expect(new Set(plan.map((p) => p.q)).size).toBe(24);
+    expect(plan.filter((p) => p.form === 'open')).toHaveLength(8);
+    expect(plan[0].q).toMatch(/^site:linkedin\.com\/in "Plant Head" "[^"]+" \S/);
+    expect(plan[2].q).toMatch(/^site:linkedin\.com\/in "[^"]+" [A-Z]/);
+  });
+
+  it("reads each person's current employer, and keeps only people on the lists, in India, with a current job", () => {
+    expect(readPerson(person('Ravi Kulkarni', 'Plant Head', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'), mfg)).toMatchObject({ name: 'Ravi Kulkarni', title: 'Plant Head', tier: 'P1', employer: 'Acme Forgings Pvt Ltd', why: '' });
+    expect(readPerson(person('John Smith', 'Plant Manager', 'Acme Corp', 'Detroit, Michigan, United States'), mfg)?.why).toMatch(/outside India/);
+    expect(readPerson(person('Hari Rao', 'HR Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'), mfg)).toMatchObject({ tier: '', why: "HR Manager: not on the ICP's lists" });
+    expect(readPerson(person('Asha Nair', 'Consultant', 'Self-employed', 'Pune, Maharashtra, India'), mfg)?.why).toBe('no current employer shown');
+    expect(readPerson({ title: 'Acme Forgings | LinkedIn', link: 'https://in.linkedin.com/company/acme-forgings' }, mfg)).toBeNull();
+  });
+
+  it("finds the company's own page by the name its people write, never a longer name that only starts the same", () => {
+    const page = (slug: string, name: string) => ({ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet: 'Company size: 201-500 employees' });
+    expect(matchingPage([page('acme-forgings-india', 'Acme Forgings India')], 'Acme Forgings Pvt Ltd')?.name).toBe('Acme Forgings India');
+    expect(matchingPage([page('bharat-gears-ltd', 'Bharat Gears Limited Faridabad')], 'Bharat Gears')?.name).toBe('Bharat Gears Limited Faridabad');
+    expect(matchingPage([page('tata-motors', 'Tata Motors')], 'Tata')).toBeNull();
+    expect(companyQuery('Acme Forgings Pvt Ltd')).toBe('site:linkedin.com/company "Acme Forgings"');
+  });
+
+  describe('a run', () => {
+    let db: Db;
+    beforeEach(async () => {
+      process.env.DATABASE_URL = 'memory://';
+      resetDbForTests();
+      db = await getDb();
+    });
+
+    const PEOPLE = [
+      person('Ravi Kulkarni', 'Plant Head', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
+      person('Meena Joshi', 'Store Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
+      person('Suresh Kumar', 'Plant Head', 'MEI Brakes', 'Chennai, Tamil Nadu, India'),
+      person('Kiran Patil', 'Plant Head', 'Tiny Works', 'Ludhiana, Punjab, India'),
+      person('Anil Shah', 'Plant Head', 'Known Forge', 'Rajkot, Gujarat, India'),
+      person('Priya Rao', 'Plant Head', 'Pharma Co', 'Hyderabad, Telangana, India'),
+      person('Sam Das', 'Plant Head', 'Ghost Gears', 'Kolkata, West Bengal, India'),
+      person('Hari Rao', 'HR Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
+      person('John Smith', 'Plant Manager', 'Acme Corp', 'Detroit, Michigan, United States'),
+    ];
+    const pageOf = (slug: string, name: string, snippet: string) => [{ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet }];
+    const BY_NAME: Record<string, unknown[]> = {
+      'Acme Forgings': pageOf('acme-forgings', 'Acme Forgings Pvt Ltd', 'Industry: Motor Vehicle Parts Manufacturing. Company size: 201-500 employees. Headquarters: Pune, Maharashtra'),
+      'MEI Brakes': pageOf('mei-brakes', 'MEI Brakes', 'MEI Brakes | 794 followers on LinkedIn. Brakes For The Long Haul.'),
+      'Tiny Works': pageOf('tiny-works', 'Tiny Works', 'Industry: Machinery Manufacturing. Company size: 11-50 employees. Headquarters: Ludhiana, Punjab'),
+      'Pharma Co': pageOf('pharma-co', 'Pharma Co', 'Industry: Pharmaceutical Manufacturing. Company size: 1,001-5,000 employees. Headquarters: Hyderabad, Telangana'),
+    };
+    const FACTS: Record<string, unknown[]> = {
+      'mei-brakes': pageOf('mei-brakes', 'MEI Brakes', 'Industry Motor Vehicle Parts Manufacturing Company size 501-1,000 employees Headquarters Sheffield, South Yorkshire Type Privately Held'),
+    };
+
+    function fake(searches: string[]): Services {
+      const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+      const fetchFn = (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
+        const q = String(JSON.parse(String(init.body)).q);
+        searches.push(q);
+        if (q.startsWith('site:linkedin.com/in ')) return json({ organic: PEOPLE });
+        const one = /^site:linkedin\.com\/company\/(\S+) /.exec(q)?.[1];
+        if (one) return json({ organic: FACTS[one] ?? [] });
+        const name = /^site:linkedin\.com\/company "([^"]+)"/.exec(q)?.[1] ?? '';
+        return json({ organic: BY_NAME[name] ?? [] });
+      }) as typeof fetch;
+      return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
+    }
+
+    it('finds people, checks their companies, and keeps only the fitting new ones, each with its contacts; nothing else is saved', async () => {
+      await db.insert(leads).values({ company: 'Known Forge Ltd', segment: MANUFACTURING, source: 'test' });
+      const leadsBefore = (await db.select().from(leads)).length;
+      const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 10 }).returning();
+      const searches: string[] = [];
+      await runSourcingTest(db, fake(searches), test.id);
+      const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, test.id));
+      expect(row.status).toBe('done');
+      const report = row.report as PeopleReport;
+      expect(isPeopleReport(report)).toBe(true);
+      const by = Object.fromEntries(report.companies.map((c) => [c.employer, c]));
+      expect(by['Acme Forgings Pvt Ltd']).toMatchObject({ screen: 'pass' });
+      expect(by['Acme Forgings Pvt Ltd'].contacts.map((p) => [p.name, p.tier])).toEqual([
+        ['Ravi Kulkarni', 'P1'],
+        ['Meena Joshi', 'P3'],
+      ]);
+      // Based in England, its plant head in Chennai: a prospect for that site.
+      expect(by['MEI Brakes']).toMatchObject({ screen: 'pass', note: 'headquartered abroad (Sheffield, South Yorkshire), with a site in Chennai; size 501-1,000 employees' });
+      expect(by['Tiny Works']).toMatchObject({ screen: 'small' });
+      expect(by['Pharma Co']).toMatchObject({ screen: 'industry' });
+      expect(by['Known Forge']).toMatchObject({ screen: 'known' });
+      expect(by['Ghost Gears']).toMatchObject({ screen: 'nopage' });
+      expect(peopleFunnelOf(report)).toEqual({ profiles: 9, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 1, abroad: 0, small: 1, industry: 1, ready: 2, readyWithP1: 2, unchecked: 0 });
+      // The known company isn't looked up; MEI Brakes' size needed a second search.
+      expect(searches.some((q) => q.includes('"Known Forge"'))).toBe(false);
+      expect(report.searches).toMatchObject({ companies: 5, facts: 1 });
+      expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
+      expect((await db.select().from(leads)).length).toBe(leadsBefore);
+    });
   });
 });

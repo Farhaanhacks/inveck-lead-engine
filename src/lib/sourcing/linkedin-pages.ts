@@ -65,7 +65,7 @@ export type PlannedQuery = {
 };
 
 /** A stable shuffle, different for each seed, so each test searches other keywords and places. */
-function shuffled<T>(list: T[], seed: number): T[] {
+export function shuffled<T>(list: T[], seed: number): T[] {
   const out = [...list];
   let s = (seed * 2654435761 + 1013904223) >>> 0;
   for (let i = out.length - 1; i > 0; i--) {
@@ -209,6 +209,15 @@ const EXCLUDED_INDUSTRY: Record<SourcingSegment, RegExp> = {
     /\b(software|it services|internet|staffing|recruiting|education|real estate|leasing|construction|marketing|advertising|financial|banking|insurance|retail|government|airlines?|travel|hospitality)\b/i,
 };
 
+/**
+ * Industries the ICP covers, by LinkedIn's label (current and older names): a company in another one
+ * (cement, oil and gas, mining, trading) isn't in the segment, whatever its people do.
+ */
+const INCLUDED_INDUSTRY: Record<SourcingSegment, RegExp> = {
+  [MANUFACTURING]: /\b(manufactur\w*|machinery|automotive|motor vehicle|industrial|mechanical|electrical|aviation|aerospace|defen[cs]e|metals?|automation|railroad|shipbuilding|transportation equipment|appliances)\b/i,
+  [LOGISTICS]: /\b(logistics|supply chain|warehous\w*|storage|transportation|freight|truck\w*|shipping|maritime|package)\b/i,
+};
+
 /** Consumer delivery, out for 3PL: courier, parcel, last mile, B2C or D2C fulfilment. */
 const CONSUMER_DELIVERY = /\b(courier|parcel|last[\s-]?mile|hyperlocal|quick commerce|b2c|d2c|e-?commerce delivery|express delivery|food delivery|packers? (?:and|&) movers)\b/i;
 
@@ -236,6 +245,7 @@ export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize
   const top = p.size ? sizeBandTop(p.size) : null;
   if (target && top != null && top <= target / 2) return { pass: false, reason: 'small', note: `too small: ${p.size} against ${companySize}` };
   if (p.industry && EXCLUDED_INDUSTRY[segment].test(p.industry)) return { pass: false, reason: 'industry', note: `industry out of the ICP: ${p.industry}` };
+  if (p.industry && !INCLUDED_INDUSTRY[segment].test(p.industry)) return { pass: false, reason: 'industry', note: `industry not one the ICP covers: ${p.industry}` };
   if (segment === LOGISTICS && CONSUMER_DELIVERY.test(`${p.name} ${p.industry} ${p.text}`)) return { pass: false, reason: 'industry', note: `consumer delivery (courier, parcel, last mile or B2C), out of the 3PL ICP` };
   const domain = rootDomain(p.website);
   if (known.names.has(normCompany(p.name)) || (domain && known.domains.has(domain))) return { pass: false, reason: 'known', note: 'already known to INVECK (a lead, a client or on its own lists)' };
