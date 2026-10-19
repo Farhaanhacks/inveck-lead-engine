@@ -21,7 +21,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
   // Connecting Outlook happens in the browser: log in, then back to the Account page to connect.
-  if (request.nextUrl.pathname.startsWith('/api/mail/')) {
+  if (request.nextUrl.pathname.startsWith('/api/auth/microsoft/')) {
     const login = new URL('/login', request.url);
     login.searchParams.set('next', '/account');
     return NextResponse.redirect(login);

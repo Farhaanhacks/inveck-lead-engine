@@ -5,31 +5,38 @@ import { mailboxes, type Mailbox } from '../db/schema';
 
 /**
  * Sending email from each team member's own Outlook mailbox (Microsoft 365), through Microsoft's
- * official sign-in and Microsoft Graph. The app is registered once in Microsoft Entra (see README);
- * its details come from the server's environment, never from the database or the screen:
- * MS_CLIENT_ID, MS_CLIENT_SECRET, MS_TENANT_ID (INVECK's tenant; "organizations" when unset) and
- * MAIL_TOKEN_KEY (a long random string the stored connections are encrypted with).
+ * official sign-in (authorization-code flow, on the server) and Microsoft Graph. The app is registered
+ * once in Microsoft Entra (see README); its details come from the server's environment, never from the
+ * database or the screen: MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET,
+ * MICROSOFT_REDIRECT_URI and MICROSOFT_TOKEN_ENCRYPTION_KEY (a long random string the stored
+ * connections are encrypted with).
  */
 const LOGIN = 'https://login.microsoftonline.com';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
-/** Stay connected (refresh token), know the mailbox's address, and write, send and reply to mail. */
-export const OUTLOOK_SCOPES = 'offline_access openid email User.Read Mail.ReadWrite';
-/** Where Microsoft sends the person back after they sign in. */
-export const CALLBACK_PATH = '/api/mail/callback';
+/** Send mail, know the mailbox's address, and stay connected (refresh token). Nothing that reads mail. */
+export const OUTLOOK_SCOPES = 'offline_access openid email User.Read Mail.Send';
+/** Where Microsoft sends the person back after they sign in (the Entra registration says the same). */
+export const CALLBACK_PATH = '/api/auth/microsoft/callback';
 /** The sign-in attempt, kept for ten minutes so the answer can be checked against it. */
-export const STATE_COOKIE = 'mail_oauth_state';
+export const STATE_COOKIE = 'microsoft_oauth_state';
+export const STATE_COOKIE_PATH = '/api/auth/microsoft';
 const TIMEOUT_MS = 30_000;
 
-export type MailConfig = { clientId: string; clientSecret: string; tenant: string; tokenKey: string };
+export type MailConfig = { clientId: string; clientSecret: string; tenant: string; tokenKey: string; redirectUri: string };
 
-/** The app registration, or null until all of it is set on the server. */
+/** The app registration, or null until all of it is set on the server (the key must be long enough to mean it). */
 export function mailConfig(): MailConfig | null {
-  const clientId = process.env.MS_CLIENT_ID?.trim();
-  const clientSecret = process.env.MS_CLIENT_SECRET?.trim();
-  const tokenKey = process.env.MAIL_TOKEN_KEY?.trim();
-  if (!clientId || !clientSecret || !tokenKey) return null;
-  return { clientId, clientSecret, tenant: process.env.MS_TENANT_ID?.trim() || 'organizations', tokenKey };
+  const env = (k: string) => process.env[k]?.trim() ?? '';
+  const clientId = env('MICROSOFT_CLIENT_ID');
+  const clientSecret = env('MICROSOFT_CLIENT_SECRET');
+  const tenant = env('MICROSOFT_TENANT_ID');
+  const tokenKey = env('MICROSOFT_TOKEN_ENCRYPTION_KEY');
+  if (!clientId || !clientSecret || !tenant || tokenKey.length < 32) return null;
+  return { clientId, clientSecret, tenant, tokenKey, redirectUri: env('MICROSOFT_REDIRECT_URI') };
 }
+
+/** The callback address: exactly MICROSOFT_REDIRECT_URI when set (production), else this site's own (local use). */
+export const redirectUriFor = (c: MailConfig, origin: string) => c.redirectUri || `${origin}${CALLBACK_PATH}`;
 
 /** A problem worth telling the person about. `reconnect`: their Outlook connection has to be made again. */
 export class MailError extends Error {
@@ -37,6 +44,8 @@ export class MailError extends Error {
     message: string,
     readonly reconnect = false,
     readonly status = 0,
+    /** The send may have gone: Microsoft didn't say either way. */
+    readonly unconfirmed = false,
   ) {
     super(message);
   }
@@ -104,26 +113,20 @@ async function token(c: MailConfig, params: Record<string, string>): Promise<Tok
   return { accessToken: data.access_token, refreshToken: data.refresh_token };
 }
 
-type GraphMessage = { id: string; conversationId?: string };
-
-async function graph<T>(accessToken: string, method: string, path: string, body?: unknown): Promise<T | null> {
+async function graph<T>(accessToken: string, method: string, path: string, body?: unknown): Promise<{ status: number; requestId: string; data: T | null }> {
   const res: Response = await fetch(`${GRAPH}${path}`, {
     method,
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      'content-type': 'application/json',
-      // Ids that stay the same when a draft moves to Sent Items, so a follow-up can reply to it later.
-      prefer: 'IdType="ImmutableId"',
-    },
+    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   }).catch(() => {
     throw noAnswer();
   });
-  if (res.status === 202 || res.status === 204) return null;
+  const requestId = res.headers.get('request-id') ?? res.headers.get('client-request-id') ?? '';
+  if (res.status === 202 || res.status === 204) return { status: res.status, requestId, data: null };
   const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
   if (!res.ok) throw new MailError(`Outlook didn't send it: ${(data.error?.message || `HTTP ${res.status}`).slice(0, 200)}`, res.status === 401, res.status);
-  return data as T;
+  return { status: res.status, requestId, data: data as T };
 }
 
 /** Finishes connecting: exchanges Microsoft's code for a lasting connection and saves it, encrypted. */
@@ -132,9 +135,12 @@ export async function connectMailbox(db: Db, userId: number, code: string, redir
   if (!c) throw new MailError("Outlook sending isn't set up on the server yet.");
   const t = await token(c, { grant_type: 'authorization_code', code, redirect_uri: redirectUri });
   if (!t.refreshToken) throw new MailError("Microsoft didn't allow the app to stay connected (offline access). Ask your Microsoft 365 administrator to allow it.");
-  const me = await graph<{ mail?: string | null; userPrincipalName?: string; displayName?: string }>(t.accessToken, 'GET', '/me?$select=mail,userPrincipalName,displayName');
+  const me = (await graph<{ mail?: string | null; userPrincipalName?: string; displayName?: string }>(t.accessToken, 'GET', '/me?$select=mail,userPrincipalName,displayName')).data;
   const address = (me?.mail || me?.userPrincipalName || '').trim().toLowerCase();
   if (!address) throw new MailError("Microsoft didn't say which mailbox this is.");
+  // One mailbox belongs to one CRM user: it can't also be linked to someone else's login.
+  const [taken] = await db.select({ userId: mailboxes.userId }).from(mailboxes).where(eq(mailboxes.address, address));
+  if (taken && taken.userId !== userId) throw new MailError(`${address} is already connected to another team member. Sign in with your own INVECK mailbox.`);
   const row = { userId, address, displayName: me?.displayName ?? '', refreshToken: seal(c, t.refreshToken), connectedAt: new Date(), lastError: '' };
   const [saved] = await db.insert(mailboxes).values(row).onConflictDoUpdate({ target: mailboxes.userId, set: row }).returning();
   return saved;
@@ -155,19 +161,23 @@ export type OutgoingMail = {
   subject: string;
   /** Plain text, sent as written. */
   body: string;
-  /** Outlook's id of an earlier email to the same person: this one goes as a reply in its thread. */
-  replyTo?: string;
+  /** Files sent with it (the product profile). */
+  attachments?: { name: string; contentType: string; bytes: Buffer }[];
 };
 
+/** What Graph said when it took the email: kept with the sent record and the lead's activity. */
+export type GraphReceipt = { from: string; status: number; requestId: string };
+
 /**
- * Sends one email from the person's own mailbox (it shows in their Sent Items). A follow-up goes as a
- * reply in the earlier email's thread; if that email can't be found any more, as a new email.
+ * Sends one email from the person's own mailbox (it shows in their Sent Items). Graph answers 202 Accepted
+ * with no message: that, and nothing else, counts as sent. If Microsoft doesn't answer at all, the email may
+ * still have gone: that is a different error, so nobody sends it twice by reflex.
  */
-export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail): Promise<{ from: string; graphId: string; conversationId: string }> {
+export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail): Promise<GraphReceipt> {
   const c = mailConfig();
   if (!c) throw new MailError("Outlook sending isn't set up on the server yet.");
   const box = await getMailbox(db, userId);
-  if (!box) throw new MailError('Connect your Outlook on the Account page first.', true);
+  if (!box) throw new MailError('Connect your Outlook on the Account page first: emails only go from the mailbox of the person the company belongs to.', true);
   let t: Tokens;
   try {
     t = await token(c, { grant_type: 'refresh_token', refresh_token: unseal(c, box.refreshToken) });
@@ -180,36 +190,23 @@ export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail
     .update(mailboxes)
     .set({ lastError: '', ...(t.refreshToken ? { refreshToken: seal(c, t.refreshToken) } : {}) })
     .where(eq(mailboxes.userId, userId));
-
-  const recipients = [{ emailAddress: { address: mail.to } }];
-  let draft: GraphMessage | null = null;
-  if (mail.replyTo) {
-    try {
-      draft = await graph<GraphMessage>(t.accessToken, 'POST', `/me/messages/${encodeURIComponent(mail.replyTo)}/createReply`, {});
-    } catch (e) {
-      // The earlier email was deleted from the mailbox: send a new one instead.
-      if (!(e instanceof MailError && e.status === 404)) throw e;
-    }
-  }
-  if (draft) {
-    // Outlook keeps the thread (RE: subject, the reply headers); the text is ours, quote included.
-    await graph(t.accessToken, 'PATCH', `/me/messages/${encodeURIComponent(draft.id)}`, { body: { contentType: 'Text', content: mail.body }, toRecipients: recipients });
-  } else {
-    draft = await graph<GraphMessage>(t.accessToken, 'POST', '/me/messages', { subject: mail.subject, body: { contentType: 'Text', content: mail.body }, toRecipients: recipients });
-  }
-  if (!draft?.id) throw new MailError("Outlook didn't create the email.");
   try {
-    await graph(t.accessToken, 'POST', `/me/messages/${encodeURIComponent(draft.id)}/send`);
+    const r = await graph(t.accessToken, 'POST', '/me/sendMail', {
+      message: {
+        subject: mail.subject,
+        body: { contentType: 'Text', content: mail.body },
+        toRecipients: [{ emailAddress: { address: mail.to } }],
+        ...(mail.attachments?.length
+          ? { attachments: mail.attachments.map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.bytes.toString('base64') })) }
+          : {}),
+      },
+      saveToSentItems: true,
+    });
+    return { from: box.address, status: r.status, requestId: r.requestId };
   } catch (e) {
-    // No answer: it may well have gone, so it is left where it is (in Sent Items, or Drafts).
     if (e instanceof MailError && e.status === 0) {
-      throw new MailError("Outlook didn't confirm the email went. Check your Sent Items before sending again: if it's there, click Mark sent.", false, 0);
-    }
-    // Refused: don't leave the unsent draft in their Drafts folder.
-    if (e instanceof MailError && e.status >= 400 && e.status < 500) {
-      await graph(t.accessToken, 'DELETE', `/me/messages/${encodeURIComponent(draft.id)}`).catch(() => {});
+      throw new MailError("Outlook didn't confirm the email went. Check your Sent Items before sending again: if it's there, click Mark sent.", false, 0, true);
     }
     throw e;
   }
-  return { from: box.address, graphId: draft.id, conversationId: draft.conversationId ?? '' };
 }

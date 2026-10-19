@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/users';
-import { CALLBACK_PATH, connectMailbox, MailError, STATE_COOKIE } from '@/lib/mail/outlook';
+import { connectMailbox, mailConfig, MailError, redirectUriFor, STATE_COOKIE, STATE_COOKIE_PATH } from '@/lib/mail/outlook';
 import { safeEqual } from '@/lib/safe-equal';
 
 /** Microsoft sends the person back here after they sign in: the connection is checked and saved. */
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     to.searchParams.set('mail', mail);
     if (why) to.searchParams.set('why', why.split(/\r?\n/)[0].slice(0, 300));
     const res = NextResponse.redirect(to);
-    res.cookies.set(STATE_COOKIE, '', { path: '/api/mail', maxAge: 0 });
+    res.cookies.set(STATE_COOKIE, '', { path: STATE_COOKIE_PATH, maxAge: 0 });
     return res;
   };
   const me = await getCurrentUser();
@@ -26,8 +26,10 @@ export async function GET(request: Request) {
   if (url.searchParams.get('error')) return back('declined', url.searchParams.get('error_description') || url.searchParams.get('error') || '');
   const code = url.searchParams.get('code');
   if (!code) return back('declined');
+  const config = mailConfig();
+  if (!config) return back('not-set-up');
   try {
-    await connectMailbox(await getDb(), me.id, code, `${url.origin}${CALLBACK_PATH}`);
+    await connectMailbox(await getDb(), me.id, code, redirectUriFor(config, url.origin));
     return back('connected');
   } catch (e) {
     console.error('[mail] connecting Outlook failed:', e instanceof MailError ? e.message : e);

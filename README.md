@@ -53,34 +53,49 @@ Nothing is ever sent automatically: every email goes out because someone clicked
 
 Each team member connects their own INVECK Outlook (Microsoft 365) once, on the **Account** page.
 After that, the email step on **Today** has a **Send mail** button: one click sends the draft from
-their own mailbox (it shows in their Sent Items, and replies come to their inbox), and the arrow
-beside it opens the email to review and edit first: the address, the subject and the text. The step
-is then logged as sent, as "Mark sent" would log it. Drafts are signed with the sender name in
-Settings; sent from someone's mailbox, that name becomes theirs. A follow-up goes as a reply in the
-same thread as the last email sent to that person, with it quoted below; if no follow-up is written
-yet, **Write it for me** drafts one. "Mark sent" is still there for emails sent by hand.
+the mailbox of the person the company belongs to (it shows in their Sent Items), and the arrow
+beside it opens the email to review and edit first: the address, the subject and the text. Nobody
+can send from someone else's mailbox, and if the owner hasn't connected Outlook the button says so
+instead of sending. The step is logged as sent only once Microsoft Graph accepts the email (HTTP 202),
+and the lead's activity records the sender, recipient, subject, time and Graph's request id. One send
+per step: a second click, or a second tab, can't send it twice; if Microsoft never answers, the step
+is held for ten minutes and the person is told to check Sent Items. Drafts are signed with the sender
+name in Settings; sent from someone's mailbox, that name becomes theirs. A follow-up is a new email
+with "Re:" and the last email quoted below it (Graph's `Mail.Send` permission can't reply in a thread);
+if no follow-up is written yet, **Write it for me** drafts one. "Mark sent" is still there for emails
+sent by hand.
+
+The product profile PDF is attached to every email when the file `assets/inveck-product-profile.pdf`
+exists (up to 3 MB); until it is added, emails go without an attachment.
 
 One-time setup by an administrator:
 
 1. In the Microsoft Entra admin center (entra.microsoft.com), **App registrations → New
    registration**: name it "INVECK Lead Engine", **Accounts in this organizational directory only**,
-   and a **Web** redirect URI of `https://<the app's address>/api/mail/callback`
-   (e.g. `https://inveck-lead-engine.vercel.app/api/mail/callback`).
-2. **API permissions → Add → Microsoft Graph → Delegated**: `Mail.ReadWrite`, `User.Read`,
+   and a **Web** redirect URI of exactly
+   `https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback`.
+2. **API permissions → Add → Microsoft Graph → Delegated**: `Mail.Send`, `User.Read`,
    `offline_access`, `openid`, `email`. If your tenant doesn't let people consent to apps
    themselves, click **Grant admin consent for INVECK**.
 3. **Certificates & secrets → New client secret**; copy its **Value** (shown once).
-4. In Vercel (Project → Settings → Environment Variables), add:
-   - `MS_CLIENT_ID`: the app's Application (client) ID
-   - `MS_TENANT_ID`: the Directory (tenant) ID
-   - `MS_CLIENT_SECRET`: the secret's value
-   - `MAIL_TOKEN_KEY`: any long random string (40+ characters); stored connections are encrypted
-     with it. Changing it later means everyone connects Outlook again.
+4. In Vercel (Project → Settings → Environment Variables), add (server-side only, never committed):
+   - `MICROSOFT_CLIENT_ID`: the app's Application (client) ID
+   - `MICROSOFT_TENANT_ID`: the Directory (tenant) ID
+   - `MICROSOFT_CLIENT_SECRET`: the secret's value
+   - `MICROSOFT_REDIRECT_URI`: `https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback`
+     (must match Entra exactly; for local testing leave it out and register
+     `http://localhost:3000/api/auth/microsoft/callback` as well)
+   - `MICROSOFT_TOKEN_ENCRYPTION_KEY`: a random string of 32+ characters; stored connections
+     (refresh tokens, AES-256-GCM) are encrypted with it. Changing it later means everyone connects
+     Outlook again.
 
-   Then redeploy. Never paste these anywhere else.
-5. Each team member: **Account → Connect Outlook**, sign in with their INVECK account.
+   Then redeploy. Never paste these anywhere else. These replace the earlier `MS_*` and
+   `MAIL_TOKEN_KEY` names.
+5. Each team member: **Account → Connect Outlook**, sign in with their own INVECK account. The
+   connection is tied to the CRM login that started it (checked against a one-time `state` held in
+   an httpOnly cookie), and one mailbox can only be linked to one CRM user.
 
-The secret expires (Entra shows when): make a new one before then and update `MS_CLIENT_SECRET`.
+The secret expires (Entra shows when): make a new one before then and update `MICROSOFT_CLIENT_SECRET`.
 
 ### WhatsApp from INVECK's number
 

@@ -8,12 +8,16 @@ import { logActivity } from '@/lib/activity';
 import { getSettings } from '@/lib/settings';
 import { requireUser } from '@/lib/users';
 import { disconnectMailbox, MailError, sendFromMailbox } from '@/lib/mail/outlook';
+import { loadProfilePdf } from '@/lib/mail/profile-pdf';
 import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
 import { draftFollowUp, FOLLOW_UP_ROUNDS } from '@/lib/pipeline/follow-ups';
 import { errorMessage } from '@/lib/pipeline/text';
 import { formatDateTime } from '@/lib/dates';
 import { liveServices } from '@/lib/run-driver';
 import { completeTaskAction } from './team-actions';
+
+/** How long a send Microsoft never confirmed blocks another try. */
+const UNCONFIRMED_HOLD_MS = 10 * 60 * 1000;
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -35,9 +39,18 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   if (task.ownerId !== user.id) return { error: 'Only the person this company belongs to can send its email.' };
   // Sent before and the step undone since: it went, so it is only to be logged.
   const [went] = await db.select().from(sentEmails).where(eq(sentEmails.taskId, task.id));
-  if (went) return { error: went.status === 'sent' ? `This email already went from Outlook${went.sentAt ? ` (${formatDateTime(went.sentAt)})` : ''}: click Mark sent to log it.` : 'This email is already being sent. Refresh the page.' };
+  if (went?.status === 'sent') return { error: `This email already went from Outlook${went.sentAt ? ` (${formatDateTime(went.sentAt)})` : ''}: click Mark sent to log it.` };
+  // Microsoft didn't confirm an earlier try: it may have gone, so for ten minutes it is not sent again.
+  if (went?.status === 'unconfirmed') {
+    if (Date.now() - went.createdAt.getTime() < UNCONFIRMED_HOLD_MS) return { error: "An earlier send wasn't confirmed by Microsoft, so it may have gone. Check your Sent Items: if it's there, click Mark sent. Otherwise try again in a few minutes." };
+    await db.delete(sentEmails).where(eq(sentEmails.id, went.id));
+  } else if (went) {
+    return { error: 'This email is already being sent. Refresh the page.' };
+  }
   const [lead] = await db.select().from(leads).where(eq(leads.id, task.leadId));
   if (!lead) return { error: 'This company no longer exists.' };
+  // From the mailbox of the company's owner, and no one else's.
+  if (lead.ownerId !== user.id) return { error: 'Only the person this company belongs to can send its email.' };
 
   const others = await db.select({ name: people.name, email: people.email }).from(people).where(eq(people.leadId, lead.id));
   const addresses = leadAddresses(lead, others);
@@ -52,7 +65,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   const subject = (reviewed ? str(form, 'subject') : plan.subject).trim();
   const body = (reviewed ? String(form.get('body') ?? '') : plan.body).trim();
   if (!body) return { error: plan.followUp ? 'No follow-up written yet: write it, or use Write it for me.' : 'There is no email draft yet: write it first.' };
-  if (!subject && !plan.replyTo) return { error: 'Add a subject.' };
+  if (!subject) return { error: 'Add a subject.' };
 
   // One send per step, even with two clicks or two tabs open.
   const [claim] = await db
@@ -62,17 +75,25 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
     .returning({ id: sentEmails.id });
   if (!claim) return { error: 'This email is already being sent, or was sent. Refresh the page.' };
   let sent: Awaited<ReturnType<typeof sendFromMailbox>>;
+  let profile: Awaited<ReturnType<typeof loadProfilePdf>> = null;
   try {
-    sent = await sendFromMailbox(db, user.id, { to, subject, body: plan.quote ? `${body}\n\n${plan.quote}` : body, replyTo: plan.replyTo || undefined });
+    profile = await loadProfilePdf();
+    sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body: plan.quote ? `${body}\n\n${plan.quote}` : body, attachments: profile ? [profile] : undefined });
   } catch (e) {
-    await db.delete(sentEmails).where(eq(sentEmails.id, claim.id));
+    if (e instanceof MailError && e.unconfirmed) {
+      // Kept, so a second click can't send it twice while nobody knows whether the first went.
+      await db.update(sentEmails).set({ status: 'unconfirmed' }).where(eq(sentEmails.id, claim.id));
+    } else {
+      await db.delete(sentEmails).where(eq(sentEmails.id, claim.id));
+    }
     if (!(e instanceof MailError)) console.error('[mail] send failed:', e);
     return { error: e instanceof MailError ? e.message : `Couldn't send: ${errorMessage(e)}` };
   }
   const now = new Date();
+  // Graph accepted it: that is the record (the request id is Microsoft's own reference for it).
   await db
     .update(sentEmails)
-    .set({ status: 'sent', sentAt: now, fromAddress: sent.from, graphId: sent.graphId, conversationId: sent.conversationId })
+    .set({ status: 'sent', sentAt: now, fromAddress: sent.from, graphId: sent.requestId })
     .where(eq(sentEmails.id, claim.id));
 
   // What went out is what the lead shows: the first email as sent; a follow-up is used up.
@@ -85,7 +106,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
       .set({ followUpSubject: '', followUpBody: '', followUpStep: step, updatedAt: now })
       .where(eq(leads.id, lead.id));
   }
-  await logActivity(db, lead.id, 'note', `${plan.followUp ? 'Follow-up' : 'Email'} sent from Outlook (${sent.from}) to ${to}${plan.replyTo ? ', in the same thread' : ''}: “${subject || `Re: ${prior?.subject ?? ''}`}”`);
+  await logActivity(db, lead.id, 'note', `${plan.followUp ? 'Follow-up' : 'Email'} sent from Outlook (${sent.from}) to ${to}: “${subject}” at ${formatDateTime(now)}. Graph accepted it (HTTP ${sent.status}${sent.requestId ? `, request ${sent.requestId}` : ''})${profile ? ', with the product profile attached' : ''}.`);
 
   // The step is done, logged as "Mark sent" logs it (the counters, the stage, the next steps).
   const done = new FormData();

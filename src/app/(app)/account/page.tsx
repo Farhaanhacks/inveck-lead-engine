@@ -51,7 +51,7 @@ export default async function AccountPage({ searchParams }: PageProps<'/account'
               <p className="text-xs text-muted">Send mail on Today sends from this mailbox; sent emails show in its Sent Items, and replies come to its inbox.</p>
               {mailbox.lastError && <p className="text-xs text-warning-ink">{mailbox.lastError}</p>}
               <div className="flex gap-2">
-                {mailbox.lastError && <a href="/api/mail/connect" className="btn-primary">Connect again</a>}
+                {mailbox.lastError && <a href="/api/auth/microsoft/connect" className="btn-primary">Connect again</a>}
                 <form action={disconnectMailboxAction}>
                   <button className="btn-secondary">Disconnect</button>
                 </form>
@@ -60,7 +60,7 @@ export default async function AccountPage({ searchParams }: PageProps<'/account'
           ) : (
             <>
               <p className="text-xs text-muted">Connect your INVECK Outlook once, and Send mail on Today sends emails from your own mailbox.</p>
-              <a href="/api/mail/connect" className="btn-primary">Connect Outlook</a>
+              <a href="/api/auth/microsoft/connect" className="btn-primary">Connect Outlook</a>
             </>
           )}
         </section>

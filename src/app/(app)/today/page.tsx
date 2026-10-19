@@ -274,7 +274,6 @@ function Step({
                     subject={plan.subject}
                     body={plan.body}
                     followUp={plan.followUp}
-                    threaded={!!(mail.from && plan.replyTo)}
                   />
                 )}
                 <Outcome id={task.id} buttons={[['done', 'Mark sent'], ['skipped', 'Skip']]} />

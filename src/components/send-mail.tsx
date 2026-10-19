@@ -39,7 +39,6 @@ export function SendMail({
   subject,
   body,
   followUp,
-  threaded,
 }: {
   taskId: number;
   /** The connected mailbox it goes from; empty: it opens their email app instead. */
@@ -50,8 +49,6 @@ export function SendMail({
   subject: string;
   body: string;
   followUp: boolean;
-  /** A reply in the thread of the last email sent to them (Outlook keeps its subject). */
-  threaded: boolean;
 }) {
   const [state, send, pending] = useActionState<SendMailState, FormData>(sendEmailAction, { error: '' });
   const [open, setOpen] = useState(false);
@@ -64,7 +61,8 @@ export function SendMail({
     setCopied(long);
     if (long) navigator.clipboard?.writeText(text).catch(() => setCopied(false));
   };
-  const outlook = !!from;
+  // Set up on the server: Send mail always goes through the person's own connected Outlook (or says to connect it), never a stand-in.
+  const outlook = configured;
   const ready = !!body.trim();
   const reviewId = `review-mail-${taskId}`;
   const toMailApp = (e: FormEvent<HTMLFormElement>) => {
@@ -115,8 +113,8 @@ export function SendMail({
             <input type="hidden" name="id" value={taskId} />
             {outlook ? (
               <p className="text-xs text-muted">
-                From {from}
-                {followUp ? (threaded ? '. A follow-up, sent as a reply in the same thread as the last email (quoted below it).' : '. A follow-up.') : '.'}
+                {from ? `From ${from}` : 'From your Outlook (not connected yet)'}
+                {followUp ? '. A follow-up, with the last email quoted below it.' : '.'}
               </p>
             ) : (
               <p className="text-xs text-muted">
@@ -136,14 +134,7 @@ export function SendMail({
               ))}
             </select>
             <label htmlFor={`subject-${taskId}`} className="label">Subject</label>
-            {threaded ? (
-              <>
-                <input type="hidden" name="subject" value={subject} />
-                <p id={`subject-${taskId}`} className="text-sm text-ink-2">{subject} (kept from the thread)</p>
-              </>
-            ) : (
-              <input id={`subject-${taskId}`} name="subject" defaultValue={subject} required className="field" />
-            )}
+            <input id={`subject-${taskId}`} name="subject" defaultValue={subject} required className="field" />
             <label htmlFor={`body-${taskId}`} className="label">Message</label>
             <textarea id={`body-${taskId}`} name="body" defaultValue={body} rows={10} required className="field font-[inherit] leading-relaxed" />
             <div className="flex flex-wrap gap-2">
@@ -169,6 +160,12 @@ export function SendMail({
       {state.error && (
         <p role="alert" className="max-w-md text-xs text-critical-ink">
           {state.error}
+          {!from && configured && (
+            <>
+              {' '}
+              <Link href="/account" className="font-medium underline">Connect Outlook</Link>
+            </>
+          )}
         </p>
       )}
     </div>

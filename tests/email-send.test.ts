@@ -41,21 +41,18 @@ async function fakeMicrosoft(input: RequestInfo | URL, init: RequestInit = {}): 
   }
   const path = url.replace('https://graph.microsoft.com/v1.0', '');
   if (method === 'GET' && path.startsWith('/me?')) return json({ mail: 'Puja@Inveck.com', displayName: 'Puja Sharma' });
-  if (method === 'POST' && path === '/me/messages') return json({ id: 'msg-1', conversationId: 'conv-1' }, 201);
-  if (method === 'POST' && path === '/me/messages/msg-1/createReply') return json({ id: 'reply-1', conversationId: 'conv-1' }, 201);
-  if (method === 'PATCH' && path === '/me/messages/reply-1') return json({ id: 'reply-1' });
-  if (method === 'POST' && /\/send$/.test(path)) return failSend ? json({ error: { message: 'Mailbox quota exceeded' } }, 403) : new Response(null, { status: 202 });
-  if (method === 'DELETE' && path.startsWith('/me/messages/')) return new Response(null, { status: 204 });
+  if (method === 'POST' && path === '/me/sendMail') return failSend ? json({ error: { message: 'Mailbox quota exceeded' } }, 403) : new Response(null, { status: 202, headers: { 'request-id': 'req-123' } });
   return json({ error: { message: `unexpected ${method} ${path}` } }, 404);
 }
 
 let db: Db;
 beforeEach(async () => {
   process.env.DATABASE_URL = 'memory://';
-  process.env.MS_CLIENT_ID = 'test-client-id';
-  process.env.MS_CLIENT_SECRET = SECRET;
-  process.env.MS_TENANT_ID = 'inveck-tenant';
-  process.env.MAIL_TOKEN_KEY = TOKEN_KEY;
+  process.env.MICROSOFT_CLIENT_ID = 'test-client-id';
+  process.env.MICROSOFT_CLIENT_SECRET = SECRET;
+  process.env.MICROSOFT_TENANT_ID = 'inveck-tenant';
+  process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY = TOKEN_KEY;
+  process.env.MICROSOFT_REDIRECT_URI = 'https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback';
   resetDbForTests();
   db = await getDb();
   me.id = (await db.select().from(users).where(eq(users.role, 'bda')).limit(1))[0].id;
@@ -67,7 +64,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  for (const k of ['MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_TENANT_ID', 'MAIL_TOKEN_KEY']) delete process.env[k];
+  for (const k of ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID', 'MICROSOFT_TOKEN_ENCRYPTION_KEY', 'MICROSOFT_REDIRECT_URI']) delete process.env[k];
 });
 
 const form = (v: Record<string, string | number>) => {
@@ -77,7 +74,7 @@ const form = (v: Record<string, string | number>) => {
 };
 const connect = async () => {
   const { connectMailbox } = await import('@/lib/mail/outlook');
-  return connectMailbox(db, me.id, 'good-code', 'https://app.example/api/mail/callback');
+  return connectMailbox(db, me.id, 'good-code', 'https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback');
 };
 const lead = async (extra: Partial<typeof leads.$inferInsert> = {}) =>
   (
@@ -108,11 +105,11 @@ const graphCalls = () => calls.filter((c) => c.url.startsWith('https://graph.mic
 describe('connecting Outlook', () => {
   it('signs in at INVECK\'s tenant with mail scopes, and keeps only an encrypted refresh token', async () => {
     const { authorizeUrl, mailConfig } = await import('@/lib/mail/outlook');
-    const url = new URL(authorizeUrl(mailConfig()!, 'https://app.example/api/mail/callback', 'state-123'));
+    const url = new URL(authorizeUrl(mailConfig()!, 'https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback', 'state-123'));
     expect(url.pathname).toBe('/inveck-tenant/oauth2/v2.0/authorize');
-    expect(url.searchParams.get('scope')).toBe('offline_access openid email User.Read Mail.ReadWrite');
+    expect(url.searchParams.get('scope')).toBe('offline_access openid email User.Read Mail.Send');
     expect(url.searchParams.get('state')).toBe('state-123');
-    expect(url.searchParams.get('redirect_uri')).toBe('https://app.example/api/mail/callback');
+    expect(url.searchParams.get('redirect_uri')).toBe('https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback');
     expect(url.toString()).not.toContain(SECRET);
 
     const box = await connect();
@@ -133,7 +130,7 @@ describe('connecting Outlook', () => {
   });
 
   it('is off until the server has the Microsoft app details', async () => {
-    delete process.env.MS_CLIENT_SECRET;
+    delete process.env.MICROSOFT_CLIENT_SECRET;
     const { mailConfig } = await import('@/lib/mail/outlook');
     expect(mailConfig()).toBeNull();
     const l = await lead();
@@ -150,15 +147,14 @@ describe('Send mail on Today', () => {
     calls = [];
     expect(await send({ id: t.id })).toEqual({ error: '', sent: true });
 
-    // A refresh (the client secret goes only to Microsoft's sign-in), then create and send.
+    // A refresh (the client secret goes only to Microsoft's sign-in), then one sendMail.
     expect(calls[0].url).toContain('/inveck-tenant/oauth2/v2.0/token');
-    expect(graphCalls().map((c) => `${c.method} ${c.url.replace('https://graph.microsoft.com/v1.0', '')}`)).toEqual(['POST /me/messages', 'POST /me/messages/msg-1/send']);
-    for (const c of graphCalls()) {
-      expect(c.headers.authorization).toBe('Bearer access-2');
-      expect(c.headers.prefer).toBe('IdType="ImmutableId"');
-      expect(c.body + c.url).not.toContain(SECRET);
-    }
-    const message = JSON.parse(graphCalls()[0].body);
+    expect(graphCalls().map((c) => `${c.method} ${c.url.replace('https://graph.microsoft.com/v1.0', '')}`)).toEqual(['POST /me/sendMail']);
+    const c0 = graphCalls()[0];
+    expect(c0.headers.authorization).toBe('Bearer access-2');
+    expect(c0.body + c0.url).not.toContain(SECRET);
+    const { message, saveToSentItems } = JSON.parse(c0.body);
+    expect(saveToSentItems).toBe(true);
     expect(message.subject).toBe('Stock checks at Hosur Gears');
     expect(message.toRecipients).toEqual([{ emailAddress: { address: 'ravi@hosurgears.in' } }]);
     expect(message.body.content).toContain('Regards,\nPuja');
@@ -171,9 +167,9 @@ describe('Send mail on Today', () => {
     expect(after.mailOutcome).toBe('Sent');
     expect(after.status).toBe('Contacted');
     const [record] = await db.select().from(sentEmails).where(eq(sentEmails.taskId, t.id));
-    expect(record).toMatchObject({ status: 'sent', fromAddress: 'puja@inveck.com', toAddress: 'ravi@hosurgears.in', graphId: 'msg-1' });
+    expect(record).toMatchObject({ status: 'sent', fromAddress: 'puja@inveck.com', toAddress: 'ravi@hosurgears.in', graphId: 'req-123' });
     const log = (await db.select().from(activities).where(eq(activities.leadId, l.id))).map((a) => a.text);
-    expect(log.some((x) => x.startsWith('Email sent from Outlook (puja@inveck.com) to ravi@hosurgears.in'))).toBe(true);
+    expect(log.some((x) => x.startsWith('Email sent from Outlook (puja@inveck.com) to ravi@hosurgears.in: “Stock checks at Hosur Gears” at ') && x.includes('Graph accepted it (HTTP 202, request req-123)'))).toBe(true);
     // Microsoft's new refresh token replaced the old one, still encrypted.
     const { mailConfig, unseal } = await import('@/lib/mail/outlook');
     const [box] = await db.select().from(mailboxes).where(eq(mailboxes.userId, me.id));
@@ -188,7 +184,7 @@ describe('Send mail on Today', () => {
     calls = [];
     const r = await send({ id: t.id, to: 'purchase@hosurgears.in', subject: 'Stock audits at your Hosur plant', body: 'Hi team,\n\nEdited text.' });
     expect(r.error).toBe('');
-    const message = JSON.parse(graphCalls()[0].body);
+    const message = JSON.parse(graphCalls()[0].body).message;
     expect(message.toRecipients[0].emailAddress.address).toBe('purchase@hosurgears.in');
     expect(message.subject).toBe('Stock audits at your Hosur plant');
     expect(message.body.content).toBe('Hi team,\n\nEdited text.');
@@ -196,7 +192,7 @@ describe('Send mail on Today', () => {
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailSubject).toBe('Stock audits at your Hosur plant');
   });
 
-  it('a follow-up goes as a reply in the same thread, with the earlier email quoted, and uses up the follow-up draft', async () => {
+  it('a follow-up goes as a new "Re:" email with the earlier one quoted, and uses up the follow-up draft', async () => {
     await connect();
     const l = await lead();
     expect((await send({ id: (await emailTask(l.id)).id })).error).toBe('');
@@ -204,20 +200,17 @@ describe('Send mail on Today', () => {
     const follow = await emailTask(l.id, 'Follow-up 1');
     calls = [];
     expect((await send({ id: follow.id })).error).toBe('');
-    expect(graphCalls().map((c) => `${c.method} ${c.url.replace('https://graph.microsoft.com/v1.0', '')}`)).toEqual([
-      'POST /me/messages/msg-1/createReply',
-      'PATCH /me/messages/reply-1',
-      'POST /me/messages/reply-1/send',
-    ]);
-    const patch = JSON.parse(graphCalls()[1].body);
-    expect(patch.toRecipients).toEqual([{ emailAddress: { address: 'ravi@hosurgears.in' } }]);
-    expect(patch.body.content).toMatch(/^Hi Ravi,\n\nJust following up\.\n\nRegards,\nPuja\n\n-----Original message-----\nFrom: puja@inveck\.com/);
-    expect(patch.body.content).toContain('Subject: Stock checks at Hosur Gears');
+    expect(graphCalls().map((c) => `${c.method} ${c.url.replace('https://graph.microsoft.com/v1.0', '')}`)).toEqual(['POST /me/sendMail']);
+    const { message } = JSON.parse(graphCalls()[0].body);
+    expect(message.subject).toBe('Re: Stock checks at Hosur Gears');
+    expect(message.toRecipients).toEqual([{ emailAddress: { address: 'ravi@hosurgears.in' } }]);
+    expect(message.body.content).toMatch(/^Hi Ravi,\n\nJust following up\.\n\nRegards,\nPuja\n\n-----Original message-----\nFrom: puja@inveck\.com/);
+    expect(message.body.content).toContain('Subject: Stock checks at Hosur Gears');
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
     expect(after.followUpBody).toBe('');
     expect(after.followUpStep).toBe(1);
     const log = (await db.select().from(activities).where(eq(activities.leadId, l.id))).map((a) => a.text);
-    expect(log.some((x) => x.startsWith('Follow-up sent from Outlook') && x.includes('in the same thread'))).toBe(true);
+    expect(log.some((x) => x.startsWith('Follow-up sent from Outlook'))).toBe(true);
   });
 
   it('a follow-up with nothing written asks for one instead of resending the first email', async () => {
@@ -235,6 +228,7 @@ describe('Send mail on Today', () => {
     const t = await emailTask(l.id);
     // Not connected yet.
     expect((await send({ id: t.id })).error).toMatch(/Connect your Outlook/);
+    expect(graphCalls()).toEqual([]);
     expect(await db.select().from(sentEmails)).toEqual([]);
 
     await connect();
@@ -261,8 +255,6 @@ describe('Send mail on Today', () => {
     const t = await emailTask(l.id);
     failSend = true;
     expect((await send({ id: t.id })).error).toBe("Outlook didn't send it: Mailbox quota exceeded");
-    // The unsent draft is removed from their Drafts folder.
-    expect(graphCalls().at(-1)).toMatchObject({ method: 'DELETE', url: 'https://graph.microsoft.com/v1.0/me/messages/msg-1' });
     expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].doneAt).toBeNull();
     expect(await db.select().from(sentEmails).where(eq(sentEmails.taskId, t.id))).toEqual([]);
 
@@ -276,15 +268,23 @@ describe('Send mail on Today', () => {
 });
 
 describe('Microsoft not answering', () => {
-  it("a send that isn't confirmed is left alone (it may have gone): no delete, and the person is told to check Sent Items", async () => {
+  it("a send that isn't confirmed is held (it may have gone): no second send for ten minutes, and the person is told to check Sent Items", async () => {
     await connect();
     const l = await lead();
     const t = await emailTask(l.id);
-    hang = '/send';
+    hang = '/sendMail';
     expect((await send({ id: t.id })).error).toMatch(/didn't confirm the email went\. Check your Sent Items/);
-    expect(graphCalls().some((c) => c.method === 'DELETE')).toBe(false);
     expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].doneAt).toBeNull();
-    expect(await db.select().from(sentEmails)).toEqual([]);
+    expect((await db.select().from(sentEmails))[0].status).toBe('unconfirmed');
+    // Not sent again straight away, even though Microsoft is back.
+    hang = null;
+    calls = [];
+    expect((await send({ id: t.id })).error).toMatch(/may have gone/);
+    expect(graphCalls()).toEqual([]);
+    // Ten minutes on, it can be tried again.
+    await db.update(sentEmails).set({ createdAt: new Date(Date.now() - 11 * 60 * 1000) }).where(eq(sentEmails.taskId, t.id));
+    expect((await send({ id: t.id })).error).toBe('');
+    expect(graphCalls().filter((c) => c.url.endsWith('/me/sendMail'))).toHaveLength(1);
   });
 
   it('a sign-in that gets no answer says so in plain words', async () => {
@@ -362,11 +362,11 @@ describe('what the next email is', () => {
     const { planEmail } = await import('@/lib/mail/plan');
     const l = await lead();
     const sign = { from: 'INVECK Sales Team', as: 'Puja' };
-    expect(planEmail(l, undefined, sign)).toMatchObject({ followUp: false, subject: 'Stock checks at Hosur Gears', replyTo: '' });
+    expect(planEmail(l, undefined, sign)).toMatchObject({ followUp: false, subject: 'Stock checks at Hosur Gears' });
     expect(planEmail(l, undefined, sign).body).toContain('Regards,\nPuja');
     // Emailed by hand on Day 1 (marked sent): Follow-up 1 is a follow-up, as a new email.
     const marked = { ...l, mailOutcome: 'Sent', followUpBody: 'Following up.' };
-    expect(planEmail(marked, undefined, sign)).toMatchObject({ followUp: true, subject: 'Re: Stock checks at Hosur Gears', body: 'Following up.', replyTo: '' });
+    expect(planEmail(marked, undefined, sign)).toMatchObject({ followUp: true, subject: 'Re: Stock checks at Hosur Gears', body: 'Following up.' });
     // No sender name in Settings that matches: the text is left as written.
     expect(planEmail(l, undefined, { from: '', as: 'Puja' }).body).toContain('INVECK Sales Team');
     // Any email marked as gone counts, on any step; a bounce never arrived.
@@ -390,5 +390,56 @@ describe('saved emails survive a restart', () => {
     for (const statement of SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0]).toMatchObject({ contactEmail: 'ravi@hosurgears.in', emailSource: 'manual' });
     expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0].email).toBe('purchase@hosurgears.in');
+  });
+});
+
+describe('Microsoft 365 rules', () => {
+  it("sends only from the lead owner's mailbox: a company owned by someone else is refused, nothing goes", async () => {
+    await connect();
+    const other = (await db.select().from(users).where(eq(users.role, 'bda')))[1];
+    const l = await lead({ ownerId: other.id });
+    const t = await emailTask(l.id); // the step is the signed-in person's, the company is not
+    calls = [];
+    expect((await send({ id: t.id })).error).toMatch(/Only the person this company belongs to/);
+    expect(graphCalls()).toEqual([]);
+    expect(await db.select().from(sentEmails)).toEqual([]);
+  });
+
+  it('one mailbox links to one CRM user only', async () => {
+    await connect();
+    const { connectMailbox } = await import('@/lib/mail/outlook');
+    const other = (await db.select().from(users).where(eq(users.role, 'bda')))[1];
+    await expect(connectMailbox(db, other.id, 'good-code', 'https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback')).rejects.toThrow(/already connected to another team member/);
+    expect(await db.select().from(mailboxes).where(eq(mailboxes.userId, other.id))).toEqual([]);
+  });
+
+  it('the redirect address is exactly the registered one, and a short encryption key keeps Outlook off', async () => {
+    const { mailConfig, redirectUriFor } = await import('@/lib/mail/outlook');
+    expect(redirectUriFor(mailConfig()!, 'http://localhost:3000')).toBe('https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback');
+    process.env.MICROSOFT_TOKEN_ENCRYPTION_KEY = 'too-short';
+    expect(mailConfig()).toBeNull();
+  });
+
+  it('attaches the product profile PDF when it is there, and sends without one until it is', async () => {
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { loadProfilePdf, PROFILE_PDF_FILE } = await import('@/lib/mail/profile-pdf');
+    const dir = await mkdtemp(join(tmpdir(), 'profile-'));
+    expect(await loadProfilePdf(dir)).toBeNull();
+    await writeFile(join(dir, PROFILE_PDF_FILE), Buffer.from('%PDF-1.4 test'));
+    const pdf = await loadProfilePdf(dir);
+    expect(pdf).toMatchObject({ name: 'INVECK Product Profile.pdf', contentType: 'application/pdf' });
+    await writeFile(join(dir, PROFILE_PDF_FILE), Buffer.alloc(3 * 1024 * 1024 + 1));
+    await expect(loadProfilePdf(dir)).rejects.toThrow(/too large/);
+
+    // In the request Graph gets: base64 file attachment.
+    const { sendFromMailbox } = await import('@/lib/mail/outlook');
+    await connect();
+    calls = [];
+    await sendFromMailbox(db, me.id, { to: 'ravi@hosurgears.in', subject: 's', body: 'b', attachments: [pdf!] });
+    const att = JSON.parse(graphCalls()[0].body).message.attachments[0];
+    expect(att).toMatchObject({ '@odata.type': '#microsoft.graph.fileAttachment', name: 'INVECK Product Profile.pdf', contentType: 'application/pdf' });
+    expect(Buffer.from(att.contentBytes, 'base64').length).toBe(pdf!.bytes.length);
   });
 });

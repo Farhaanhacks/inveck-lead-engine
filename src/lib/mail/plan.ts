@@ -28,19 +28,17 @@ export const emailedAlready = (lead: Pick<Lead, 'mailOutcome'>) => EMAILED.inclu
 export const lastSentTo = (sent: SentEmail[] | undefined, to: string) => sent?.find((e) => e.toAddress === to.trim().toLowerCase());
 
 export type EmailPlan = {
-  /** A follow-up to someone already emailed (a reply in that thread), not the first email. */
+  /** A follow-up to someone already emailed, not the first email. */
   followUp: boolean;
   subject: string;
   /** What the sender writes; for a follow-up, the earlier email is quoted below it when sent. */
   body: string;
   quote: string;
-  /** Outlook's id of the email being followed up, to reply in its thread. */
-  replyTo: string;
 };
 
 /**
  * What the next email to a contact is: the lead's drafted first email, or, once they have been
- * emailed, a follow-up (the follow-up draft, sent as a reply to the last email). Drafts are signed
+ * emailed, a follow-up (the follow-up draft, with the last email quoted below it). Drafts are signed
  * with the sender name in Settings; sent from someone's own mailbox, they are signed with theirs.
  */
 export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string }): EmailPlan {
@@ -53,14 +51,13 @@ export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from
     const i = text.lastIndexOf(from);
     return from.length >= 3 && as && from !== as && i >= 0 && i >= text.length - from.length - 200 ? text.slice(0, i) + as + text.slice(i + from.length) : text;
   };
-  if (!followUp) return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '', replyTo: '' };
+  if (!followUp) return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '' };
   const original = (prior?.subject || lead.emailSubject).replace(/^\s*re:\s*/i, '');
   return {
     followUp,
     subject: lead.followUpSubject || (original ? `Re: ${original}` : ''),
     body: signed(lead.followUpBody),
     quote: prior ? quoteOf(prior) : '',
-    replyTo: prior?.graphId ?? '',
   };
 }
 
