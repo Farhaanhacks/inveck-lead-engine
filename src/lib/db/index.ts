@@ -6,6 +6,7 @@ import { SCHEMA_STATEMENTS } from './migrate';
 import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingDealBreakersV5, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
 import { ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
+import { retireWithoutContactOnce } from '../escalate';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -63,6 +64,7 @@ async function connect(): Promise<Db> {
     await seedUsers(db);
     await ensureMarketingUser(db);
     await reconcileFollowUpsOnce(db);
+    await retireWithoutContactOnce(db);
   } catch (e) {
     const cause = (e as { cause?: unknown })?.cause;
     console.error('[db] schema upkeep failed; running on the existing schema:', cause ?? e);

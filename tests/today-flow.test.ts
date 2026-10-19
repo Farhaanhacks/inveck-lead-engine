@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { leads, tasks, users } from '@/lib/db/schema';
+import { leads, people, tasks, users } from '@/lib/db/schema';
 import { ensureSequences, FIND_NEXT_STEP, istDay, loadTodayTasks, nextDue } from '@/lib/tasks';
 import { saveContactEdit } from '@/lib/contact-edit';
 
@@ -31,16 +31,26 @@ describe('leads go from the Leads list to Today on their own', () => {
     expect(monday.every((t) => t.lead.id === l.id)).toBe(true);
   });
 
-  it('a lead waiting for a contact is on Today too, with a step to find one; naming someone starts the sequence', async () => {
+  it('a lead waiting for a contact with nobody eligible on file goes to Deleted, not onto Today', async () => {
     const l = await addLead({ status: 'Needs Manual Contact' });
     await ensureSequences(db, SUNDAY);
+    expect(await loadTodayTasks(db, owner, MONDAY)).toEqual([]);
+    const [gone] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(gone).toMatchObject({ status: 'Deleted', statusBeforeDelete: 'Needs Manual Contact' });
+    expect((await db.select().from(tasks).where(eq(tasks.leadId, l.id))).some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
+  });
+
+  it('with a P1 or P2 on file, the lead stays on Today with a step to choose them; naming someone starts the sequence', async () => {
+    const l = await addLead({ status: 'Needs Manual Contact' });
+    await db.insert(people).values({ leadId: l.id, name: 'Asha Rao', title: 'Inventory Manager' });
+    await ensureSequences(db, SUNDAY);
     const monday = await loadTodayTasks(db, owner, MONDAY);
-    expect(monday.map((t) => [t.lead.id, t.task.step, t.task.title])).toEqual([[l.id, FIND_NEXT_STEP, 'Find the person to contact (plant head, else a P2 process owner)']]);
-    // Run again: no second find step.
+    expect(monday.map((t) => [t.lead.id, t.task.step, t.task.title])).toEqual([[l.id, FIND_NEXT_STEP, 'Choose the next contact: Asha Rao (P2) is on file']]);
+    // Run again: no second step.
     await ensureSequences(db, SUNDAY);
     expect((await db.select().from(tasks).where(eq(tasks.leadId, l.id))).length).toBe(1);
 
-    // The team names someone: ready for approval, the find step closes and the sequence starts.
+    // The team names someone: ready for approval, the step closes and the sequence starts.
     await saveContactEdit(db, l.id, { contactName: 'Ravi K', contactTitle: 'Plant Head', contactPhone: '9876543210', contactEmail: '', contactLinkedin: '' });
     await ensureSequences(db, MONDAY);
     const open = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
@@ -49,6 +59,21 @@ describe('leads go from the Leads list to Today on their own', () => {
     // Saving plans from the real day, so look on the day the first call is due.
     const firstCall = open.filter((t) => t.kind === 'call').map((t) => t.dueDate).sort()[0];
     expect((await loadTodayTasks(db, owner, firstCall)).some((t) => t.lead.id === l.id && t.task.kind === 'call')).toBe(true);
+  });
+
+  it('the one-time sweep deletes only leads with nobody eligible; others, restored and unassigned leads stay', async () => {
+    const { retireWithoutContact, FIND_NEXT_STEP: FIND } = await import('@/lib/escalate');
+    const none = await addLead({ company: 'No One Co', status: 'Needs Manual Contact' });
+    const withP2 = await addLead({ company: 'Has P2 Co', status: 'Needs Manual Contact' });
+    await db.insert(people).values({ leadId: withP2.id, name: 'Asha Rao', title: 'Inventory Manager' });
+    const confirming = await addLead({ company: 'Confirm Co', status: 'Needs Manual Contact', contactName: 'Srihari K.R' });
+    const unowned = await addLead({ company: 'Pool Co', status: 'Needs Manual Contact', ownerId: null });
+    const oldFind = await addLead({ company: 'Old Find Co', status: 'Contacted', contactName: 'Ravi Shah' });
+    await db.insert(tasks).values({ leadId: oldFind.id, ownerId: owner, kind: 'call', step: FIND, title: 'Find the next person to contact (P2: process owner)', dueDate: MONDAY });
+    const gone = await retireWithoutContact(db);
+    expect(gone.sort()).toEqual([none.id, oldFind.id].sort());
+    for (const l of [withP2, confirming, unowned]) expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].status).not.toBe('Deleted');
+    expect((await db.select().from(tasks).where(and(eq(tasks.leadId, oldFind.id), isNull(tasks.doneAt)))).length).toBe(0);
   });
 
   it('a named contact not yet confirmed at the site: the step asks to confirm them, or find someone', async () => {

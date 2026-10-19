@@ -203,7 +203,7 @@ export async function completeTaskAction(form: FormData) {
 
   // The pipeline follows what was logged: Contacted, a conversation, a meeting, or lost.
   const [current] = await db.select({ status: leads.status }).from(leads).where(eq(leads.id, task.leadId));
-  const target = current && stageAfterOutreach(current.status, task.kind, outcome, feedback);
+  const target = current && !escalated?.deleted && stageAfterOutreach(current.status, task.kind, outcome, feedback);
   if (target) {
     const from = await moveAfterOutreach(db, task.leadId, target, now);
     if (from) await db.update(tasks).set({ stageFrom: `${from}>${target}` }).where(eq(tasks.id, task.id));
@@ -211,7 +211,7 @@ export async function completeTaskAction(form: FormData) {
   // The follow-up sequence: a call saved as no answer, busy or wrong number starts it right away; a
   // connected call stops it (and it never starts for a lead that has had one).
   if (task.kind === 'call' && outcome === 'connected') await cancelFollowUpSequence(db, task.leadId, 'a call connected', { now });
-  else if (task.kind === 'call' && isQualifyingOutcome(outcome) && !escalated?.switched) await startFollowUpSequence(db, task.leadId, now);
+  else if (task.kind === 'call' && isQualifyingOutcome(outcome) && !escalated?.switched && !escalated?.deleted) await startFollowUpSequence(db, task.leadId, now);
   // The last round done (every step done or skipped): the lead goes to Deleted as junk.
   if (task.followUpRound > 0) await junkIfComplete(db, task.leadId, now);
   await markCompanyDay(db, task.leadId, task.ownerId);

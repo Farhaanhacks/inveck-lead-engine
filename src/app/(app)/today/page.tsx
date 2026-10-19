@@ -326,7 +326,7 @@ function Step({
         )}
         {task.step === FIND_NEXT_STEP && (
           <p className="mt-2 text-xs text-warning-ink">
-            The last contact didn&apos;t work out and nobody else is on file. Find a P2 (process owner: inventory, warehouse, procurement or supply chain manager) and add them under Edit point of contact; their plan starts straight away.
+            The last contact didn&apos;t work out. Someone eligible is on file: choose them under Edit point of contact, and their plan starts straight away.
           </p>
         )}
         {task.priority && task.note && !task.note.startsWith('auto-retry:') && <div className="mt-1 text-xs text-ink-2">Note: {task.note}</div>}

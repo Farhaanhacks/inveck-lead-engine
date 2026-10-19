@@ -526,7 +526,7 @@ describe('P2 flow', () => {
     expect(nextContact(branches, icp, 'Moga')?.person.name).toBe('Moga Plant');
   });
 
-  it('switches to the P2 after five unanswered calls with a fresh plan, or asks for one', async () => {
+  it('never switches to a P2 by itself: a P2 on file is for the associate to choose; naming them starts their plan', async () => {
     const db = await getDb();
     const { escalate, unansweredCalls, newContactNamed, FIND_NEXT_STEP } = await import('@/lib/escalate');
     const { people: peopleTable } = await import('@/lib/db/schema');
@@ -542,21 +542,58 @@ describe('P2 flow', () => {
     await db.insert(tasks).values(Array.from({ length: 5 }, () => ({ leadId: l.id, ownerId: owned.ownerId!, kind: 'call' as const, title: 'c', dueDate: istDay(), doneAt: done, outcome: 'no_answer' })));
     expect(await unansweredCalls(db, owned)).toBe(5);
 
-    expect(await escalate(db, l.id, 'no_answer')).toMatchObject({ switched: true, name: 'Asha Rao', tier: 'P2' });
-    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(after).toMatchObject({ contactName: 'Asha Rao', contactPhone: '+91 98200 00001', contactTier: 'P2' });
-    expect(await unansweredCalls(db, after)).toBe(0);
-    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
-    expect(open.filter((t) => t.dueDate === istDay()).map((t) => t.kind).sort()).toEqual(['call', 'email', 'linkedin', 'whatsapp']);
-
-    // Nobody left: a step to find someone, and naming them starts their plan.
+    // Not the right person, a P2 on file: the main contact stays; a step asks the associate to choose.
     expect(await escalate(db, l.id, 'wrong_person')).toEqual({ switched: false });
-    let waiting = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
-    expect(waiting.map((t) => t.step)).toEqual([FIND_NEXT_STEP]);
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.status).not.toBe('Deleted');
+    expect(after.contactName).toBe(owned.contactName);
+    const waiting = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(waiting.map((t) => [t.step, t.title])).toEqual([[FIND_NEXT_STEP, 'Choose the next contact: Asha Rao (P2) is on file']]);
     await newContactNamed(db, l.id);
-    waiting = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
-    expect(waiting.some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
-    expect(waiting.filter((t) => t.dueDate === istDay())).toHaveLength(4);
+    const planned = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(planned.some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
+    expect(planned.filter((t) => t.dueDate === istDay())).toHaveLength(4);
+  });
+
+  it('a fresh lead whose contact is used up with no P1 or P2 left goes to Deleted: no find step, nothing off Today, history kept, restorable', async () => {
+    const db = await getDb();
+    const { escalate, FIND_NEXT_STEP } = await import('@/lib/escalate');
+    const { restoreLead } = await import('@/lib/follow-up-sequence');
+    const { people: peopleTable, activities: acts } = await import('@/lib/db/schema');
+    const [l] = await db.insert(leads).values(lead('Beta Works', { segment: 'Manufacturing' })).returning();
+    await assignUnowned(db, { everything: true });
+    await ensureSequences(db);
+    // Only a P3 and an HR contact are on file besides the contact: neither is eligible.
+    await db.insert(peopleTable).values([
+      { leadId: l.id, name: 'Ravi Shah', title: 'Plant Head', isPrimary: true },
+      { leadId: l.id, name: 'Sunil Store', title: 'Store Manager' },
+      { leadId: l.id, name: 'Hema HR', title: 'Head HR' },
+    ]);
+    expect(await escalate(db, l.id, 'wrong_person')).toMatchObject({ switched: false, deleted: true });
+    const [gone] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(gone).toMatchObject({ status: 'Deleted', deletedReason: expect.stringContaining('no eligible P1 or P2') });
+    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(open).toEqual([]);
+    expect((await db.select().from(tasks).where(eq(tasks.leadId, l.id))).some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
+    // Nothing physical was removed: the people and the history are still there.
+    expect(await db.select().from(peopleTable).where(eq(peopleTable.leadId, l.id))).toHaveLength(3);
+    expect((await db.select().from(acts).where(eq(acts.leadId, l.id))).some((a) => a.text.startsWith('Moved to Deleted'))).toBe(true);
+    // Restoring puts it back, and a later Today planning does not delete it again.
+    expect(await restoreLead(db, l.id, 'Puja')).toBe(true);
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].status).not.toBe('Deleted');
+  });
+
+  it('a lead on its follow-up rounds is left to the existing flow (no automatic deletion here)', async () => {
+    const db = await getDb();
+    const { escalate } = await import('@/lib/escalate');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [l] = await db.insert(leads).values(lead('Gamma Ltd', { segment: 'Manufacturing' })).returning();
+    await assignUnowned(db, { everything: true });
+    await db.insert(peopleTable).values({ leadId: l.id, name: 'Ravi Shah', title: 'Plant Head', isPrimary: true });
+    const [owned] = await db.select().from(leads).where(eq(leads.id, l.id));
+    await db.insert(tasks).values({ leadId: l.id, ownerId: owned.ownerId!, kind: 'call', title: 'Follow-up 1: call', step: 'Follow-up 1', followUpRound: 1, dueDate: istDay() });
+    expect(await escalate(db, l.id, 'wrong_person')).toEqual({ switched: false });
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].status).not.toBe('Deleted');
   });
 });
 
@@ -659,8 +696,9 @@ describe('only people who work at the company now', () => {
     expect(await purgeFormerEmployees(db, { leadId: l.id })).toBe(3);
     const left = await db.select().from(peopleTable).where(eq(peopleTable.leadId, l.id));
     expect(left.map((p) => p.name)).toEqual(['Siddhartha Saha']);
+    // The main contact who left is cleared; the one still there isn't switched to automatically.
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(after.contactName).toBe('Siddhartha Saha');
+    expect(after.contactName).toBe('');
   });
 });
 

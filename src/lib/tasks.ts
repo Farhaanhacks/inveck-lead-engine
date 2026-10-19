@@ -1,7 +1,8 @@
 import { and, eq, exists, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { getHolidays } from './holidays';
-import { activities, companyDays, leads, tasks, type Lead, type Task, type TaskKind } from './db/schema';
+import { icpFor } from './tiers';
+import { activities, companyDays, icps, leads, people, tasks, type Lead, type Task, type TaskKind } from './db/schema';
 
 export const DAILY_LINKEDIN_LIMIT = 50;
 /** The step that asks the team for a person to contact (nobody confirmed at the company's site yet). */
@@ -183,19 +184,38 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
     )
     .limit(500);
   const due = firstWorkingDay(today);
-  const find = finding.map((l) => ({
+  // Nobody named and no P1 or P2 on file: nothing for the associate to find, so the lead goes to Deleted (restorable;
+  // one a person restored stays). With one on file, the step says to choose them.
+  const { eligibleContact, NO_CONTACT_REASON, wasRestored } = await import('./escalate');
+  const { softDeleteLead } = await import('./follow-up-sequence');
+  const icpRows = finding.length ? await db.select().from(icps) : [];
+  const peopleRows = finding.length ? await db.select().from(people).where(inArray(people.leadId, finding.map((l) => l.id))) : [];
+  const chosen = new Map<number, string>();
+  const keep: typeof finding = [];
+  for (const l of finding) {
+    const lead = (await db.select().from(leads).where(eq(leads.id, l.id)))[0];
+    const others = peopleRows.filter((p) => p.leadId === l.id && !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== l.contactName.toLowerCase());
+    const eligible = lead ? eligibleContact(others, icpFor(lead.segment, icpRows), lead.city) : null;
+    if (eligible) chosen.set(l.id, `Choose the next contact: ${eligible.person.name} (${eligible.tier}) is on file`);
+    else if (!l.contactName && lead && !(await wasRestored(db, l.id))) {
+      await softDeleteLead(db, l.id, NO_CONTACT_REASON);
+      continue;
+    }
+    keep.push(l);
+  }
+  const find = keep.map((l) => ({
     leadId: l.id,
     ownerId: l.ownerId!,
     kind: 'call' as const,
     step: FIND_NEXT_STEP,
-    title: l.contactName
+    title: chosen.get(l.id) ?? (l.contactName
       ? `Confirm ${l.contactName} is at the ${l.city || 'company\'s'} site, or find the person to contact`
-      : 'Find the person to contact (plant head, else a P2 process owner)',
+      : 'Find the person to contact (plant head, else a P2 process owner)'),
     dueDate: due,
     slot: 'day' as const,
   }));
   for (let i = 0; i < find.length; i += 500) await db.insert(tasks).values(find.slice(i, i + 500));
-  return waiting.length + finding.length;
+  return waiting.length + keep.length;
 }
 
 /**
