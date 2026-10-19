@@ -676,10 +676,9 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const doneOf = (leadId: number) => doneAll.filter((d) => d.lead.id === leadId).map((d) => d.task);
   const linkedinFull = counts.linkedinSent >= DAILY_LINKEDIN_LIMIT;
   const done = doneAll.filter((d) => inSeg(d.lead) && (!needle || [d.lead.company, d.lead.contactName].some((v) => v.toLowerCase().includes(needle))));
-  // Fresh leads: companies on their first contact that were allocated today (drawn today, or whose first steps are due
-  // today). Follow-up: companies on a follow-up or CA round, a promised callback or a call again. Same task definitions as
+  // Fresh leads: every company still on its first contact (including ones allocated on an earlier day and overdue). Follow-up: companies on a follow-up or CA round, a promised callback or a call again. Same task definitions as
   // the rest of Today; nothing about allocation or scheduling changes.
-  const isFresh = (g: CompanyGroup) => !g.priority && g.items.every((i) => isFirstContact(i.task)) && (g.lead.drawnOn === day || g.items.some((i) => i.task.dueDate === day));
+  const isFresh = (g: CompanyGroup) => !g.priority && g.items.every((i) => isFirstContact(i.task));
   const isFollowUp = (g: CompanyGroup) => g.priority || g.items.some((i) => !isFirstContact(i.task));
   const inTab = (g: CompanyGroup) => (tab === 'fresh' ? isFresh(g) : tab === 'followup' ? isFollowUp(g) : true);
   const tabCount = (k: TabKey) => (k === 'done' ? done.length : k === 'fresh' ? groups.filter(isFresh).length : k === 'followup' ? groups.filter(isFollowUp).length : groups.length);
