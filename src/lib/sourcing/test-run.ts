@@ -376,7 +376,13 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       let onLists = 0;
       let newCompanies = 0;
       for (const r of got.results) {
-        const person = readPerson(r, icp);
+        // One result Google wrote oddly is skipped, never the whole test.
+        let person: FoundContact | null;
+        try {
+          person = readPerson(r, icp);
+        } catch {
+          person = null;
+        }
         if (!person) continue;
         profiles++;
         if (seen.has(profileKey(person.linkedin))) continue;

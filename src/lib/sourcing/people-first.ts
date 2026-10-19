@@ -116,6 +116,12 @@ export function readPerson(r: SerperResult, icp: TitleIcp): FoundContact | null 
     return { name, title: job?.role ?? '', tier: '', employer: '', location: '', linkedin, why: 'no current employer shown' };
   }
   const [p] = toLinkedInPeople([r], employer);
+  // The contact search leaves out profiles on another country's LinkedIn (uk., ae., pk.) and nameless ones.
+  if (!p) {
+    const host = /^https?:\/\/([a-z]{2,3})\.linkedin\.com\//i.exec(linkedin)?.[1]?.toLowerCase() ?? '';
+    const why = host && host !== 'www' && host !== 'in' ? `based outside India (a profile on ${host}.linkedin.com)` : 'no name shown';
+    return { name, title: job?.role ?? '', tier: '', employer, location: '', linkedin, why };
+  }
   const tier = tierOf(p.title, icp);
   const base = { name: p.name || name, title: p.title, tier: ['P1', 'P2', 'P3'].includes(tier) ? tier : '', employer, location: p.location ?? '', linkedin };
   if (p.abroad) return { ...base, why: `based outside India (${p.location || 'another country'})` };

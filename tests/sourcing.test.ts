@@ -277,6 +277,9 @@ describe('people first', () => {
     expect(readPerson(person('Hari Rao', 'HR Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'), mfg)).toMatchObject({ tier: '', why: "HR Manager: not on the ICP's lists" });
     expect(readPerson(person('Asha Nair', 'Consultant', 'Self-employed', 'Pune, Maharashtra, India'), mfg)?.why).toBe('no current employer shown');
     expect(readPerson({ title: 'Acme Forgings | LinkedIn', link: 'https://in.linkedin.com/company/acme-forgings' }, mfg)).toBeNull();
+    // Profiles the contact search leaves out (another country's LinkedIn, no name) are reported, not a crash (test 3, 19 Oct).
+    expect(readPerson({ ...person('Tom Hill', 'Plant Manager', 'Acme UK Ltd', 'Sheffield, England, United Kingdom'), link: 'https://uk.linkedin.com/in/tom-hill' }, mfg)).toMatchObject({ employer: 'Acme UK Ltd', why: 'based outside India (a profile on uk.linkedin.com)' });
+    expect(readPerson({ title: ' - Plant Head - Acme Forgings | LinkedIn', link: 'https://in.linkedin.com/in/x', subtitle: 'Pune, Maharashtra, India · Plant Head · Acme Forgings' }, mfg)).toMatchObject({ why: 'no name shown' });
   });
 
   it("finds the company's own page by the name its people write, never a longer name that only starts the same", () => {
@@ -305,6 +308,7 @@ describe('people first', () => {
       person('Sam Das', 'Plant Head', 'Ghost Gears', 'Kolkata, West Bengal, India'),
       person('Hari Rao', 'HR Manager', 'Acme Forgings Pvt Ltd', 'Pune, Maharashtra, India'),
       person('John Smith', 'Plant Manager', 'Acme Corp', 'Detroit, Michigan, United States'),
+      { ...person('Tom Hill', 'Plant Manager', 'Acme UK Ltd', 'Sheffield, England, United Kingdom'), link: 'https://uk.linkedin.com/in/tom-hill' },
     ];
     const pageOf = (slug: string, name: string, snippet: string) => [{ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet }];
     const BY_NAME: Record<string, unknown[]> = {
@@ -353,7 +357,7 @@ describe('people first', () => {
       expect(by['Pharma Co']).toMatchObject({ screen: 'industry' });
       expect(by['Known Forge']).toMatchObject({ screen: 'known' });
       expect(by['Ghost Gears']).toMatchObject({ screen: 'nopage' });
-      expect(peopleFunnelOf(report)).toEqual({ profiles: 9, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 1, abroad: 0, small: 1, industry: 1, ready: 2, readyWithP1: 2, unchecked: 0 });
+      expect(peopleFunnelOf(report)).toEqual({ profiles: 10, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 1, abroad: 0, small: 1, industry: 1, ready: 2, readyWithP1: 2, unchecked: 0 });
       // The known company isn't looked up; MEI Brakes' size needed a second search.
       expect(searches.some((q) => q.includes('"Known Forge"'))).toBe(false);
       expect(report.searches).toMatchObject({ companies: 5, facts: 1 });
