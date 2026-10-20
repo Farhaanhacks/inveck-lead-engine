@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { activities, icps, leads, people, prospectSearches, sourcingTests, tasks, users } from '@/lib/db/schema';
+import { activities, icps, leads, people, prospectSearches, settings, sourcingTests, tasks, users } from '@/lib/db/schema';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
@@ -145,6 +145,13 @@ describe('the Morning Sample Run', () => {
     expect(r.phase).toBe('done');
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
     expect(r.hands.reduce((a, h) => a + h.cards.length, 0)).toBe(3);
+  });
+
+  it("shows the first morning the draw runs, when that's later than the next one", async () => {
+    await db.insert(settings).values({ key: 'morningStartsOn', value: '2030-01-10' });
+    const id = await startSample();
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    expect((await reportOf(id)).day).toBe('2030-01-10');
   });
 
   it('fails with the reason when Google refuses every search, and saves nothing', async () => {

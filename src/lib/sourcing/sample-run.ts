@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, is, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, leads, people, sourcingTests, users, type Lead, type SourcingTest } from '../db/schema';
-import { dealToDeficits, DRAW_HOUR_IST, DRAW_SEGMENTS, drawPool, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
+import { dealToDeficits, DRAW_HOUR_IST, DRAW_SEGMENTS, drawPool, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
@@ -238,7 +238,11 @@ export function sampleMorning(now: Date, holidays: Holidays): string {
 
 /** The morning it shows, the team and quotas, and what the search is asked for: the draw's shortfall, plus a quarter. */
 async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSampleReport> {
-  const day = sampleMorning(new Date(), await getHolidays(db));
+  const holidays = await getHolidays(db);
+  // Not before the day the morning search and draw start (the live database: 22 Oct 2026).
+  const startsOn = await morningStartsOn(db);
+  const next = sampleMorning(new Date(), holidays);
+  const day = startsOn && next < startsOn ? firstWorkingDay(startsOn, holidays) : next;
   const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(asc(users.id));
   const quota = quotaOf(svc.settings);
   const own = await teamQuotas(db, svc.settings);
