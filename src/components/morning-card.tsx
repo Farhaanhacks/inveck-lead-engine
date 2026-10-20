@@ -3,11 +3,13 @@ import type { MorningHealth } from '@/lib/sourcing/morning';
 
 const time = (d: Date) => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' }).format(d);
 
-const OFF: Record<Exclude<MorningHealth['off'], ''>, string> = {
+const OFF: Record<Exclude<MorningHealth['off'], '' | 'not_started'>, string> = {
   weekend: 'No search today: the 6 am run searches Monday to Friday.',
   holiday: 'No search today: a holiday in Settings (and no draw).',
   disabled: 'The 6 am prospect search is turned off in Settings.',
 };
+
+const longDay = (day: string) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${day}T00:00:00Z`));
 
 const STOPPED: Record<string, string> = {
   cap: "stopped at the day's search limit",
@@ -20,7 +22,9 @@ const STOPPED: Record<string, string> = {
 export function MorningCard({ health: h, dailySearches }: { health: MorningHealth; dailySearches: number }) {
   const r = h.run;
   const status = !r
-    ? h.off
+    ? h.off === 'not_started'
+      ? `The morning search and draw start on ${longDay(h.startsOn)}: nothing is searched for or handed out before then.`
+      : h.off
       ? OFF[h.off]
       : 'Not started yet: the run starts at 6:00 am India time and the draw is at 8:00 am.'
     : r.status === 'running'

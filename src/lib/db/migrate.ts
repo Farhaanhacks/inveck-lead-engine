@@ -633,6 +633,10 @@ export const SCHEMA_STATEMENTS = [
    WHERE role = 'bda' AND lower(split_part(btrim(name), ' ', 1)) IN ('parimal', 'anuradha')
    AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'drawQuotasV1')`,
   `INSERT INTO settings (key, value) VALUES ('drawQuotasV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // INVECK's go-live (21 Oct 2026): the new morning search and draw start on Thursday 22 October, not before.
+  // Set once on the live database (a new one has no team yet when this runs, so it starts at once).
+  `INSERT INTO settings (key, value) SELECT 'morningStartsOn', to_jsonb('2026-10-22'::text)
+   WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

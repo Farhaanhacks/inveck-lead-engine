@@ -169,6 +169,12 @@ export async function drawPool(db: Db): Promise<{ total: number; withContact: nu
   return { total: Number(row?.total ?? 0), withContact: Number(row?.withContact ?? 0), bySegment };
 }
 
+/** The first day the morning search and draw run ('' when they always have): before it, neither runs on its own. */
+export async function morningStartsOn(db: Db): Promise<string> {
+  const [row] = await db.select().from(settings).where(eq(settings.key, 'morningStartsOn'));
+  return typeof row?.value === 'string' ? row.value : '';
+}
+
 /** Leads the draw would pick from in a segment, as it picks them: those with a named contact first, at random. */
 export async function poolLeads(db: Db, segment: DrawSegment, limit: number): Promise<Lead[]> {
   if (limit <= 0) return [];
@@ -219,8 +225,9 @@ export async function runDailyDraw(db: Db, opts: { now?: Date; force?: boolean; 
   const now = opts.now ?? new Date();
   const day = istDay(now);
   if (!opts.force && !drawDue(now)) return null;
-  // No draw on a holiday marked in Settings: nobody is working.
+  // No draw on a holiday marked in Settings (nobody is working), nor before the day it starts.
   if (!opts.force && (await getHolidays(db)).has(day)) return null;
+  if (!opts.force && day < ((await morningStartsOn(db)) || day)) return null;
   if (await getDraw(db, day)) return null;
 
   const settingsNow = await getSettings(db);

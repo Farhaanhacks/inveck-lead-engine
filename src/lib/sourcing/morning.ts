@@ -2,7 +2,8 @@ import { and, desc, eq, gte, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { icps, leads, people, prospectSearches, runs, type Lead, type Run } from '../db/schema';
 import { DEFAULT_ICPS } from '../db/seed';
-import { drawPool, quotaTotal, teamQuotas, teamTotal } from '../draw';
+import { drawPool, morningStartsOn, quotaTotal, teamQuotas, teamTotal } from '../draw';
+import { getHolidays } from '../holidays';
 import { normSegment } from '../icp-match';
 import { logActivity } from '../activity';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
@@ -106,6 +107,18 @@ export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof sea
     });
   }
   return out;
+}
+
+/**
+ * Whether the 6 am run searches for new prospects today: a working day (Monday to Friday, not a holiday
+ * marked in Settings), on or after the day the morning search starts, and not turned off in Settings.
+ */
+export async function searchesThisMorning(db: Db, settings: Services['settings'], now = new Date()): Promise<boolean> {
+  const day = istDay(now);
+  const weekday = new Date(now.getTime() + 5.5 * 3600 * 1000).getUTCDay();
+  if (weekday < 1 || weekday > 5 || (await getHolidays(db)).has(day)) return false;
+  const start = await morningStartsOn(db);
+  return (!start || day >= start) && settings.morningSearch;
 }
 
 /** Whether a scheduled run may still start another round before the draw. */
@@ -481,8 +494,10 @@ export async function sourceProspects(
 
 export type MorningHealth = {
   day: string;
-  /** Why there's no search today: a weekend, a holiday, or turned off in Settings ('' on a working day). */
-  off: '' | 'weekend' | 'holiday' | 'disabled';
+  /** Why there's no search today: a weekend, a holiday, not started yet, or turned off in Settings ('' on a working day). */
+  off: '' | 'weekend' | 'holiday' | 'not_started' | 'disabled';
+  /** The first day the morning search and draw run ('' when they always have). */
+  startsOn: string;
   /** Today's 6 am run, if it has started. */
   run: { id: number; status: Run['status']; startedAt: Date; finishedAt: Date | null; added: number; researched: number; approved: number; disqualified: number; searches: number; rounds: number; error: string } | null;
   /** Per segment: what the draw needs, what's ready for it now, and what today's search found against what it wanted. */
@@ -496,7 +511,9 @@ export type MorningHealth = {
 export async function morningHealth(db: Db, settings: Services['settings'], holidays: Set<string>, now = new Date()): Promise<MorningHealth> {
   const day = istDay(now);
   const weekday = new Date(now.getTime() + 5.5 * 3600 * 1000).getUTCDay();
-  const off: MorningHealth['off'] = weekday === 0 || weekday === 6 ? 'weekend' : holidays.has(day) ? 'holiday' : settings.morningSearch ? '' : 'disabled';
+  const startsOn = await morningStartsOn(db);
+  const off: MorningHealth['off'] =
+    weekday === 0 || weekday === 6 ? 'weekend' : holidays.has(day) ? 'holiday' : startsOn && day < startsOn ? 'not_started' : settings.morningSearch ? '' : 'disabled';
   const { start } = istDayBounds(day);
   // Only the small parts of each run's search record (its list of profiles seen can be long).
   const recent = await db
@@ -552,6 +569,7 @@ export async function morningHealth(db: Db, settings: Services['settings'], holi
   return {
     day,
     off,
+    startsOn,
     run: todays
       ? {
           id: todays.id,

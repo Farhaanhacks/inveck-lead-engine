@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { leads, people, prospectSearches, runs, users } from '@/lib/db/schema';
+import { leads, people, prospectSearches, runs, settings, users } from '@/lib/db/schema';
+import { SCHEMA_STATEMENTS } from '@/lib/db/migrate';
 import { DEFAULT_ICPS, LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
-import { drawPool, runDailyDraw } from '@/lib/draw';
+import { drawPool, morningStartsOn, runDailyDraw } from '@/lib/draw';
 import { saveHolidays } from '@/lib/holidays';
 import { executeRun, startRun } from '@/lib/runs';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { istDay } from '@/lib/tasks';
-import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, type MorningSourcing } from '@/lib/sourcing/morning';
+import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, searchesThisMorning, type MorningSourcing } from '@/lib/sourcing/morning';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
 
@@ -188,5 +189,51 @@ describe('holidays', () => {
     expect(await runDailyDraw(db, { now: morning })).toBeNull();
     await saveHolidays(db, []);
     expect((await runDailyDraw(db, { now: morning }))?.drawn).toBe(1);
+  });
+});
+
+describe('the day the morning search and draw start', () => {
+  const setStart = (day: string) => db.insert(settings).values({ key: 'morningStartsOn', value: day }).onConflictDoUpdate({ target: settings.key, set: { value: day } });
+  // Wednesday 9 and Thursday 10 January 2030, 8:30 am India time.
+  const wed = new Date('2030-01-09T03:00:00Z');
+  const thu = new Date('2030-01-10T03:00:00Z');
+
+  it('is set on the live database only: a new one starts at once', async () => {
+    expect(await morningStartsOn(db)).toBe('');
+    // As on the live database, which already has its team: the go-live statement sets it.
+    for (const s of SCHEMA_STATEMENTS.filter((x) => x.includes("'morningStartsOn'"))) await db.execute(sql.raw(s));
+    expect(await morningStartsOn(db)).toBe('2026-10-22');
+  });
+
+  it('before it, neither the 6 am search nor the 8 am draw runs; from it, both do', async () => {
+    await setStart('2030-01-10');
+    await db.insert(leads).values({ company: 'Ready Co', segment: MANUFACTURING, status: 'Approved', qualified: true, contactName: 'Asha Kulkarni', contactVerifiedAt: new Date() });
+    const s = settingsSchema.parse({});
+    expect(await searchesThisMorning(db, s, wed)).toBe(false);
+    expect(await searchesThisMorning(db, s, thu)).toBe(true);
+    expect(await runDailyDraw(db, { now: wed })).toBeNull();
+    expect((await db.select().from(leads).where(eq(leads.company, 'Ready Co')))[0].ownerId).toBeNull();
+    expect((await runDailyDraw(db, { now: thu }))?.drawn).toBe(1);
+  });
+
+  it('an admin can still draw by hand before it', async () => {
+    await setStart('2030-01-10');
+    await db.insert(leads).values({ company: 'Ready Co', segment: MANUFACTURING, status: 'Approved', qualified: true, contactName: 'Asha Kulkarni', contactVerifiedAt: new Date() });
+    expect((await runDailyDraw(db, { now: wed, force: true }))?.drawn).toBe(1);
+  });
+
+  it('never searches at the weekend, on a holiday, or when turned off', async () => {
+    const s = settingsSchema.parse({});
+    expect(await searchesThisMorning(db, s, new Date('2030-01-12T00:30:00Z'))).toBe(false); // Saturday
+    await saveHolidays(db, ['2030-01-10']);
+    expect(await searchesThisMorning(db, s, thu)).toBe(false);
+    await saveHolidays(db, []);
+    expect(await searchesThisMorning(db, settingsSchema.parse({ morningSearch: false }), thu)).toBe(false);
+  });
+
+  it("the Dashboard card says when it starts", async () => {
+    await setStart('2030-01-10');
+    const h = await morningHealth(db, settingsSchema.parse({}), new Set(), wed);
+    expect(h).toMatchObject({ off: 'not_started', startsOn: '2030-01-10', run: null });
   });
 });

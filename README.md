@@ -233,7 +233,8 @@ Each report shows the funnel, every company with its outcome, and each search wi
 4. Redeploy so the variables take effect, then open the site and log in.
 
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
-working day (not holidays marked in Settings), finds new prospects **people first**
+working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
+`morningStartsOn` setting, which holds the 8 am draw back until then too), finds new prospects **people first**
 (`src/lib/sourcing/morning.ts`): Google searches of LinkedIn profiles with the ICP's P1 and P2 titles (plant
 heads first), each with an industry word and a town; then each person's company page on LinkedIn, screened
 on size, industry, headquarters and whether INVECK already has it (by name, website or LinkedIn page). Each
