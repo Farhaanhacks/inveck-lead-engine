@@ -147,25 +147,41 @@ async function searchesTodayElsewhere(db: Db, runId: number): Promise<number> {
   return Number(used);
 }
 
-/** The companies a round asks for, per segment. A manual search finds at least its share of "New prospects per search". */
-async function newRound(db: Db, svc: Services, run: Run, prev: MorningSourcing | null): Promise<MorningSourcing> {
+/** Searches the morning runs made in the last 30 days (by their normalised form), not to be made again; `own` is a run's own. */
+export async function recentSearches(db: Db, own: number | null): Promise<Set<string>> {
+  const since = new Date(Date.now() - MORNING_LIMITS.memoryDays * 86_400_000);
+  const rows = await db
+    .select({ q: prospectSearches.normQuery })
+    .from(prospectSearches)
+    .where(and(gte(prospectSearches.searchedAt, since), eq(prospectSearches.status, 'ok'), own === null ? undefined : or(isNull(prospectSearches.runId), ne(prospectSearches.runId, own))));
+  return new Set(rows.map((r) => r.q));
+}
+
+/**
+ * A new round: what it wants per segment, carrying on from the last round (the searches already made
+ * aren't made again, companies already checked aren't checked again, and those found but not needed
+ * then come first now).
+ */
+export function startRound(prev: MorningSourcing | null, wanted: Record<SourcingSegment, number>): MorningSourcing {
+  const segments = SOURCING_SEGMENTS.map((segment): MorningSegment => {
+    const before = prev?.segments.find((p) => p.segment === segment);
+    return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
+  });
+  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [] };
+}
+
+/** The companies a round of the run asks for, per segment. A manual search finds at least its share of "New prospects per search". */
+async function runWants(db: Db, svc: Services, run: Run, round: number): Promise<Record<SourcingSegment, number>> {
   const short = await drawShortfall(db, svc.settings);
   const quota = quotaOf(svc.settings);
   const total = quotaTotal(quota);
-  const round = (prev?.round ?? 0) + 1;
   const share = (s: SourcingSegment) => (total ? (quota[s] ? Math.max(1, Math.round((svc.settings.prospectsPerRun * quota[s]) / total)) : 0) : Math.ceil(svc.settings.prospectsPerRun / 2));
-  const segments = SOURCING_SEGMENTS.map((segment): MorningSegment => {
+  const wanted = {} as Record<SourcingSegment, number>;
+  for (const segment of SOURCING_SEGMENTS) {
     const fill = Math.ceil(short[segment].short * MORNING_LIMITS.headroom);
-    const wanted = run.trigger !== 'schedule' && round === 1 ? Math.max(fill, share(segment)) : fill;
-    return { segment, wanted, added: 0, cursor: 0, quiet: 0, pending: [], checked: [], ruledOut: 0, noPage: 0, searches: 0 };
-  });
-  // Carries on from the last round: the searches already made aren't made again, companies already
-  // checked aren't checked again, and those found but not needed then come first now.
-  for (const s of segments) {
-    const before = prev?.segments.find((p) => p.segment === s.segment);
-    if (before) Object.assign(s, { cursor: before.cursor, pending: before.pending, checked: before.checked });
+    wanted[segment] = run.trigger !== 'schedule' && round === 1 ? Math.max(fill, share(segment)) : fill;
   }
-  return { round, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [] };
+  return wanted;
 }
 
 /** Whether the run should search again: research ruled out companies and the draw is still short. */
@@ -183,67 +199,59 @@ export async function wantsAnotherRound(db: Db, svc: Services, run: Run, now = n
   return SOURCING_SEGMENTS.some((s) => short[s].short > 0);
 }
 
-/** The people the search found at a people-first lead, as the LinkedIn search's own finds, for research to choose from. */
+/** People the search found, as the LinkedIn search's own finds, for research to choose from. */
+export function asLinkedInFinds(found: Pick<FoundContact, 'name' | 'title' | 'linkedin' | 'location'>[]) {
+  return found.map((p) => ({ name: p.name, title: p.title, linkedin: p.linkedin, snippet: PEOPLE_FIRST_EVIDENCE, location: p.location, evidence: PEOPLE_FIRST_EVIDENCE }));
+}
+
+/** The people the search found at a people-first lead, for research to choose from. */
 export async function peopleFirstContacts(db: Db, lead: Pick<Lead, 'id' | 'source'>) {
   if (!lead.source.startsWith(PEOPLE_FIRST_SOURCE)) return [];
   const rows = await db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.source, 'LinkedIn'), eq(people.evidence, PEOPLE_FIRST_EVIDENCE)));
-  return rows.map((p) => ({ name: p.name, title: p.title, linkedin: p.linkedin, snippet: PEOPLE_FIRST_EVIDENCE, location: p.location, evidence: PEOPLE_FIRST_EVIDENCE }));
+  return asLinkedInFinds(rows);
 }
 
-/**
- * Works on the run's prospect search until each segment has what it wants or stops, or `budgetMs`
- * runs out ('continue': where it got to is saved on the run). Every company that passes is added as a
- * lead at once, with its people, and handed to `onAdded` (to give it to the team when the admin chose that).
- */
-export async function sourceProspects(
-  db: Db,
-  svc: Services,
-  run: Run,
-  opts: {
-    started: number;
-    budgetMs: number;
-    log: (m: string, level?: 'info' | 'warn' | 'error') => Promise<unknown>;
-    onAdded?: (ids: number[]) => Promise<void>;
-    /** Whether the admin pressed Stop: the search ends where it is (the run then stops). */
-    stopped?: () => Promise<boolean>;
-  },
-): Promise<'done' | 'continue'> {
-  // Read again: an earlier round of this invocation saved it.
-  const [row] = await db.select({ sourcing: runs.sourcing }).from(runs).where(eq(runs.id, run.id));
-  const prev = (row?.sourcing ?? null) as MorningSourcing | null;
-  const fresh = !prev || prev.roundDone;
-  const state = fresh ? await newRound(db, svc, run, prev) : prev;
-  const save = () => db.update(runs).set({ sourcing: JSON.parse(JSON.stringify(state)), heartbeatAt: new Date() }).where(eq(runs.id, run.id));
-  if (fresh) {
-    const wanted = state.segments.filter((s) => s.wanted > 0);
-    await opts.log(
-      wanted.length
-        ? `${state.round > 1 ? `Searching again (round ${state.round}): ` : 'Finding new prospects, people first: '}${wanted.map((s) => `${s.wanted} ${s.segment}`).join(', ')}`
-        : 'Finding new prospects: the morning draw has enough researched leads waiting, so none are needed',
-    );
-    await save();
-  }
-  if (!svc.keys.serper) {
-    await opts.log('Prospect search skipped: SERPER_API_KEY is not set', 'error');
-    state.roundDone = true;
-    await save();
-    return 'done';
-  }
+/** A company that passed the screen, with the people found there (best first). */
+export type PassedCompany = { segment: SourcingSegment; name: string; employer: string; page: CompanyPage; contacts: FoundContact[]; note: string; city: string };
 
+/** Where a round's finds go: the run's leads, or a sample run's report. */
+export type RoundSink = {
+  add(c: PassedCompany): Promise<void>;
+  /** A search made: the run remembers it, so it isn't made again for a while (a sample run doesn't). */
+  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; error?: string }): Promise<void>;
+  save(state: MorningSourcing): Promise<unknown>;
+};
+
+export type RoundOptions = {
+  started: number;
+  budgetMs: number;
+  log: (m: string, level?: 'info' | 'warn' | 'error') => Promise<unknown>;
+  /** Whether the admin pressed Stop: the search ends where it is. */
+  stopped?: () => Promise<boolean>;
+  /** Orders the plan: the same on every round and invocation, so the cursor stays where it was. */
+  seed: number;
+  /** Searches already made today elsewhere, counted against the day's limit. */
+  usedToday: number;
+  /** Searches made before (normalised), not made again. */
+  recent: Set<string>;
+  /** Companies taken besides INVECK's own: a sample run's earlier finds. */
+  alsoKnown?: { names: string[]; domains: string[]; pages: string[] };
+  sink: RoundSink;
+};
+
+/**
+ * Works on a round until each segment has what it wants or stops, or `budgetMs` runs out ('continue':
+ * where it got to is saved). Every company that passes goes to the sink at once. Throws when Google
+ * refuses every search (out of credits, a wrong key).
+ */
+export async function searchRound(db: Db, svc: Services, state: MorningSourcing, o: RoundOptions): Promise<'done' | 'continue'> {
+  const save = () => o.sink.save(state);
   const known = await knownToInveck(db);
   const pages = new Set((await db.select({ url: leads.companyLinkedin }).from(leads).where(ne(leads.companyLinkedin, ''))).map((r) => r.url));
-  const elsewhere = await searchesTodayElsewhere(db, run.id);
+  for (const n of o.alsoKnown?.names ?? []) known.names.add(normCompany(n));
+  for (const d of o.alsoKnown?.domains ?? []) known.domains.add(d);
+  for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
-  const since = new Date(Date.now() - MORNING_LIMITS.memoryDays * 86_400_000);
-  // Searches made on earlier runs: not made again for a while (this run's own are in its cursor).
-  const recent = new Set(
-    (
-      await db
-        .select({ q: prospectSearches.normQuery })
-        .from(prospectSearches)
-        .where(and(gte(prospectSearches.searchedAt, since), eq(prospectSearches.status, 'ok'), or(isNull(prospectSearches.runId), ne(prospectSearches.runId, run.id))))
-    ).map((r) => r.q),
-  );
 
   let steps = 0;
   for (const seg of state.segments) {
@@ -252,8 +260,7 @@ export async function sourceProspects(
       continue;
     }
     const icp = await icpFor(db, seg.segment);
-    // The same plan on every round and invocation of this run, so the cursor stays where it was.
-    const plan = morningPlan(seg.segment, icp, run.id * 31).filter((q) => !recent.has(normQuery(q.q)));
+    const plan = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
     const counting: Services = {
       ...svc,
       fetch: ((input, init) => {
@@ -274,7 +281,7 @@ export async function sourceProspects(
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);
 
-    // Checks one company's LinkedIn page; one that passes becomes a lead with its people.
+    // Checks one company's LinkedIn page; one that passes goes to the sink with its people.
     const check = async (c: MorningSegment['pending'][number]) => {
       checked.add(normCompany(c.employer));
       const got = await search(companyQuery(c.employer));
@@ -292,7 +299,7 @@ export async function sourceProspects(
       }
       if (seg.added >= seg.wanted) return;
       const name = page.nameCut ? c.employer : page.name;
-      // Taken before the insert, so two checks at once can't add the same company.
+      // Taken before it's added, so two checks at once can't add the same company.
       pages.add(page.url);
       known.names.add(normCompany(name));
       known.names.add(normCompany(c.employer));
@@ -302,25 +309,7 @@ export async function sourceProspects(
       state.added++;
       const best = c.contacts[0];
       const city = page.hq && !hqAbroad(page.hq) ? page.hq.split(',')[0].trim() : placeNamedIn(page.text) || (best.location.split(',')[0] ?? '').trim();
-      const [row] = await db
-        .insert(leads)
-        .values({
-          company: name,
-          nameAsFound: c.employer,
-          website: page.website,
-          city,
-          segment: seg.segment,
-          status: 'New',
-          companyLinkedin: page.url,
-          source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${page.url} (${page.size || 'size not shown'}${page.industry ? `, ${page.industry}` : ''})`,
-        })
-        .returning({ id: leads.id });
-      if (page.website) registerFirmWebsite(name, page.website);
-      await db.insert(people).values(
-        c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany).map((p) => ({ leadId: row.id, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })),
-      );
-      await logActivity(db, row.id, 'added', `Found by the people-first search: ${c.contacts.map((p) => `${p.name} (${p.title}, ${p.tier})`).slice(0, 4).join('; ')} work here. Company page: ${page.url}; ${s.note}.`);
-      await opts.onAdded?.([row.id]);
+      await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city });
     };
 
     for (;;) {
@@ -328,18 +317,18 @@ export async function sourceProspects(
         seg.stopped = 'target';
         break;
       }
-      if (elsewhere + state.searches >= MORNING_LIMITS.dailySearches) {
+      if (o.usedToday + state.searches >= MORNING_LIMITS.dailySearches) {
         seg.stopped = 'cap';
         break;
       }
       // Out of this invocation's time (after doing something, so every invocation gets further).
-      if (steps > 0 && Date.now() - opts.started > opts.budgetMs * 0.6) {
+      if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.6) {
         state.seen = [...seen];
         seg.checked = [...checked];
         await save();
         return 'continue';
       }
-      if (await opts.stopped?.()) {
+      if (await o.stopped?.()) {
         state.seen = [...seen];
         seg.checked = [...checked];
         state.roundDone = true;
@@ -399,16 +388,7 @@ export async function sourceProspects(
           }
         }
         seg.quiet = onLists ? 0 : seg.quiet + 1;
-        await db.insert(prospectSearches).values({
-          query: pq.q,
-          normQuery: normQuery(pq.q),
-          segment: seg.segment,
-          runId: run.id,
-          status: got[i].error ? 'failed' : 'ok',
-          resultsCount: got[i].results.length,
-          freshCount: newCompanies,
-          error: got[i].error ?? '',
-        });
+        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, error: got[i].error });
       }
       for (const c of seg.pending) c.contacts.sort((a, b) => rank(a) - rank(b));
     }
@@ -423,13 +403,80 @@ export async function sourceProspects(
             : seg.stopped === 'dry'
               ? ` (the last ${seg.quiet} searches found nobody new on the lists)`
               : ` (every search planned has been made in the last ${MORNING_LIMITS.memoryDays} days)`;
-      await opts.log(`${seg.segment}: ${seg.added} of ${seg.wanted} new companies with contacts, ${seg.searches} Google searches${why}`, seg.added < seg.wanted ? 'warn' : 'info');
+      await o.log(`${seg.segment}: ${seg.added} of ${seg.wanted} new companies with contacts, ${seg.searches} Google searches${why}`, seg.added < seg.wanted ? 'warn' : 'info');
     }
   }
   state.seen = [...seen];
   state.roundDone = true;
   await save();
   return 'done';
+}
+
+/**
+ * The run's prospect search: a round of searchRound whose finds become leads at once, with their
+ * people, handed to `onAdded` (to give them to the team when the admin chose that).
+ */
+export async function sourceProspects(
+  db: Db,
+  svc: Services,
+  run: Run,
+  opts: Pick<RoundOptions, 'started' | 'budgetMs' | 'log' | 'stopped'> & { onAdded?: (ids: number[]) => Promise<void> },
+): Promise<'done' | 'continue'> {
+  // Read again: an earlier round of this invocation saved it.
+  const [row] = await db.select({ sourcing: runs.sourcing }).from(runs).where(eq(runs.id, run.id));
+  const prev = (row?.sourcing ?? null) as MorningSourcing | null;
+  const fresh = !prev || prev.roundDone;
+  const state = fresh ? startRound(prev, await runWants(db, svc, run, (prev?.round ?? 0) + 1)) : prev;
+  const save = (s: MorningSourcing) => db.update(runs).set({ sourcing: JSON.parse(JSON.stringify(s)), heartbeatAt: new Date() }).where(eq(runs.id, run.id));
+  if (fresh) {
+    const wanted = state.segments.filter((s) => s.wanted > 0);
+    await opts.log(
+      wanted.length
+        ? `${state.round > 1 ? `Searching again (round ${state.round}): ` : 'Finding new prospects, people first: '}${wanted.map((s) => `${s.wanted} ${s.segment}`).join(', ')}`
+        : 'Finding new prospects: the morning draw has enough researched leads waiting, so none are needed',
+    );
+    await save(state);
+  }
+  if (!svc.keys.serper) {
+    await opts.log('Prospect search skipped: SERPER_API_KEY is not set', 'error');
+    state.roundDone = true;
+    await save(state);
+    return 'done';
+  }
+  return searchRound(db, svc, state, {
+    ...opts,
+    // The same plan on every round and invocation of this run, so the cursor stays where it was.
+    seed: run.id * 31,
+    usedToday: await searchesTodayElsewhere(db, run.id),
+    // Searches made on earlier runs: not made again for a while (this run's own are in its cursor).
+    recent: await recentSearches(db, run.id),
+    sink: {
+      save,
+      async add(c) {
+        const best = c.contacts[0];
+        const [lead] = await db
+          .insert(leads)
+          .values({
+            company: c.name,
+            nameAsFound: c.employer,
+            website: c.page.website,
+            city: c.city,
+            segment: c.segment,
+            status: 'New',
+            companyLinkedin: c.page.url,
+            source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
+          })
+          .returning({ id: leads.id });
+        if (c.page.website) registerFirmWebsite(c.name, c.page.website);
+        await db.insert(people).values(c.contacts.map((p) => ({ leadId: lead.id, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
+        await logActivity(db, lead.id, 'added', `Found by the people-first search: ${c.contacts.map((p) => `${p.name} (${p.title}, ${p.tier})`).slice(0, 4).join('; ')} work here. Company page: ${c.page.url}; ${c.note}.`);
+        await opts.onAdded?.([lead.id]);
+      },
+      async searched(segment, pq, r) {
+        await db.insert(prospectSearches).values({ query: pq.q, normQuery: normQuery(pq.q), segment, runId: run.id, status: r.error ? 'failed' : 'ok', resultsCount: r.results, freshCount: r.newCompanies, error: r.error ?? '' });
+      },
+    },
+  });
 }
 
 export type MorningHealth = {

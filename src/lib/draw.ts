@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { leads, settings, users, type LeadStatus } from './db/schema';
+import { leads, settings, users, type Lead, type LeadStatus } from './db/schema';
 import { LOGISTICS, MANUFACTURING } from './db/seed';
 import { normSegment } from './icp-match';
 import { getSettings, type Settings } from './settings';
@@ -141,6 +141,12 @@ export async function drawPool(db: Db): Promise<{ total: number; withContact: nu
     bySegment[s] = Number(r?.n ?? 0);
   }
   return { total: Number(row?.total ?? 0), withContact: Number(row?.withContact ?? 0), bySegment };
+}
+
+/** Leads the draw would pick from in a segment, as it picks them: those with a named contact first, at random. */
+export async function poolLeads(db: Db, segment: DrawSegment, limit: number): Promise<Lead[]> {
+  if (limit <= 0) return [];
+  return db.select().from(leads).where(inPool(segment)).orderBy(sql`(${leads.contactName} = '')`, sql`random()`).limit(limit);
 }
 
 export async function getDraw(db: Db, day = istDay()): Promise<DrawRecord | null> {

@@ -245,6 +245,12 @@ last 30 days isn't made again, and the prospect search stops at 3,000 Google sea
 never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
 segment has ready for the draw, and warns when the searches are running thin.
 
+To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
+(`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
+researches exactly as the run does, deals each active associate their quota from the pool and what it found,
+and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
+nobody is given anything and no search is remembered, so tomorrow's run starts fresh. CA firms aren't part of it.
+
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate 20 leads:
 12 Manufacturing + 8 3PL & Logistics (Settings, "Manufacturing leads per associate" and "3PL & Logistics
 leads per associate"), so 80 a day for four associates (48 + 32). Each segment is drawn separately, at random,

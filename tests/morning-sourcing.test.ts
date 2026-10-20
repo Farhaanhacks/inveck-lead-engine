@@ -9,8 +9,8 @@ import { executeRun, startRun } from '@/lib/runs';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { istDay } from '@/lib/tasks';
 import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, type MorningSourcing } from '@/lib/sourcing/morning';
-import type { Services } from '@/lib/pipeline/services';
-import { fakeFetch, type FakeLog } from './fake-apis';
+import type { FakeLog } from './fake-apis';
+import { morningServices } from './morning-world';
 
 /**
  * The 6 am run, people first: plant heads and other P1/P2 titles on LinkedIn, their companies'
@@ -21,55 +21,7 @@ import { fakeFetch, type FakeLog } from './fake-apis';
 let db: Db;
 let log: FakeLog;
 
-const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
-const person = (name: string, role: string, company: string, place = 'Pune, Maharashtra, India') => ({
-  title: `${name} - ${role} - ${company} | LinkedIn`,
-  subtitle: `${place} · ${role} · ${company}`,
-  link: `https://in.linkedin.com/in/${name.toLowerCase().replace(/ /g, '-')}`,
-  snippet: '',
-});
-const page = (slug: string, name: string, facts: string) => ({ title: `${name} | LinkedIn`, link: `https://in.linkedin.com/company/${slug}`, snippet: `${name} | 2,345 followers on LinkedIn. ${facts}` });
-
-const PROFILES: Record<string, ReturnType<typeof person>[]> = {
-  forging: [
-    person('Rahul Patil', 'Plant Head', 'Forgeline Components'),
-    person('Sunita Rao', 'Supply Chain Manager', 'Forgeline Components'),
-    person('Imran Shaikh', 'Plant Head', 'Tiny Tools'),
-    person('Vikas Jain', 'Plant Head', 'Known Gears'),
-  ],
-  warehousing: [person('Deepak Nair', 'Warehouse Head', 'Swift Warehousing Solutions', 'Bhiwandi, Maharashtra, India')],
-};
-const PAGES: Record<string, ReturnType<typeof page>> = {
-  'Forgeline Components': page('forgeline-components', 'Forgeline Components', 'Website: http://www.forgeline.in. Industry: Motor Vehicle Parts Manufacturing. Company size: 501-1,000 employees. Headquarters: Pune, Maharashtra'),
-  'Tiny Tools': page('tiny-tools', 'Tiny Tools', 'Website: http://www.tinytools.in. Industry: Machinery Manufacturing. Company size: 11-50 employees. Headquarters: Pune, Maharashtra'),
-  'Swift Warehousing Solutions': page('swift-warehousing', 'Swift Warehousing Solutions', 'Website: http://www.swiftwh.in. Industry: Transportation, Logistics, Supply Chain and Storage. Company size: 201-500 employees. Headquarters: Mumbai, Maharashtra'),
-};
-
-/** Serper for the people-first searches and company pages; everything else (research, AI) as in the other tests. */
-function world(searched: string[]): typeof fetch {
-  const rest = fakeFetch(log);
-  return (async (input: RequestInfo | URL, init: RequestInit = {}) => {
-    const url = new URL(String(input instanceof Request ? input.url : input));
-    if (url.host === 'google.serper.dev' && url.pathname === '/search') {
-      const { q } = JSON.parse(String(init.body));
-      if (q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(q)) {
-        searched.push(q);
-        return json({ organic: PROFILES[/"forging"/.test(q) ? 'forging' : 'warehousing'] });
-      }
-      const name = Object.keys(PAGES).find((n) => q.includes(n) || q.includes(PAGES[n].snippet.match(/www\.([a-z]+\.[a-z]+)/)![1]));
-      if (q.startsWith('site:linkedin.com/company') && name) return json({ organic: [PAGES[name]] });
-    }
-    return rest(input, init);
-  }) as typeof fetch;
-}
-
-function services(searched: string[] = []): Services {
-  return {
-    fetch: world(searched),
-    keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', jina: '' },
-    settings: settingsSchema.parse({ manufacturingPerAssociate: 1, logisticsPerAssociate: 1 }),
-  };
-}
+const services = (searched: string[] = []) => morningServices(log, searched);
 
 beforeEach(async () => {
   process.env.DATABASE_URL = 'memory://';

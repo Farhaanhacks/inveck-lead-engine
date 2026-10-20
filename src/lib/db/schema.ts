@@ -573,8 +573,11 @@ export type SheetFirm = typeof sheetFirms.$inferSelect;
 export const sourcingTests = pgTable('sourcing_tests', {
   id: serial('id').primaryKey(),
   segment: text('segment').notNull(),
-  /** 'companies': company pages first, then their people; 'people': people with the ICP's titles first, then their companies. */
-  mode: text('mode').$type<'companies' | 'people'>().notNull().default('companies'),
+  /**
+   * 'companies': company pages first, then their people; 'people': people with the ICP's titles first, then
+   * their companies; 'morning': a Morning Sample Run (tomorrow's run and draw on paper, see sourcing/sample-run.ts).
+   */
+  mode: text('mode').$type<'companies' | 'people' | 'morning'>().notNull().default('companies'),
   /** People first: prospects wanted. Companies first: companies checked for people. */
   companies: integer('companies').notNull().default(30),
   status: text('status').$type<'running' | 'done' | 'failed'>().notNull().default('running'),
