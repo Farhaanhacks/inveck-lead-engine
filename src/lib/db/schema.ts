@@ -42,6 +42,8 @@ export const leads = pgTable('leads', {
   /** What the company name was checked against: its website, its domain, or the team ('' = not checked yet). */
   nameEvidence: text('name_evidence').notNull().default(''),
   website: text('website').notNull().default(''),
+  /** The company's LinkedIn page, when the people-first search found it there ('' otherwise). */
+  companyLinkedin: text('company_linkedin').notNull().default(''),
   city: text('city').notNull().default(''),
   segment: text('segment').notNull().default(''),
   status: text('status').$type<LeadStatus>().notNull().default('New'),
@@ -220,6 +222,8 @@ export const runs = pgTable('runs', {
   error: text('error').notNull().default(''),
   cancelRequested: boolean('cancel_requested').notNull().default(false),
   prospectsDone: boolean('prospects_done').notNull().default(false),
+  /** The people-first prospect search's progress (see sourcing/morning.ts); null on runs that didn't search. */
+  sourcing: jsonb('sourcing'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),

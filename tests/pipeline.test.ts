@@ -65,7 +65,8 @@ beforeEach(async () => {
 describe('full run with DeepSeek-style messy answers', () => {
   it('handles every lead correctly and never crashes', async () => {
     await db.insert(leads).values(TEST_LEADS);
-    const { run } = await startRun(db, { findProspects: true, trigger: 'test' });
+    // The prospect search (people first) has its own tests: tests/morning-sourcing.test.ts.
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     expect(await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY)).toBe('done');
 
     const L = await byCompany();
@@ -183,16 +184,6 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Catchall Co'].contactEmail).toBe('');
     expect(L['Catchall Co'].status).toBe('Approved'); // reachable on LinkedIn
 
-    // Prospect search added new companies but skipped duplicates, clients and directories.
-    expect(L['Bharat Forge Ltd'].source).toBe('Lookalike of Haldex: forging plants');
-    expect(L['Sona Comstar']).toBeDefined();
-    expect(L['Tata Motors Limited']).toBeUndefined();
-    expect(L['Haldex India']).toBeUndefined();
-    expect(L['IndiaMART Listing Co'].website).toBe('');
-    // …and researched them in the same run.
-    expect(L['Bharat Forge Ltd'].status).not.toBe('New');
-
-    expect(finished.stats.prospectsAdded).toBe(3);
     expect(Object.values(L).every((l) => l.status !== 'New' && l.status !== 'Processing')).toBe(true);
   });
 

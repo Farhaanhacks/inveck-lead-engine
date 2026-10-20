@@ -4,8 +4,8 @@ import { listKnownCompanies } from './known-companies';
 import { KnownBranches } from './branches';
 import { clients, icps, leads, prospectResults, prospectSearches, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
-import { isCaSegment } from './tasks';
-import { findProspects, type ProspectHistory } from './pipeline/prospects';
+import type { ProspectHistory } from './pipeline/prospects';
+import { peopleFirstContacts, sourceProspects, wantsAnotherRound } from './sourcing/morning';
 import { normQuery } from './pipeline/query-history';
 import { contactFromTeam } from './team-contact';
 export { contactFromTeam };
@@ -194,33 +194,6 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     const activeIcps = allIcps.filter((i) => i.active);
     if (!activeIcps.length) throw new Error('No active ICP. Turn on at least one ICP.');
 
-    if (run.findProspects && !run.prospectsDone) {
-      await log('Finding new prospects');
-      try {
-        // Every lead, and the companies in INVECK's own lead lists: never offered again.
-        const known = [...(await db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads)), ...(await listKnownCompanies(db))];
-        // CA firms come from the database: no prospect search for them.
-        const found = await findProspects(svc, activeIcps.filter((i) => !isCaSegment(i.segment)), clientList, known, (m, l) => log(m, l), await prospectHistory(db, runId));
-        if (found.length) {
-          const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
-          for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search. ${r.source}`);
-          // The admin chose who gets them: the team now, one person, or (default) the morning draw.
-          const given = await delegateProspects(db, rows.map((r) => r.id), run.prospectsTo);
-          if (given) await log(given);
-          await assignUnowned(db);
-        }
-        stats.prospectsAdded += found.length;
-        await log(found.length ? `Added ${found.length} new prospects: ${found.map((p) => p.company).join(', ')}` : 'No new prospects found');
-        await save({ prospectsDone: true });
-      } catch (e) {
-        // Recorded on the run, so it ends as failed (not "Finished") once the waiting leads are done.
-        const error = 'Prospect search failed: ' + errorMessage(e);
-        await log(error, 'error');
-        run.error = error;
-        await save({ prospectsDone: true, error });
-      }
-    }
-
     // New plants and warehouses in the news (at most every 12 hours).
     if (stats.processed === 0 && svc.settings.radarEnabled) {
       try {
@@ -240,39 +213,91 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       }
     }
 
-    // Every waiting company gets researched: there's no per-run cap. Long runs hand over to
-    // a fresh invocation when this one's time runs out.
+    // New prospects, people first (see sourcing/morning.ts): as many as the morning draw is short of.
+    // Research decides each one (the ICP check: Approved or Disqualified); while it rules companies out
+    // and the draw is still short, the run searches again, a few rounds at most.
     for (;;) {
-      const [fresh] = await db.select({ cancel: runs.cancelRequested }).from(runs).where(eq(runs.id, runId));
-      if (fresh?.cancel) return stop();
-      // Stop claiming work when a batch might not finish inside this invocation.
-      if (Date.now() - started > budgetMs * 0.6) {
-        await save();
-        return 'continue';
-      }
-      const batch = await claimLeads(db, CONCURRENCY);
-      if (!batch.length) break;
-
-      await mapLimit(batch, CONCURRENCY, async (lead) => {
-        let result: LeadResult;
+      if (run.findProspects && !run.prospectsDone) {
+        const added: number[] = [];
+        let outcome: 'done' | 'continue' = 'done';
         try {
-          result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken, ownLeads }, (m, l) => log(m, l, lead.id), { teamContact: await contactFromTeam(db, lead) });
+          outcome = await sourceProspects(db, svc, run, {
+            started,
+            budgetMs,
+            log: (m, l) => log(m, l),
+            onAdded: async (ids) => void added.push(...ids),
+            stopped: async () => !!(await db.select({ cancel: runs.cancelRequested }).from(runs).where(eq(runs.id, runId)))[0]?.cancel,
+          });
         } catch (e) {
-          result = { status: 'Error' as const, lastError: errorMessage(e) };
-          await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);
+          // Recorded on the run, so it ends as failed (not "Finished") once the waiting leads are done.
+          const error = 'Prospect search failed: ' + errorMessage(e);
+          await log(error, 'error');
+          run.error = error;
+          await save({ error });
         }
-        const { people: found, ...update } = result;
-        await db.update(leads).set({ ...update, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
-        if (found) await savePeople(db, lead.id, found);
-        await recordOutcome(db, lead.id, update);
-        stats.processed++;
-        // `drafted` counts the leads approved (the name is kept so earlier runs' stats still read).
-        if (update.status === 'Approved') stats.drafted++;
-        if (update.status === 'Disqualified') stats.disqualified++;
-        if (update.status === 'Existing Client') stats.existingClients++;
-        if (update.status === 'Error') stats.errors++;
-      });
-      await save();
+        if (added.length) {
+          stats.prospectsAdded += added.length;
+          const names = await db.select({ company: leads.company }).from(leads).where(inArray(leads.id, added));
+          await log(`Added ${added.length} new prospect${added.length === 1 ? '' : 's'}: ${names.map((n) => n.company).join(', ')}`);
+          // The admin chose who gets them: the team now, one person, or (default) the morning draw.
+          const given = await delegateProspects(db, added, run.prospectsTo);
+          if (given) await log(given);
+          await assignUnowned(db);
+        }
+        if (outcome === 'continue') {
+          await save();
+          return 'continue';
+        }
+        run.prospectsDone = true;
+        await save({ prospectsDone: true });
+      }
+
+      // Every waiting company gets researched: there's no per-run cap. Long runs hand over to
+      // a fresh invocation when this one's time runs out.
+      for (;;) {
+        const [fresh] = await db.select({ cancel: runs.cancelRequested }).from(runs).where(eq(runs.id, runId));
+        if (fresh?.cancel) return stop();
+        // Stop claiming work when a batch might not finish inside this invocation.
+        if (Date.now() - started > budgetMs * 0.6) {
+          await save();
+          return 'continue';
+        }
+        const batch = await claimLeads(db, CONCURRENCY);
+        if (!batch.length) break;
+
+        await mapLimit(batch, CONCURRENCY, async (lead) => {
+          let result: LeadResult;
+          try {
+            result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken, ownLeads }, (m, l) => log(m, l, lead.id), {
+              teamContact: await contactFromTeam(db, lead),
+              found: await peopleFirstContacts(db, lead),
+            });
+          } catch (e) {
+            result = { status: 'Error' as const, lastError: errorMessage(e) };
+            await log(`${lead.company}: ${errorMessage(e)}`, 'error', lead.id);
+          }
+          const { people: found, ...update } = result;
+          await db.update(leads).set({ ...update, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
+          if (found) await savePeople(db, lead.id, found);
+          await recordOutcome(db, lead.id, update);
+          stats.processed++;
+          // `drafted` counts the leads approved (the name is kept so earlier runs' stats still read).
+          if (update.status === 'Approved') stats.drafted++;
+          if (update.status === 'Disqualified') stats.disqualified++;
+          if (update.status === 'Existing Client') stats.existingClients++;
+          if (update.status === 'Error') stats.errors++;
+        });
+        await save();
+      }
+
+      // Research ruled some out and the draw is still short: search again.
+      const [now] = run.findProspects ? await db.select().from(runs).where(eq(runs.id, runId)) : [];
+      if (now && (await wantsAnotherRound(db, svc, now))) {
+        run.prospectsDone = false;
+        await save({ prospectsDone: false });
+        continue;
+      }
+      break;
     }
 
     // Contacts reset: companies whose contacts are found again from scratch, research kept.
@@ -288,7 +313,11 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       if (!batch.length) break;
       await mapLimit(batch, CONCURRENCY, async (lead) => {
         try {
-          const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), { contactsOnly: true, teamContact: await contactFromTeam(db, lead) });
+          const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken }, (m, l) => log(m, l, lead.id), {
+            contactsOnly: true,
+            teamContact: await contactFromTeam(db, lead),
+            found: await peopleFirstContacts(db, lead),
+          });
           const { people: found, ...update } = result;
           await db.update(leads).set({ ...update, refetchPending: false, refetchClaimedAt: null, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
           if (found) await savePeople(db, lead.id, found);

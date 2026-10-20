@@ -4,6 +4,7 @@ import { leads, settings, users, type LeadStatus } from './db/schema';
 import { LOGISTICS, MANUFACTURING } from './db/seed';
 import { normSegment } from './icp-match';
 import { getSettings, type Settings } from './settings';
+import { getHolidays } from './holidays';
 import { istDay } from './tasks';
 
 /** The draw happens from this hour, India time, so the lists are ready before the team starts. */
@@ -184,6 +185,8 @@ export async function runDailyDraw(db: Db, opts: { now?: Date; force?: boolean; 
   const now = opts.now ?? new Date();
   const day = istDay(now);
   if (!opts.force && !drawDue(now)) return null;
+  // No draw on a holiday marked in Settings: nobody is working.
+  if (!opts.force && (await getHolidays(db)).has(day)) return null;
   if (await getDraw(db, day)) return null;
 
   const quota = quotaOf(await getSettings(db));
@@ -221,7 +224,7 @@ export async function topUpDraw(db: Db, opts: { now?: Date; random?: () => numbe
   return full;
 }
 
-async function activeTeam(db: Db): Promise<number[]> {
+export async function activeTeam(db: Db): Promise<number[]> {
   return (await db.select({ id: users.id }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(users.id)).map((u) => u.id);
 }
 

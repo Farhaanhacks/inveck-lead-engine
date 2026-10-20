@@ -232,8 +232,18 @@ Each report shows the funnel, every company with its outcome, and each search wi
    \* You need the key for whichever AI provider is selected in Settings.
 4. Redeploy so the variables take effect, then open the site and log in.
 
-A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new
-leads and runs the prospect search on the day chosen in Settings.
+A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
+working day (not holidays marked in Settings), finds new prospects **people first**
+(`src/lib/sourcing/morning.ts`): Google searches of LinkedIn profiles with the ICP's P1 and P2 titles (plant
+heads first), each with an industry word and a town; then each person's company page on LinkedIn, screened
+on size, industry, headquarters and whether INVECK already has it (by name, website or LinkedIn page). Each
+company that passes becomes one lead with the people found there, and research makes the ICP check:
+Approved or Disqualified. It finds what the morning draw is short of in each segment (active associates times
+their quota, less the researched leads waiting), with a quarter more for those research rules out, and
+searches again (three rounds at most, none after 07:30) while the draw is still short. A search made in the
+last 30 days isn't made again, and the prospect search stops at 3,000 Google searches a day. CA firms are
+never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
+segment has ready for the draw, and warns when the searches are running thin.
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate 20 leads:
 12 Manufacturing + 8 3PL & Logistics (Settings, "Manufacturing leads per associate" and "3PL & Logistics

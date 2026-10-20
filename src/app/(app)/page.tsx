@@ -14,6 +14,10 @@ import { PageHeader } from '@/components/page-header';
 import { RunButtons } from '@/components/run-buttons';
 import { adminPage } from '@/lib/access';
 import { listBdas } from '@/lib/users';
+import { getSettings } from '@/lib/settings';
+import { getHolidays } from '@/lib/holidays';
+import { MORNING_LIMITS, morningHealth } from '@/lib/sourcing/morning';
+import { MorningCard } from '@/components/morning-card';
 
 // Runs started from this page keep working after the response (see actions.ts).
 export const maxDuration = 300;
@@ -74,6 +78,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
     db.select().from(opportunities).where(eq(opportunities.status, 'added')).orderBy(desc(opportunities.id)).limit(3),
     db.select({ waiting: sql<number>`count(*)::int` }).from(opportunities).where(eq(opportunities.status, 'new')),
   ]);
+  const morning = await morningHealth(db, await getSettings(db), await getHolidays(db));
   const counts: Record<string, number> = Object.fromEntries(byStatus.map((r) => [r.status, r.n]));
   const shownRun = wanted || running?.id || runList[0]?.id;
   const runView = shownRun ? await getRunView(db, shownRun) : null;
@@ -99,6 +104,10 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
           note={`${analytics.awaitingReply} awaiting reply · ${analytics.followUpsDue.length} follow-ups due`}
         />
         <StatTile label="Replied" value={analytics.funnel[3].value} note={analytics.replyRate != null ? `${analytics.replyRate}% reply rate` : 'No emails sent yet'} />
+      </div>
+
+      <div className="mt-6">
+        <MorningCard health={morning} dailySearches={MORNING_LIMITS.dailySearches} />
       </div>
 
       <div className="mt-6">

@@ -78,7 +78,12 @@ export async function processLead(
   lead: Lead,
   ctx: { icps: Icp[]; clients: Client[]; taken?: TakenContact[]; ownLeads?: KnownBranches },
   log: Log,
-  opts: { contactsOnly?: boolean; teamContact?: boolean } = {},
+  opts: {
+    contactsOnly?: boolean;
+    teamContact?: boolean;
+    /** People already found at the company on LinkedIn (the people-first search): candidates like the search's own finds. */
+    found?: Awaited<ReturnType<typeof searchLinkedIn>>['people'];
+  } = {},
 ): Promise<LeadResult> {
   const client = matchClient(lead, ctx.clients);
   if (client) {
@@ -279,13 +284,17 @@ export async function processLead(
     ? { name: lead.contactName, title: lead.contactTitle, email: lead.contactEmail, phone: lead.contactPhone, linkedin: lead.contactLinkedin }
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
-  const [linkedin, leaders, news] = await Promise.all([
+  const [searched, leaders, news] = await Promise.all([
     // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
     // each person's verdict goes on the run's log.
     searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`)),
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
   ]);
+  // The people the people-first search found here are on LinkedIn too: added unless the search found them again.
+  const earlier = (opts.found ?? []).filter((f) => !searched.people.some((p) => sameName(p.name, f.name)));
+  const linkedin = earlier.length ? { ...searched, people: [...searched.people, ...earlier] } : searched;
+  if (earlier.length) await log(`${lead.company}: ${earlier.length} found earlier by the people-first search: ${earlier.map((p) => `${p.name} (${p.title})`).join(', ')}`);
   if (news.signals.length) await log(`${lead.company}: buying signal: ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
   if (linkedin.error) {
     notes.push('LinkedIn search error: ' + linkedin.error);

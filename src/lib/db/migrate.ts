@@ -618,6 +618,9 @@ export const SCHEMA_STATEMENTS = [
   )`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'companies'`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+  // People first in the scheduled run: where its prospect search got to, and each company's LinkedIn page.
+  `ALTER TABLE runs ADD COLUMN IF NOT EXISTS sourcing JSONB`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_linkedin TEXT NOT NULL DEFAULT ''`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

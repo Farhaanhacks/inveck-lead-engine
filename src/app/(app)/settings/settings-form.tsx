@@ -4,7 +4,6 @@ import type { Settings } from '@/lib/settings';
 import { saveSettingsAction } from '../../actions';
 import { SubmitButton } from '@/components/submit-button';
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function Num({ name, label, value, hint, min, max }: { name: keyof Settings; label: string; value: number; hint: string; min: number; max: number }) {
   return (
@@ -25,7 +24,7 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <Num name="manufacturingPerAssociate" label="Manufacturing leads per associate, per day" value={s.manufacturingPerAssociate} min={0} max={100} hint="Each active associate is handed this many Manufacturing leads every working morning (8:00 am India time), drawn at random from the researched list. Together with the next field it sets the daily total: 12 + 8 = 20 each, 80 for four associates." />
           <Num name="logisticsPerAssociate" label="3PL & Logistics leads per associate, per day" value={s.logisticsPerAssociate} min={0} max={100} hint="The same for 3PL & Logistics. A segment that runs short is never filled from the other segment or from CA firms. 0 and 0 stops the draw." />
-          <Num name="prospectsPerRun" label="New prospects per search" value={s.prospectsPerRun} min={1} max={50} hint="How many companies the prospect search adds at most." />
+          <Num name="prospectsPerRun" label="New prospects per search" value={s.prospectsPerRun} min={1} max={50} hint="The fewest new companies Find new prospects adds, split across Manufacturing and 3PL. The 6 am run finds what the morning draw is short of instead." />
           <label className="flex items-start gap-2 text-sm sm:col-span-2">
             <input type="checkbox" name="radarEnabled" defaultChecked={s.radarEnabled} className="mt-1" />
             <span>
@@ -35,16 +34,15 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
               </span>
             </span>
           </label>
-          <div>
-            <label htmlFor="prospectDay" className="label">Prospect search on scheduled runs</label>
-            <select id="prospectDay" name="prospectDay" defaultValue={s.prospectDay} className="field">
-              <option value={-1}>Never (manual only)</option>
-              <option value={7}>Every weekday (Monday to Friday)</option>
-              {DAYS.map((d, i) => (
-                <option key={d} value={i}>Every {d}</option>
-              ))}
-            </select>
-          </div>
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" name="morningSearch" defaultChecked={s.morningSearch} className="mt-1" />
+            <span>
+              Find new prospects on the 6 am run
+              <span className="block text-xs text-muted">
+                Every working day (not holidays), as many as the 8 am draw is short of in each segment: people with the ICP&apos;s P1 and P2 titles on LinkedIn first, then their companies, then the ICP check. CA firms come from their sheet and are never searched for.
+              </span>
+            </span>
+          </label>
         </div>
       </section>
 
