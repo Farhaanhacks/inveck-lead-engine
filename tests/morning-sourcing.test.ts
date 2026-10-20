@@ -182,7 +182,8 @@ describe('the search plan', () => {
 describe('holidays', () => {
   it('the morning draw skips a holiday marked in Settings', async () => {
     await db.insert(leads).values({ company: 'Ready Co', segment: MANUFACTURING, status: 'Approved', qualified: true, contactName: 'Asha Kulkarni', contactVerifiedAt: new Date() });
-    const morning = new Date('2026-10-21T03:00:00Z'); // a Wednesday, 8:30 am India time
+    // A Wednesday, 8:30 am India time, far from the day the tests run (a new database counts today's draw as done).
+    const morning = new Date('2030-01-09T03:00:00Z');
     await saveHolidays(db, [istDay(morning)]);
     expect(await runDailyDraw(db, { now: morning })).toBeNull();
     await saveHolidays(db, []);

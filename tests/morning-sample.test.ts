@@ -6,9 +6,8 @@ import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { activities, icps, leads, people, prospectSearches, sourcingTests, tasks, users } from '@/lib/db/schema';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
-import { istDay, nextWorkingDay } from '@/lib/tasks';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, sampleMorning, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
@@ -57,6 +56,20 @@ beforeEach(async () => {
   ]);
 });
 
+describe('the morning a sample shows', () => {
+  it("is this morning's when run before its 8 am draw, else the next working day's", () => {
+    // Wednesday 21 Oct 2026, 12:45 am India time: this morning's draw.
+    expect(sampleMorning(new Date('2026-10-20T19:15:00Z'), new Set())).toBe('2026-10-21');
+    // The same Wednesday at 10 am: Thursday's.
+    expect(sampleMorning(new Date('2026-10-21T04:30:00Z'), new Set())).toBe('2026-10-22');
+    // Friday evening: Monday's. Saturday 1 am: Monday's too.
+    expect(sampleMorning(new Date('2026-10-23T13:00:00Z'), new Set())).toBe('2026-10-26');
+    expect(sampleMorning(new Date('2026-10-23T19:30:00Z'), new Set())).toBe('2026-10-26');
+    // A holiday this morning: the next working day's.
+    expect(sampleMorning(new Date('2026-10-20T19:15:00Z'), new Set(['2026-10-21']))).toBe('2026-10-22');
+  });
+});
+
 describe('the Morning Sample Run', () => {
   it("shows each associate's day tomorrow, and saves nothing but its report", async () => {
     const before = await counts();
@@ -71,7 +84,7 @@ describe('the Morning Sample Run', () => {
     const [pooled] = await db.select().from(leads).where(eq(leads.company, 'Ready Pool Co'));
     expect(pooled.ownerId).toBeNull();
 
-    expect(r.day).toBe(nextWorkingDay(istDay()));
+    expect(r.day).toBe(sampleMorning(new Date(), new Set()));
     // Two associates, one of each a day: the pool has one Manufacturing lead, so the search was asked for the rest (plus a quarter).
     expect(r.start[MANUFACTURING]).toMatchObject({ need: 2, pool: 1, wanted: 2 });
     expect(r.start[LOGISTICS]).toMatchObject({ need: 2, pool: 0, wanted: 3 });
@@ -103,6 +116,10 @@ describe('the Morning Sample Run', () => {
     expect(html).toContain('Leads assigned today');
     expect(html).toContain('from the Google Sheet at 8 am');
     for (const c of puja.cards) expect(html).toContain(cardLead(r, c)!.lead.company.replace(/&/g, '&amp;'));
+    // The overview: what each person gets, then every lead person by person.
+    expect(html).toContain('Who gets what on');
+    expect(html).toContain('Every lead, person by person');
+    for (const h of r.hands) for (const c of h.cards) expect(html).toContain(cardLead(r, c)!.lead.contactName);
     expect(html).toContain('Talk track');
     expect(html).toContain('Connection note');
     expect(html).toContain('Parimal');

@@ -91,7 +91,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
     <>
       <PageHeader
         title="Sourcing test"
-        description="A Morning Sample Run shows tomorrow's 6 am run and 8 am draw on paper, person by person. The sourcing test compares two ways to find new companies. People first: searches LinkedIn for people with your ICP's titles, then checks their companies (size, industry, headquarters, already known to INVECK). Companies first: finds company pages, screens them, then looks for people there. Nothing is saved as a lead and nothing is sent: only the reports are kept."
+        description="A Morning Sample Run shows the next 6 am run and 8 am draw on paper, person by person. The sourcing test compares two ways to find new companies. People first: searches LinkedIn for people with your ICP's titles, then checks their companies (size, industry, headquarters, already known to INVECK). Companies first: finds company pages, screens them, then looks for people there. Nothing is saved as a lead and nothing is sent: only the reports are kept."
       >
         <Link href="/" className="btn-secondary">Dashboard</Link>
       </PageHeader>

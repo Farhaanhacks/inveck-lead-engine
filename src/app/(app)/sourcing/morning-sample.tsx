@@ -204,6 +204,128 @@ function PersonDay({ r, hand, senderName, icps }: { r: MorningSampleReport; hand
   );
 }
 
+/** Every associate's leads in one place: what each gets per segment, then every lead, person by person. */
+function WhoGetsWhat({ r, icps }: { r: MorningSampleReport; icps: Icp[] }) {
+  const rows = r.hands.map((h) => {
+    const q = quotaFor(r, h.userId);
+    const leads = h.cards.map((c) => ({ c, found: cardLead(r, c) })).filter((x) => x.found);
+    const got = (s: string) => leads.filter((x) => x.found!.lead.segment === s).length;
+    return { h, q, leads, m: got(MANUFACTURING), l: got(LOGISTICS) };
+  });
+  const total = (pick: (x: (typeof rows)[number]) => number) => rows.reduce((a, x) => a + pick(x), 0);
+  return (
+    <div className="mb-6 space-y-4">
+      <div className="card overflow-x-auto">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="text-sm font-semibold">Who gets what on {dayName(r.day)}</h3>
+          <p className="text-xs text-muted">Each associate&apos;s daily list (Team page) and what this sample could give them.</p>
+        </div>
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="text-xs text-ink-2">
+            <tr>
+              <th className={th}>Associate</th>
+              <th className={`${th} text-right`}>{MANUFACTURING}</th>
+              <th className={`${th} text-right`}>{LOGISTICS}</th>
+              <th className={`${th} text-right`}>Total</th>
+              <th className={th}>Short</th>
+              <th className={th}>CA firms</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map(({ h, q, m, l }) => (
+              <tr key={h.userId}>
+                <td className={`${td} font-medium`}>{h.name}</td>
+                <td className={`${td} text-right tabular-nums`}>{m} <span className="text-xs text-muted">of {q[MANUFACTURING]}</span></td>
+                <td className={`${td} text-right tabular-nums`}>{l} <span className="text-xs text-muted">of {q[LOGISTICS]}</span></td>
+                <td className={`${td} text-right tabular-nums`}>{m + l} <span className="text-xs text-muted">of {quotaTotal(q)}</span></td>
+                <td className={td}>
+                  {DRAW_SEGMENTS.some((s) => h.short[s] > 0) ? (
+                    <span className="text-warning-ink">{DRAW_SEGMENTS.filter((s) => h.short[s] > 0).map((s) => `${h.short[s]} ${s}`).join(', ')}</span>
+                  ) : (
+                    <span className="text-good-ink">Full</span>
+                  )}
+                </td>
+                <td className={`${td} text-xs text-muted`}>{h.ca ? `+${CA_PER_ASSOCIATE} from the sheet (not in this sample)` : '–'}</td>
+              </tr>
+            ))}
+            <tr className="font-medium">
+              <td className={td}>Team</td>
+              <td className={`${td} text-right tabular-nums`}>{total((x) => x.m)} <span className="text-xs font-normal text-muted">of {total((x) => x.q[MANUFACTURING])}</span></td>
+              <td className={`${td} text-right tabular-nums`}>{total((x) => x.l)} <span className="text-xs font-normal text-muted">of {total((x) => x.q[LOGISTICS])}</span></td>
+              <td className={`${td} text-right tabular-nums`}>{total((x) => x.m + x.l)} <span className="text-xs font-normal text-muted">of {total((x) => quotaTotal(x.q))}</span></td>
+              <td className={td} colSpan={2} />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card overflow-x-auto">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="text-sm font-semibold">Every lead, person by person</h3>
+          <p className="text-xs text-muted">Click a name below the table to see that person&apos;s Today as it would look, with the messages.</p>
+        </div>
+        <table className="w-full min-w-[960px] text-sm">
+          <thead className="text-xs text-ink-2">
+            <tr>
+              <th className={th}>#</th>
+              <th className={th}>Company</th>
+              <th className={th}>Segment</th>
+              <th className={th}>City</th>
+              <th className={th}>Size</th>
+              <th className={th}>Contact</th>
+              <th className={th}>From</th>
+            </tr>
+          </thead>
+          {rows.map(({ h, q, leads, m, l }) => (
+            <tbody key={h.userId} className="divide-y divide-line">
+              <tr className="bg-surface-2">
+                <td colSpan={7} className="px-3 py-2 text-sm font-semibold">
+                  {h.name} <span className="font-normal text-muted">· {m} {MANUFACTURING} + {l} {LOGISTICS} of {q[MANUFACTURING]} + {q[LOGISTICS]}</span>
+                </td>
+              </tr>
+              {leads.length ? (
+                leads.map(({ c, found }, i) => {
+                  const { lead, company } = found!;
+                  const tier = (['P1', 'P2', 'P3'].includes(lead.contactTier) ? lead.contactTier : tierOf(lead.contactTitle, icpFor(lead.segment, icps))) as Tier;
+                  return (
+                    <tr key={`${c.from}-${c.key}`}>
+                      <td className={`${td} tabular-nums text-muted`}>{i + 1}</td>
+                      <td className={`${td} font-medium`}>
+                        {c.from === 'pool' ? (
+                          <Link href={`/leads/${lead.id}`} className="hover:underline">{lead.company}</Link>
+                        ) : (
+                          <a href={lead.companyLinkedin || company?.page.url} target="_blank" rel="noreferrer" className="hover:underline">{lead.company}</a>
+                        )}
+                      </td>
+                      <td className={td}>{lead.segment === LOGISTICS ? '3PL' : lead.segment}</td>
+                      <td className={td}>{lead.city || <span className="text-muted">–</span>}</td>
+                      <td className={`${td} whitespace-nowrap`}>{company?.page.size || <span className="text-muted">–</span>}</td>
+                      <td className={td}>
+                        {lead.contactLinkedin ? (
+                          <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className="hover:underline">{lead.contactName}</a>
+                        ) : (
+                          lead.contactName
+                        )}
+                        <TierBadge tier={tier} />
+                        <span className="block text-xs text-muted">{lead.contactTitle}</span>
+                      </td>
+                      <td className={`${td} text-xs text-muted`}>{c.from === 'pool' ? 'Already waiting' : 'This sample'}</td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={7} className="px-3 py-2.5 text-sm text-muted">Nothing for {h.name} in this sample.</td>
+                </tr>
+              )}
+            </tbody>
+          ))}
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The Morning Sample Run section of the Sourcing page: start one, watch it, then switch between the
  * associates to see each one's day as tomorrow's Today would show it.
@@ -231,7 +353,7 @@ export function MorningSample({
       <div className="card mb-4 p-5">
         <h2 className="text-sm font-semibold">Morning Sample Run</h2>
         <p className="mt-1 text-sm text-ink-2">
-          Tomorrow&apos;s 6 am run and 8 am draw, done now: it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything, and tomorrow&apos;s run starts fresh, so the real companies will differ. CA firms aren&apos;t part of it.
+          The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything and no search is remembered: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
         </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
@@ -283,6 +405,8 @@ export function MorningSample({
 
           {r && r.phase === 'done' && r.hands.length > 0 && hand && (
             <>
+              <WhoGetsWhat r={r} icps={icps} />
+              <h3 className="mb-2 text-sm font-semibold">Each person&apos;s Today</h3>
               <nav className="mb-4 flex flex-wrap gap-2" aria-label="Associates">
                 {r.hands.map((h) => (
                   <Link

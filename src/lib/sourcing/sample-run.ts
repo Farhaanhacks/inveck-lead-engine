@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, is, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, leads, people, sourcingTests, users, type Lead, type SourcingTest } from '../db/schema';
-import { dealToDeficits, DRAW_SEGMENTS, drawPool, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
+import { dealToDeficits, DRAW_HOUR_IST, DRAW_SEGMENTS, drawPool, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
@@ -10,7 +10,7 @@ import { processLead } from '../pipeline/process-lead';
 import { mapLimit, type Services } from '../pipeline/services';
 import { errorMessage, rootDomain } from '../pipeline/text';
 import { tierOf } from '../tiers';
-import { istDay, loadTodayTasks, nextWorkingDay, worksCaFirms } from '../tasks';
+import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
@@ -226,9 +226,19 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
   return 'done';
 }
 
+/**
+ * The morning a sample shows: the next draw's. Today's on a working day before 8 am (a sample run just
+ * after midnight shows the morning about to come), else the next working day's.
+ */
+export function sampleMorning(now: Date, holidays: Holidays): string {
+  const today = istDay(now);
+  const hour = new Date(now.getTime() + 5.5 * 3600 * 1000).getUTCHours();
+  return firstWorkingDay(today, holidays) === today && hour < DRAW_HOUR_IST ? today : nextWorkingDay(today, holidays);
+}
+
 /** The morning it shows, the team and quotas, and what the search is asked for: the draw's shortfall, plus a quarter. */
 async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSampleReport> {
-  const day = nextWorkingDay(istDay(), await getHolidays(db));
+  const day = sampleMorning(new Date(), await getHolidays(db));
   const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(asc(users.id));
   const quota = quotaOf(svc.settings);
   const own = await teamQuotas(db, svc.settings);
