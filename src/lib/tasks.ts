@@ -130,26 +130,23 @@ export function planCaFallback(today: string, fallbackDay: string, waiting: bool
 /** Statuses where the lead is being worked on, so outreach tasks make sense. */
 export const WORKING_STATUSES = ['Approved', 'Contacted'] as const;
 /** Once a lead is here, open sequence tasks stop showing (promised callbacks still do). */
-const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Needs Review', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact', 'Deleted'] as const;
+const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client', 'Error', 'Deleted'] as const;
 /**
  * Here the day's steps no longer show. A conversation or a meeting still finishes today's steps
  * (moving there already ended the later rounds).
  */
 const HIDDEN_STATUSES = STOPPED_STATUSES.filter((s) => s !== 'Replied' && s !== 'Meeting Booked');
 
-/**
- * The steps Today shows: those of a lead being worked; promised callbacks always; and for a lead
- * waiting for a contact, the step to find one. (Used with tasks joined to their lead.)
- */
-const SHOWN_ON_TODAY = or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES), and(eq(tasks.step, FIND_NEXT_STEP), eq(leads.status, 'Needs Manual Contact')));
+/** The steps Today shows: those of a lead being worked, and promised callbacks always. (Used with tasks joined to their lead.) */
+const SHOWN_ON_TODAY = or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES));
 
 /**
  * Puts every owned lead on its owner's Today list. Safe to call repeatedly.
  * - A lead with a decision-maker and no plan yet gets the P1 sequence (first call, WhatsApp, email and
  *   LinkedIn request on the next working day). So does one whose only open step was finding someone,
  *   now that someone is named (that step is closed).
- * - A lead waiting for a contact (Needs Manual Contact) with nothing planned gets a step to find one:
- *   nobody confirmed at the site yet, or the named person still to be confirmed there.
+ * - An approved lead with nobody named and nothing planned gets a step to find someone, or goes to
+ *   Deleted when no P1 or P2 is on file (a CA firm, worked from the firm's own details, never).
  */
 export async function ensureSequences(db: Db, today = istDay()): Promise<number> {
   const openFind = db
@@ -189,7 +186,9 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
     .where(
       and(
         isNotNull(leads.ownerId),
-        eq(leads.status, 'Needs Manual Contact'),
+        eq(leads.status, 'Approved'),
+        eq(leads.contactName, ''),
+        sql`NOT (${caFirmSql})`,
         notExists(db.select({ one: sql`1` }).from(tasks).where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt)))),
       ),
     )
@@ -219,9 +218,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
     ownerId: l.ownerId!,
     kind: 'call' as const,
     step: FIND_NEXT_STEP,
-    title: chosen.get(l.id) ?? (l.contactName
-      ? `Confirm ${l.contactName} is at the ${l.city || 'company\'s'} site, or find the person to contact`
-      : 'Find the person to contact (plant head, else a P2 process owner)'),
+    title: chosen.get(l.id) ?? 'Find the person to contact (plant head, else a P2 process owner)',
     dueDate: due,
     slot: 'day' as const,
   }));
@@ -355,8 +352,7 @@ export async function unattendedInbound(db: Db, ownerId: number | null, now = ne
         eq(leads.inbound, true),
         ownerId === null ? undefined : eq(leads.ownerId, ownerId),
         lt(leads.createdAt, cutoff),
-        // An inbound lead whose fit is still being reviewed asked to hear from us: it still needs a call.
-        notInArray(leads.status, [...STOPPED_STATUSES.filter((s) => s !== 'Needs Review'), 'Contacted']),
+        notInArray(leads.status, [...STOPPED_STATUSES, 'Contacted']),
         notExists(db.select({ one: sql`1` }).from(activities).where(and(eq(activities.leadId, leads.id), inArray(activities.kind, [...TOUCH_KINDS])))),
         notExists(db.select({ one: sql`1` }).from(tasks).where(and(eq(tasks.leadId, leads.id), isNotNull(tasks.doneAt)))),
       ),

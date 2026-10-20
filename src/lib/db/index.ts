@@ -8,6 +8,7 @@ import { ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
 import { retireWithoutContactOnce } from '../escalate';
 import { approveSheetLeadsOnce } from '../ca-sheet';
+import { retireRemovedStatuses } from '../retired-statuses';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -67,6 +68,7 @@ async function connect(): Promise<Db> {
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);
     await approveSheetLeadsOnce(db);
+    await retireRemovedStatuses(db);
   } catch (e) {
     const cause = (e as { cause?: unknown })?.cause;
     console.error('[db] schema upkeep failed; running on the existing schema:', cause ?? e);

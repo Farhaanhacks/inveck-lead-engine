@@ -312,7 +312,7 @@ describe('an automotive manufacturer with evidenced physical operations (KLT)', 
   it('goes to review, not through, when the ICP excludes insolvency but the AI ignores the notice', async () => {
     const strict = (await allIcps()).map((i) => (i.segment === 'Manufacturing' ? { ...i, dealBreakers: `${i.dealBreakers}; Company under insolvency or liquidation proceedings` } : i));
     const r = await run(await klt(), { research: (user) => kltAnswer(user, {}, { D4: ['unknown', '', ''] }) }, strict);
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.fitDecision).toContain('may apply');
     expect(seen.research).toHaveLength(2);
   });
@@ -323,7 +323,7 @@ describe('AI answers that are malformed or contradict themselves', () => {
     const r = await run(await klt(), { research: () => ({ summary: 'x', qualified: 'false', fit_score: '2', fit_reason: { why: 'no' } }) });
     expect(seen.research).toHaveLength(2);
     expect(seen.research[1]).toContain('## Your previous answer was rejected');
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.qualified).toBeNull();
     expect(r.fitScore).toBeNull();
     expect(r.fitDecision).toContain('failed the checks');
@@ -338,14 +338,14 @@ describe('AI answers that are malformed or contradict themselves', () => {
   it('a score that contradicts the verdict goes to review', async () => {
     const r = await run(await klt(), { research: (user) => kltAnswer(user, { fit_score: 9, qualified: false }) });
     expect(seen.research).toHaveLength(2);
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.fitDecision).toContain('contradicts its evidence');
   });
 
   it('a low score alone does not reject a company that meets every criterion', async () => {
     // Self-consistent (3/10, not qualified) but nothing evidenced against it: that is not a rejection.
     const r = await run(await klt(), { research: (user) => kltAnswer(user, { fit_score: 3, qualified: false, fit_reason: 'In insolvency, low priority' }) });
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.qualified).toBeNull();
     expect(r.fitScore).toBe(3);
     expect(r.fitDecision).toContain('no must-have shown not met');
@@ -374,7 +374,7 @@ describe('AI answers that are malformed or contradict themselves', () => {
       research: (user) => fitAnswer(user, {}, { M1: ['unknown', 'Nothing says what it makes', ''] }),
     });
     expect(seen.research).toHaveLength(2);
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.fitDecision).toContain('couldn\'t confirm must-have');
   });
 });
@@ -389,7 +389,7 @@ describe('a rejection resting on a quote that does not show the failure', () => 
       check: (user) => ({ checks: [{ id: /^- id ([A-Z]+\d*):/m.exec(user)![1], supports: false, why: 'It is about customer support, not what the company makes' }] }),
       google: (q) => (q.startsWith('site:') ? [] : [{ title: 'Acme Stockware', link: 'https://news.example/a', snippet: 'Acme Stockware raises funds.' }]),
     });
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.fitDecision).toContain('the quote doesn\'t show it');
     expect(r.fitEvidence?.find((x) => x.id === 'M1')).toMatchObject({ verified: false, check: 'It is about customer support, not what the company makes' });
   });
@@ -402,7 +402,7 @@ describe('a rejection resting on a quote that does not show the failure', () => 
       },
       check: () => 'not json at all',
     });
-    expect(r.status).toBe('Needs Review');
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(r.qualified).toBeNull();
   });
 });
@@ -416,7 +416,7 @@ describe('segments that name no usable ICP', () => {
     const pharma = await run(await addLead({ company: 'Pharma Co', segment: 'Pharma' }), { research });
     const blank = await run(await addLead({ company: 'Blank Co', segment: '' }), { research });
     const off = await run(await addLead({ company: 'Audit Co', segment: 'CA Firms' }), { research });
-    expect(pharma).toMatchObject({ status: 'Needs Review', fitStatus: 'review', qualified: null, assessedIcp: '' });
+    expect(pharma).toMatchObject({ status: 'Disqualified', fitStatus: 'review', qualified: null, assessedIcp: '' });
     expect(pharma.fitDecision).toContain('Segment "Pharma" matches no ICP');
     expect(blank.fitDecision).toContain('No segment set');
     expect(off.fitDecision).toContain('switched off');
@@ -454,7 +454,8 @@ describe('finding contacts is separate from the fit', () => {
       },
     });
     expect(r.otherDecisionMakers).toContain('LinkedIn search error');
-    expect(r.status).toBe('Needs Manual Contact');
+    expect(r).toMatchObject({ status: 'Deleted', statusBeforeDelete: 'Approved' });
+    expect(r.deletedReason).toMatch(/^No contact found/);
     expect(r).toMatchObject({ fitStatus: 'qualified', qualified: true, fitScore: 8 });
     expect(r.fitDecision).toMatch(/^Meets every must-have/);
   });
@@ -533,7 +534,7 @@ describe('the company name, checked against its own website (Advance Forgings)',
     const lead = await addLead({ company: 'Smith Forges', website: 'smithforge.example', city: 'Pune' });
     const r = await run(lead, { research: (user) => fitAnswer(user) });
     expect(r).toMatchObject({ company: 'Smith Forge', nameAsFound: 'Smith Forges' });
-    expect(r.status).not.toBe('Needs Review');
+    expect(r.fitStatus).not.toBe('review');
     expect(seen.research.every((u) => !u.includes('Smith Forges'))).toBe(true);
   });
 
@@ -607,7 +608,7 @@ describe('contacts: the review of the contact pipeline', () => {
       { research: (user) => kltAnswer(user, { qualified: false, fit_score: 2 }, { M1: ['not_met', ...cite(user, 'KLT is the leading authority when it comes to chassis manufacturing for several OEMs in India as well as overseas')] }), google: () => [] },
       off,
     );
-    expect(['Disqualified', 'Needs Review']).toContain(notFit.status);
+    expect(notFit.status).toBe('Disqualified');
   });
 
   it("a firm the team imported is researched even when it is on INVECK's own lead list", async () => {
@@ -642,7 +643,7 @@ describe('contacts: the review of the contact pipeline', () => {
     expect(r.status).toBe('Approved');
     expect(r.fitDecision).toContain("On the team's researched list");
     const found = await addLead({ company: 'Delta Found & Co', segment: 'CA Firms', source: 'Found by prospect search' });
-    expect((await run(found, { research: unsure, google: () => [] })).status).toBe('Needs Review');
+    expect((await run(found, { research: unsure, google: () => [] })).status).toBe('Disqualified');
   });
 
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
@@ -674,7 +675,7 @@ describe('contacts: the review of the contact pipeline', () => {
       status: 'Approved',
     });
     const r = await run(lead, { research: (user) => kltAnswer(user, { risks: [] }), google: () => [] });
-    expect(r).toMatchObject({ contactName: '', contactTitle: '', contactLinkedin: '', status: 'Needs Manual Contact' });
+    expect(r).toMatchObject({ contactName: '', contactTitle: '', contactLinkedin: '', status: 'Deleted' });
   });
 
   it("research again keeps the team's own contact when nobody is found", async () => {
@@ -707,14 +708,14 @@ describe('reassessing companies ruled out before', () => {
     await executeRun(db, r.id, scriptedServices({ research: (user) => kltAnswer(user) }, seen), Number.POSITIVE_INFINITY);
     const [now] = await db.select().from(leads).where(eq(leads.id, old.id));
     expect(now).toMatchObject({ fitStatus: 'qualified', qualified: true, fitScore: 8 });
-    expect(now.status).toMatch(/^(Approved|Needs Manual Contact)$/);
+    expect(now.status).toMatch(/^(Approved|Deleted)$/);
     expect(now.riskFlags[0]?.kind).toBe('insolvency');
     // The lead nobody chose was never researched.
     expect((await db.select().from(leads).where(eq(leads.id, other.id)))[0].status).toBe('Disqualified');
   });
 
   it("a person's confirmed fit stands: research finds contacts without assessing the fit again", async () => {
-    const lead = await klt({ status: 'Needs Review', fitStatus: 'review', fitDecision: 'Needs review: something', fitScore: 5, researchSummary: 'KLT makes chassis frames.', assessedIcp: 'Manufacturing' });
+    const lead = await klt({ status: 'Disqualified', fitStatus: 'review', fitDecision: 'ICP fit not confirmed: something', fitScore: 5, researchSummary: 'KLT makes chassis frames.', assessedIcp: 'Manufacturing' });
     expect(await confirmFit(db, lead.id, 'Parimal', 'Known chassis maker')).toBe(true);
     const [queued] = await db.select().from(leads).where(eq(leads.id, lead.id));
     expect(queued).toMatchObject({ status: 'New', fitOverride: 'qualified', fitStatus: 'qualified', qualified: true, fitDecision: 'Confirmed as a fit by Parimal: Known chassis maker' });
@@ -724,12 +725,12 @@ describe('reassessing companies ruled out before', () => {
       },
     });
     expect(seen.research).toHaveLength(0);
-    expect(r.status).toMatch(/^(Approved|Needs Manual Contact)$/);
+    expect(r.status).toMatch(/^(Approved|Deleted)$/);
     expect(r.fitStatus).toBeUndefined();
   });
 
   it("a person's not-a-fit call stands through Research again, until someone reassesses", async () => {
-    const lead = await klt({ status: 'Needs Review', fitStatus: 'review', researchSummary: 'KLT makes chassis frames.', assessedIcp: 'Manufacturing' });
+    const lead = await klt({ status: 'Disqualified', fitStatus: 'review', researchSummary: 'KLT makes chassis frames.', assessedIcp: 'Manufacturing' });
     expect(await markNotFit(db, lead.id, 'Admin', 'In liquidation talks')).toBe(true);
     await applyStage(db, [lead.id], 'New');
     const [queued] = await db.select().from(leads).where(eq(leads.id, lead.id));
@@ -743,11 +744,11 @@ describe('reassessing companies ruled out before', () => {
   });
 });
 
-describe('Needs Review is held back from the team until decided', () => {
+describe('a fit research could not confirm is Disqualified, held back from the team until a person decides', () => {
   it('is never drawn, gets no outreach steps and stays off the tracker', async () => {
     const [bda] = await db.select().from(users).limit(1);
-    await addLead({ company: 'Pending Fit', status: 'Needs Review', fitStatus: 'review', qualified: null });
-    const owned = await addLead({ company: 'Owned Pending', status: 'Needs Review', fitStatus: 'review', qualified: null, ownerId: bda.id, contactName: 'Asha Rao' });
+    await addLead({ company: 'Pending Fit', status: 'Disqualified', fitStatus: 'review', qualified: null });
+    const owned = await addLead({ company: 'Owned Pending', status: 'Disqualified', fitStatus: 'review', qualified: null, ownerId: bda.id, contactName: 'Asha Rao' });
     expect(await drawPool(db)).toMatchObject({ total: 0, withContact: 0 });
     await ensureSequences(db);
     expect(await db.select().from(tasks).where(eq(tasks.leadId, owned.id))).toEqual([]);

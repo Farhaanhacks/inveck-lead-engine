@@ -71,7 +71,6 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
 const RANK: Partial<Record<LeadStatus, number>> = {
   New: 0,
   'Low Score': 1,
-  'Needs Manual Contact': 1,
   Approved: 2,
   Rejected: 2,
   Contacted: 3,
@@ -85,8 +84,8 @@ const RANK: Partial<Record<LeadStatus, number>> = {
  * conversation started (Replied), a demo means Meeting Booked, and not interested means Lost.
  */
 export function stageAfterOutreach(current: LeadStatus, kind: string, outcome: string, feedback = ''): LeadStatus | null {
-  // A company whose fit is under review (or ruled out) isn't moved along by outreach until a person decides.
-  if (['Won', 'Disqualified', 'Needs Review', 'Existing Client'].includes(current) || outcome === 'skipped' || outcome === 'closed') return null;
+  // A company ruled out (or whose fit couldn't be confirmed) isn't moved along by outreach until a person decides.
+  if (['Won', 'Disqualified', 'Existing Client'].includes(current) || outcome === 'skipped' || outcome === 'closed') return null;
   let target: LeadStatus = 'Contacted';
   if (kind === 'call' && outcome === 'connected') {
     // A client now, or one already: wherever the lead was.

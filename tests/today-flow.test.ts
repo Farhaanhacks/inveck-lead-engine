@@ -31,17 +31,17 @@ describe('leads go from the Leads list to Today on their own', () => {
     expect(monday.every((t) => t.lead.id === l.id)).toBe(true);
   });
 
-  it('a lead waiting for a contact with nobody eligible on file goes to Deleted, not onto Today', async () => {
-    const l = await addLead({ status: 'Needs Manual Contact' });
+  it('an approved lead with nobody named and nobody eligible on file goes to Deleted, not onto Today', async () => {
+    const l = await addLead({ status: 'Approved' });
     await ensureSequences(db, SUNDAY);
     expect(await loadTodayTasks(db, owner, MONDAY)).toEqual([]);
     const [gone] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(gone).toMatchObject({ status: 'Deleted', statusBeforeDelete: 'Needs Manual Contact' });
+    expect(gone).toMatchObject({ status: 'Deleted', statusBeforeDelete: 'Approved' });
     expect((await db.select().from(tasks).where(eq(tasks.leadId, l.id))).some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
   });
 
   it('with a P1 or P2 on file, the lead stays on Today with a step to choose them; naming someone starts the sequence', async () => {
-    const l = await addLead({ status: 'Needs Manual Contact' });
+    const l = await addLead({ status: 'Approved' });
     await db.insert(people).values({ leadId: l.id, name: 'Asha Rao', title: 'Inventory Manager' });
     await ensureSequences(db, SUNDAY);
     const monday = await loadTodayTasks(db, owner, MONDAY);
@@ -63,24 +63,17 @@ describe('leads go from the Leads list to Today on their own', () => {
 
   it('the one-time sweep deletes only leads with nobody eligible; others, restored and unassigned leads stay', async () => {
     const { retireWithoutContact, FIND_NEXT_STEP: FIND } = await import('@/lib/escalate');
-    const none = await addLead({ company: 'No One Co', status: 'Needs Manual Contact' });
-    const withP2 = await addLead({ company: 'Has P2 Co', status: 'Needs Manual Contact' });
+    const none = await addLead({ company: 'No One Co', status: 'Approved' });
+    const withP2 = await addLead({ company: 'Has P2 Co', status: 'Approved' });
     await db.insert(people).values({ leadId: withP2.id, name: 'Asha Rao', title: 'Inventory Manager' });
-    const confirming = await addLead({ company: 'Confirm Co', status: 'Needs Manual Contact', contactName: 'Srihari K.R' });
-    const unowned = await addLead({ company: 'Pool Co', status: 'Needs Manual Contact', ownerId: null });
+    const confirming = await addLead({ company: 'Confirm Co', status: 'Approved', contactName: 'Srihari K.R' });
+    const unowned = await addLead({ company: 'Pool Co', status: 'Approved', ownerId: null });
     const oldFind = await addLead({ company: 'Old Find Co', status: 'Contacted', contactName: 'Ravi Shah' });
     await db.insert(tasks).values({ leadId: oldFind.id, ownerId: owner, kind: 'call', step: FIND, title: 'Find the next person to contact (P2: process owner)', dueDate: MONDAY });
     const gone = await retireWithoutContact(db);
     expect(gone.sort()).toEqual([none.id, oldFind.id].sort());
     for (const l of [withP2, confirming, unowned]) expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].status).not.toBe('Deleted');
     expect((await db.select().from(tasks).where(and(eq(tasks.leadId, oldFind.id), isNull(tasks.doneAt)))).length).toBe(0);
-  });
-
-  it('a named contact not yet confirmed at the site: the step asks to confirm them, or find someone', async () => {
-    await addLead({ status: 'Needs Manual Contact', contactName: 'Srihari K.R' });
-    await ensureSequences(db, MONDAY);
-    const [t] = await loadTodayTasks(db, owner, MONDAY);
-    expect(t.task.title).toBe("Confirm Srihari K.R is at the Coimbatore site, or find the person to contact");
   });
 
   it('the "next steps" count is the companies Today will show that day: not deleted, rejected or set-aside leads', async () => {

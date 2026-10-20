@@ -200,7 +200,7 @@ function AssessmentCard({ lead, primary, listed, canAct }: { lead: Lead; primary
                 </form>
               </details>
             )}
-            {lead.status === 'Needs Review' && !segmentProblem && (
+            {lead.status === 'Disqualified' && lead.fitStatus === 'review' && !segmentProblem && (
               <details className="relative">
                 <summary className="btn-secondary list-none [&::-webkit-details-marker]:hidden">Not a fit</summary>
                 <form action={markNotFitAction} className="card absolute right-0 z-10 mt-2 w-80 space-y-2 p-4 shadow-lg">

@@ -17,7 +17,6 @@ import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
 import type { LeadResult, LeadUpdate } from './pipeline/process-lead';
 import { savePeople } from './people';
-import { reconcileContactStatus } from './contact-status';
 import { assignUnowned } from './assign';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, needsReview: 0, existingClients: 0, errors: 0 };
@@ -222,9 +221,6 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       }
     }
 
-    if (stats.processed === 0) {
-    }
-
     // New plants and warehouses in the news (at most every 12 hours).
     if (stats.processed === 0 && svc.settings.radarEnabled) {
       try {
@@ -268,13 +264,11 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         const { people: found, ...update } = result;
         await db.update(leads).set({ ...update, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
         if (found) await savePeople(db, lead.id, found);
-        await reconcileContactStatus(db, lead.id);
         await recordOutcome(db, lead.id, update);
         stats.processed++;
         // `drafted` counts the leads approved (the name is kept so earlier runs' stats still read).
         if (update.status === 'Approved') stats.drafted++;
         if (update.status === 'Disqualified') stats.disqualified++;
-        if (update.status === 'Needs Review') stats.needsReview = (stats.needsReview ?? 0) + 1;
         if (update.status === 'Existing Client') stats.existingClients++;
         if (update.status === 'Error') stats.errors++;
       });
@@ -298,7 +292,6 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           const { people: found, ...update } = result;
           await db.update(leads).set({ ...update, refetchPending: false, refetchClaimedAt: null, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));
           if (found) await savePeople(db, lead.id, found);
-          await reconcileContactStatus(db, lead.id);
           await logActivity(
             db,
             lead.id,
@@ -340,14 +333,15 @@ export async function recordOutcome(db: Db, leadId: number, u: LeadUpdate) {
   if (u.riskFlags?.length) {
     await logActivity(db, leadId, 'note', `Commercial risk noted (kept apart from the ICP fit): ${u.riskFlags.map((r) => `${r.label}: “${r.evidence}”${r.url ? ` (${r.url})` : ''}`).join('; ')}`);
   }
-  if (u.status === 'Disqualified' || u.status === 'Needs Review') {
-    const decision = u.fitDecision || (u.status === 'Disqualified' ? ['Not a fit', u.fitReason].filter(Boolean).join('. ') : 'Needs review');
+  if (u.status === 'Disqualified') {
+    const decision = u.fitDecision || ['Not a fit', u.fitReason].filter(Boolean).join('. ');
     return logActivity(db, leadId, 'researched', `${decision}${fit ? `. ${fit}` : ''}`);
   }
   await logActivity(db, leadId, 'researched', [`Researched: ${fit}`, u.fitReason].filter(Boolean).join('. '));
   if (u.contactName) {
     await logActivity(db, leadId, 'contact', `Decision-maker: ${[u.contactName, u.contactTitle].filter(Boolean).join(', ')}${u.emailStatus ? `. Email: ${u.contactEmail || '—'} (${u.emailStatus})` : ''}`);
   }
-  if (u.status === 'Approved') await logActivity(db, leadId, 'approved', `Approved: fits the ICP and has a contact; outreach draft ready (score ${u.finalScore})`, 'Approved');
+  if (u.status === 'Deleted') await logActivity(db, leadId, 'stage', `Moved to Deleted. ${u.deletedReason ?? ''}`.trim(), 'Deleted');
+  else if (u.status === 'Approved') await logActivity(db, leadId, 'approved', `Approved: fits the ICP and has a contact; outreach draft ready (score ${u.finalScore})`, 'Approved');
   else await logActivity(db, leadId, 'stage', `${u.status} (score ${u.finalScore ?? '—'})`, u.status ?? '');
 }

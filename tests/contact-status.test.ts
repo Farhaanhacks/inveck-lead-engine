@@ -4,7 +4,6 @@ import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { leads, people } from '@/lib/db/schema';
 import { saveContactEdit } from '@/lib/contact-edit';
 import { makePrimary } from '@/lib/people';
-import { reconcileContactStatus } from '@/lib/contact-status';
 
 let db: Db;
 beforeEach(async () => {
@@ -14,7 +13,7 @@ beforeEach(async () => {
 });
 
 const addLead = async (values: Partial<typeof leads.$inferInsert> = {}) =>
-  (await db.insert(leads).values({ company: 'Hosur Gears', city: 'Hosur', segment: 'Manufacturing', status: 'Needs Manual Contact', ...values }).returning())[0];
+  (await db.insert(leads).values({ company: 'Hosur Gears', city: 'Hosur', segment: 'Manufacturing', status: 'Approved', ...values }).returning())[0];
 const statusOf = async (id: number) => (await db.select().from(leads).where(eq(leads.id, id)))[0].status;
 const edit = (o: Partial<{ contactName: string; contactTitle: string; contactPhone: string; contactEmail: string; contactLinkedin: string }>) => ({
   contactName: '',
@@ -25,17 +24,20 @@ const edit = (o: Partial<{ contactName: string; contactTitle: string; contactPho
   ...o,
 });
 
-describe('the status follows the contact after every change', () => {
-  it('a contact with a LinkedIn typed in by the team makes a waiting lead ready for approval', async () => {
+describe('a contact change never moves the stage (no Needs Manual Contact since 20 Oct 2026)', () => {
+  it('a contact with a LinkedIn typed in by the team keeps the lead Approved', async () => {
     const l = await addLead();
     await saveContactEdit(db, l.id, edit({ contactName: 'Karthik R', contactTitle: 'Plant Head', contactLinkedin: 'https://in.linkedin.com/in/karthik-r' }));
     expect(await statusOf(l.id)).toBe('Approved');
   });
 
-  it('the contact cleared: a lead ready for approval waits for a contact again', async () => {
-    const l = await addLead({ status: 'Approved', contactName: 'Karthik R', contactLinkedin: 'https://in.linkedin.com/in/karthik-r' });
+  it('the contact cleared: the lead stays Approved, and the draw holds it back until someone is confirmed', async () => {
+    const l = await addLead({ contactName: 'Karthik R', contactLinkedin: 'https://in.linkedin.com/in/karthik-r', contactVerifiedAt: new Date(), qualified: true });
+    const { drawPool } = await import('@/lib/draw');
+    expect((await drawPool(db)).total).toBe(1);
     await saveContactEdit(db, l.id, edit({}));
-    expect(await statusOf(l.id)).toBe('Needs Manual Contact');
+    expect(await statusOf(l.id)).toBe('Approved');
+    expect((await drawPool(db)).total).toBe(0);
   });
 
   it('the team making someone the main contact makes the lead ready', async () => {
@@ -57,9 +59,6 @@ describe('the status follows the contact after every change', () => {
     const [p] = await db.insert(people).values({ leadId: l.id, name: 'Srihari K.R', title: 'CEO', linkedin: 'https://in.linkedin.com/in/srihari', source: 'LinkedIn', location: 'Chennai, Tamil Nadu, India', checkedAt: new Date() }).returning();
     await makePrimary(db, p.id);
     expect(await statusOf(l.id)).toBe('Approved');
-    // And with no way to reach them, nor does a name alone.
-    const l2 = await addLead({ contactName: 'Nobody Reachable', contactVerifiedAt: new Date() });
-    expect(await reconcileContactStatus(db, l2.id)).toBeNull();
   });
 
   it('never moves a lead already in outreach: Contacted, Replied, Meeting Booked and Won keep their stage', async () => {

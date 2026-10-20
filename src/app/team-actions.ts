@@ -19,7 +19,6 @@ import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { runCaDraw } from '@/lib/ca-sheet';
-import { reconcileContactStatus } from '@/lib/contact-status';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack, waNumber } from '@/lib/phones';
@@ -540,8 +539,6 @@ export async function updateTrackerPhoneAction(id: number, value: string): Promi
     await db.update(leads).set({ contactPhone: phone, updatedAt: now }).where(eq(leads.id, id));
     await db.update(people).set({ phone }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
     await logActivity(db, id, 'contact', phone ? `Number for ${lead.contactName} set to ${phone} (tracker)` : `Number for ${lead.contactName} removed (tracker)`);
-    // A number makes the contact reachable: a lead waiting for one may now be ready.
-    await reconcileContactStatus(db, id);
   } else {
     if (phone === lead.companyPhone) return { ok: true, value: phone };
     await db.update(leads).set({ companyPhone: phone, updatedAt: now }).where(eq(leads.id, id));

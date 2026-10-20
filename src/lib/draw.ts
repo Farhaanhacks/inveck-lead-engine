@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, settings, users, type LeadStatus } from './db/schema';
 import { LOGISTICS, MANUFACTURING } from './db/seed';
@@ -10,7 +10,7 @@ import { istDay } from './tasks';
 export const DRAW_HOUR_IST = 8;
 
 /** Researched and still worth a call: these can be handed out. */
-export const DRAWABLE: LeadStatus[] = ['Approved', 'Needs Manual Contact', 'Low Score'];
+export const DRAWABLE: LeadStatus[] = ['Approved', 'Low Score'];
 
 /**
  * The segments the morning draw hands out, each with its own quota per associate (Settings: 12
@@ -32,11 +32,11 @@ export const quotaTotal = (q: Quota) => q[MANUFACTURING] + q[LOGISTICS];
 const segmentKey = sql`btrim(regexp_replace(replace(lower(${leads.segment}), '&', ' and '), '[^a-z0-9]+', ' ', 'g'))`;
 
 /**
- * The release gate: only a researched company that qualified, whose main contact is confirmed (a
- * LinkedIn profile at this company and site, or entered by the team), or that has no contact yet for
- * the team to find. A lead whose contact isn't confirmed waits until it is, or is set aside.
+ * The release gate: only a researched company that qualified, with a main contact who is confirmed (a
+ * LinkedIn profile at this company, or entered by the team). Never a company with nobody to contact; a lead
+ * whose contact isn't confirmed waits until it is.
  */
-const RELEASABLE = and(eq(leads.qualified, true), or(eq(leads.contactName, ''), isNotNull(leads.contactVerifiedAt)));
+const RELEASABLE = and(eq(leads.qualified, true), ne(leads.contactName, ''), isNotNull(leads.contactVerifiedAt));
 const inPool = (segment?: DrawSegment) =>
   and(
     isNull(leads.ownerId),

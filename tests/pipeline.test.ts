@@ -102,24 +102,26 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Bajaj Finance'].fitEvidence.find((e) => e.id === 'D1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.bajajfinserv.in/' });
     expect(L['Bajaj Finance'].fitScore).toBe(1);
 
-    expect(L['Kirtane & Pandit'].status).toBe('Needs Manual Contact');
+    // A CA firm is worked from the firm's own details: it stays Approved with no person named.
+    expect(L['Kirtane & Pandit'].status).toBe('Approved');
     expect(L['Kirtane & Pandit'].emailStatus).toBe('');
 
     // A segment written differently still names its ICP; finding contacts failing leaves the fit alone.
     expect(L['Mystery Castings'].segment).toBe('Manufacturing');
-    expect(L['Mystery Castings'].status).toBe('Needs Manual Contact');
+    expect(L['Mystery Castings'].status).toBe('Deleted');
     expect(L['Mystery Castings']).toMatchObject({ fitStatus: 'qualified', qualified: true, fitScore: 6 });
     expect(L['Mystery Castings'].otherDecisionMakers).toContain('LinkedIn search error');
-    // No contact found, but the email and LinkedIn message are written anyway.
-    expect(L['Mystery Castings'].emailBody).toBeTruthy();
-    expect(L['Mystery Castings'].linkedinMessage).toBeTruthy();
+    // No contact found: it goes to Deleted (restorable) with no draft written, and the reason is recorded.
+    expect(L['Mystery Castings'].emailBody).toBe('');
+    expect(L['Mystery Castings'].statusBeforeDelete).toBe('Approved');
+    expect(L['Mystery Castings'].deletedReason).toMatch(/^No contact found/);
 
-    // An answer that can't be read even when asked again goes to review, never to Disqualified.
-    expect(L['Garbage Output Ltd'].status).toBe('Needs Review');
+    // An answer that can't be read even when asked again is Disqualified as unconfirmed, never as not a fit.
+    expect(L['Garbage Output Ltd']).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(L['Garbage Output Ltd'].qualified).toBeNull();
     expect(L['Garbage Output Ltd'].fitDecision).toContain('Could not read the AI JSON');
 
-    expect(L['Old Segment Co'].status).toBe('Needs Review');
+    expect(L['Old Segment Co']).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(L['Old Segment Co'].fitDecision).toContain('matches no ICP');
     expect(L['Old Segment Co'].segment).toBe('manufacturing & 3pl');
     expect(log.calls.some((c) => c.includes('oldsegment'))).toBe(false);
@@ -552,7 +554,7 @@ describe('a company with no contact while search is down', () => {
   it('says the search failed and keeps it waiting for a later run, without retrying in a loop', async () => {
     const [l] = await db
       .insert(leads)
-      .values({ company: 'Mojj Engineering Systems Limited', website: 'mojjpune.com', city: 'Pune', segment: 'Manufacturing', status: 'Needs Manual Contact', qualified: true, fitScore: 8, researchSummary: 'Mojj makes process equipment.', refetchPending: true })
+      .values({ company: 'Mojj Engineering Systems Limited', website: 'mojjpune.com', city: 'Pune', segment: 'Manufacturing', status: 'Approved', qualified: true, fitScore: 8, researchSummary: 'Mojj makes process equipment.', refetchPending: true })
       .returning();
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     const svc = { ...services(), keys: { ...services().keys, serper: 'wrong-key' } };

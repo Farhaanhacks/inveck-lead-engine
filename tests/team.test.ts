@@ -1311,7 +1311,7 @@ describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
     return { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
   };
 
-  it('is no longer shown as the main contact, the lead waits for a contact, and nothing addresses the old one', async () => {
+  it('is no longer shown as the main contact, the lead is held back from the draw, and nothing addresses the old one', async () => {
     const db = await getDb();
     const { verifyContact } = await import('@/lib/verify-contacts');
     const { people } = await import('@/lib/db/schema');
@@ -1319,7 +1319,8 @@ describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
     await db.insert(people).values({ leadId: l.id, name: 'Govind Gopalia', title: 'Head Sourcing & Procurement', isPrimary: true });
     expect(await verifyContact(db, await services(false), l)).toBe('not_found');
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(after).toMatchObject({ contactName: '', status: 'Needs Manual Contact' });
+    // The stage stays; with nobody confirmed, the draw holds it back until someone is.
+    expect(after).toMatchObject({ contactName: '', status: 'Approved' });
     expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0]).toMatchObject({ isPrimary: false, passedReason: 'unverified' });
   });
 
@@ -1328,7 +1329,7 @@ describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
     const { verifyContacts } = await import('@/lib/verify-contacts');
     const { people } = await import('@/lib/db/schema');
     // As the lead page showed it: no contact on the lead, the set-aside person still flagged main contact.
-    const [l] = await db.insert(leads).values(lead('NBC Bearings', { segment: 'Manufacturing', city: 'Jaipur', status: 'Needs Manual Contact', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null, emailBody: 'Hello Rohan,' })).returning();
+    const [l] = await db.insert(leads).values(lead('NBC Bearings', { segment: 'Manufacturing', city: 'Jaipur', status: 'Approved', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null, emailBody: 'Hello Rohan,' })).returning();
     await db.insert(people).values([
       { leadId: l.id, name: 'Govind Gopalia', title: 'Head Sourcing & Procurement', isPrimary: true, passedAt: new Date(), linkedin: 'https://in.linkedin.com/in/govindgopalia' },
       { leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', passedAt: new Date(), passedReason: 'tried' },
@@ -1462,7 +1463,7 @@ describe('only confirmed contacts go out', () => {
     expect(kept.passedAt).not.toBeNull();
   });
 
-  it('the morning draw hands out only qualified leads with a confirmed contact, or none yet', async () => {
+  it('the morning draw hands out only qualified leads with a confirmed contact: never one with nobody to contact', async () => {
     const db = await getDb();
     const { runDailyDraw } = await import('@/lib/draw');
     await db.insert(leads).values([
@@ -1473,7 +1474,7 @@ describe('only confirmed contacts go out', () => {
     ]);
     await runDailyDraw(db, { now: new Date('2026-09-28T03:30:00Z'), force: true });
     const owned = (await db.select().from(leads)).filter((l) => l.ownerId !== null).map((l) => l.company).sort();
-    expect(owned).toEqual(['Confirmed Co', 'No Contact Co']);
+    expect(owned).toEqual(['Confirmed Co']);
   });
 });
 

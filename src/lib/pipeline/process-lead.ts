@@ -5,6 +5,8 @@ import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
 import { buildSources, tooSmall } from './fit';
 import { scoreLead } from './scoring';
+import { NO_CONTACT_FOUND, unconfirmedFit } from '../retired-statuses';
+import { isCaSegment } from '../tasks';
 import { contactPriority, icpFor } from '../tiers';
 import { resolveIcp } from '../icp-match';
 import { IMPORTED_SOURCE } from '../contact-import';
@@ -62,7 +64,7 @@ function storedResearch(lead: Lead): Research {
 export type TakenContact = { leadId: number; company: string; website: string; contactName: string };
 
 /** Stages before anything was sent: re-finding contacts here may set the stage and rewrite the draft. */
-const BEFORE_OUTREACH = ['Approved', 'Needs Manual Contact', 'Low Score', 'Rejected', 'Error', 'Needs Review', 'Disqualified'];
+const BEFORE_OUTREACH = ['Approved', 'Low Score', 'Rejected', 'Error', 'Disqualified'];
 
 /**
  * Researches a lead and finds its contacts. With `contactsOnly` (contacts reset), the company research
@@ -113,8 +115,8 @@ export async function processLead(
   } else {
     const match = resolveIcp(lead.segment, ctx.icps);
     if (!match.icp) {
-      await log(`${lead.company}: needs review: ${match.detail}`, 'warn');
-      return { status: 'Needs Review', qualified: null, fitStatus: 'review', fitDecision: `Needs review: ${match.detail}`, assessedIcp: '', assessedAt: new Date(), finalScore: null, lastError: '' };
+      await log(`${lead.company}: ICP fit not confirmed: ${match.detail}`, 'warn');
+      return { status: 'Disqualified', qualified: null, fitStatus: 'review', fitDecision: unconfirmedFit(match.detail), assessedIcp: '', assessedAt: new Date(), finalScore: null, lastError: '' };
     }
     icp = match.icp;
   }
@@ -162,12 +164,12 @@ export async function processLead(
       if (client) return { ...corrected, status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
       if (!opts.contactsOnly && !imported && ctx.ownLeads?.has(lead.company, website, lead.city)) return { ...corrected, status: 'Rejected', fitReason: OWN_LEAD_REASON, lastError: '' };
     } else if (check.status === 'mismatch') {
-      await log(`${lead.company}: needs review: company name not confirmed: ${check.evidence}`, 'warn');
+      await log(`${lead.company}: ICP fit not confirmed: company name not confirmed: ${check.evidence}`, 'warn');
       return {
         ...corrected,
-        status: 'Needs Review',
+        status: 'Disqualified',
         fitStatus: 'review',
-        fitDecision: `Needs review: the company name isn't confirmed: ${check.evidence}. Correct the name under Company (or confirm it by saving it), then Reassess fit.`,
+        fitDecision: unconfirmedFit(`the company name isn't confirmed: ${check.evidence}. Correct the name under Company (or confirm it by saving it), then Reassess fit.`),
         finalScore: null,
         lastError: '',
       };
@@ -258,8 +260,8 @@ export async function processLead(
       return { ...base, status: 'Disqualified', finalScore: null };
     }
     if (a.status === 'review') {
-      await log(`${lead.company}: ${a.reason.replace(/^Needs review: /, 'needs review: ')}`, 'warn');
-      return { ...base, status: 'Needs Review', finalScore: null };
+      await log(`${lead.company}: ${unconfirmedFit(a.reason)}`, 'warn');
+      return { ...base, status: 'Disqualified', fitDecision: unconfirmedFit(a.reason), finalScore: null };
     }
   } else if (!research.qualified) {
     // Saved research that didn't qualify: nothing to find contacts for, and the stage stays.
@@ -346,6 +348,12 @@ export async function processLead(
   contact.email = teamEmail;
 
   const score = scoreLead(research.fitScore, contact, teamEmail ? 'likely' : 'no email found');
+  // Nobody reachable: the lead goes to Deleted (restorable, back to Approved) and never to the team. A CA firm is
+  // worked from the firm's own details, so it stays Approved.
+  const noContact = score.status === 'Deleted' && !isCaSegment(lead.segment);
+  const outcome: LeadUpdate = noContact
+    ? { status: 'Deleted', statusBeforeDelete: 'Approved', deletedReason: NO_CONTACT_FOUND, deletedAt: new Date() }
+    : { status: 'Approved' };
   const update: LeadResult = {
     ...base,
     ...teamEmailFields(teamEmail),
@@ -449,16 +457,20 @@ export async function processLead(
     await log(`${lead.company}: contacts found again (${contact.name || 'nobody on the lists yet'}); stage kept at ${lead.status}`);
     return update;
   }
+  if (noContact) {
+    await log(`${lead.company}: ${NO_CONTACT_FOUND}; moved to Deleted (restorable)`);
+    return { ...update, ...outcome };
+  }
   const out = await writeOutreach(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, contact, news.signals.length ? news.signals : lead.signals);
   if (!out.draft) {
     // The research and contacts stand; the missing draft is written again in the background.
     await log(`${lead.company}: drafting failed, will retry: ${out.error}`, 'warn');
-    return { ...update, status: score.status, lastError: `Drafting failed (retrying automatically): ${out.error || 'unknown error'}` };
+    return { ...update, ...outcome, lastError: `Drafting failed (retrying automatically): ${out.error || 'unknown error'}` };
   }
   await log(`${lead.company}: draft ready for ${contact.name || 'the team (no contact found yet)'} (score ${score.finalScore})`);
   return {
     ...update,
-    status: score.status,
+    ...outcome,
     emailSubject: out.draft.subject,
     emailBody: out.draft.body,
     linkedinMessage: out.draft.linkedin,

@@ -123,7 +123,8 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
         <Stat label="New prospects" value={s.prospectsAdded} />
         <Stat label="Researched" value={s.processed} />
         <Stat label="Approved" value={s.drafted} />
-        <Stat label="Needs review" value={s.needsReview ?? 0} />
+        {/* Runs from before Needs Review was removed (20 Oct 2026) still show theirs. */}
+        {(s.needsReview ?? 0) > 0 && <Stat label="Needs review" value={s.needsReview ?? 0} />}
         <Stat label="Disqualified" value={s.disqualified} />
         <Stat label="Clients skipped" value={s.existingClients} />
         <Stat label="Problems" value={s.errors} />

@@ -62,7 +62,7 @@ describe('scoring', () => {
     expect(scoreLead(8, withLinkedIn, 'no email found')).toMatchObject({ finalScore: 80, reachable: true, status: 'Approved' });
     const withEmail = { ...EMPTY_CONTACT, name: 'A B', email: 'a@b.com', roleMatch: true };
     expect(scoreLead(8, withEmail, 'valid')).toMatchObject({ finalScore: 80, reachable: true, status: 'Approved' });
-    expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found')).toMatchObject({ reachable: false, status: 'Needs Manual Contact' });
+    expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found')).toMatchObject({ reachable: false, status: 'Deleted' });
   });
 
   it('never holds back a reachable, qualified lead because of its score', () => {

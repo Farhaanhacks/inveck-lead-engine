@@ -9,8 +9,6 @@ export const LEAD_STATUSES = [
   'Processing',
   'Existing Client',
   'Disqualified',
-  'Needs Review',
-  'Needs Manual Contact',
   'Low Score',
   'Approved',
   'Contacted',

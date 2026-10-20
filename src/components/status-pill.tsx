@@ -6,8 +6,6 @@ const TONE: Record<LeadStatus, string> = {
   Processing: 'bg-accent-soft text-accent',
   'Existing Client': 'bg-neutral-soft text-ink-2',
   Disqualified: 'bg-neutral-soft text-ink-2',
-  'Needs Review': 'bg-warning-soft text-warning-ink',
-  'Needs Manual Contact': 'bg-warning-soft text-warning-ink',
   'Low Score': 'bg-warning-soft text-warning-ink',
   Approved: 'bg-good-soft text-good-ink',
   Contacted: 'bg-good-soft text-good-ink',

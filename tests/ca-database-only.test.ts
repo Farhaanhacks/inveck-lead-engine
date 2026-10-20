@@ -5,7 +5,6 @@ import { leads, sheetFirms, tasks, users } from '@/lib/db/schema';
 import { KnownBranches } from '@/lib/branches';
 import { importContactSheet } from '@/lib/contact-import';
 import { approveSheetLeadsOnce } from '@/lib/ca-sheet';
-import { reconcileContactStatus } from '@/lib/contact-status';
 import { ensureSequences, isFirstContact, loadTodayTasks, istDay } from '@/lib/tasks';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 
@@ -39,7 +38,7 @@ describe('CA firms from the database', () => {
     expect(items.map((i) => [i.lead.id, i.task.kind, i.task.step])).toEqual([[id, 'linkedin', 'Day 1']]);
     expect(items.every((i) => isFirstContact(i.task))).toBe(true);
     // A contact change never sends it back to waiting for a person, and no find-a-contact step appears.
-    expect(await reconcileContactStatus(db, id)).toBeNull();
+    await ensureSequences(db, istDay());
     expect((await db.select().from(leads).where(eq(leads.id, id)))[0].status).toBe('Approved');
     expect((await db.select().from(tasks).where(eq(tasks.leadId, id))).some((t) => t.step === 'Find the next person')).toBe(false);
   });
