@@ -341,7 +341,7 @@ describe('morning draw', () => {
     // Nobody was given CA firms to make up the numbers.
     expect((await db.select().from(leads)).filter((l) => l.segment === 'CA Firms').every((l) => l.ownerId === null)).toBe(true);
     const team = Object.keys(first!.perOwnerSegment!).map(Number);
-    const short = shortfalls(team, quotaOf(settingsSchema.parse({})), await handsOf(db));
+    const short = shortfalls(new Map(team.map((id) => [id, quotaOf(settingsSchema.parse({}))])), await handsOf(db));
     expect(short.filter((s) => s.segment === M).map((s) => s.short)).toEqual([7, 7, 7, 7]);
     expect(short.filter((s) => s.segment === P).reduce((n, s) => n + s.short, 0)).toBe(27);
     // More leads of each segment arrive later the same day: each associate's own deficits are filled.

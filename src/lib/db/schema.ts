@@ -390,6 +390,9 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   mustChangePassword: boolean('must_change_password').notNull().default(true),
   active: boolean('active').notNull().default(true),
+  /** Their own daily list for the morning draw, per segment (null: the Settings numbers). */
+  drawManufacturing: integer('draw_manufacturing'),
+  drawLogistics: integer('draw_logistics'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type User = typeof users.$inferSelect;

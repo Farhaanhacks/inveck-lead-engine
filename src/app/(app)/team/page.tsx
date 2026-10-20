@@ -4,13 +4,13 @@ import { adminPage } from '@/lib/access';
 import { PERIODS, periodDays, teamReport, type Period } from '@/lib/team-report';
 import { formatTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
-import { DRAW_SEGMENTS, drawPool, getDraw, handedOut, quotaOf, quotaTotal, runDailyDraw, shortfalls, topUpDraw } from '@/lib/draw';
+import { DRAW_SEGMENTS, drawPool, getDraw, handedOut, quotaOf, quotaTotal, runDailyDraw, shortfalls, teamQuotas, teamTotal, topUpDraw } from '@/lib/draw';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { istDay } from '@/lib/tasks';
 import { CA_PER_ASSOCIATE, getCaDraw, runCaDraw } from '@/lib/ca-sheet';
 import { googleCredentials } from '@/lib/google-sheet';
 import { getSettings } from '@/lib/settings';
-import { drawNowAction } from '@/app/team-actions';
+import { drawNowAction, saveDrawQuotaAction } from '@/app/team-actions';
 import { refetchProgress, startRefetchIfWaiting } from '@/lib/run-driver';
 
 const hours = (m: number) => (m ? `${Math.floor(m / 60)}h ${String(Math.round(m % 60)).padStart(2, '0')}m` : '—');
@@ -32,12 +32,16 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   const refetch = await refetchProgress();
   const resetRecent = refetch.recent;
   const [{ people, attendance }, draw, pool, drawSettings, hands] = await Promise.all([teamReport(db, from, to), getDraw(db), drawPool(db), getSettings(db), handedOut(db, istDay())]);
-  // Per associate: the quota in each segment (12 + 8 by default), so the team-wide total is 20 x the associates (80 for four).
-  const quota = draw?.quota ?? quotaOf(drawSettings);
-  const teamWanted = people.length * quotaTotal(quota);
+  // Per associate: their own quota in each segment (the Settings one for anyone without their own numbers).
+  const fallback = quotaOf(drawSettings);
+  const own = await teamQuotas(db, drawSettings);
+  const quotaFor = (id: number) => own.get(id) ?? fallback;
+  const quotas = new Map(people.map((p) => [p.id, quotaFor(p.id)]));
+  const team = teamTotal(quotas);
+  const teamWanted = quotaTotal(team);
   const teamDrawn = people.reduce((n, p) => n + (hands[String(p.id)]?.[MANUFACTURING] ?? 0) + (hands[String(p.id)]?.[LOGISTICS] ?? 0), 0);
   const names = new Map(people.map((p) => [p.id, p.name]));
-  const shortage = shortfalls(people.map((p) => p.id), quota, hands);
+  const shortage = shortfalls(quotas, hands);
   const totals = people.reduce(
     (t, p) => ({ companies: t.companies + p.companiesDone, attempts: t.attempts + p.callAttempts, connected: t.connected + p.connected, meetings: t.meetings + p.meetings, won: t.won + p.won }),
     { companies: 0, attempts: 0, connected: 0, meetings: 0, won: 0 },
@@ -96,8 +100,8 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
           <div>
             <h2 className="text-sm font-semibold">Morning draw</h2>
             <p className="text-xs text-muted">
-              Every working day at 8:00 am, each associate is handed {quotaTotal(quota)} researched leads nobody has had yet: {quota[MANUFACTURING]} {MANUFACTURING} + {quota[LOGISTICS]} {LOGISTICS}, picked at random per segment. Team-wide
-              that is {teamWanted} a day for {people.length} {people.length === 1 ? 'associate' : 'associates'} ({quota[MANUFACTURING] * people.length} {MANUFACTURING} + {quota[LOGISTICS] * people.length} {LOGISTICS}). A segment that runs short is never filled from the other segment or from CA firms.
+              Every working day at 8:00 am, each associate is handed their daily list of researched leads nobody has had yet, per segment, picked at random: the numbers in the table, set per person (anyone without their own gets {fallback[MANUFACTURING]} {MANUFACTURING} + {fallback[LOGISTICS]} {LOGISTICS} from Settings). Team-wide
+              that is {teamWanted} a day ({team[MANUFACTURING]} {MANUFACTURING} + {team[LOGISTICS]} {LOGISTICS}). A segment that runs short is never filled from the other segment or from CA firms.
             </p>
           </div>
           {(!draw || (draw.short && pool.total > 0)) && (
@@ -120,19 +124,21 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
           </span>
         </p>
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[520px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="text-xs text-ink-2">
               <tr>
                 <th className={th}>Associate</th>
                 {DRAW_SEGMENTS.map((s) => (
-                  <th key={s} className={th}>{s} (of {quota[s]})</th>
+                  <th key={s} className={th}>{s} today</th>
                 ))}
-                <th className={th}>Total (of {quotaTotal(quota)})</th>
+                <th className={th}>Total today</th>
+                <th className={th}>Daily list</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
               {people.map((p) => {
                 const h = hands[String(p.id)];
+                const quota = quotaFor(p.id);
                 return (
                   <tr key={p.id}>
                     <td className={`${td} font-medium`}>{p.name}</td>
@@ -140,12 +146,26 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
                       const got = h?.[s] ?? 0;
                       return (
                         <td key={s} className={td}>
-                          {got}
+                          {got} <span className="text-xs text-muted">of {quota[s]}</span>
                           {got < quota[s] && draw && <span className="ml-1 text-xs text-warning-ink">{quota[s] - got} short</span>}
                         </td>
                       );
                     })}
-                    <td className={td}>{(h?.[MANUFACTURING] ?? 0) + (h?.[LOGISTICS] ?? 0)}</td>
+                    <td className={td}>
+                      {(h?.[MANUFACTURING] ?? 0) + (h?.[LOGISTICS] ?? 0)} <span className="text-xs text-muted">of {quotaTotal(quota)}</span>
+                    </td>
+                    <td className={td}>
+                      <form action={saveDrawQuotaAction} className="flex items-center gap-1.5">
+                        <input type="hidden" name="userId" value={p.id} />
+                        <label className="sr-only" htmlFor={`m-${p.id}`}>{p.name}: {MANUFACTURING} a day</label>
+                        <input id={`m-${p.id}`} name="manufacturing" type="number" min={0} max={200} defaultValue={quota[MANUFACTURING]} className="field h-8 w-16 py-1 text-sm" />
+                        <span className="text-xs text-muted">Mfg +</span>
+                        <label className="sr-only" htmlFor={`l-${p.id}`}>{p.name}: {LOGISTICS} a day</label>
+                        <input id={`l-${p.id}`} name="logistics" type="number" min={0} max={200} defaultValue={quota[LOGISTICS]} className="field h-8 w-16 py-1 text-sm" />
+                        <span className="text-xs text-muted">3PL</span>
+                        <button className="btn-secondary px-2 py-1 text-xs">Save</button>
+                      </form>
+                    </td>
                   </tr>
                 );
               })}
@@ -157,9 +177,9 @@ export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
             Shortfall: {shortage.map((s) => `${names.get(s.owner) ?? 'Associate'} ${s.short} ${s.segment}`).join('; ')}. They are topped up as soon as more {pool.total === 0 ? 'researched leads' : 'leads'} are available the same day.
           </p>
         )}
-        {pool.bySegment[MANUFACTURING] < quota[MANUFACTURING] * people.length || pool.bySegment[LOGISTICS] < quota[LOGISTICS] * people.length ? (
+        {pool.bySegment[MANUFACTURING] < team[MANUFACTURING] || pool.bySegment[LOGISTICS] < team[LOGISTICS] ? (
           <p className="mt-2 text-xs text-warning-ink">
-            The list is short of tomorrow&apos;s need ({quota[MANUFACTURING] * people.length} {MANUFACTURING} and {quota[LOGISTICS] * people.length} {LOGISTICS}). Add companies in the segment that is short to keep the draw full.
+            The list is short of tomorrow&apos;s need ({team[MANUFACTURING]} {MANUFACTURING} and {team[LOGISTICS]} {LOGISTICS}). The 6 am run searches for what is short; companies added by hand count too.
           </p>
         ) : null}
       </section>

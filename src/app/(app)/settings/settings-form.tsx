@@ -22,8 +22,8 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
       <section className="card space-y-4 p-5">
         <h2 className="text-sm font-semibold">Pipeline</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Num name="manufacturingPerAssociate" label="Manufacturing leads per associate, per day" value={s.manufacturingPerAssociate} min={0} max={100} hint="Each active associate is handed this many Manufacturing leads every working morning (8:00 am India time), drawn at random from the researched list. Together with the next field it sets the daily total: 12 + 8 = 20 each, 80 for four associates." />
-          <Num name="logisticsPerAssociate" label="3PL & Logistics leads per associate, per day" value={s.logisticsPerAssociate} min={0} max={100} hint="The same for 3PL & Logistics. A segment that runs short is never filled from the other segment or from CA firms. 0 and 0 stops the draw." />
+          <Num name="manufacturingPerAssociate" label="Default Manufacturing leads per associate, per day" value={s.manufacturingPerAssociate} min={0} max={100} hint="Only for an associate without their own daily list: each person's own numbers are set on the Team page (Anchal and Puja 40 Manufacturing; Parimal and Anuradha 24 Manufacturing + 16 3PL). Handed out every working morning at 8:00 am, at random from the researched list." />
+          <Num name="logisticsPerAssociate" label="Default 3PL & Logistics leads per associate, per day" value={s.logisticsPerAssociate} min={0} max={100} hint="The same for 3PL & Logistics. A segment that runs short is never filled from the other segment or from CA firms." />
           <Num name="prospectsPerRun" label="New prospects per search" value={s.prospectsPerRun} min={1} max={50} hint="The fewest new companies Find new prospects adds, split across Manufacturing and 3PL. The 6 am run finds what the morning draw is short of instead." />
           <label className="flex items-start gap-2 text-sm sm:col-span-2">
             <input type="checkbox" name="radarEnabled" defaultChecked={s.radarEnabled} className="mt-1" />

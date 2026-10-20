@@ -586,6 +586,23 @@ export async function drawNowAction() {
   for (const p of ['/team', '/today', '/tracker', '/leads']) revalidatePath(p);
 }
 
+/** An associate's own daily list for the morning draw, per segment (Team page). From the next draw (or a top-up today). */
+export async function saveDrawQuotaAction(form: FormData) {
+  const user = await requireUser();
+  if (user.role !== 'admin') return;
+  const id = Number(form.get('userId'));
+  const count = (name: string) => {
+    const n = Math.round(Number(form.get(name)));
+    return Number.isFinite(n) ? Math.min(200, Math.max(0, n)) : null;
+  };
+  const manufacturing = count('manufacturing');
+  const logistics = count('logistics');
+  if (!id || manufacturing === null || logistics === null) return;
+  const db = await getDb();
+  await db.update(users).set({ drawManufacturing: manufacturing, drawLogistics: logistics }).where(and(eq(users.id, id), eq(users.role, 'bda')));
+  for (const p of ['/team', '/today', '/']) revalidatePath(p);
+}
+
 const QUICK_FIELDS = { contactPhone: 'number', contactLinkedin: 'LinkedIn', contactEmail: 'email' } as const;
 /** An email added when the contact already has one: kept as another point of contact. */
 const OTHER_EMAIL = 'Other email';

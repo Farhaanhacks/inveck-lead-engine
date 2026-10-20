@@ -621,6 +621,18 @@ export const SCHEMA_STATEMENTS = [
   // People first in the scheduled run: where its prospect search got to, and each company's LinkedIn page.
   `ALTER TABLE runs ADD COLUMN IF NOT EXISTS sourcing JSONB`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_linkedin TEXT NOT NULL DEFAULT ''`,
+  // Each associate's own daily list for the morning draw (empty: the Settings numbers).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS draw_manufacturing INTEGER`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS draw_logistics INTEGER`,
+  // INVECK's daily lists (20 Oct 2026), set once: Anchal and Puja 40 Manufacturing each (their CA firms come
+  // apart); Parimal and Anuradha 40 each in the 12:8 ratio, 24 Manufacturing and 16 3PL. Editable on the Team page.
+  `UPDATE users SET draw_manufacturing = 40, draw_logistics = 0
+   WHERE role = 'bda' AND lower(split_part(btrim(name), ' ', 1)) IN ('anchal', 'aanchal', 'puja')
+   AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'drawQuotasV1')`,
+  `UPDATE users SET draw_manufacturing = 24, draw_logistics = 16
+   WHERE role = 'bda' AND lower(split_part(btrim(name), ' ', 1)) IN ('parimal', 'anuradha')
+   AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'drawQuotasV1')`,
+  `INSERT INTO settings (key, value) VALUES ('drawQuotasV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.

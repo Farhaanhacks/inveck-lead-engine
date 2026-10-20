@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, is, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, leads, people, sourcingTests, users, type Lead, type SourcingTest } from '../db/schema';
-import { dealToDeficits, DRAW_SEGMENTS, drawPool, poolLeads, quotaOf, shuffle, type DrawSegment, type Quota } from '../draw';
+import { dealToDeficits, DRAW_SEGMENTS, drawPool, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
@@ -77,7 +77,9 @@ export type MorningSampleReport = {
   /** Every list filled from the search alone: the leads already waiting in the pool are left out. */
   fresh: boolean;
   team: { id: number; name: string }[];
+  /** The Settings quota (for anyone without their own numbers), and each associate's own, by id. */
   quota: Quota;
+  quotas?: Record<string, Quota>;
   /** Per segment when it started: what the draw needs, what's waiting in the pool, what the search was asked for. */
   start: Record<DrawSegment, { need: number; pool: number; waiting: number; wanted: number }>;
   search: MorningSourcing | null;
@@ -229,18 +231,20 @@ async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSamp
   const day = nextWorkingDay(istDay(), await getHolidays(db));
   const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(asc(users.id));
   const quota = quotaOf(svc.settings);
+  const own = await teamQuotas(db, svc.settings);
+  const quotas = Object.fromEntries(team.map((t) => [String(t.id), own.get(t.id) ?? quota]));
   const pool = await drawPool(db);
   // Companies already waiting for research: the run researches them first; the sample can't show them.
   const waitingRows = await db.select({ segment: leads.segment }).from(leads).where(inArray(leads.status, ['New', 'Processing']));
   const start = {} as MorningSampleReport['start'];
   const wanted = {} as Record<SourcingSegment, number>;
   for (const s of DRAW_SEGMENTS) {
-    const need = team.length * quota[s];
+    const need = Object.values(quotas).reduce((a, q) => a + q[s], 0);
     const short = Math.max(0, need - (fresh ? 0 : pool.bySegment[s]));
     wanted[s] = Math.ceil(short * MORNING_LIMITS.headroom);
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
   }
-  return { mode: 'morning', day, phase: 'search', fresh, team, quota, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
+  return { mode: 'morning', day, phase: 'search', fresh, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
 }
 
 /** Researches a few of the sample's companies exactly as the run would (the ICP check, contacts, drafts), keeping the result in the report. */
@@ -293,17 +297,17 @@ async function deal(db: Db, r: MorningSampleReport) {
   const hands = new Map(r.team.map((t) => [t.id, { userId: t.id, name: t.name, ca: worksCaFirms(t.name), cards: [] as SampleCard[], short: { ...Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, 0])) } as Record<DrawSegment, number>, carried: [] as SampleHand['carried'] }]));
   const poolUsed: Lead[] = [];
   for (const s of DRAW_SEGMENTS) {
-    const need = team.length * r.quota[s];
+    const need = team.reduce((a, t) => a + quotaFor(r, t)[s], 0);
     if (!need) continue;
     const pool = r.fresh ? [] : await poolLeads(db, s, need);
     const mine = r.companies.filter((c) => c.segment === s && releasable(c));
     const cards: SampleCard[] = shuffle([...pool.map((l) => ({ from: 'pool' as const, key: l.id })), ...mine.map((c) => ({ from: 'sample' as const, key: c.key }))]).slice(0, need);
     poolUsed.push(...pool.filter((l) => cards.some((c) => c.from === 'pool' && c.key === l.id)));
-    const deficits = new Map(team.map((t) => [t, r.quota[s]] as const));
+    const deficits = new Map(team.map((t) => [t, quotaFor(r, t)[s]] as const).filter(([, n]) => n > 0));
     for (const [owner, dealt] of dealToDeficits(cards, deficits)) {
       const h = hands.get(owner)!;
       h.cards.push(...dealt);
-      h.short[s] = r.quota[s] - dealt.length;
+      h.short[s] = quotaFor(r, owner)[s] - dealt.length;
     }
   }
   const ids = poolUsed.map((l) => l.id);
@@ -325,6 +329,9 @@ async function deal(db: Db, r: MorningSampleReport) {
   r.hands = [...hands.values()];
 }
 
+/** An associate's daily list in the sample: their own numbers when it ran, else the Settings ones. */
+export const quotaFor = (r: Pick<MorningSampleReport, 'quota' | 'quotas'>, userId: number): Quota => r.quotas?.[String(userId)] ?? r.quota;
+
 const segOf = (r: MorningSampleReport, c: SampleCard) =>
   c.from === 'sample' ? r.companies.find((x) => x.key === c.key)?.segment : r.pool.find((p) => p.lead.id === c.key)?.lead.segment;
 
@@ -342,7 +349,7 @@ export function progressOf(r: MorningSampleReport): string {
 export function summaryOf(r: MorningSampleReport): string {
   const approved = r.companies.filter(releasable).length;
   const dealt = r.hands.reduce((a, h) => a + h.cards.length, 0);
-  const wanted = r.team.length * DRAW_SEGMENTS.reduce((a, s) => a + r.quota[s], 0);
+  const wanted = r.team.reduce((a, t) => a + DRAW_SEGMENTS.reduce((b, s) => b + quotaFor(r, t.id)[s], 0), 0);
   return `${r.companies.length} companies found (${r.searches} Google searches), ${approved} approved with a confirmed contact; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates.`;
 }
 

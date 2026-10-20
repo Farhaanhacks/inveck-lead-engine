@@ -251,10 +251,11 @@ researches exactly as the run does, deals each active associate their quota from
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
 nobody is given anything and no search is remembered, so tomorrow's run starts fresh. CA firms aren't part of it.
 
-At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate 20 leads:
-12 Manufacturing + 8 3PL & Logistics (Settings, "Manufacturing leads per associate" and "3PL & Logistics
-leads per associate"), so 80 a day for four associates (48 + 32). Each segment is drawn separately, at random,
-from researched leads nobody has been given yet and dealt round the team, so everyone gets the same mix. A
+At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
+list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from
+the sheet), Parimal and Anuradha 24 Manufacturing + 16 3PL & Logistics each (40 in the 12:8 ratio), so 160 a
+day (128 + 32). Anyone without their own list gets the Settings defaults. Each segment is drawn separately, at
+random, from researched leads nobody has been given yet and dealt round the team. A
 shortage in one segment is shown per associate on the Team page and never filled from the other segment or
 from CA firms (CA firms are not part of this draw); leads that turn up later the same day top up each
 associate's missing segment. A lead is drawn only once. Inbound leads still go out in turn the moment they
@@ -319,7 +320,7 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   call is saved as no answer, busy or wrong number. Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
   an outcome: Not interested, No requirement right now or Already using a solution ticks off everything
   else for that company; any other outcome keeps today's WhatsApp, email and LinkedIn and stops the later
-  rounds. When every step is ticked the company is done for the day. Counters show leads assigned (20: 12 + 8), companies done (target 20), calls
+  rounds. When every step is ticked the company is done for the day. Counters show leads assigned (their daily list), companies done (target 20), calls
   attempted (target 20 a day, per associate), connected calls, WhatsApp, emails and LinkedIn requests.
 - **P2 flow**: after 5 unanswered calls to the point of contact, or a connected call logged as "Not the
   right person", the lead switches to the next person already found at the company (a P2 process owner

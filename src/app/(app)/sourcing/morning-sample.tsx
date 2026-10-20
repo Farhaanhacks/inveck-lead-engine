@@ -12,7 +12,7 @@ import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
 import { startMorningSampleAction } from '@/app/sourcing-actions';
-import { CA_PER_ASSOCIATE, cardLead, isMorningSample, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
+import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 const th = 'px-3 py-2 text-left font-medium whitespace-nowrap';
@@ -160,7 +160,8 @@ function Card({ r, card, person, senderName, icps }: { r: MorningSampleReport; c
 
 /** One associate's day: their counters, then every company they'd be given, as Today would show it. */
 function PersonDay({ r, hand, senderName, icps }: { r: MorningSampleReport; hand: SampleHand; senderName: string; icps: Icp[] }) {
-  const quota = quotaTotal(r.quota);
+  const q = quotaFor(r, hand.userId);
+  const quota = quotaTotal(q);
   const seg = (s: string) => hand.cards.filter((c) => cardLead(r, c)?.lead.segment === s).length;
   const short = DRAW_SEGMENTS.filter((s) => hand.short[s] > 0);
   const carried = [...new Map(hand.carried.map((c) => [c.leadId, c])).values()];
@@ -168,7 +169,7 @@ function PersonDay({ r, hand, senderName, icps }: { r: MorningSampleReport; hand
     <div>
       <h3 className="mb-3 text-base font-semibold">{hand.name}&apos;s Today on {dayName(r.day)}</h3>
       <div className="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Counter label="Leads assigned today" value={hand.cards.length} goal={quota} note={`${seg(MANUFACTURING)}/${r.quota[MANUFACTURING]} Manufacturing + ${seg(LOGISTICS)}/${r.quota[LOGISTICS]} 3PL & Logistics`} />
+        <Counter label="Leads assigned today" value={hand.cards.length} goal={quota} note={`${seg(MANUFACTURING)}/${q[MANUFACTURING]} Manufacturing + ${seg(LOGISTICS)}/${q[LOGISTICS]} 3PL & Logistics`} />
         <Counter label="From earlier days" value={carried.length} note="companies with a step already due" />
         {hand.ca && <Counter label="CA firms" value={CA_PER_ASSOCIATE} note="from the Google Sheet at 8 am: not part of this sample" />}
       </div>
@@ -230,7 +231,7 @@ export function MorningSample({
       <div className="card mb-4 p-5">
         <h2 className="text-sm font-semibold">Morning Sample Run</h2>
         <p className="mt-1 text-sm text-ink-2">
-          Tomorrow&apos;s 6 am run and 8 am draw, done now: it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their 12 Manufacturing and 8 3PL as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything, and tomorrow&apos;s run starts fresh, so the real companies will differ. CA firms aren&apos;t part of it.
+          Tomorrow&apos;s 6 am run and 8 am draw, done now: it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything, and tomorrow&apos;s run starts fresh, so the real companies will differ. CA firms aren&apos;t part of it.
         </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
@@ -269,7 +270,7 @@ export function MorningSample({
                 <div key={s} className="card p-4 text-sm">
                   <div className="font-medium">{s}</div>
                   <p className="mt-1 text-xs text-muted">
-                    The draw needs {r.start[s].need} ({r.team.length} associates × {r.quota[s]}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.
+                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.
                     {r.start[s].waiting ? ` ${r.start[s].waiting} companies already waiting for research would be researched first at 6 am (not shown here).` : ''}
                   </p>
                   <p className="mt-2">

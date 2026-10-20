@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { icps, leads, people, prospectSearches, runs, type Lead, type Run } from '../db/schema';
 import { DEFAULT_ICPS } from '../db/seed';
-import { activeTeam, drawPool, quotaOf, quotaTotal } from '../draw';
+import { drawPool, quotaTotal, teamQuotas, teamTotal } from '../draw';
 import { normSegment } from '../icp-match';
 import { logActivity } from '../activity';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
@@ -116,12 +116,11 @@ export function beforeLastRound(now = new Date()): boolean {
 }
 
 /**
- * What the morning draw is short of in each segment: the active associates times their quota, less
+ * What the morning draw is short of in each segment: every active associate's daily list added up, less
  * the researched leads waiting to be drawn and the companies still waiting for research.
  */
 export async function drawShortfall(db: Db, settings: Services['settings']): Promise<Record<SourcingSegment, { need: number; pool: number; waiting: number; short: number }>> {
-  const quota = quotaOf(settings);
-  const team = await activeTeam(db);
+  const team = teamTotal(await teamQuotas(db, settings));
   const pool = await drawPool(db);
   const waitingRows = await db
     .select({ segment: leads.segment, n: sql<number>`count(*)::int` })
@@ -130,7 +129,7 @@ export async function drawShortfall(db: Db, settings: Services['settings']): Pro
     .groupBy(leads.segment);
   const out = {} as Record<SourcingSegment, { need: number; pool: number; waiting: number; short: number }>;
   for (const s of SOURCING_SEGMENTS) {
-    const need = team.length * quota[s];
+    const need = team[s];
     const waiting = waitingRows.filter((r) => normSegment(r.segment) === normSegment(s)).reduce((a, r) => a + Number(r.n), 0);
     out[s] = { need, pool: pool.bySegment[s], waiting, short: Math.max(0, need - pool.bySegment[s] - waiting) };
   }
@@ -173,9 +172,10 @@ export function startRound(prev: MorningSourcing | null, wanted: Record<Sourcing
 /** The companies a round of the run asks for, per segment. A manual search finds at least its share of "New prospects per search". */
 async function runWants(db: Db, svc: Services, run: Run, round: number): Promise<Record<SourcingSegment, number>> {
   const short = await drawShortfall(db, svc.settings);
-  const quota = quotaOf(svc.settings);
-  const total = quotaTotal(quota);
-  const share = (s: SourcingSegment) => (total ? (quota[s] ? Math.max(1, Math.round((svc.settings.prospectsPerRun * quota[s]) / total)) : 0) : Math.ceil(svc.settings.prospectsPerRun / 2));
+  // A manual search's share per segment follows the team's daily lists.
+  const team = teamTotal(await teamQuotas(db, svc.settings));
+  const total = quotaTotal(team);
+  const share = (s: SourcingSegment) => (total ? (team[s] ? Math.max(1, Math.round((svc.settings.prospectsPerRun * team[s]) / total)) : 0) : Math.ceil(svc.settings.prospectsPerRun / 2));
   const wanted = {} as Record<SourcingSegment, number>;
   for (const segment of SOURCING_SEGMENTS) {
     const fill = Math.ceil(short[segment].short * MORNING_LIMITS.headroom);
