@@ -80,7 +80,7 @@ One-time setup by an administrator:
    registration**: name it "INVECK Lead Engine", **Accounts in this organizational directory only**,
    and a **Web** redirect URI of exactly
    `https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback`.
-2. **API permissions → Add → Microsoft Graph → Delegated**: `Mail.Send`, `User.Read`,
+2. **API permissions → Add → Microsoft Graph → Delegated**: `Mail.Send`, `Calendars.ReadWrite`, `User.Read`,
    `offline_access`, `openid`, `email`. If your tenant doesn't let people consent to apps
    themselves, click **Grant admin consent for INVECK**.
 3. **Certificates & secrets → New client secret**; copy its **Value** (shown once).
@@ -100,6 +100,20 @@ One-time setup by an administrator:
 5. Each team member: **Account → Connect Outlook**, sign in with their own INVECK account. The
    connection is tied to the CRM login that started it (checked against a one-time `state` held in
    an httpOnly cookie), and one mailbox can only be linked to one CRM user.
+
+### Teams meetings
+
+When a connected call is saved as **Demo scheduled**, a dialog shows the prospect, company and saved email with a date, time
+and length (India time) and the title "Demo for [Company] - Inveck". Nothing is created, and the lead doesn't move, until
+**Approve and Schedule**. Then an event with a Microsoft Teams meeting is created in the lead owner's own Microsoft 365
+calendar through Graph, with the prospect as a required attendee; Microsoft's calendar sends the invitation (the app sends
+no separate email). Only once Graph returns the event and its Teams link is the call logged and the lead moved to Meeting
+Booked. Scheduling again with the same details never makes a second meeting. On the meeting's date it shows at the top of
+the BDA's Today page with its time and a **Join meeting** button that opens the Teams link in a new tab.
+
+Calendar permission (`Calendars.ReadWrite`) is asked for at sign-in. Everyone who connected Outlook before it was added:
+**Account → Allow calendar access** (or Connect again), then agree on Microsoft's page. If your tenant requires it, click
+**Grant admin consent** in Entra once. Existing email sending keeps working until they do.
 
 The secret expires (Entra shows when): make a new one before then and update `MICROSOFT_CLIENT_SECRET`.
 

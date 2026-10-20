@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, type Escalation } from '@/lib/escalate';
+import { hasScheduledMeeting } from '@/lib/meetings';
 import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
@@ -71,6 +72,8 @@ export async function completeTaskAction(form: FormData) {
   // A CA firm's waiting step is only ever marked accepted; "accepted" fits nothing else.
   if ((task.step === CA_WAITING_STEP) !== (outcome === 'accepted')) return refreshToday();
   const feedback = str(form, 'feedback');
+  // Demo scheduled means a Teams meeting was approved and created first (Approve and Schedule): never by this call alone.
+  if (task.kind === 'call' && outcome === 'connected' && feedback === 'Demo scheduled' && !(await hasScheduledMeeting(db, task.leadId))) return refreshToday();
   if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return refreshToday();
   if (task.kind === 'linkedin' && outcome === 'sent') {
     if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return refreshToday();

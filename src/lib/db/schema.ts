@@ -460,6 +460,8 @@ export const mailboxes = pgTable('mailboxes', {
   connectedAt: timestamp('connected_at', { withTimezone: true }).notNull().defaultNow(),
   /** Why the last send couldn't use it (e.g. the connection expired): shown on the Account page. */
   lastError: text('last_error').notNull().default(''),
+  /** What Microsoft said was allowed when it was connected (space-separated); '' for a connection made before calendars were added. */
+  scopes: text('scopes').notNull().default(''),
 });
 export type Mailbox = typeof mailboxes.$inferSelect;
 
@@ -632,3 +634,28 @@ export const contentTodos = pgTable('content_todos', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type ContentTodo = typeof contentTodos.$inferSelect;
+
+/**
+ * A Microsoft Teams meeting scheduled from a connected call (the calendar event is in the BDA's own Microsoft 365
+ * calendar, which sends the invitation). `requestKey` is unique per lead, step, time and attendee, so retrying never
+ * makes a second meeting; `status` is 'creating' until Graph has returned the event and its Teams link.
+ */
+export const leadMeetings = pgTable('lead_meetings', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').notNull(),
+  taskId: integer('task_id'),
+  requestKey: text('request_key').notNull().unique(),
+  title: text('title').notNull(),
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+  /** The BDA whose calendar holds it, and that mailbox. */
+  organizerId: integer('organizer_id').notNull(),
+  organizerEmail: text('organizer_email').notNull().default(''),
+  attendeeEmail: text('attendee_email').notNull(),
+  attendeeName: text('attendee_name').notNull().default(''),
+  graphEventId: text('graph_event_id').notNull().default(''),
+  joinUrl: text('join_url').notNull().default(''),
+  status: text('status').$type<'creating' | 'scheduled'>().notNull().default('creating'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type LeadMeeting = typeof leadMeetings.$inferSelect;

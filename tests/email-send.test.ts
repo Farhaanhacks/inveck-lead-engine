@@ -120,7 +120,7 @@ describe('connecting Outlook', () => {
     const { authorizeUrl, mailConfig } = await import('@/lib/mail/outlook');
     const url = new URL(authorizeUrl(mailConfig()!, 'https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback', 'state-123'));
     expect(url.pathname).toBe('/inveck-tenant/oauth2/v2.0/authorize');
-    expect(url.searchParams.get('scope')).toBe('offline_access openid email User.Read Mail.Send');
+    expect(url.searchParams.get('scope')).toBe('offline_access openid email User.Read Mail.Send Calendars.ReadWrite');
     expect(url.searchParams.get('state')).toBe('state-123');
     expect(url.searchParams.get('redirect_uri')).toBe('https://inveck-lead-engine.vercel.app/api/auth/microsoft/callback');
     expect(url.toString()).not.toContain(SECRET);

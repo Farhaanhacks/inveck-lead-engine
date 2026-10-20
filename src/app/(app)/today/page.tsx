@@ -3,6 +3,9 @@ import { atMostEvery } from '@/lib/throttle';
 
 import { TierBadge } from '@/components/tier-badge';
 import { StepActions, TaskButton, TaskForm } from '@/components/step-actions';
+import type { MeetingInfo } from '@/components/meeting-dialog';
+import { defaultMeetingTitle, meetingsOn } from '@/lib/meetings';
+import { addDays } from '@/lib/content-meta';
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
@@ -135,14 +138,14 @@ function Outcome({ id, buttons }: { id: number; buttons: [string, string][] }) {
   );
 }
 
-function CallActions({ task, waTo, waAgreed }: { task: Task; waTo: string; waAgreed: boolean }) {
+function CallActions({ task, waTo, waAgreed, meeting }: { task: Task; waTo: string; waAgreed: boolean; meeting: MeetingInfo }) {
   return (
     <div className="flex flex-wrap items-start gap-2">
       <Outcome id={task.id} buttons={[['no_answer', 'No answer'], ['busy', 'Busy or voicemail'], ['wrong_number', 'Wrong number'], ['no_contact', 'No contact found']]} />
       {/* Opens in place, under the buttons, so nothing can cut it off on any screen. */}
       <details className="group open:basis-full">
         <summary className="btn-primary list-none px-2.5 py-1 text-xs group-open:ring-2 group-open:ring-accent/30 [&::-webkit-details-marker]:hidden">Connected</summary>
-        <TaskForm className="mt-3 w-[min(28rem,calc(100vw-5rem))] space-y-2 rounded-lg border border-line bg-surface-2 p-4">
+        <TaskForm meeting={meeting} className="mt-3 w-[min(28rem,calc(100vw-5rem))] space-y-2 rounded-lg border border-line bg-surface-2 p-4">
           <input type="hidden" name="id" value={task.id} />
           <label htmlFor={`note-${task.id}`} className="label">What was discussed *</label>
           <textarea id={`note-${task.id}`} name="note" rows={3} required className="field" placeholder="Spoke with the Plant Head about their current stock count process." />
@@ -249,7 +252,7 @@ function Step({
         ) : (
           <StepActions className="flex flex-wrap items-start gap-2">
             {task.kind === 'call' &&
-              (finding ? <Outcome id={task.id} buttons={[['skipped', 'Skip for today']]} /> : <CallActions task={task} waTo={whatsapp?.to ?? ''} waAgreed={!!whatsapp?.agreed} />)}
+              (finding ? <Outcome id={task.id} buttons={[['skipped', 'Skip for today']]} /> : <CallActions task={task} waTo={whatsapp?.to ?? ''} waAgreed={!!whatsapp?.agreed} meeting={{ company: lead.company, contactName: lead.contactName, email: lead.contactEmail.trim(), title: defaultMeetingTitle(lead.company), today: istDay(), defaultDate: addDays(istDay(), 1) }} />)}
             {task.kind === 'whatsapp' &&
               (whatsapp?.optedOut ? (
                 <>
@@ -631,7 +634,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const day = istDay();
   const caTeam = !!viewing && worksCaFirms(viewing.name);
   const drawQuota = quotaOf(await getSettings(db));
-  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later, assigned] = await Promise.all([
+  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later, assigned, meetingsToday] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
     // Someone who works CA firms has them counted apart from the other companies.
@@ -644,6 +647,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     nextDue(db, viewId, day),
     laterToday(db, viewId, day),
     allocationFor(db, viewId, day),
+    // Teams meetings on today's date only (India time).
+    bestEffort('loading meetings', () => meetingsOn(db, viewId, day), []),
   ]);
   // Where this person's follow-ups stand, with a link to the funnel.
   const funnel = viewId ? await bestEffort('loading follow-ups', () => loadFunnel(db, viewId, day), []) : [];
@@ -749,7 +754,10 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           (p.source === 'Added by the team' || contactPriority(p.title, icpOf(l)) < 99),
       )
       .sort((a, b) => Number(!!a.passedAt) - Number(!!b.passedAt) || candidateRank(a, icpOf(l), l.city) - candidateRank(b, icpOf(l), l.city));
-  const startHere = unattended.length + demos.length;
+  // A meeting today is shown with its time and Join button; its lead isn't listed a second time as a booked demo.
+  const meetingLeadIds = new Set(meetingsToday.map((m) => m.lead.id));
+  const demoRows = demos.filter((l) => !meetingLeadIds.has(l.id));
+  const startHere = unattended.length + demoRows.length + meetingsToday.length;
 
   return (
     <>
@@ -856,7 +864,22 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
                 <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
               </li>
             ))}
-            {demos.map((l) => (
+            {meetingsToday.map(({ meeting, lead: l }) => (
+              <li key={`meeting-${meeting.id}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div>
+                  <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
+                  <div className="text-xs text-ink-2">
+                    Teams meeting today at <span className="font-semibold tabular-nums">{new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }).format(meeting.startsAt)}</span> IST
+                    {l.contactName ? ` with ${l.contactName}` : ''}.
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {meeting.joinUrl.startsWith('https://') && <a href={meeting.joinUrl} target="_blank" rel="noreferrer" className="btn-primary px-2.5 py-1 text-xs">Join meeting</a>}
+                  <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
+                </div>
+              </li>
+            ))}
+            {demoRows.map((l) => (
               <li key={`demo-${l.id}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
                 <div>
                   <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>

@@ -524,6 +524,26 @@ export const SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS content_posts_day_idx ON content_posts (scheduled_on)`,
+  `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT ''`,
+  `CREATE TABLE IF NOT EXISTS lead_meetings (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    task_id INTEGER,
+    request_key TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ NOT NULL,
+    organizer_id INTEGER NOT NULL,
+    organizer_email TEXT NOT NULL DEFAULT '',
+    attendee_email TEXT NOT NULL,
+    attendee_name TEXT NOT NULL DEFAULT '',
+    graph_event_id TEXT NOT NULL DEFAULT '',
+    join_url TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'creating',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS lead_meetings_lead_idx ON lead_meetings (lead_id)`,
+  `CREATE INDEX IF NOT EXISTS lead_meetings_start_idx ON lead_meetings (starts_at)`,
   `ALTER TABLE content_posts ADD COLUMN IF NOT EXISTS assignee_id INTEGER`,
   `ALTER TABLE content_posts ADD COLUMN IF NOT EXISTS drive_link TEXT NOT NULL DEFAULT ''`,
   `CREATE TABLE IF NOT EXISTS content_people (

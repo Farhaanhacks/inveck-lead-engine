@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/page-header';
 import { PasswordForm } from './password-form';
 import { resetPasswordAction } from '../../team-actions';
 import { disconnectMailboxAction } from '../../mail-actions';
-import { getMailbox, mailConfig } from '@/lib/mail/outlook';
+import { getMailbox, hasCalendarAccess, mailConfig } from '@/lib/mail/outlook';
 import { formatDate } from '@/lib/dates';
 
 /** What came back from connecting Outlook. */
@@ -50,8 +50,13 @@ export default async function AccountPage({ searchParams }: PageProps<'/account'
               </p>
               <p className="text-xs text-muted">Send mail on Today sends from this mailbox; sent emails show in its Sent Items, and replies come to its inbox.</p>
               {mailbox.lastError && <p className="text-xs text-warning-ink">{mailbox.lastError}</p>}
+              {hasCalendarAccess(mailbox) ? (
+                <p className="text-xs text-muted">Calendar access: allowed. Teams meetings you approve are put in this mailbox&apos;s calendar.</p>
+              ) : (
+                <p className="text-xs text-warning-ink">Calendar access: not allowed yet. To schedule Teams meetings, connect Outlook again and allow calendar access.</p>
+              )}
               <div className="flex gap-2">
-                {mailbox.lastError && <a href="/api/auth/microsoft/connect" className="btn-primary">Connect again</a>}
+                {(mailbox.lastError || !hasCalendarAccess(mailbox)) && <a href="/api/auth/microsoft/connect" className="btn-primary">{hasCalendarAccess(mailbox) ? 'Connect again' : 'Allow calendar access'}</a>}
                 <form action={disconnectMailboxAction}>
                   <button className="btn-secondary">Disconnect</button>
                 </form>

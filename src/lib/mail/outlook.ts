@@ -13,8 +13,10 @@ import { mailboxes, type Mailbox } from '../db/schema';
  */
 const LOGIN = 'https://login.microsoftonline.com';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
-/** Send mail, know the mailbox's address, and stay connected (refresh token). Nothing that reads mail. */
-export const OUTLOOK_SCOPES = 'offline_access openid email User.Read Mail.Send';
+/** Send mail, put meetings in the person's own calendar, know the mailbox's address, and stay connected (refresh token). Nothing that reads mail. */
+export const OUTLOOK_SCOPES = 'offline_access openid email User.Read Mail.Send Calendars.ReadWrite';
+/** The permission Teams meetings need: connections made before it was added have to be connected again. */
+export const CALENDAR_SCOPE = 'Calendars.ReadWrite';
 /** Where Microsoft sends the person back after they sign in (the Entra registration says the same). */
 export const CALLBACK_PATH = '/api/auth/microsoft/callback';
 /** The sign-in attempt, kept for ten minutes so the answer can be checked against it. */
@@ -89,7 +91,7 @@ export function authorizeUrl(c: MailConfig, redirectUri: string, state: string):
   return u.toString();
 }
 
-type Tokens = { accessToken: string; refreshToken?: string };
+type Tokens = { accessToken: string; refreshToken?: string; scope: string };
 
 /** Microsoft didn't answer (network, timeout): status 0, unlike a refusal. */
 const noAnswer = () => new MailError("Microsoft didn't answer. Try again in a minute.", false, 0);
@@ -98,22 +100,24 @@ async function token(c: MailConfig, params: Record<string, string>): Promise<Tok
   const res = await fetch(`${LOGIN}/${encodeURIComponent(c.tenant)}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: c.clientId, client_secret: c.clientSecret, scope: OUTLOOK_SCOPES, ...params }),
+    // The permissions are asked for at sign-in only. A refresh keeps what the person agreed to then: asking for a new
+    // one there would make every earlier connection fail until it was connected again.
+    body: new URLSearchParams({ client_id: c.clientId, client_secret: c.clientSecret, ...(params.grant_type === 'authorization_code' ? { scope: OUTLOOK_SCOPES } : {}), ...params }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   }).catch(() => {
     throw noAnswer();
   });
-  const data = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; error?: string; error_description?: string };
+  const data = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; scope?: string; error?: string; error_description?: string };
   if (!res.ok || !data.access_token) {
     // invalid_grant: the connection was revoked, expired or the password changed.
     const reconnect = data.error === 'invalid_grant' || data.error === 'interaction_required';
     const why = (data.error_description || data.error || `HTTP ${res.status}`).split(/\r?\n/)[0].slice(0, 200);
     throw new MailError(reconnect ? 'Your Outlook connection has expired: connect Outlook again on the Account page.' : `Microsoft sign-in failed: ${why}`, reconnect, res.status);
   }
-  return { accessToken: data.access_token, refreshToken: data.refresh_token };
+  return { accessToken: data.access_token, refreshToken: data.refresh_token, scope: data.scope ?? '' };
 }
 
-async function graph<T>(accessToken: string, method: string, path: string, body?: unknown): Promise<{ status: number; requestId: string; data: T | null }> {
+async function graph<T>(accessToken: string, method: string, path: string, body?: unknown, failed = "Outlook didn't send it"): Promise<{ status: number; requestId: string; data: T | null }> {
   const res: Response = await fetch(`${GRAPH}${path}`, {
     method,
     headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
@@ -125,7 +129,7 @@ async function graph<T>(accessToken: string, method: string, path: string, body?
   const requestId = res.headers.get('request-id') ?? res.headers.get('client-request-id') ?? '';
   if (res.status === 202 || res.status === 204) return { status: res.status, requestId, data: null };
   const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-  if (!res.ok) throw new MailError(`Outlook didn't send it: ${(data.error?.message || `HTTP ${res.status}`).slice(0, 200)}`, res.status === 401, res.status);
+  if (!res.ok) throw new MailError(`${failed}: ${(data.error?.message || `HTTP ${res.status}`).slice(0, 200)}`, res.status === 401, res.status);
   return { status: res.status, requestId, data: data as T };
 }
 
@@ -141,7 +145,7 @@ export async function connectMailbox(db: Db, userId: number, code: string, redir
   // One mailbox belongs to one CRM user: it can't also be linked to someone else's login.
   const [taken] = await db.select({ userId: mailboxes.userId }).from(mailboxes).where(eq(mailboxes.address, address));
   if (taken && taken.userId !== userId) throw new MailError(`${address} is already connected to another team member. Sign in with your own INVECK mailbox.`);
-  const row = { userId, address, displayName: me?.displayName ?? '', refreshToken: seal(c, t.refreshToken), connectedAt: new Date(), lastError: '' };
+  const row = { userId, address, displayName: me?.displayName ?? '', refreshToken: seal(c, t.refreshToken), connectedAt: new Date(), lastError: '', scopes: t.scope };
   const [saved] = await db.insert(mailboxes).values(row).onConflictDoUpdate({ target: mailboxes.userId, set: row }).returning();
   return saved;
 }
@@ -154,6 +158,86 @@ export async function getMailbox(db: Db, userId: number): Promise<Mailbox | null
 
 export async function disconnectMailbox(db: Db, userId: number): Promise<void> {
   await db.delete(mailboxes).where(eq(mailboxes.userId, userId));
+}
+
+/** A working access token for the mailbox (refreshed from its stored connection), keeping the newest refresh token. */
+async function freshAccess(db: Db, c: MailConfig, box: Mailbox): Promise<Tokens> {
+  let t: Tokens;
+  try {
+    t = await token(c, { grant_type: 'refresh_token', refresh_token: unseal(c, box.refreshToken) });
+  } catch (e) {
+    if (e instanceof MailError) await db.update(mailboxes).set({ lastError: e.message }).where(eq(mailboxes.userId, box.userId));
+    throw e;
+  }
+  // Microsoft hands out a new refresh token now and then: keep the latest.
+  await db
+    .update(mailboxes)
+    .set({ lastError: '', ...(t.refreshToken ? { refreshToken: seal(c, t.refreshToken) } : {}) })
+    .where(eq(mailboxes.userId, box.userId));
+  return t;
+}
+
+/** Whether this connection was made with calendar permission. */
+export const hasCalendarAccess = (box: Pick<Mailbox, 'scopes'> | null | undefined) => !!box && box.scopes.toLowerCase().split(/\s+/).includes(CALENDAR_SCOPE.toLowerCase());
+
+export type TeamsMeetingRequest = {
+  subject: string;
+  /** Local time in India, as Graph takes it: 2026-10-21T15:00:00 */
+  startLocal: string;
+  endLocal: string;
+  attendeeEmail: string;
+  attendeeName: string;
+  /** Graph uses it to return the same event if this exact request is sent again (a retry), never a second one. */
+  transactionId: string;
+};
+export type TeamsMeeting = { organizer: string; eventId: string; joinUrl: string };
+
+const RECONNECT_CALENDAR = 'Calendar access is needed to schedule Teams meetings: connect Outlook again on the Account page and allow it.';
+
+/**
+ * Creates a Teams meeting in the person's own calendar, with the prospect as a required attendee. Microsoft's own
+ * calendar sends the invitation (nothing is sent from here). The meeting only counts once Graph returns the event
+ * and its Teams join link: without the link the event is deleted again and the person is told.
+ */
+export async function createTeamsMeeting(db: Db, userId: number, req: TeamsMeetingRequest): Promise<TeamsMeeting> {
+  const c = mailConfig();
+  if (!c) throw new MailError("Outlook isn't set up on the server yet.");
+  const box = await getMailbox(db, userId);
+  if (!box) throw new MailError('Connect your Outlook on the Account page first: the meeting goes in the calendar of the person the company belongs to.', true);
+  if (!hasCalendarAccess(box)) throw new MailError(RECONNECT_CALENDAR, true);
+  const t = await freshAccess(db, c, box);
+  let event: { id?: string; onlineMeeting?: { joinUrl?: string } | null; onlineMeetingUrl?: string | null } | null;
+  try {
+    event = (
+      await graph<NonNullable<typeof event>>(
+        t.accessToken,
+        'POST',
+        '/me/events',
+        {
+          subject: req.subject,
+          start: { dateTime: req.startLocal, timeZone: 'India Standard Time' },
+          end: { dateTime: req.endLocal, timeZone: 'India Standard Time' },
+          attendees: [{ emailAddress: { address: req.attendeeEmail, name: req.attendeeName || req.attendeeEmail }, type: 'required' }],
+          isOnlineMeeting: true,
+          onlineMeetingProvider: 'teamsForBusiness',
+          transactionId: req.transactionId,
+        },
+        "Outlook didn't create the meeting",
+      )
+    ).data;
+  } catch (e) {
+    if (e instanceof MailError && e.status === 403) throw new MailError(RECONNECT_CALENDAR, true, 403);
+    if (e instanceof MailError && e.status === 0) throw new MailError("Outlook didn't confirm the meeting was created. Check your calendar before trying again: trying again is safe, it will not make a second meeting.", false, 0, true);
+    throw e;
+  }
+  const joinUrl = event?.onlineMeeting?.joinUrl || event?.onlineMeetingUrl || '';
+  if (!event?.id) throw new MailError("Outlook didn't return the meeting.");
+  if (!joinUrl) {
+    // An event with no Teams link is no use to the prospect: take it (and its invitation) back.
+    await graph(t.accessToken, 'DELETE', `/me/events/${encodeURIComponent(event.id)}`).catch(() => {});
+    throw new MailError("Outlook created the event but returned no Teams link (Teams may not be enabled on this Microsoft 365 account), so nothing was scheduled. Ask your Microsoft 365 administrator.");
+  }
+  return { organizer: box.address, eventId: event.id, joinUrl };
 }
 
 export type OutgoingMail = {
@@ -178,18 +262,7 @@ export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail
   if (!c) throw new MailError("Outlook sending isn't set up on the server yet.");
   const box = await getMailbox(db, userId);
   if (!box) throw new MailError('Connect your Outlook on the Account page first: emails only go from the mailbox of the person the company belongs to.', true);
-  let t: Tokens;
-  try {
-    t = await token(c, { grant_type: 'refresh_token', refresh_token: unseal(c, box.refreshToken) });
-  } catch (e) {
-    if (e instanceof MailError) await db.update(mailboxes).set({ lastError: e.message }).where(eq(mailboxes.userId, userId));
-    throw e;
-  }
-  // Microsoft hands out a new refresh token now and then: keep the latest.
-  await db
-    .update(mailboxes)
-    .set({ lastError: '', ...(t.refreshToken ? { refreshToken: seal(c, t.refreshToken) } : {}) })
-    .where(eq(mailboxes.userId, userId));
+  const t = await freshAccess(db, c, box);
   try {
     const r = await graph(t.accessToken, 'POST', '/me/sendMail', {
       message: {

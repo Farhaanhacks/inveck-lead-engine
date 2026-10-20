@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useTransition, type ButtonHTMLAttributes, type FormHTMLAttributes, type ReactNode } from 'react';
 import { completeTaskAction } from '@/app/team-actions';
+import { MeetingDialog, type MeetingInfo } from './meeting-dialog';
 
 type Ctx = { pending: boolean; run: (data: FormData) => void };
 const StepCtx = createContext<Ctx | null>(null);
@@ -35,26 +36,39 @@ export function StepActions({ children, className }: { children: ReactNode; clas
   );
 }
 
-/** A form that logs the step through the shared pending state (a plain form where there is none). */
-export function TaskForm({ children, ...rest }: FormHTMLAttributes<HTMLFormElement>) {
+/**
+ * A form that logs the step through the shared pending state (a plain form where there is none). With `meeting`, saving
+ * a connected call as "Demo scheduled" opens the Teams meeting dialog first instead of saving: the call is logged
+ * (and the lead moved to Meeting Booked) only when the meeting is approved and created.
+ */
+export function TaskForm({ children, meeting, ...rest }: FormHTMLAttributes<HTMLFormElement> & { meeting?: MeetingInfo }) {
   const ctx = useContext(StepCtx);
+  const [call, setCall] = useState<FormData | null>(null);
   return (
-    <form
-      {...rest}
-      action={ctx ? undefined : completeTaskAction}
-      onSubmit={
-        ctx
-          ? (e) => {
-              e.preventDefault();
-              if (ctx.pending) return;
-              // The button pressed (its outcome) goes in with the fields.
-              ctx.run(new FormData(e.currentTarget, (e.nativeEvent as SubmitEvent).submitter));
-            }
-          : undefined
-      }
-    >
-      {children}
-    </form>
+    <>
+      <form
+        {...rest}
+        action={ctx ? undefined : completeTaskAction}
+        onSubmit={
+          ctx
+            ? (e) => {
+                e.preventDefault();
+                if (ctx.pending) return;
+                // The button pressed (its outcome) goes in with the fields.
+                const data = new FormData(e.currentTarget, (e.nativeEvent as SubmitEvent).submitter);
+                if (meeting && data.get('outcome') === 'connected' && data.get('feedback') === 'Demo scheduled') {
+                  setCall(data);
+                  return;
+                }
+                ctx.run(data);
+              }
+            : undefined
+        }
+      >
+        {children}
+      </form>
+      {meeting && call && <MeetingDialog info={meeting} call={call} onClose={() => setCall(null)} onDone={() => setCall(null)} />}
+    </>
   );
 }
 
