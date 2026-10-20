@@ -122,7 +122,7 @@ export function RunPanel({ runs, initial }: { runs: RunSummary[]; initial: RunVi
       <dl className="grid grid-cols-3 gap-3 px-5 py-4 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="New prospects" value={s.prospectsAdded} />
         <Stat label="Researched" value={s.processed} />
-        <Stat label="Drafts ready" value={s.drafted} />
+        <Stat label="Approved" value={s.drafted} />
         <Stat label="Needs review" value={s.needsReview ?? 0} />
         <Stat label="Disqualified" value={s.disqualified} />
         <Stat label="Clients skipped" value={s.existingClients} />

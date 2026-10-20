@@ -118,7 +118,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
         await db.update(people).set({ passedAt: now, passedReason: 'unverified', whyNot: reason, isPrimary: false }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
       }
       // Nobody to send the draft to: the team finds someone first.
-      const waiting = lead.status === 'Awaiting Approval' || lead.status === 'Approved';
+      const waiting = lead.status === 'Approved';
       await db
         .update(leads)
         .set({ contactVerifiedAt: null, contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, ...(waiting ? { status: 'Needs Manual Contact' as const } : {}), updatedAt: now })

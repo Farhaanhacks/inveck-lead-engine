@@ -32,7 +32,7 @@ export const FUNNEL_HELP: Record<FunnelStage, string> = {
 };
 
 /** Leads in outreach: being worked, or talking to us. */
-const IN_OUTREACH: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked'];
+const IN_OUTREACH: LeadStatus[] = ['Approved', 'Contacted', 'Replied', 'Meeting Booked'];
 const TALKING: LeadStatus[] = ['Replied', 'Meeting Booked'];
 
 export type FunnelCard = {

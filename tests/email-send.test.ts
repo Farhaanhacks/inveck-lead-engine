@@ -96,7 +96,7 @@ const lead = async (extra: Partial<typeof leads.$inferInsert> = {}) =>
       .values({
         company: 'Hosur Gears',
         segment: 'Other',
-        status: 'Awaiting Approval',
+        status: 'Approved',
         ownerId: me.id,
         contactName: 'Ravi Kumar',
         contactTitle: 'Plant Head',

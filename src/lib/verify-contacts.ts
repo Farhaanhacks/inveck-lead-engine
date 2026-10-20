@@ -30,7 +30,7 @@ import type { Services } from './pipeline/services';
 /** A designation can change; contacts are checked again after this long. */
 const RECHECK_AFTER_DAYS = 30;
 /** Leads whose contact is worth keeping right: being worked, or waiting to be handed out. */
-const LIVE = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Needs Manual Contact', 'Low Score'] as const;
+const LIVE = ['Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Needs Manual Contact', 'Low Score'] as const;
 
 /** A real change of role, not the same role written shorter ("Plant Head at Lumax World" vs "Plant Head"). */
 const newRole = (saved: string, found: string) => {
@@ -284,7 +284,7 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
     const reachable = !!(p.linkedin || profile.url) || !!p.email;
     await db
       .update(leads)
-      .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now, ...(lead.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
+      .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now, ...(lead.status === 'Needs Manual Contact' && reachable ? { status: 'Approved' as const } : {}) })
       .where(eq(leads.id, lead.id));
     if (lead.emailBody) await safely(() => redraftForContact(db, svc, lead.id));
     return 'confirmed';

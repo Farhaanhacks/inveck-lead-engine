@@ -25,7 +25,7 @@ export const isQualifyingOutcome = (outcome: string) => (QUALIFYING_OUTCOMES as 
 export const JUNK_REASON = 'Junk/Waste: completed five unanswered follow-up rounds.';
 
 /** Where a lead can be and still be enrolled: being worked, not in a conversation or ruled out. */
-const ENROLLABLE: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Contacted'];
+const ENROLLABLE: LeadStatus[] = ['Approved', 'Contacted'];
 const ROUND_KINDS = ['call', 'whatsapp', 'email'] as const;
 const KIND_LABEL = { call: 'call', whatsapp: 'WhatsApp', email: 'email' } as const;
 

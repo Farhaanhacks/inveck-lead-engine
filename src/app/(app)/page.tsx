@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { ensureResearch, requestOrigin } from '@/lib/run-driver';
 import { leads, opportunities } from '@/lib/db/schema';
@@ -63,10 +63,11 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
         qualified: sql<number>`(count(*) filter (where qualified))::int`,
         contacts: sql<number>`(count(*) filter (where contact_name <> ''))::int`,
         emails: sql<number>`(count(*) filter (where contact_email <> ''))::int`,
-        drafts: sql<number>`(count(*) filter (where status = 'Awaiting Approval'))::int`,
+        // Approved and nobody given them yet: what the next morning draw can hand out.
+        waitingDraw: sql<number>`(count(*) filter (where status = 'Approved' and owner_id is null))::int`,
       })
       .from(leads),
-    db.select().from(leads).where(eq(leads.status, 'Awaiting Approval')).orderBy(desc(leads.finalScore)).limit(6),
+    db.select().from(leads).where(and(eq(leads.status, 'Approved'), isNull(leads.ownerId))).orderBy(desc(leads.finalScore)).limit(6),
     listRuns(db),
     activeRun(db),
     db.select().from(opportunities).where(eq(opportunities.status, 'new')).orderBy(desc(opportunities.id)).limit(6),
@@ -99,7 +100,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Companies" value={totals.total} note={`${counts.New ?? 0} waiting for research`} />
         <StatTile label="Qualified" value={totals.qualified} note={`${totals.contacts} decision-makers, ${totals.emails} emails`} />
-        <StatTile label="Drafts to approve" value={totals.drafts} />
+        <StatTile label="Approved, waiting for the draw" value={totals.waitingDraw} />
         <StatTile
           label="Emails sent"
           value={analytics.funnel[2].value}
@@ -171,8 +172,8 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
 
         <section className="card overflow-hidden lg:col-span-2">
           <div className="flex items-center justify-between px-5 pt-5 pb-3">
-            <h2 className="text-sm font-semibold">Top drafts to approve</h2>
-            <Link href="/leads?status=Awaiting%20Approval" className="text-sm text-accent hover:underline">See all</Link>
+            <h2 className="text-sm font-semibold">Approved, waiting for the draw</h2>
+            <Link href="/leads?status=Approved" className="text-sm text-accent hover:underline">See all</Link>
           </div>
           {topLeads.length ? (
             <ul>
@@ -187,7 +188,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
               ))}
             </ul>
           ) : (
-            <p className="px-5 pb-5 text-sm text-muted">No drafts waiting.</p>
+            <p className="px-5 pb-5 text-sm text-muted">None waiting: every approved lead has been given out.</p>
           )}
         </section>
       </div>

@@ -60,11 +60,11 @@ describe('CA firms from the database', () => {
     await db.delete(settings).where(eq(settings.key, 'caApprovedV1'));
     const [sheet] = [{ sourceKey: 'icai:1', company: 'Mehta & Co', ownerId: owner, leadId: id, assignedOn: istDay() }];
     await db.insert(sheetFirms).values(sheet);
-    const manual = (await db.insert(leads).values({ company: 'Hand Added CA', segment: 'CA Firms', status: 'Awaiting Approval', ownerId: owner }).returning())[0];
+    const manual = (await db.insert(leads).values({ company: 'Hand Added CA', segment: 'CA Firms', status: 'New', ownerId: owner }).returning())[0];
     expect((await db.select().from(leads).where(eq(leads.id, id)))[0].status).toBe('New');
     await approveSheetLeadsOnce(db);
     expect((await db.select().from(leads).where(eq(leads.id, id)))[0].status).toBe('Approved');
-    expect((await db.select().from(leads).where(eq(leads.id, manual.id)))[0].status).toBe('Awaiting Approval');
+    expect((await db.select().from(leads).where(eq(leads.id, manual.id)))[0].status).toBe('New');
     // Once only: a lead moved on later isn't pulled back to Approved.
     await db.update(leads).set({ status: 'Contacted' }).where(eq(leads.id, id));
     await approveSheetLeadsOnce(db);

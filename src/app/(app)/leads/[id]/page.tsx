@@ -590,9 +590,8 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {lead.status === 'Awaiting Approval' && <StatusButton id={id} action="approve" label="Approve" primary />}
-          {(lead.status === 'Approved' || lead.status === 'Awaiting Approval') && <StatusButton id={id} action="sent" label="Mark as sent" />}
-          {(lead.status === 'Awaiting Approval' || lead.status === 'Approved') && <StatusButton id={id} action="reject" label="Reject" />}
+          {lead.status === 'Approved' && <StatusButton id={id} action="sent" label="Mark as sent" />}
+          {lead.status === 'Approved' && <StatusButton id={id} action="reject" label="Reject" />}
           {lead.status === 'Contacted' && <StatusButton id={id} action="replied" label="They replied" primary />}
           {(lead.status === 'Contacted' || lead.status === 'Replied') && <StatusButton id={id} action="meeting" label="Meeting booked" />}
           {(lead.status === 'Contacted' || lead.status === 'Replied' || lead.status === 'Meeting Booked') && (

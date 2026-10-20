@@ -81,7 +81,7 @@ describe('importing clients', () => {
 
   it('marks matching leads as Existing Client, by name or website, but not contacted ones', async () => {
     await db.insert(leads).values([
-      { company: 'Haldex India Pvt Ltd', website: 'haldexindia.in', status: 'Awaiting Approval' },
+      { company: 'Haldex India Pvt Ltd', website: 'haldexindia.in', status: 'Approved' },
       { company: 'HX Brakes', website: 'https://in.haldex.com/', status: 'New' },
       { company: 'Haldex', website: '', status: 'Contacted' },
       { company: 'Bharat Forge', website: 'bharatforge.com', status: 'New' },

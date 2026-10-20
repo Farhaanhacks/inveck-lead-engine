@@ -38,7 +38,7 @@ export async function makePrimary(db: Db, personId: number, opts: { byTeam?: boo
       updatedAt: new Date(),
     })
     .where(eq(leads.id, p.leadId));
-  // Someone confirmed here now: a lead that was waiting for a contact is ready for approval.
+  // Someone confirmed here now: a lead that was waiting for a contact is Approved.
   await reconcileContactStatus(db, p.leadId);
   await logActivity(db, p.leadId, 'contact', `Main contact changed to ${[p.name, p.title].filter(Boolean).join(', ')}${opts.byTeam ? ' (chosen by the team)' : ''}${opts.why ? `: ${opts.why}.` : ''}`);
   return p.leadId;

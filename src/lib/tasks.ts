@@ -128,7 +128,7 @@ export function planCaFallback(today: string, fallbackDay: string, waiting: bool
 }
 
 /** Statuses where the lead is being worked on, so outreach tasks make sense. */
-export const WORKING_STATUSES = ['Awaiting Approval', 'Approved', 'Contacted'] as const;
+export const WORKING_STATUSES = ['Approved', 'Contacted'] as const;
 /** Once a lead is here, open sequence tasks stop showing (promised callbacks still do). */
 const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Needs Review', 'Rejected', 'Existing Client', 'Error', 'Needs Manual Contact', 'Deleted'] as const;
 /**

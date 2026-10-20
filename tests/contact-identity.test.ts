@@ -161,7 +161,7 @@ describe('Mojj Engineering: the owner-director, and a search that failed', () =>
       { name: 'Govind Gopalia', isPrimary: true, passedAt: new Date(), passedReason: '', location: 'Jaipur, Rajasthan, India' },
       { name: 'Rohan Katara', isPrimary: false, passedAt: new Date(), passedReason: 'tried', location: 'India' },
     ];
-    const nbc = contactAvailability({ ...base, city: 'Jaipur', status: 'Awaiting Approval' }, listed);
+    const nbc = contactAvailability({ ...base, city: 'Jaipur', status: 'Approved' }, listed);
     expect(nbc.label).toBe('Company contacts found; no Jaipur contact confirmed');
     expect(nbc.detail).toContain('Govind Gopalia (not confirmed on LinkedIn at this site yet');
     expect(nbc.detail).toContain('Rohan Katara (tried, no luck)');
@@ -641,7 +641,7 @@ describe('contact search, one designation at a time (Hosur Gears, manufacturing)
     const { scoreLead } = await import('@/lib/pipeline/scoring');
     const { EMPTY_CONTACT } = await import('@/lib/pipeline/contacts');
     expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found').status).toBe('Needs Manual Contact');
-    expect(scoreLead(8, { ...EMPTY_CONTACT, name: 'Ravi Kumar', linkedin: 'https://in.linkedin.com/in/ravi-kumar' }, 'no email found').status).toBe('Awaiting Approval');
+    expect(scoreLead(8, { ...EMPTY_CONTACT, name: 'Ravi Kumar', linkedin: 'https://in.linkedin.com/in/ravi-kumar' }, 'no email found').status).toBe('Approved');
   });
 
   it("tries the company's verified LinkedIn name when its own name finds nobody there", async () => {

@@ -10,7 +10,7 @@ import { istDay } from './tasks';
 export const DRAW_HOUR_IST = 8;
 
 /** Researched and still worth a call: these can be handed out. */
-export const DRAWABLE: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score'];
+export const DRAWABLE: LeadStatus[] = ['Approved', 'Needs Manual Contact', 'Low Score'];
 
 /**
  * The segments the morning draw hands out, each with its own quota per associate (Settings: 12

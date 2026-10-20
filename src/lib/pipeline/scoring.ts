@@ -8,7 +8,7 @@ export type Score = {
   breakdown: string;
   /** The contact can be reached (a usable email or a LinkedIn profile). */
   reachable: boolean;
-  /** Status after drafting: reachable leads await approval; the rest need the team to find someone. */
+  /** Status after research: a qualified lead with a reachable contact is Approved; the rest need the team to find someone. */
   status: LeadStatus;
 };
 
@@ -26,6 +26,6 @@ export function scoreLead(fitScore: number, contact: Contact, emailStatus: Email
     finalScore,
     breakdown: '',
     reachable,
-    status: reachable ? 'Awaiting Approval' : 'Needs Manual Contact',
+    status: reachable ? 'Approved' : 'Needs Manual Contact',
   };
 }

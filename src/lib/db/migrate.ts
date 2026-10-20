@@ -311,7 +311,7 @@ export const SCHEMA_STATEMENTS = [
   `DELETE FROM activities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   `UPDATE leads SET owner_id = NULL, drawn_on = '', call_feedback = '', remark = '', call_remark = '', mail_outcome = '', linkedin_outcome = '',
      sent_at = NULL, follow_up_step = 0, next_follow_up_at = NULL, follow_up_subject = '', follow_up_body = '',
-     status = CASE WHEN status IN ('Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Rejected') THEN 'Awaiting Approval' ELSE status END
+     status = CASE WHEN status IN ('Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Rejected') THEN 'Approved' ELSE status END
    WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   `DELETE FROM settings WHERE (key LIKE 'draw:%' OR key = 'rrNext') AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   // No draw on the day of the fresh start: the first leads go out on the next working morning.
@@ -633,4 +633,10 @@ export const SCHEMA_STATEMENTS = [
   `DELETE FROM leads WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
   `DELETE FROM settings WHERE key = 'rrNext' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
   `INSERT INTO settings (key, value) VALUES ('clearLeadsV2', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // Awaiting Approval is gone (INVECK's decision, 20 Oct 2026): passing the ICP check is the approval. Leads
+  // still in it become Approved, with a note on their timeline. Matches nothing once done.
+  `INSERT INTO activities (lead_id, kind, text, stage)
+   SELECT id, 'approved', 'Approved: Awaiting Approval was removed, so a company that passed the ICP check is Approved', 'Approved'
+   FROM leads WHERE status = 'Awaiting Approval'`,
+  `UPDATE leads SET status = 'Approved', updated_at = now() WHERE status = 'Awaiting Approval'`,
 ];

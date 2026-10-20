@@ -183,7 +183,7 @@ page or its Today step.
 
 - **Follow-ups**: five rounds, every other working day, started only by a call saved on Today as No answer, Busy or voicemail, or Wrong number. The day of that call is Day 1; Follow-up 1 to 5 fall 2, 4, 6, 8 and 10 working days later (Saturdays, Sundays and the holidays set in **Settings → Holidays** never count). Each round is a call, a WhatsApp and an email; the AI drafts the round's email when it is due, the team edits it and marks it sent (nothing is sent automatically). A connected call stops the sequence for good. When all five rounds are done (every step done or skipped), the lead moves to **Deleted** as junk: it is only archived, and **Leads → Deleted** lists it with a Restore button. Existing records follow the same rules, from their saved call outcomes (see `src/lib/follow-up-reconcile.ts`).
 - **Buying signals**: qualified leads get a Google News check for new plants, expansions, acquisitions, funding or audit news. The best one opens the draft, and each links to its article.
-- **Pipeline**: a board from Awaiting Approval to Won/Lost; drag cards or use their menu.
+- **Pipeline**: a board from Approved to Won/Lost; drag cards or use their menu. There is no approval step: a company that passes the ICP check after research, with a reachable contact, is Approved straight away (Awaiting Approval was removed on 20 Oct 2026, and leads still in it were moved to Approved, with a note on their timeline).
 - **Timeline**: every lead shows what happened and when, and the team can add notes, calls and meetings.
 - **Dashboard**: the funnel with conversion rates, weekly emails and replies, the best segment and lead source, and follow-ups due.
 

@@ -97,7 +97,7 @@ export function describeKnownImport(r: KnownImport): string {
 }
 
 /** Not contacted yet: a lead in these stages that is on INVECK's own list is set aside. */
-const NOT_CONTACTED = ['New', 'Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score', 'Needs Review', 'Disqualified', 'Error'] as const;
+const NOT_CONTACTED = ['New', 'Approved', 'Needs Manual Contact', 'Low Score', 'Needs Review', 'Disqualified', 'Error'] as const;
 
 /**
  * Leads the app found that turn out to be on INVECK's own lead list (same company at the same location,

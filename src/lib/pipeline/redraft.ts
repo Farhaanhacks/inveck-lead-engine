@@ -28,7 +28,7 @@ export async function redraftForContact(db: Db, svc: Services, leadId: number): 
 }
 
 /** Leads whose outreach hasn't started, qualified, missing the email draft or the LinkedIn message. */
-const NOT_STARTED = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score'] as const;
+const NOT_STARTED = ['Approved', 'Needs Manual Contact', 'Low Score'] as const;
 
 /**
  * Writes the drafts qualified leads are missing: the email and LinkedIn message when there is no

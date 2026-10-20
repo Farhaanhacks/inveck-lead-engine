@@ -31,7 +31,7 @@ const caLead = async (extra: Partial<typeof leads.$inferInsert> = {}) =>
   (
     await db
       .insert(leads)
-      .values({ company: 'Test & Associates', segment: 'CA Firms', status: 'Awaiting Approval', ownerId: me.id, contactName: 'Asha Rao', contactTitle: 'Partner', contactPhone: '9800000001', contactLinkedin: 'https://in.linkedin.com/in/asha-rao', ...extra })
+      .values({ company: 'Test & Associates', segment: 'CA Firms', status: 'Approved', ownerId: me.id, contactName: 'Asha Rao', contactTitle: 'Partner', contactPhone: '9800000001', contactLinkedin: 'https://in.linkedin.com/in/asha-rao', ...extra })
       .returning()
   )[0];
 /** Plans the firm's steps and puts the first one on today (whatever day the test runs). */

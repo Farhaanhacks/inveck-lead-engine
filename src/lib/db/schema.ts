@@ -12,7 +12,6 @@ export const LEAD_STATUSES = [
   'Needs Review',
   'Needs Manual Contact',
   'Low Score',
-  'Awaiting Approval',
   'Approved',
   'Contacted',
   'Replied',
@@ -26,7 +25,7 @@ export const LEAD_STATUSES = [
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
 /** The sales pipeline, as columns on the board. */
-export const PIPELINE_STAGES = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost'] as const satisfies readonly LeadStatus[];
+export const PIPELINE_STAGES = ['Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost'] as const satisfies readonly LeadStatus[];
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 /** Stages where the conversation has moved on, so no more follow-ups. */
 export const ENGAGED_STAGES: readonly LeadStatus[] = ['Replied', 'Meeting Booked', 'Won', 'Lost'];

@@ -21,7 +21,7 @@ const addLead = async (values: Partial<typeof leads.$inferInsert>) =>
 
 describe('leads go from the Leads list to Today on their own', () => {
   it('a lead ready for approval gets its first call, WhatsApp, email and LinkedIn steps on the next working day', async () => {
-    const l = await addLead({ status: 'Awaiting Approval', contactName: 'Ananda Kumar', contactTitle: 'Works Manager', contactLinkedin: 'https://in.linkedin.com/in/ananda' });
+    const l = await addLead({ status: 'Approved', contactName: 'Ananda Kumar', contactTitle: 'Works Manager', contactLinkedin: 'https://in.linkedin.com/in/ananda' });
     await ensureSequences(db, SUNDAY);
     // A Sunday: nothing is due today, and the page says when the steps start.
     expect(await loadTodayTasks(db, owner, SUNDAY)).toEqual([]);
@@ -84,9 +84,9 @@ describe('leads go from the Leads list to Today on their own', () => {
   });
 
   it('the "next steps" count is the companies Today will show that day: not deleted, rejected or set-aside leads', async () => {
-    const shown = await addLead({ status: 'Awaiting Approval', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
-    const rejected = await addLead({ company: 'Gone Co', status: 'Awaiting Approval', contactName: 'B', contactLinkedin: 'https://in.linkedin.com/in/b' });
-    const deleted = await addLead({ company: 'Deleted Co', status: 'Awaiting Approval', contactName: 'C', contactLinkedin: 'https://in.linkedin.com/in/c' });
+    const shown = await addLead({ status: 'Approved', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
+    const rejected = await addLead({ company: 'Gone Co', status: 'Approved', contactName: 'B', contactLinkedin: 'https://in.linkedin.com/in/b' });
+    const deleted = await addLead({ company: 'Deleted Co', status: 'Approved', contactName: 'C', contactLinkedin: 'https://in.linkedin.com/in/c' });
     await ensureSequences(db, SUNDAY);
     await db.update(leads).set({ status: 'Rejected' }).where(eq(leads.id, rejected.id));
     // A lead deleted the old way, leaving its planned steps behind.
@@ -112,7 +112,7 @@ describe('calling again after no answer: the day split at 2 pm IST', () => {
 
   it('a 5 pm call shows on Today from 5 pm (listed as later today before that); a 9 am call from 9 am', async () => {
     const { laterToday } = await import('@/lib/tasks');
-    const l = await addLead({ status: 'Awaiting Approval', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
+    const l = await addLead({ status: 'Approved', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
     await db.insert(tasks).values([
       { leadId: l.id, ownerId: owner, kind: 'call', step: 'Call again', title: 'Call again at 5 pm', dueDate: MONDAY, slot: 'evening' },
     ]);
@@ -130,7 +130,7 @@ describe('calling again after no answer: the day split at 2 pm IST', () => {
 describe('calls attempted', () => {
   it('counts numbers actually dialled, not "No contact found" or skips', async () => {
     const { dayCounts } = await import('@/lib/tasks');
-    const l = await addLead({ status: 'Awaiting Approval', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
+    const l = await addLead({ status: 'Approved', contactName: 'A', contactLinkedin: 'https://in.linkedin.com/in/a' });
     const now = new Date();
     const call = (outcome: string) => ({ leadId: l.id, ownerId: owner, kind: 'call' as const, step: 'Day 1', title: 'call', dueDate: istDay(), slot: 'day' as const, doneAt: now, outcome });
     await db.insert(tasks).values([call('connected'), call('no_answer'), call('busy'), call('wrong_number'), call('no_contact'), call('no_contact'), call('skipped'), call('closed')]);

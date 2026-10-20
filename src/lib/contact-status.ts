@@ -5,16 +5,16 @@ import { canBeMain } from './pipeline/contacts';
 import { icpFor } from './tiers';
 import { isCaSegment } from './tasks';
 
-/** Before outreach, waiting on a contact or on approval: the statuses a contact change can move between. */
+/** Before outreach, waiting on a contact or ready: the statuses a contact change can move between. */
 const WAITING_FOR_CONTACT = 'Needs Manual Contact' as const;
-const READY = ['Awaiting Approval', 'Approved'] as const;
+const READY = ['Approved'] as const;
 
 /**
  * Puts a lead's status in step with its point of contact, after any change to the contact (an edit,
  * a check on LinkedIn, a switch to someone else):
  * - waiting for a contact, and now someone reachable is confirmed (by the team, on LinkedIn at this
- *   site, or as a person on file found at this site): ready for approval;
- * - ready for approval, but nobody is the contact any more: waiting for a contact again.
+ *   site, or as a person on file found at this site): Approved;
+ * - Approved, but nobody is the contact any more: waiting for a contact again.
  * Someone who works at the company but isn't confirmed at this site leaves the lead waiting: that
  * distinction stays. Returns the new status when it changed.
  */
@@ -43,6 +43,6 @@ export async function reconcileContactStatus(db: Db, leadId: number): Promise<st
       (primary.source === 'Sales team' || primary.source === 'Added by the team' || (!!primary.checkedAt && canBeMain(primary, lead.city, icp)));
   }
   if (!confirmed) return null;
-  await db.update(leads).set({ status: 'Awaiting Approval', updatedAt: new Date() }).where(eq(leads.id, leadId));
-  return 'Awaiting Approval';
+  await db.update(leads).set({ status: 'Approved', updatedAt: new Date() }).where(eq(leads.id, leadId));
+  return 'Approved';
 }

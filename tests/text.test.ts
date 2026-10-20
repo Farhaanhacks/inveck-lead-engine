@@ -59,19 +59,19 @@ describe('names, domains and companies', () => {
 describe('scoring', () => {
   it('scores the ICP fit times ten, whatever the contact details, and drafts for an email or LinkedIn', () => {
     const withLinkedIn = { ...EMPTY_CONTACT, name: 'A B', linkedin: 'u', roleMatch: true };
-    expect(scoreLead(8, withLinkedIn, 'no email found')).toMatchObject({ finalScore: 80, reachable: true, status: 'Awaiting Approval' });
+    expect(scoreLead(8, withLinkedIn, 'no email found')).toMatchObject({ finalScore: 80, reachable: true, status: 'Approved' });
     const withEmail = { ...EMPTY_CONTACT, name: 'A B', email: 'a@b.com', roleMatch: true };
-    expect(scoreLead(8, withEmail, 'valid')).toMatchObject({ finalScore: 80, reachable: true, status: 'Awaiting Approval' });
+    expect(scoreLead(8, withEmail, 'valid')).toMatchObject({ finalScore: 80, reachable: true, status: 'Approved' });
     expect(scoreLead(8, { ...EMPTY_CONTACT }, 'no email found')).toMatchObject({ reachable: false, status: 'Needs Manual Contact' });
   });
 
   it('never holds back a reachable, qualified lead because of its score', () => {
     // Assam Petro-Chemicals: strong fit, Managing Director, a likely (unconfirmed) email.
     const md = { ...EMPTY_CONTACT, name: 'R G', title: 'Managing Director', email: 'r@a.co.in', roleMatch: false };
-    expect(scoreLead(8, md, 'likely')).toMatchObject({ finalScore: 80, reachable: true, status: 'Awaiting Approval' });
+    expect(scoreLead(8, md, 'likely')).toMatchObject({ finalScore: 80, reachable: true, status: 'Approved' });
     // Weaker fit, reachable only through LinkedIn: still gets a draft to review.
     const linkedinOnly = { ...EMPTY_CONTACT, name: 'A B', title: 'Store Manager', linkedin: 'u', roleMatch: false };
-    expect(scoreLead(6, linkedinOnly, 'no email found')).toMatchObject({ finalScore: 60, reachable: true, status: 'Awaiting Approval' });
+    expect(scoreLead(6, linkedinOnly, 'no email found')).toMatchObject({ finalScore: 60, reachable: true, status: 'Approved' });
   });
 });
 

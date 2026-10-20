@@ -62,7 +62,7 @@ function storedResearch(lead: Lead): Research {
 export type TakenContact = { leadId: number; company: string; website: string; contactName: string };
 
 /** Stages before anything was sent: re-finding contacts here may set the stage and rewrite the draft. */
-const BEFORE_OUTREACH = ['Awaiting Approval', 'Approved', 'Needs Manual Contact', 'Low Score', 'Rejected', 'Error', 'Needs Review', 'Disqualified'];
+const BEFORE_OUTREACH = ['Approved', 'Needs Manual Contact', 'Low Score', 'Rejected', 'Error', 'Needs Review', 'Disqualified'];
 
 /**
  * Researches a lead and finds its contacts. With `contactsOnly` (contacts reset), the company research

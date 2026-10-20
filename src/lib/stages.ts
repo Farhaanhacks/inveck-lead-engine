@@ -6,11 +6,10 @@ import { istDay } from './tasks';
 import { logActivity } from './activity';
 import { importClients } from './clients';
 
-const BEFORE_SENDING: LeadStatus[] = ['New', 'Awaiting Approval', 'Approved', 'Rejected'];
+const BEFORE_SENDING: LeadStatus[] = ['New', 'Approved', 'Rejected'];
 
 const WHAT: Partial<Record<LeadStatus, string>> = {
   New: 'Queued for research again',
-  'Awaiting Approval': 'Moved back to Awaiting Approval',
   Rejected: 'Draft rejected',
   Replied: 'They replied',
   'Meeting Booked': 'Meeting booked',
@@ -49,7 +48,7 @@ export async function applyStage(db: Db, ids: number[], status: LeadStatus, whyB
     if (status === 'New') set.lastError = '';
     await db.update(leads).set(set).where(eq(leads.id, lead.id));
 
-    if (status === 'Approved') await logActivity(db, lead.id, 'approved', 'Draft approved', status);
+    if (status === 'Approved') await logActivity(db, lead.id, 'approved', 'Approved', status);
     else if (status === 'Contacted' && !lead.sentAt) {
       await logActivity(db, lead.id, 'sent', `First email sent${lead.emailSubject ? `: “${lead.emailSubject}”` : ''}.`, status);
     } else await logActivity(db, lead.id, 'stage', WHAT[status] ?? `Moved to ${status}`, status);
@@ -73,7 +72,6 @@ const RANK: Partial<Record<LeadStatus, number>> = {
   New: 0,
   'Low Score': 1,
   'Needs Manual Contact': 1,
-  'Awaiting Approval': 1,
   Approved: 2,
   Rejected: 2,
   Contacted: 3,

@@ -266,7 +266,7 @@ async function save(db: Db, day: string, record: CaDrawRecord): Promise<CaDrawRe
 /** Makes the lead for a firm already recorded as given, and records its id. Null when it couldn't be made (it is retried). */
 async function makeLead(db: Db, firm: CaFirm, owner: number, segment: string, known: KnownBranches): Promise<number | null> {
   try {
-    // Database only: Approved at once (never Awaiting Approval, never researched); nothing is searched to fill a blank.
+    // Database only: Approved at once (never researched); nothing is searched to fill a blank.
     const r = await importContactSheet(db, [toContactRow(firm)], { segment, ownerId: owner, known, by: 'the Google Sheet', status: 'Approved' });
     const id = r.ids[0] ?? null;
     if (id === null) return null;
@@ -280,13 +280,13 @@ async function makeLead(db: Db, firm: CaFirm, owner: number, segment: string, kn
 }
 
 /**
- * CA firms already taken from the sheet before this rule (still New or Awaiting Approval) are approved once, so they
+ * CA firms already taken from the sheet before this rule (still New) are approved once, so they
  * show as fresh leads and are not researched. Runs once per database; what it did is kept under settings.caApprovedV1.
  */
 export async function approveSheetLeadsOnce(db: Db): Promise<void> {
   const key = 'caApprovedV1';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
-  const rows = await db.select({ id: leads.id, status: leads.status }).from(leads).innerJoin(sheetFirms, eq(sheetFirms.leadId, leads.id)).where(inArray(leads.status, ['New', 'Awaiting Approval']));
+  const rows = await db.select({ id: leads.id, status: leads.status }).from(leads).innerJoin(sheetFirms, eq(sheetFirms.leadId, leads.id)).where(inArray(leads.status, ['New']));
   for (const r of rows) {
     await db.update(leads).set({ status: 'Approved', updatedAt: new Date() }).where(eq(leads.id, r.id));
     await logActivity(db, r.id, 'stage', `Approved: CA firms from the Google Sheet are database-only and need no research or approval (was ${r.status})`, 'Approved');

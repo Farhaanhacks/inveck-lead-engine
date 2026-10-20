@@ -78,7 +78,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(log.calls.some((c) => c.includes('haldex'))).toBe(false);
 
     // A malformed AI answer (wrong types, criteria missing) is asked for again; the second one stands.
-    expect(L['Tata Motors'].status).toBe('Awaiting Approval');
+    expect(L['Tata Motors'].status).toBe('Approved');
     expect(L['Tata Motors'].fitStatus).toBe('qualified');
     expect(L['Tata Motors'].fitReason).toBe('6 plants, SAP');
     expect(L['Tata Motors'].fitEvidence.find((e) => e.id === 'M1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.tatamotors.com/' });
@@ -135,7 +135,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['No Draft Industries'].contactEmail).toBe('');
     expect(L['No Draft Industries'].contactPhone).toBe('');
     // Drafting failed: the lead keeps its research and contact, and the draft is retried later.
-    expect(L['No Draft Industries'].status).toBe('Awaiting Approval');
+    expect(L['No Draft Industries'].status).toBe('Approved');
     expect(L['No Draft Industries'].lastError).toMatch(/^Drafting failed \(retrying automatically\)/);
 
     // Not even an address published on the website, nor a guessed format; no email service is called.
@@ -160,7 +160,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     ]);
     // The timeline records what research found.
     const hwTimeline = (await db.select().from(activities).where(eq(activities.leadId, L['Honeywell'].id))).map((a) => a.kind);
-    expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'contact', 'draft']));
+    expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'contact', 'approved']));
 
     // Everyone found at the company is kept, best first, with no email (none is looked up).
     const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));
@@ -179,7 +179,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Finder Co'].contactEmail).toBe('');
     expect(log.calls.some((c) => /hunter\.io|apollo\.io|prospeo\.io/.test(c))).toBe(false);
     expect(L['Catchall Co'].contactEmail).toBe('');
-    expect(L['Catchall Co'].status).toBe('Awaiting Approval'); // reachable on LinkedIn
+    expect(L['Catchall Co'].status).toBe('Approved'); // reachable on LinkedIn
 
     // Prospect search added new companies but skipped duplicates, clients and directories.
     expect(L['Bharat Forge Ltd'].source).toBe('Lookalike of Haldex: forging plants');
@@ -307,7 +307,7 @@ describe('full run with Claude', () => {
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     await executeRun(db, run.id, services({ aiProvider: 'anthropic', aiModel: 'claude-opus-5' }), Number.POSITIVE_INFINITY);
     const L = await byCompany();
-    expect(L['Tata Motors'].status).toBe('Awaiting Approval');
+    expect(L['Tata Motors'].status).toBe('Approved');
     expect(L['Bajaj Finance'].status).toBe('Disqualified');
     expect(log.calls.some((c) => c.startsWith('POST api.anthropic.com/v1/messages'))).toBe(true);
     expect(log.calls.some((c) => c.includes('deepseek'))).toBe(false);
@@ -452,7 +452,7 @@ describe('fresh start', () => {
 
     const [ta] = await db.select().from(leads).where(eq(leads.id, a.id));
     expect(ta).toMatchObject({
-      contactName: '', ownerId: null, status: 'Awaiting Approval', callFeedback: '', remark: '', sentAt: null, drawnOn: '', refetchPending: true,
+      contactName: '', ownerId: null, status: 'Approved', callFeedback: '', remark: '', sentAt: null, drawnOn: '', refetchPending: true,
       fitScore: 8, researchSummary: 'Acme makes parts.',
     });
     expect(await db.select().from(people)).toHaveLength(0);
@@ -536,7 +536,7 @@ describe('finding contacts again while search is down', () => {
   it('keeps the saved contacts instead of replacing them with nothing, and doesn\'t retry in a loop', async () => {
     const [l] = await db
       .insert(leads)
-      .values({ company: 'Acme Forgings', website: 'acmeforgings.in', city: 'Jaipur', segment: 'Manufacturing', status: 'Awaiting Approval', qualified: true, fitScore: 8, researchSummary: 'Acme forges parts.', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', refetchPending: true })
+      .values({ company: 'Acme Forgings', website: 'acmeforgings.in', city: 'Jaipur', segment: 'Manufacturing', status: 'Approved', qualified: true, fitScore: 8, researchSummary: 'Acme forges parts.', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', refetchPending: true })
       .returning();
     await db.insert(people).values({ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true });
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
@@ -568,7 +568,7 @@ describe('stopping a run that is finding contacts again', () => {
   it('stops, and drops the rest of the queue so it does not start again by itself', async () => {
     const rows = await db
       .insert(leads)
-      .values(Array.from({ length: 4 }, (_, i) => ({ company: `Queued ${i}`, status: 'Awaiting Approval' as const, contactName: 'Old Contact', refetchPending: true })))
+      .values(Array.from({ length: 4 }, (_, i) => ({ company: `Queued ${i}`, status: 'Approved' as const, contactName: 'Old Contact', refetchPending: true })))
       .returning();
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     await db.update(runs).set({ cancelRequested: true }).where(eq(runs.id, run.id));

@@ -271,7 +271,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
         await reconcileContactStatus(db, lead.id);
         await recordOutcome(db, lead.id, update);
         stats.processed++;
-        if (update.status === 'Awaiting Approval') stats.drafted++;
+        // `drafted` counts the leads approved (the name is kept so earlier runs' stats still read).
+        if (update.status === 'Approved') stats.drafted++;
         if (update.status === 'Disqualified') stats.disqualified++;
         if (update.status === 'Needs Review') stats.needsReview = (stats.needsReview ?? 0) + 1;
         if (update.status === 'Existing Client') stats.existingClients++;
@@ -320,7 +321,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     }
     if (refetched) await log(`Contacts found again for ${refetched} compan${refetched === 1 ? 'y' : 'ies'}`);
 
-    await log(`Done: ${stats.processed} researched, ${stats.drafted} drafts ready`);
+    await log(`Done: ${stats.processed} researched, ${stats.drafted} approved`);
     if (run.error) await log(`Finished with an error: ${run.error}`, 'error');
     await save({ status: run.error ? 'failed' : 'done', finishedAt: new Date() });
     return 'done';
@@ -347,6 +348,6 @@ export async function recordOutcome(db: Db, leadId: number, u: LeadUpdate) {
   if (u.contactName) {
     await logActivity(db, leadId, 'contact', `Decision-maker: ${[u.contactName, u.contactTitle].filter(Boolean).join(', ')}${u.emailStatus ? `. Email: ${u.contactEmail || '—'} (${u.emailStatus})` : ''}`);
   }
-  if (u.status === 'Awaiting Approval') await logActivity(db, leadId, 'draft', `Outreach draft ready (score ${u.finalScore})`);
+  if (u.status === 'Approved') await logActivity(db, leadId, 'approved', `Approved: fits the ICP and has a contact; outreach draft ready (score ${u.finalScore})`, 'Approved');
   else await logActivity(db, leadId, 'stage', `${u.status} (score ${u.finalScore ?? '—'})`, u.status ?? '');
 }
