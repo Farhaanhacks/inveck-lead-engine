@@ -276,17 +276,29 @@ describe("the day's Google search budget", () => {
     expect(people.every((b) => b.num === 10)).toBe(true);
   });
 
-  it('a company found people first still gets the full search for its people, with those found kept as candidates', async () => {
-    let serper = 0;
-    const base = fakeFetch(log);
-    const svc = { ...services(), fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base(u, i))) as typeof fetch };
-    const found = asLinkedInFinds([{ name: 'Rahul Patil', title: 'Plant Head', linkedin: 'https://in.linkedin.com/in/rahul-patil', location: 'Pune, Maharashtra, India' }]);
-    const lead = sampleLead(-1, { company: 'Some Forge Co', website: 'someforge.in', city: 'Pune', segment: MANUFACTURING, status: 'Processing', source: PEOPLE_FIRST_SOURCE });
-    const r = await processLead(svc, lead, { icps: await db.select().from(icps), clients: [] }, async () => {}, { teamContact: false, found });
-    expect(r).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil' });
-    expect(r.contactVerifiedAt).toBeTruthy();
-    // The full search ran: one designation at a time, the company's LinkedIn page, evidence and news.
-    expect(serper).toBeGreaterThan(20);
+  it('a company found people first still gets the search for its people, the people found counting towards the contacts it looks for', async () => {
+    const research = async (found: ReturnType<typeof asLinkedInFinds>) => {
+      let serper = 0;
+      const base = fakeFetch(log);
+      const svc = { ...services(), fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base(u, i))) as typeof fetch };
+      const lead = sampleLead(-1, { company: 'Some Forge Co', website: 'someforge.in', city: 'Pune', segment: MANUFACTURING, status: 'Processing', source: PEOPLE_FIRST_SOURCE });
+      const r = await processLead(svc, lead, { icps: await db.select().from(icps), clients: [] }, async () => {}, { teamContact: false, found });
+      return { r, serper };
+    };
+    const at = (name: string, title: string) => ({ name, title, linkedin: `https://in.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, '-')}`, location: 'Pune, Maharashtra, India' });
+    // One person found: one acceptable contact isn't four, so the designations are searched as before.
+    const one = await research(asLinkedInFinds([at('Rahul Patil', 'Plant Head')]));
+    expect(one.r).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil' });
+    expect(one.r.contactVerifiedAt).toBeTruthy();
+    expect(one.serper).toBeGreaterThan(20);
+    // Four, a plant head among them: the company's staff, its LinkedIn page, evidence and news are still
+    // searched, but not every designation. Everyone found is kept on the lead.
+    const four = await research(asLinkedInFinds([at('Rahul Patil', 'Plant Head'), at('Sneha Joshi', 'Supply Chain Manager'), at('Amit Deshmukh', 'Materials Manager'), at('Priya Kulkarni', 'Purchase Manager')]));
+    expect(four.r).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil' });
+    expect(four.r.contactVerifiedAt).toBeTruthy();
+    expect(four.serper).toBeGreaterThan(0);
+    expect(four.serper).toBeLessThan(one.serper - 15);
+    expect(four.r.people!.map((p) => p.name)).toEqual(expect.arrayContaining(['Rahul Patil', 'Sneha Joshi', 'Amit Deshmukh', 'Priya Kulkarni']));
   });
 
   it('the search stops while there is still enough left to research what it found and check contacts', async () => {

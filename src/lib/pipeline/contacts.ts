@@ -310,7 +310,9 @@ export type SearchLog = (message: string) => unknown;
  * several searches is merged. Without an ICP, `query` and a broad search are run instead. `staffOnly`
  * runs only the staff searches (no designations, no second looks, no leadership search): a quick check
  * of whether anyone reachable works there, for the sourcing test. `accepted` are the acceptable people
- * on the ICP's P1/P2/P3 lists, best first.
+ * on the ICP's P1/P2/P3 lists, best first. `known` are people already found working here on LinkedIn (the
+ * people-first search): checked like anyone the search finds, the acceptable ones count towards enough
+ * contacts and a P1, so the search stops sooner; they aren't returned (the caller already has them).
  */
 export async function searchLinkedIn(
   svc: Services,
@@ -319,7 +321,7 @@ export async function searchLinkedIn(
   city = '',
   icp?: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>,
   log?: SearchLog,
-  opts: { staffOnly?: boolean } = {},
+  opts: { staffOnly?: boolean; known?: LinkedInPerson[] } = {},
 ): Promise<{ people: LinkedInPerson[]; accepted: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const firm = firmQuery(company);
@@ -373,13 +375,23 @@ export async function searchLinkedIn(
     return { ok: true, why: [tier && tier !== 'Top' ? tier : tier === 'Top' ? 'head of the company' : '', p.evidence || '', city ? siteEvidence(p, city) : ''].filter(Boolean).join('; ') };
   };
   const passes = (p: FoundPerson) => verdict(p).ok;
-  const done = () => current().some(passes);
+  // People already found working here (the people-first search), as long as the search hasn't found
+  // them itself: then they count as the search reads them.
+  const known: FoundPerson[] = company ? (opts.known ?? []).map((p) => ({ ...p, employer: 'here' as const, abroad: false })) : [];
+  const knownOnly = () => {
+    const now = current();
+    return known.filter((k) => !now.some((p) => keyOf(p) === keyOf(k) || sameName(p.name, k.name)));
+  };
+  const done = () => current().some(passes) || knownOnly().some(passes);
   // Acceptable people on the ICP's P1/P2/P3 lists, one per profile: the head of the company found on
   // the way is kept, but isn't one of the contacts searched for.
-  const accepted = () => current().filter((p) => passes(p) && (!icp || TIERED.has(tierOf(p.title, icp))));
-  const enough = () => accepted().length >= CONTACT_SEARCH_BUDGET.contacts;
+  const onLists = (p: FoundPerson) => passes(p) && (!icp || TIERED.has(tierOf(p.title, icp)));
+  const accepted = () => current().filter(onLists);
+  // Those, and the acceptable people already found here.
+  const allAccepted = () => [...accepted(), ...knownOnly().filter(onLists)];
+  const enough = () => allAccepted().length >= CONTACT_SEARCH_BUDGET.contacts;
   // Enough people found is not enough while no P1 is among them: the P1 designations are still searched.
-  const hasP1 = () => !!icp && accepted().some((p) => tierOf(p.title, icp) === 'P1');
+  const hasP1 = () => !!icp && allAccepted().some((p) => tierOf(p.title, icp) === 'P1');
   const searchDown = () => failures.length > 0 && !answered;
   // Each person's verdict is logged once, and again only if more evidence changes it.
   const reported = new Map<string, string>();
@@ -413,6 +425,10 @@ export async function searchLinkedIn(
     let staffLeft: number = CONTACT_SEARCH_BUDGET.staff;
     if (opts.staffOnly) await say(`contact search: the company's staff on LinkedIn only (${staff.length} search${staff.length === 1 ? '' : 'es'})`);
     else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${CONTACT_SEARCH_BUDGET.contacts} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    if (known.length) {
+      await say(`${known.length} found here earlier by the people-first search, counted towards the ${CONTACT_SEARCH_BUDGET.contacts} contacts when they pass: ${known.map((p) => `${p.name} (${p.title})`).join('; ')}`);
+      for (const p of known) await report(p);
+    }
     for (const q of staff) {
       if (failedInRow >= 2) break;
       for (const page of [1, 2]) {
@@ -491,7 +507,7 @@ export async function searchLinkedIn(
   }
   const people = icp ? rankCandidates(current(), icp, city) : current();
   if (icp && name) {
-    const ok = accepted();
+    const ok = allAccepted();
     await say(
       ok.length
         ? `contact search done: ${ok.length} acceptable contact${ok.length === 1 ? '' : 's'} (${rankCandidates(ok, icp, city).map((p) => `${p.name}, ${p.title}`).join('; ')})`

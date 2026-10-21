@@ -246,9 +246,11 @@ last 30 days isn't made again. Every Google search the app makes is counted per 
 the day's Serper credits (`src/lib/search-budget.ts`). There is no daily limit unless one is set in Settings
 ("Google searches a day"); with one, research of companies already found comes first, then the 8 am contact
 checks, then finding more companies, and whatever is left waits for the next day. People searches ask for 10
-results (1 credit). Research is the same for every company: the full
-search for its people on LinkedIn (the people the morning search found there are added as candidates), its
-LinkedIn page, evidence and news, about 30-50 searches a company. CA firms are
+results (1 credit). Research is the same for every company: the search for its people on LinkedIn (the
+company's staff, then the ICP's designations one at a time until 4 acceptable contacts with a P1 among them),
+its LinkedIn page, evidence and news, about 30-50 searches a company. For a company found people first, the
+people the morning search found there are checked like anyone the search finds, and the acceptable ones count
+towards those 4, so it stops sooner; all of them are kept as candidates. CA firms are
 never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
 segment has ready for the draw, and warns when the searches are running thin.
 

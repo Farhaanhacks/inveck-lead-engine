@@ -81,7 +81,7 @@ export async function processLead(
   opts: {
     contactsOnly?: boolean;
     teamContact?: boolean;
-    /** People already found at the company on LinkedIn (the people-first search): candidates like the search's own finds. */
+    /** People already found at the company on LinkedIn (the people-first search): candidates like the search's own finds, counted towards the contacts it looks for. */
     found?: Awaited<ReturnType<typeof searchLinkedIn>>['people'];
   } = {},
 ): Promise<LeadResult> {
@@ -286,8 +286,9 @@ export async function processLead(
   const notes: string[] = [];
   const [searched, leaders, news] = await Promise.all([
     // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
-    // each person's verdict goes on the run's log.
-    searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`)),
+    // each person's verdict goes on the run's log. People the people-first search found here count
+    // towards the contacts it looks for, so it stops sooner.
+    searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`), { known: opts.found }),
     searchLeaders(svc, lead.company, domain, site.text, pages),
     findSignals(svc, lead.company),
   ]);
