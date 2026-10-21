@@ -11,7 +11,7 @@ import { TierBadge } from '@/components/tier-badge';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
-import { carryOnSampleAction, startMorningSampleAction } from '@/app/sourcing-actions';
+import { carryOnSampleAction, pushSampleAction, startMorningSampleAction, stopSampleAction } from '@/app/sourcing-actions';
 import { canCarryOn } from '@/lib/sourcing/test-run';
 import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, SAMPLE_RULES, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
@@ -389,6 +389,13 @@ export function MorningSample({
           </div>
           {test.status === 'running' && <AutoRefresh />}
           {test.progress && <p className="mb-3 text-sm text-ink-2" role="status">{test.progress}</p>}
+          {test.status === 'running' && (
+            <form action={stopSampleAction} className="mb-3 flex flex-wrap items-center gap-3">
+              <input type="hidden" name="id" value={test.id} />
+              <SubmitButton pendingText="Stopping…">Stop</SubmitButton>
+              <span className="text-xs text-muted">Ends it where it is: nothing more is searched or researched. What it found can then be pushed into the pipeline.</span>
+            </form>
+          )}
           {test.error && <p className="mb-3 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink">{test.error}</p>}
           {canCarryOn(test) && !running && (
             <form action={carryOnSampleAction} className="mb-3 flex flex-wrap items-center gap-3">
@@ -439,9 +446,18 @@ export function MorningSample({
           {r && r.companies.length > 0 && (
             <details className="card mt-4 overflow-x-auto">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Everything the search found ({r.companies.length}), and what research made of it</summary>
+              <form action={pushSampleAction}>
+              <input type="hidden" name="id" value={test.id} />
+              {test.status !== 'running' && (
+                <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3">
+                  <SubmitButton pendingText="Pushing…">Push selected to the pipeline</SubmitButton>
+                  <span className="text-xs text-muted">Nobody&apos;s yet: the 8 am draw deals them. An approved one goes in ready, with its contact and drafts; one not researched yet goes in as New and the pipeline researches it (that uses Google search credits). One already in the pipeline is left out.</span>
+                </div>
+              )}
               <table className="w-full min-w-[860px] text-sm">
                 <thead className="text-xs text-ink-2">
                   <tr>
+                    {test.status !== 'running' && <th className={th}><span className="sr-only">Select</span></th>}
                     <th className={th}>Company</th>
                     <th className={th}>Segment</th>
                     <th className={th}>LinkedIn page</th>
@@ -454,6 +470,15 @@ export function MorningSample({
                     const o = c.outcome ? OUTCOME[c.outcome] : null;
                     return (
                       <tr key={c.key}>
+                        {test.status !== 'running' && (
+                          <td className={td}>
+                            {c.pushed ? (
+                              <Link href={`/leads/${c.pushed}`} className="whitespace-nowrap text-xs text-accent hover:underline">In the pipeline</Link>
+                            ) : (
+                              <input type="checkbox" name="key" value={c.key} defaultChecked={c.outcome === 'approved'} aria-label={`Push ${c.page.name}`} />
+                            )}
+                          </td>
+                        )}
                         <td className={`${td} font-medium`}>
                           <a href={c.page.url} target="_blank" rel="noreferrer" className="hover:underline">{c.page.name}</a>
                           {c.page.website && <span className="block text-xs font-normal text-muted">{c.page.website}</span>}
@@ -476,6 +501,7 @@ export function MorningSample({
                   })}
                 </tbody>
               </table>
+              </form>
             </details>
           )}
         </div>

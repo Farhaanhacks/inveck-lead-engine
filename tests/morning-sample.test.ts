@@ -225,6 +225,62 @@ describe('the Morning Sample Run', () => {
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
   });
 
+  it('stops where it is when the admin presses Stop, and is not picked up again', async () => {
+    const { stopSample } = await import('@/lib/sourcing/sample-run');
+    const { canCarryOn, claimStalledTests } = await import('@/lib/sourcing/test-run');
+    const id = await startSample();
+    expect(await runSourcingTest(db, morningServices(log), id, 0)).toBe('continue');
+    expect(await stopSample(db, id)).toBe(true);
+    const calls = log.calls.length;
+    expect(await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY)).toBe('done');
+    expect(log.calls.length).toBe(calls);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    expect(row).toMatchObject({ status: 'failed', error: 'Stopped by you. The report shows what it got to.' });
+    expect(canCarryOn(row)).toBe(false);
+    expect(await claimStalledTests(db, new Date(Date.now() + 60 * 60_000))).toEqual([]);
+    expect(await stopSample(db, id)).toBe(false);
+  });
+
+  it('pushes the companies ticked into the pipeline: an approved one ready for the draw, one not researched as New with its people', async () => {
+    const { pushSampleCompanies, stopSample } = await import('@/lib/sourcing/sample-run');
+    const { peopleFirstContacts } = await import('@/lib/sourcing/morning');
+    // A finished sample: Forgeline was researched and approved.
+    const done = await startSample(true);
+    await runSourcingTest(db, morningServices(log), done, Number.POSITIVE_INFINITY);
+    const forgeline = (await reportOf(done)).companies.find((c) => c.page.name === 'Forgeline Components')!;
+    expect(forgeline.outcome).toBe('approved');
+    expect(await pushSampleCompanies(db, done, [forgeline.key])).toEqual({ pushed: 1, skipped: [] });
+    const [lead] = await db.select().from(leads).where(eq(leads.company, 'Forgeline Components'));
+    expect(lead).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil', ownerId: null, companyLinkedin: forgeline.page.url });
+    expect(lead.contactVerifiedAt).toBeInstanceOf(Date);
+    expect(lead.emailBody).toBeTruthy();
+    expect((await db.select().from(people).where(eq(people.leadId, lead.id))).some((p) => p.name === 'Rahul Patil' && p.isPrimary)).toBe(true);
+    expect((await db.select().from(activities).where(eq(activities.leadId, lead.id))).some((a) => a.text.includes(`Morning Sample Run ${done}`))).toBe(true);
+    // Shown as in the pipeline, and never pushed twice.
+    expect((await reportOf(done)).companies.find((c) => c.key === forgeline.key)?.pushed).toBe(lead.id);
+    expect(await pushSampleCompanies(db, done, [forgeline.key])).toEqual({ pushed: 0, skipped: [] });
+
+    // A sample stopped before research: the company goes in as New, with the people found there for research to start from.
+    const stopped = await startSample(true);
+    const raw = async () => (await db.select().from(sourcingTests).where(eq(sourcingTests.id, stopped)))[0].report as MorningSampleReport;
+    await runSourcingTest(db, morningServices(log), stopped, 0);
+    for (let i = 0; i < 20 && !(await raw()).companies.some((c) => c.segment === LOGISTICS); i++) await runSourcingTest(db, morningServices(log), stopped, 0);
+    const swift = (await raw()).companies.find((c) => c.segment === LOGISTICS)!;
+    expect(swift.outcome).toBeUndefined();
+    // Not while it runs.
+    expect(await pushSampleCompanies(db, stopped, [swift.key])).toEqual({ pushed: 0, skipped: [] });
+    await stopSample(db, stopped);
+    // Forgeline is in the pipeline already: left out.
+    const again = (await raw()).companies.find((c) => c.page.name === 'Forgeline Components');
+    const result = await pushSampleCompanies(db, stopped, [swift.key, ...(again ? [again.key] : [])]);
+    expect(result.pushed).toBe(1);
+    if (again) expect(result.skipped).toEqual(['Forgeline Components']);
+    const [fresh] = await db.select().from(leads).where(eq(leads.company, swift.page.name));
+    expect(fresh).toMatchObject({ status: 'New', ownerId: null, segment: LOGISTICS });
+    expect(fresh.source.startsWith('People-first search')).toBe(true);
+    expect((await peopleFirstContacts(db, fresh)).map((p) => p.name)).toEqual(swift.contacts.map((p) => p.name));
+  });
+
   it("shows the first morning the draw runs, when that's later than the next one", async () => {
     await db.insert(settings).values({ key: 'morningStartsOn', value: '2030-01-10' });
     const id = await startSample();

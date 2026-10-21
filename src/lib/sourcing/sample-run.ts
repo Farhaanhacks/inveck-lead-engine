@@ -9,12 +9,13 @@ import { normSegment } from '../icp-match';
 import { processLead } from '../pipeline/process-lead';
 import { knowFirmPage } from '../pipeline/firm-identity';
 import { mapLimit, type Services } from '../pipeline/services';
-import { errorMessage, rootDomain } from '../pipeline/text';
+import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
+import { logActivity } from '../activity';
 import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
-import { PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
+import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
 import { CHECKS_RESERVE } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
 import type { FoundContact } from './people-first';
@@ -61,6 +62,8 @@ export type SampleCompany = {
   /** The lead as research left it, and the people it kept. */
   lead?: Lead;
   people?: SamplePerson[];
+  /** The real lead it became when the admin pushed it into the pipeline. */
+  pushed?: number;
 };
 
 /** One card on a person's day: a lead waiting in the pool now, or a company the sample found. */
@@ -173,8 +176,15 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
     if (!report) report = await begin(db, svc, (test.report as MorningSampleStart | null)?.fresh ?? false);
     const r = report;
     const budgetLeft = () => (r.budget ?? Number.POSITIVE_INFINITY) - (r.credits ?? 0);
+    // Stopped by the admin: it ends where it is (nothing more searched or researched).
+    const stopped = async () => (await db.select({ status: sourcingTests.status }).from(sourcingTests).where(eq(sourcingTests.id, test.id)))[0]?.status !== 'running';
 
     for (let step = 0; ; step++) {
+      if (await stopped()) {
+        await save();
+        await saving;
+        return 'done';
+      }
       if (r.phase === 'search') {
         if (step > 0 && outOfTime(0.85)) break;
         const outcome = await searchRound(db, metered, r.search!, {
@@ -182,6 +192,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           budgetMs,
           log: async () => {},
           seed: test.id * 31,
+          stopped,
           // As the run: the budget, less researching what was found and the 8 am contact checks.
           budgetLeft: async () => budgetLeft() - r.companies.filter((c) => !c.outcome).length * SAMPLE_RULES.researchCredits - CHECKS_RESERVE,
           peopleResults: SAMPLE_RULES.peopleResults,
@@ -261,6 +272,91 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
   }
   await saving;
   return 'done';
+}
+
+/** The admin stops a running sample: it ends where it is, and what it found can still be pushed into the pipeline. */
+export async function stopSample(db: Db, id: number): Promise<boolean> {
+  const done = await db
+    .update(sourcingTests)
+    .set({ status: 'failed', error: 'Stopped by you. The report shows what it got to.', finishedAt: new Date() })
+    .where(and(eq(sourcingTests.id, id), eq(sourcingTests.mode, 'morning'), eq(sourcingTests.status, 'running')))
+    .returning({ id: sourcingTests.id });
+  return done.length > 0;
+}
+
+const timestampColumns = new Set(Object.entries(getTableColumns(leads)).filter(([, c]) => c.dataType === 'date').map(([k]) => k));
+
+/**
+ * Puts companies a sample found into the pipeline as real leads, nobody's yet (the 8 am draw deals them).
+ * One research finished stays as research left it: an approved one is ready to be dealt, with its contact
+ * and drafts, and isn't researched (or paid for) again. One not researched goes in as the 6 am run would
+ * add it: New, with the people found there, and the pipeline researches it. One already in the pipeline
+ * (by LinkedIn page, name or website) is left out. Only once the sample has stopped or finished.
+ */
+export async function pushSampleCompanies(db: Db, testId: number, keys: number[]): Promise<{ pushed: number; skipped: string[] }> {
+  const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, testId));
+  if (!test || test.status === 'running' || !isMorningSample(test.report)) return { pushed: 0, skipped: [] };
+  const r = test.report;
+  const wanted = new Set(keys);
+  const existing = await db.select({ company: leads.company, website: leads.website, page: leads.companyLinkedin }).from(leads);
+  const names = new Set(existing.map((l) => normCompany(l.company)));
+  const domains = new Set(existing.map((l) => rootDomain(l.website)).filter(Boolean));
+  const pages = new Set(existing.map((l) => l.page).filter(Boolean));
+  let pushed = 0;
+  const skipped: string[] = [];
+  for (const c of r.companies) {
+    if (!wanted.has(c.key) || c.pushed) continue;
+    const name = c.page.nameCut ? c.employer : c.page.name;
+    const domain = rootDomain(c.page.website);
+    if (pages.has(c.page.url) || names.has(normCompany(name)) || (domain && domains.has(domain))) {
+      skipped.push(name);
+      continue;
+    }
+    const researched = !!c.lead && !!c.outcome && c.outcome !== 'waiting' && c.outcome !== 'error';
+    let leadId: number;
+    if (researched) {
+      const values: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(c.lead!)) {
+        if (k === 'id' || !(k in getTableColumns(leads))) continue;
+        values[k] = timestampColumns.has(k) && typeof v === 'string' ? new Date(v) : v;
+      }
+      Object.assign(values, { ownerId: null, processingStartedAt: null, createdAt: new Date(), updatedAt: new Date() });
+      if (values.status === 'Processing') values.status = 'New';
+      const [lead] = await db.insert(leads).values(values as typeof leads.$inferInsert).returning({ id: leads.id });
+      leadId = lead.id;
+      const kept = c.people ?? [];
+      if (kept.length) {
+        await db.insert(people).values(
+          kept.map((p) => ({ leadId, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, isPrimary: p.isPrimary, source: 'LinkedIn', whyNot: p.whyNot, ...(p.setAside ? { passedAt: new Date(), passedReason: 'excluded' } : {}) })),
+        );
+      }
+    } else {
+      const best = c.contacts[0];
+      const [lead] = await db
+        .insert(leads)
+        .values({
+          company: name,
+          nameAsFound: c.employer,
+          website: c.page.website,
+          city: c.city,
+          segment: c.segment,
+          status: 'New',
+          companyLinkedin: c.page.url,
+          source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
+        })
+        .returning({ id: leads.id });
+      leadId = lead.id;
+      if (c.contacts.length) await db.insert(people).values(c.contacts.map((p) => ({ leadId, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
+    }
+    await logActivity(db, leadId, 'added', `Pushed into the pipeline from Morning Sample Run ${testId}${researched ? ' (researched there)' : ': not researched yet, so the pipeline researches it'}. Company page: ${c.page.url}.`);
+    c.pushed = leadId;
+    pushed++;
+    names.add(normCompany(name));
+    pages.add(c.page.url);
+    if (domain) domains.add(domain);
+  }
+  await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify(r)) }).where(eq(sourcingTests.id, testId));
+  return { pushed, skipped };
 }
 
 /**

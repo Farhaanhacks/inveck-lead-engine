@@ -30,7 +30,7 @@ import { knownToInveck } from './test-run';
 
 /** Leads found this way say so in their source; their people are handed to research as LinkedIn finds. */
 export const PEOPLE_FIRST_SOURCE = 'People-first search';
-const PEOPLE_FIRST_EVIDENCE = 'Found by the people-first search: their LinkedIn profile shows this company as their current job';
+export const PEOPLE_FIRST_EVIDENCE = 'Found by the people-first search: their LinkedIn profile shows this company as their current job';
 
 export const MORNING_LIMITS = {
   /** Times one run searches again after research ruled companies out. */
