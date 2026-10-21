@@ -172,6 +172,59 @@ describe('the Morning Sample Run', () => {
     expect(log.calls.length).toBeGreaterThan(searchesBefore);
   });
 
+  it('tries the cheaper rules (the 6 am run does not): 100-result searches, rule-outs remembered, no repeat lookups, a 2,300 budget', async () => {
+    const store = new Map<string, unknown>();
+    const cache = { get: async (k: string) => store.get(k) ?? null, set: async (k: string, v: unknown) => void store.set(k, JSON.parse(JSON.stringify(v))) };
+    const sent: { q: string; num: number }[] = [];
+    const watched = () => {
+      const base = morningServices(log, [], { cache });
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).includes('google.serper.dev/search')) sent.push(JSON.parse(String(init?.body)));
+          return base.fetch(input, init);
+        }) as typeof fetch,
+      };
+    };
+    const first = await startSample(true);
+    await runSourcingTest(db, watched(), first, Number.POSITIVE_INFINITY);
+    const r = await reportOf(first);
+    expect(r.budget).toBe(2300);
+    expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+    // People searches ask for a hundred results.
+    const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
+    expect(people.length).toBeGreaterThan(0);
+    expect(people.every((b) => b.num === 100)).toBe(true);
+    // Research doesn't look the company's LinkedIn page up again (the search found it), nor its officers in the news and filings.
+    expect(sent.some((b) => b.q === 'site:linkedin.com/company "forgeline.in"')).toBe(false);
+    expect(sent.some((b) => b.q.includes('"company secretary"'))).toBe(false);
+    // Tiny Tools was too small: the next sample doesn't check it again.
+    expect(sent.some((b) => b.q.startsWith('site:linkedin.com/company') && b.q.includes('Tiny Tools'))).toBe(true);
+    sent.length = 0;
+    const second = await startSample(true);
+    await runSourcingTest(db, watched(), second, Number.POSITIVE_INFINITY);
+    expect((await reportOf(second)).phase).toBe('done');
+    expect(sent.some((b) => b.q.startsWith('site:linkedin.com/company') && b.q.includes('Tiny Tools'))).toBe(false);
+  });
+
+  it('asks for ten results instead when Serper refuses a hundred, and still gets to the end', async () => {
+    const base = morningServices(log);
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('google.serper.dev/search') && JSON.parse(String(init?.body)).num > 10) {
+          return new Response(JSON.stringify({ message: 'Query pattern not allowed for free accounts.', statusCode: 400 }), { status: 400 });
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample();
+    await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    expect(r.phase).toBe('done');
+    expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+  });
+
   it("shows the first morning the draw runs, when that's later than the next one", async () => {
     await db.insert(settings).values({ key: 'morningStartsOn', value: '2030-01-10' });
     const id = await startSample();

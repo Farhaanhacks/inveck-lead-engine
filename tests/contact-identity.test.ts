@@ -740,3 +740,32 @@ describe('people already found here (the people-first search) count towards the 
     expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length);
   });
 });
+
+describe('the Morning Sample Run\'s lean research (the 6 am run keeps four contacts and the hunt for a P1)', () => {
+  const company = 'Hosur Gears';
+  const mfg = DEFAULT_ICPS[0];
+  const person = (name: string, title: string) => ({ name, title, linkedin: `https://in.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, '-')}`, snippet: '', location: 'Hosur, Tamil Nadu, India', evidence: 'Found by the people-first search' });
+  const linkedinSearches = () => seen.searches.filter((q) => q.startsWith('site:linkedin.com/in'));
+
+  it('two acceptable contacts are enough, and with people the search found there no P1 is hunted for', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Hosur']);
+    const two = [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')];
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two, lean: true });
+    expect(linkedinSearches()).toEqual(staffSearches(company, 'Hosur'));
+    // Not lean (the run): two P2s are fewer than four, and no P1 among them, so the designations are searched.
+    seen.searches.length = 0;
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two });
+    expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length + 9);
+  });
+
+  it('with one person found, it looks for one more, designation by designation', async () => {
+    const svc = services(seen, (q) => (q.includes('"Plant Manager"') ? [{ title: 'Bina B - Plant Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Manager · Hosur Gears', link: 'https://in.linkedin.com/in/bina-b', snippet: '' }] : []));
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: [person('Ravi Kumar', 'Plant Head')], lean: true });
+    const designations = linkedinSearches().filter((q) => !staffSearches(company, 'Hosur').includes(q));
+    expect(designations.at(-1)).toBe('site:linkedin.com/in "Hosur Gears" "Plant Manager" Hosur');
+    expect(logs.at(-1)).toMatch(/^contact search done: 2 acceptable contacts/);
+  });
+});

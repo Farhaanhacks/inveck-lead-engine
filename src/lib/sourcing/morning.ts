@@ -255,13 +255,19 @@ export type RoundOptions = {
   recent: Set<string>;
   /** Companies taken besides INVECK's own: a sample run's earlier finds. */
   alsoKnown?: { names: string[]; domains: string[]; pages: string[] };
+  /** The Morning Sample Run's cheaper rules (see SAMPLE_RULES); the run uses the defaults. Results per people search. */
+  peopleResults?: number;
+  /** Searches in a row finding nobody new before a segment stops (default MORNING_LIMITS.quietSearches). */
+  quietSearches?: number;
+  /** Companies ruled out (too small, the wrong industry, no LinkedIn page) are remembered and not checked again. */
+  rememberRuledOut?: boolean;
   sink: RoundSink;
 };
 
 /** Results asked for in one people search: ten, for 1 credit. */
 export const PEOPLE_RESULTS = 10;
-/** The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks. */
-const STEP_CREDITS = 8 * searchCredits(PEOPLE_RESULTS);
+/** A company ruled out (or with no LinkedIn page) isn't checked again for this long, where that's asked for. */
+const RULED_OUT_DAYS = 90;
 
 /** The credits a request to Serper costs, from the number of results it asks for. */
 function creditsOf(input: RequestInfo | URL, init?: RequestInit): number {
@@ -287,6 +293,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const d of o.alsoKnown?.domains ?? []) known.domains.add(d);
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
+  const peopleResults = o.peopleResults ?? PEOPLE_RESULTS;
+  const quietLimit = o.quietSearches ?? MORNING_LIMITS.quietSearches;
+  // The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks.
+  const stepCredits = 8 * searchCredits(peopleResults);
 
   // Each segment's search, ready to take a step.
   type Worker = { seg: MorningSegment; step: () => Promise<'more' | 'stop'>; checked: Set<string> };
@@ -307,12 +317,28 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return svc.fetch(input, init);
       }) as typeof fetch,
     };
+    // An account Serper doesn't allow more than ten results on: ten at a time, for the rest of the round.
+    let fewer = false;
     const search = async (q: string, num = 10): Promise<{ results: SerperResult[]; error?: string }> => {
       try {
-        return { results: await googleSearch(counting, q, 1, num) };
+        return { results: await googleSearch(counting, q, 1, fewer ? Math.min(num, 10) : num) };
       } catch (e) {
+        if (num > 10 && !fewer && /not allowed/i.test(errorMessage(e))) {
+          fewer = true;
+          return search(q, 10);
+        }
         return { results: [], error: errorMessage(e) };
       }
+    };
+    // Companies ruled out earlier for this segment and size (when asked): not checked (searched) again.
+    const ruledOutKey = (employer: string) => `company-check:v1:${seg.segment}:${icp.companySize}:${normCompany(employer)}`;
+    const ruledOutBefore = async (employer: string) => {
+      if (!o.rememberRuledOut) return false;
+      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string } | null;
+      return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
+    };
+    const rememberRuledOut = async (employer: string, why: string) => {
+      if (o.rememberRuledOut) await svc.cache?.set(ruledOutKey(employer), { at: new Date().toISOString(), why }).catch(() => {});
     };
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);
@@ -320,10 +346,15 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     // Checks one company's LinkedIn page; one that passes goes to the sink with its people.
     const check = async (c: MorningSegment['pending'][number]) => {
       checked.add(normCompany(c.employer));
+      if (await ruledOutBefore(c.employer)) {
+        seg.ruledOut++;
+        return;
+      }
       const got = await search(companyQuery(c.employer));
       let page: CompanyPage | null = got.error ? null : matchingPage(got.results, c.employer);
       if (!page) {
         seg.noPage++;
+        if (!got.error) await rememberRuledOut(c.employer, 'no LinkedIn page');
         return;
       }
       if (needsFacts(page)) page = withFacts(page, (await search(factsQuery(page))).results);
@@ -331,6 +362,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       const s = screenPage({ ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` }, seg.segment, icp.companySize, known);
       if (!s.pass || pages.has(page.url)) {
         seg.ruledOut++;
+        // Too small or the wrong industry doesn't change soon; abroad depends on who was found there.
+        if (!s.pass && (s.reason === 'small' || s.reason === 'industry')) await rememberRuledOut(c.employer, s.note);
         return;
       }
       if (seg.added >= seg.wanted) return;
@@ -357,7 +390,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         await mapLimit(batch, 4, check);
         return 'more';
       }
-      if (seg.quiet >= MORNING_LIMITS.quietSearches) {
+      if (seg.quiet >= quietLimit) {
         seg.stopped = 'dry';
         return 'stop';
       }
@@ -367,7 +400,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return 'stop';
       }
       seg.cursor += batch.length;
-      const got = await mapLimit(batch, 4, (pq) => search(pq.q, PEOPLE_RESULTS));
+      const got = await mapLimit(batch, 4, (pq) => search(pq.q, peopleResults));
       // Every search refused (out of credits, a wrong key): the run ends as failed, with the reason.
       if (got.every((g) => g.error)) {
         seg.stopped = 'failed';
@@ -445,7 +478,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       return 'done';
     }
     // The day's budget: what's left after researching what's been found, and the contact checks.
-    if ((await o.budgetLeft()) < STEP_CREDITS) {
+    if ((await o.budgetLeft()) < stepCredits) {
       for (const w of active) w.seg.stopped = 'cap';
       for (const w of active) await finish(w);
       active = [];

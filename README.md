@@ -267,6 +267,11 @@ To see what tomorrow will look like first, the Sourcing page has a **Morning Sam
 researches exactly as the run does, deals each active associate their quota from the pool and what it found,
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
 nobody is given anything and no search is remembered, so tomorrow's run starts fresh. CA firms aren't part of it.
+The sample is also where cheaper rules are tried before the 6 am run uses them (`SAMPLE_RULES` in
+`sample-run.ts`): people searches of 100 results, companies ruled out remembered for 90 days, two contacts a
+company (no hunt for a P1 when the search found people there), no repeat lookup of the company's LinkedIn page
+or of its officers in the news and filings, 10% extra companies, and 2,300 Google search credits at most for a
+new sample. A sample carried on from where it stopped uses them too.
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
 list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from

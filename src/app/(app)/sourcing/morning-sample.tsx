@@ -13,7 +13,7 @@ import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
 import { carryOnSampleAction, startMorningSampleAction } from '@/app/sourcing-actions';
 import { canCarryOn } from '@/lib/sourcing/test-run';
-import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
+import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, SAMPLE_RULES, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 const th = 'px-3 py-2 text-left font-medium whitespace-nowrap';
@@ -356,6 +356,9 @@ export function MorningSample({
         <h2 className="text-sm font-semibold">Morning Sample Run</h2>
         <p className="mt-1 text-sm text-ink-2">
           The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything and no search is remembered: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
+        </p>
+        <p className="mt-2 text-sm text-ink-2">
+          <span className="font-medium">Cheaper rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): people searches of 100 results, companies already ruled out not checked again, 2 contacts a company, no repeat lookups of a company&apos;s LinkedIn page or of its officers in the news, 10% extra companies, and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample. A sample carried on from where it stopped uses them too.
         </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
