@@ -2,6 +2,7 @@ import 'server-only';
 import { getDb } from './db';
 import { apiKeys, getSettings } from './settings';
 import { dbEnrichmentCache } from './enrichment-cache';
+import { dbSearchMeter, searchBudgetLeft } from './search-budget';
 import { activeRun, executeRun, startRun } from './runs';
 import { desc, eq, sql } from 'drizzle-orm';
 import { after } from 'next/server';
@@ -18,7 +19,7 @@ const BUDGET_MS = (RUN_MAX_DURATION - 90) * 1000;
 export async function liveServices(): Promise<Services> {
   const db = await getDb();
   // Lookups (places, LinkedIn pages) are cached in the database, so each is made once.
-  return { fetch: globalThis.fetch.bind(globalThis), keys: apiKeys(), settings: await getSettings(db), cache: dbEnrichmentCache(db) };
+  return { fetch: globalThis.fetch.bind(globalThis), keys: apiKeys(), settings: await getSettings(db), cache: dbEnrichmentCache(db), meter: dbSearchMeter(db) };
 }
 
 /** The app's own URL, for a run to call its next invocation. */
@@ -64,6 +65,8 @@ export async function ensureResearch(origin: string): Promise<void> {
       .from(leads)
       .where(eq(leads.status, 'New'));
     if (!waiting || (await activeRun(db))) return;
+    // The day's Google search budget is used: they wait for the next run.
+    if ((await searchBudgetLeft(db, await getSettings(db))) < 30) return;
     const [last] = await db.select().from(runs).orderBy(desc(runs.id)).limit(1);
     if (last && Date.now() - new Date(last.startedAt).getTime() < 5 * 60 * 1000) return;
     const { run, created } = await startRun(db, { findProspects: false, trigger: 'auto' });
@@ -95,6 +98,7 @@ export async function startRefetchIfWaiting(origin?: string) {
   if (!waiting) return;
   const db = await getDb();
   if (await activeRun(db)) return;
+  if ((await searchBudgetLeft(db, await getSettings(db))) < 30) return;
   // Not again straight after a run that just ended or was stopped.
   const [last] = await db.select().from(runs).orderBy(desc(runs.id)).limit(1);
   if (last && Date.now() - new Date(last.finishedAt ?? last.startedAt).getTime() < 10 * 60 * 1000) return;

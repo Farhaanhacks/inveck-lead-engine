@@ -1,9 +1,9 @@
 import Link from 'next/link';
-import { desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, ne } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { sourcingTests } from '@/lib/db/schema';
+import { icps, sourcingTests } from '@/lib/db/schema';
 import { adminPage } from '@/lib/access';
-import { apiKeys } from '@/lib/settings';
+import { apiKeys, getSettings } from '@/lib/settings';
 import { formatDateTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
@@ -12,6 +12,7 @@ import { startSourcingTestAction } from '@/app/sourcing-actions';
 import { SOURCING_SEGMENTS } from '@/lib/sourcing/linkedin-pages';
 import { activeSourcingTest, funnelOf, isPeopleReport, SOURCING_LIMITS, type CompanyReport, type PeopleOutcome, type SourcingReport } from '@/lib/sourcing/test-run';
 import { PeopleReportView } from './people-report';
+import { MorningSample } from './morning-sample';
 
 // The test runs after the response, inside this page's time limit.
 export const maxDuration = 300;
@@ -61,14 +62,20 @@ const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : 
 export default async function SourcingPage({ searchParams }: PageProps<'/sourcing'>) {
   await adminPage();
   const db = await getDb();
+  const sp = await searchParams;
   const running = await activeSourcingTest(db);
-  const recent = await db
-    .select({ id: sourcingTests.id, segment: sourcingTests.segment, mode: sourcingTests.mode, status: sourcingTests.status, startedAt: sourcingTests.startedAt })
-    .from(sourcingTests)
-    .orderBy(desc(sourcingTests.id))
-    .limit(10);
-  const wanted = Number((await searchParams).test) || recent[0]?.id || 0;
-  const [test] = wanted ? await db.select().from(sourcingTests).where(eq(sourcingTests.id, wanted)) : [];
+  const sampleRunning = await activeSourcingTest(db, 'morning');
+  const listed = { id: sourcingTests.id, segment: sourcingTests.segment, mode: sourcingTests.mode, status: sourcingTests.status, startedAt: sourcingTests.startedAt };
+  const [recent, samples] = await Promise.all([
+    db.select(listed).from(sourcingTests).where(ne(sourcingTests.mode, 'morning')).orderBy(desc(sourcingTests.id)).limit(10),
+    db.select(listed).from(sourcingTests).where(eq(sourcingTests.mode, 'morning')).orderBy(desc(sourcingTests.id)).limit(10),
+  ]);
+  const wanted = Number(sp.test) || recent[0]?.id || 0;
+  const [test] = wanted ? await db.select().from(sourcingTests).where(and(eq(sourcingTests.id, wanted), ne(sourcingTests.mode, 'morning'))) : [];
+  // The Morning Sample Run shown: the one asked for, else the latest.
+  const sampleId = Number(sp.sample) || samples[0]?.id || 0;
+  const [sample] = sampleId ? await db.select().from(sourcingTests).where(and(eq(sourcingTests.id, sampleId), eq(sourcingTests.mode, 'morning'))) : [];
+  const [settings, icpRows] = await Promise.all([getSettings(db), db.select().from(icps).orderBy(asc(icps.id))]);
   const raw = test?.report ?? null;
   const peopleReport = isPeopleReport(raw) ? raw : null;
   // A companies-first report (tests from before the people-first mode are all this kind).
@@ -84,10 +91,14 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
     <>
       <PageHeader
         title="Sourcing test"
-        description="Two ways to find new companies. People first: searches LinkedIn for people with your ICP's titles, then checks their companies (size, industry, headquarters, already known to INVECK). Companies first: finds company pages, screens them, then looks for people there. Nothing is saved as a lead and nothing is sent: only this report is kept."
+        description="A Morning Sample Run shows the next 6 am run and 8 am draw on paper, person by person. The sourcing test compares two ways to find new companies. People first: searches LinkedIn for people with your ICP's titles, then checks their companies (size, industry, headquarters, already known to INVECK). Companies first: finds company pages, screens them, then looks for people there. Nothing is saved as a lead and nothing is sent: only the reports are kept."
       >
         <Link href="/" className="btn-secondary">Dashboard</Link>
       </PageHeader>
+
+      <MorningSample test={sample ?? null} running={!!sampleRunning} earlier={samples} person={Number(sp.person) || 0} senderName={settings.senderName} icps={icpRows} />
+
+      <h2 className="mb-3 text-sm font-semibold">Sourcing test</h2>
 
       <section className="card mb-6 p-5">
         <form action={startSourcingTestAction} className="flex flex-wrap items-end gap-4">

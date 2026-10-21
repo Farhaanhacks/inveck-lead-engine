@@ -66,7 +66,7 @@ const RANK: Record<string, number> = { sending: 0, sent: 1, delivered: 2, read: 
 /** Not something they wrote: a reaction, WhatsApp's own notices (a changed number). No answer needed, and not agreeing to anything. */
 const NOT_WRITTEN = ['reaction', 'system', 'request_welcome'];
 /** A conversation started: the lead moves to Replied from any stage before it (or back from Lost). */
-const REPLY_MOVES = ['Awaiting Approval', 'Approved', 'Contacted', 'Lost'];
+const REPLY_MOVES = ['Approved', 'Contacted', 'Lost'];
 
 /**
  * Handles one webhook call from Meta for INVECK's number: messages that came in (kept, matched to their

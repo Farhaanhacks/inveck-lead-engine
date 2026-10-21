@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
+import { searchBudgetLeft } from '@/lib/search-budget';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
@@ -20,7 +21,7 @@ import { candidateRank } from '@/lib/pipeline/contacts';
 import { getCurrentUser, listBdas } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { runCaDraw } from '@/lib/ca-sheet';
-import { allocationFor, quotaOf, quotaTotal, runDailyDraw, topUpDraw } from '@/lib/draw';
+import { allocationFor, quotaOf, quotaTotal, runDailyDraw, teamQuotas, topUpDraw } from '@/lib/draw';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { getAttendance } from '@/lib/attendance';
 import {
@@ -614,7 +615,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       async () => {
         const svc = await liveServices();
         await Promise.race([
-          verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10 }),
+          verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10, budgetLeft: () => searchBudgetLeft(db, svc.settings) }),
           new Promise((resolve) => setTimeout(resolve, 3000)),
         ]);
       },
@@ -624,7 +625,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       const d = await getDb();
       const svc = await liveServices();
       for (const id of switched) await redraftForContact(d, svc, id);
-      await verifyContacts(d, svc, { ownerId: viewId, limit: 30 });
+      await verifyContacts(d, svc, { ownerId: viewId, limit: 30, budgetLeft: () => searchBudgetLeft(d, svc.settings) });
     });
   }
   const viewing = team.find((b) => b.id === viewId);
@@ -633,7 +634,9 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
 
   const day = istDay();
   const caTeam = !!viewing && worksCaFirms(viewing.name);
-  const drawQuota = quotaOf(await getSettings(db));
+  // This person's own daily list (Team page), else the Settings numbers.
+  const drawSettings = await getSettings(db);
+  const drawQuota = (await teamQuotas(db, drawSettings)).get(viewId) ?? quotaOf(drawSettings);
   const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later, assigned, meetingsToday] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
@@ -810,7 +813,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       </section>
 
       <p className="mb-2 text-xs text-muted">
-        Daily targets, per associate: {quotaTotal(drawQuota)} leads assigned ({drawQuota[MANUFACTURING]} Manufacturing + {drawQuota[LOGISTICS]} 3PL &amp; Logistics), {DAILY_COMPANY_TARGET} companies completed, {DAILY_CALL_TARGET} calls attempted.
+        Daily targets for {bda}: {quotaTotal(drawQuota)} leads assigned ({drawQuota[MANUFACTURING]} Manufacturing + {drawQuota[LOGISTICS]} 3PL &amp; Logistics), {DAILY_COMPANY_TARGET} companies completed, {DAILY_CALL_TARGET} calls attempted.
       </p>
       <div className={`mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 ${caProgress ? 'xl:grid-cols-9' : 'xl:grid-cols-8'}`}>
         <Counter

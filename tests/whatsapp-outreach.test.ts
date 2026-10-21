@@ -96,7 +96,7 @@ describe('opening WhatsApp logs the step', () => {
     me.id = bdas[0].id;
   });
   const setup = async (extra: Partial<typeof leads.$inferInsert> = {}) => {
-    const [l] = await db.insert(leads).values({ company: 'Acme Forge', segment: 'Manufacturing', status: 'Awaiting Approval', ownerId: me.id, contactName: 'Ravi Shah', contactPhone: '9876543210', ...extra }).returning();
+    const [l] = await db.insert(leads).values({ company: 'Acme Forge', segment: 'Manufacturing', status: 'Approved', ownerId: me.id, contactName: 'Ravi Shah', contactPhone: '9876543210', ...extra }).returning();
     const [t] = await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'whatsapp', step: 'Day 1', title: 'Day 1: WhatsApp', dueDate: istDay(), slot: 'day' }).returning();
     return t;
   };

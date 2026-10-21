@@ -5,7 +5,6 @@ import { leads, sheetFirms, tasks, users } from '@/lib/db/schema';
 import { KnownBranches } from '@/lib/branches';
 import { importContactSheet } from '@/lib/contact-import';
 import { approveSheetLeadsOnce } from '@/lib/ca-sheet';
-import { reconcileContactStatus } from '@/lib/contact-status';
 import { ensureSequences, isFirstContact, loadTodayTasks, istDay } from '@/lib/tasks';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 
@@ -39,7 +38,7 @@ describe('CA firms from the database', () => {
     expect(items.map((i) => [i.lead.id, i.task.kind, i.task.step])).toEqual([[id, 'linkedin', 'Day 1']]);
     expect(items.every((i) => isFirstContact(i.task))).toBe(true);
     // A contact change never sends it back to waiting for a person, and no find-a-contact step appears.
-    expect(await reconcileContactStatus(db, id)).toBeNull();
+    await ensureSequences(db, istDay());
     expect((await db.select().from(leads).where(eq(leads.id, id)))[0].status).toBe('Approved');
     expect((await db.select().from(tasks).where(eq(tasks.leadId, id))).some((t) => t.step === 'Find the next person')).toBe(false);
   });
@@ -60,11 +59,11 @@ describe('CA firms from the database', () => {
     await db.delete(settings).where(eq(settings.key, 'caApprovedV1'));
     const [sheet] = [{ sourceKey: 'icai:1', company: 'Mehta & Co', ownerId: owner, leadId: id, assignedOn: istDay() }];
     await db.insert(sheetFirms).values(sheet);
-    const manual = (await db.insert(leads).values({ company: 'Hand Added CA', segment: 'CA Firms', status: 'Awaiting Approval', ownerId: owner }).returning())[0];
+    const manual = (await db.insert(leads).values({ company: 'Hand Added CA', segment: 'CA Firms', status: 'New', ownerId: owner }).returning())[0];
     expect((await db.select().from(leads).where(eq(leads.id, id)))[0].status).toBe('New');
     await approveSheetLeadsOnce(db);
     expect((await db.select().from(leads).where(eq(leads.id, id)))[0].status).toBe('Approved');
-    expect((await db.select().from(leads).where(eq(leads.id, manual.id)))[0].status).toBe('Awaiting Approval');
+    expect((await db.select().from(leads).where(eq(leads.id, manual.id)))[0].status).toBe('New');
     // Once only: a lead moved on later isn't pulled back to Approved.
     await db.update(leads).set({ status: 'Contacted' }).where(eq(leads.id, id));
     await approveSheetLeadsOnce(db);

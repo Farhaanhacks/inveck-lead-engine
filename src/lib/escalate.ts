@@ -5,7 +5,7 @@ import { logActivity } from './activity';
 import { makePrimary } from './people';
 import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
 import { personSite, rankCandidates } from './pipeline/contacts';
-import { FIND_NEXT_STEP, istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
+import { FIND_NEXT_STEP, isCaSegment, istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
 import { cancelFollowUpSequence, softDeleteLead } from './follow-up-sequence';
 import { getHolidays } from './holidays';
 export { FIND_NEXT_STEP };
@@ -117,11 +117,9 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
       if (why === 'unverified') {
         await db.update(people).set({ passedAt: now, passedReason: 'unverified', whyNot: reason, isPrimary: false }).where(and(eq(people.leadId, leadId), eq(people.isPrimary, true)));
       }
-      // Nobody to send the draft to: the team finds someone first.
-      const waiting = lead.status === 'Awaiting Approval' || lead.status === 'Approved';
       await db
         .update(leads)
-        .set({ contactVerifiedAt: null, contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, ...(waiting ? { status: 'Needs Manual Contact' as const } : {}), updatedAt: now })
+        .set({ contactVerifiedAt: null, contactName: '', contactTitle: '', contactEmail: '', contactPhone: '', contactLinkedin: '', contactTier: '', contactSince: now, updatedAt: now })
         .where(eq(leads.id, leadId));
     }
     const cleared = why === 'left' || why === 'abroad' || why === 'other_site' || why === 'off_list' || why === 'unverified';
@@ -187,7 +185,7 @@ export async function retireWithoutContact(db: Db, now = new Date()): Promise<nu
   const icpRows = await db.select().from(icps);
   const openFind = await db.select({ leadId: tasks.leadId }).from(tasks).where(and(eq(tasks.step, FIND_NEXT_STEP), isNull(tasks.doneAt)));
   const findIds = new Set(openFind.map((t) => t.leadId));
-  const rows = (await db.select().from(leads)).filter((l) => l.ownerId != null && l.status !== 'Deleted' && (findIds.has(l.id) || (l.status === 'Needs Manual Contact' && !l.contactName)));
+  const rows = (await db.select().from(leads)).filter((l) => l.ownerId != null && l.status !== 'Deleted' && (findIds.has(l.id) || (l.status === 'Approved' && !l.contactName && !isCaSegment(l.segment))));
   const gone: number[] = [];
   for (const lead of rows) {
     if (!(await isFresh(db, lead.id)) || (await wasRestored(db, lead.id))) continue;

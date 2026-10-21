@@ -9,10 +9,7 @@ export const LEAD_STATUSES = [
   'Processing',
   'Existing Client',
   'Disqualified',
-  'Needs Review',
-  'Needs Manual Contact',
   'Low Score',
-  'Awaiting Approval',
   'Approved',
   'Contacted',
   'Replied',
@@ -26,7 +23,7 @@ export const LEAD_STATUSES = [
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
 /** The sales pipeline, as columns on the board. */
-export const PIPELINE_STAGES = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost'] as const satisfies readonly LeadStatus[];
+export const PIPELINE_STAGES = ['Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost'] as const satisfies readonly LeadStatus[];
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 /** Stages where the conversation has moved on, so no more follow-ups. */
 export const ENGAGED_STAGES: readonly LeadStatus[] = ['Replied', 'Meeting Booked', 'Won', 'Lost'];
@@ -45,6 +42,8 @@ export const leads = pgTable('leads', {
   /** What the company name was checked against: its website, its domain, or the team ('' = not checked yet). */
   nameEvidence: text('name_evidence').notNull().default(''),
   website: text('website').notNull().default(''),
+  /** The company's LinkedIn page, when the people-first search found it there ('' otherwise). */
+  companyLinkedin: text('company_linkedin').notNull().default(''),
   city: text('city').notNull().default(''),
   segment: text('segment').notNull().default(''),
   status: text('status').$type<LeadStatus>().notNull().default('New'),
@@ -223,6 +222,8 @@ export const runs = pgTable('runs', {
   error: text('error').notNull().default(''),
   cancelRequested: boolean('cancel_requested').notNull().default(false),
   prospectsDone: boolean('prospects_done').notNull().default(false),
+  /** The people-first prospect search's progress (see sourcing/morning.ts); null on runs that didn't search. */
+  sourcing: jsonb('sourcing'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -389,6 +390,9 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   mustChangePassword: boolean('must_change_password').notNull().default(true),
   active: boolean('active').notNull().default(true),
+  /** Their own daily list for the morning draw, per segment (null: the Settings numbers). */
+  drawManufacturing: integer('draw_manufacturing'),
+  drawLogistics: integer('draw_logistics'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type User = typeof users.$inferSelect;
@@ -572,8 +576,11 @@ export type SheetFirm = typeof sheetFirms.$inferSelect;
 export const sourcingTests = pgTable('sourcing_tests', {
   id: serial('id').primaryKey(),
   segment: text('segment').notNull(),
-  /** 'companies': company pages first, then their people; 'people': people with the ICP's titles first, then their companies. */
-  mode: text('mode').$type<'companies' | 'people'>().notNull().default('companies'),
+  /**
+   * 'companies': company pages first, then their people; 'people': people with the ICP's titles first, then
+   * their companies; 'morning': a Morning Sample Run (tomorrow's run and draw on paper, see sourcing/sample-run.ts).
+   */
+  mode: text('mode').$type<'companies' | 'people' | 'morning'>().notNull().default('companies'),
   /** People first: prospects wanted. Companies first: companies checked for people. */
   companies: integer('companies').notNull().default(30),
   status: text('status').$type<'running' | 'done' | 'failed'>().notNull().default('running'),

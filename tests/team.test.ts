@@ -26,7 +26,7 @@ beforeEach(() => {
 
 // A researched, qualified lead whose main contact has been confirmed; tests about unconfirmed contacts say so.
 const lead = (company: string, extra: Partial<typeof leads.$inferInsert> = {}) => ({
-  company, status: 'Awaiting Approval' as const, contactName: 'Ravi Shah', contactTitle: 'Plant Head', contactEmail: 'ravi@x.com',
+  company, status: 'Approved' as const, contactName: 'Ravi Shah', contactTitle: 'Plant Head', contactEmail: 'ravi@x.com',
   researchSummary: `${company} makes things.`, qualified: true, contactVerifiedAt: new Date(), ...extra,
 });
 
@@ -341,7 +341,7 @@ describe('morning draw', () => {
     // Nobody was given CA firms to make up the numbers.
     expect((await db.select().from(leads)).filter((l) => l.segment === 'CA Firms').every((l) => l.ownerId === null)).toBe(true);
     const team = Object.keys(first!.perOwnerSegment!).map(Number);
-    const short = shortfalls(team, quotaOf(settingsSchema.parse({})), await handsOf(db));
+    const short = shortfalls(new Map(team.map((id) => [id, quotaOf(settingsSchema.parse({}))])), await handsOf(db));
     expect(short.filter((s) => s.segment === M).map((s) => s.short)).toEqual([7, 7, 7, 7]);
     expect(short.filter((s) => s.segment === P).reduce((n, s) => n + s.short, 0)).toBe(27);
     // More leads of each segment arrive later the same day: each associate's own deficits are filled.
@@ -425,11 +425,11 @@ describe('company done for the day', () => {
 describe('pipeline follows the calls', () => {
   it('moves a lead forward from what was logged, never back', async () => {
     const { stageAfterOutreach } = await import('@/lib/stages');
-    expect(stageAfterOutreach('Awaiting Approval', 'call', 'no_answer')).toBe('Contacted');
+    expect(stageAfterOutreach('Approved', 'call', 'no_answer')).toBe('Contacted');
     expect(stageAfterOutreach('Approved', 'whatsapp', 'sent')).toBe('Contacted');
     expect(stageAfterOutreach('Contacted', 'call', 'busy')).toBeNull();
     expect(stageAfterOutreach('Contacted', 'call', 'connected', 'Interested')).toBe('Replied');
-    expect(stageAfterOutreach('Awaiting Approval', 'call', 'connected', 'Demo scheduled')).toBe('Meeting Booked');
+    expect(stageAfterOutreach('Approved', 'call', 'connected', 'Demo scheduled')).toBe('Meeting Booked');
     expect(stageAfterOutreach('Meeting Booked', 'call', 'connected', 'Interested')).toBeNull();
     expect(stageAfterOutreach('Replied', 'call', 'connected', 'Not interested')).toBe('Lost');
     expect(stageAfterOutreach('Lost', 'call', 'no_answer')).toBeNull();
@@ -443,13 +443,13 @@ describe('pipeline follows the calls', () => {
     const { moveAfterOutreach, undoOutreachStage } = await import('@/lib/stages');
     const [l] = await db.insert(leads).values(lead('Acme')).returning();
     const at = new Date();
-    expect(await moveAfterOutreach(db, l.id, 'Contacted', at)).toBe('Awaiting Approval');
+    expect(await moveAfterOutreach(db, l.id, 'Contacted', at)).toBe('Approved');
     let [now] = await db.select().from(leads).where(eq(leads.id, l.id));
     expect(now.status).toBe('Contacted');
     expect(now.nextFollowUpAt).toBeNull();
-    await undoOutreachStage(db, l.id, 'Awaiting Approval', 'Contacted', at);
+    await undoOutreachStage(db, l.id, 'Approved', 'Contacted', at);
     [now] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(now.status).toBe('Awaiting Approval');
+    expect(now.status).toBe('Approved');
     expect(now.sentAt).toBeNull();
     const at2 = new Date();
     await moveAfterOutreach(db, l.id, 'Meeting Booked', at2);
@@ -471,7 +471,7 @@ describe('meetings on the Team page', () => {
     const day = istDay();
     const meetings = async () => (await teamReport(db, day, day)).people.find((p) => p.id === l.ownerId)!.meetings;
     expect(await meetings()).toBe(1);
-    await undoOutreachStage(db, l.id, 'Awaiting Approval', 'Meeting Booked', at);
+    await undoOutreachStage(db, l.id, 'Approved', 'Meeting Booked', at);
     expect(await meetings()).toBe(0);
   });
 });
@@ -1311,15 +1311,16 @@ describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
     return { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
   };
 
-  it('is no longer shown as the main contact, the lead waits for a contact, and nothing addresses the old one', async () => {
+  it('is no longer shown as the main contact, the lead is held back from the draw, and nothing addresses the old one', async () => {
     const db = await getDb();
     const { verifyContact } = await import('@/lib/verify-contacts');
     const { people } = await import('@/lib/db/schema');
-    const [l] = await db.insert(leads).values(lead('NBC Bearings', { city: 'Jaipur', status: 'Awaiting Approval', contactName: 'Govind Gopalia', contactTitle: 'Head Sourcing & Procurement', contactEmail: '', contactVerifiedAt: null })).returning();
+    const [l] = await db.insert(leads).values(lead('NBC Bearings', { city: 'Jaipur', status: 'Approved', contactName: 'Govind Gopalia', contactTitle: 'Head Sourcing & Procurement', contactEmail: '', contactVerifiedAt: null })).returning();
     await db.insert(people).values({ leadId: l.id, name: 'Govind Gopalia', title: 'Head Sourcing & Procurement', isPrimary: true });
     expect(await verifyContact(db, await services(false), l)).toBe('not_found');
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(after).toMatchObject({ contactName: '', status: 'Needs Manual Contact' });
+    // The stage stays; with nobody confirmed, the draw holds it back until someone is.
+    expect(after).toMatchObject({ contactName: '', status: 'Approved' });
     expect((await db.select().from(people).where(eq(people.leadId, l.id)))[0]).toMatchObject({ isPrimary: false, passedReason: 'unverified' });
   });
 
@@ -1328,7 +1329,7 @@ describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
     const { verifyContacts } = await import('@/lib/verify-contacts');
     const { people } = await import('@/lib/db/schema');
     // As the lead page showed it: no contact on the lead, the set-aside person still flagged main contact.
-    const [l] = await db.insert(leads).values(lead('NBC Bearings', { segment: 'Manufacturing', city: 'Jaipur', status: 'Needs Manual Contact', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null, emailBody: 'Hello Rohan,' })).returning();
+    const [l] = await db.insert(leads).values(lead('NBC Bearings', { segment: 'Manufacturing', city: 'Jaipur', status: 'Approved', contactName: '', contactTitle: '', contactEmail: '', contactVerifiedAt: null, emailBody: 'Hello Rohan,' })).returning();
     await db.insert(people).values([
       { leadId: l.id, name: 'Govind Gopalia', title: 'Head Sourcing & Procurement', isPrimary: true, passedAt: new Date(), linkedin: 'https://in.linkedin.com/in/govindgopalia' },
       { leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', passedAt: new Date(), passedReason: 'tried' },
@@ -1338,7 +1339,7 @@ describe('NBC Bearings, Jaipur: a contact set aside as unconfirmed', () => {
     const tally = await verifyContacts(db, svc);
     expect(tally.confirmed, JSON.stringify(tally)).toBeGreaterThanOrEqual(1);
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
-    expect(after).toMatchObject({ contactName: 'Govind Gopalia', contactTitle: 'Head of Procurement', status: 'Awaiting Approval' });
+    expect(after).toMatchObject({ contactName: 'Govind Gopalia', contactTitle: 'Head of Procurement', status: 'Approved' });
     expect(after.contactVerifiedAt).not.toBeNull();
     const rows = await db.select().from(people).where(eq(people.leadId, l.id));
     expect(rows.find((p) => p.name === 'Govind Gopalia')).toMatchObject({ isPrimary: true, passedAt: null });
@@ -1462,7 +1463,7 @@ describe('only confirmed contacts go out', () => {
     expect(kept.passedAt).not.toBeNull();
   });
 
-  it('the morning draw hands out only qualified leads with a confirmed contact, or none yet', async () => {
+  it('the morning draw hands out only qualified leads with a confirmed contact: never one with nobody to contact', async () => {
     const db = await getDb();
     const { runDailyDraw } = await import('@/lib/draw');
     await db.insert(leads).values([
@@ -1473,7 +1474,7 @@ describe('only confirmed contacts go out', () => {
     ]);
     await runDailyDraw(db, { now: new Date('2026-09-28T03:30:00Z'), force: true });
     const owned = (await db.select().from(leads)).filter((l) => l.ownerId !== null).map((l) => l.company).sort();
-    expect(owned).toEqual(['Confirmed Co', 'No Contact Co']);
+    expect(owned).toEqual(['Confirmed Co']);
   });
 });
 
@@ -1624,7 +1625,7 @@ describe('a lead the app found that is on INVECK\'s own list', () => {
     const { KnownBranches } = await import('@/lib/branches');
     const { parseCsv } = await import('@/lib/csv');
     const { settingsSchema } = await import('@/lib/settings');
-    const [found] = await db.insert(leads).values(lead('Wadhokar Group', { city: 'Pune', status: 'Awaiting Approval' })).returning();
+    const [found] = await db.insert(leads).values(lead('Wadhokar Group', { city: 'Pune', status: 'Approved' })).returning();
     const [contacted] = await db.insert(leads).values(lead('Swastik Pipes Ltd', { city: 'New Delhi', status: 'Contacted' })).returning();
     await importKnownCompanies(db, parseCsv('Company Name,Company Location\nWadhokar Group Of Company,\nSwastik Pipe Limited,New Delhi\n'));
     expect(await setAsideOwnLeads(db, OWN_LEAD_REASON)).toEqual(['Wadhokar Group']);

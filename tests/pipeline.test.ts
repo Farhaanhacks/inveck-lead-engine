@@ -65,7 +65,8 @@ beforeEach(async () => {
 describe('full run with DeepSeek-style messy answers', () => {
   it('handles every lead correctly and never crashes', async () => {
     await db.insert(leads).values(TEST_LEADS);
-    const { run } = await startRun(db, { findProspects: true, trigger: 'test' });
+    // The prospect search (people first) has its own tests: tests/morning-sourcing.test.ts.
+    const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     expect(await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY)).toBe('done');
 
     const L = await byCompany();
@@ -78,7 +79,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(log.calls.some((c) => c.includes('haldex'))).toBe(false);
 
     // A malformed AI answer (wrong types, criteria missing) is asked for again; the second one stands.
-    expect(L['Tata Motors'].status).toBe('Awaiting Approval');
+    expect(L['Tata Motors'].status).toBe('Approved');
     expect(L['Tata Motors'].fitStatus).toBe('qualified');
     expect(L['Tata Motors'].fitReason).toBe('6 plants, SAP');
     expect(L['Tata Motors'].fitEvidence.find((e) => e.id === 'M1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.tatamotors.com/' });
@@ -102,24 +103,26 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Bajaj Finance'].fitEvidence.find((e) => e.id === 'D1')).toMatchObject({ status: 'met', verified: true, url: 'https://www.bajajfinserv.in/' });
     expect(L['Bajaj Finance'].fitScore).toBe(1);
 
-    expect(L['Kirtane & Pandit'].status).toBe('Needs Manual Contact');
+    // A CA firm is worked from the firm's own details: it stays Approved with no person named.
+    expect(L['Kirtane & Pandit'].status).toBe('Approved');
     expect(L['Kirtane & Pandit'].emailStatus).toBe('');
 
     // A segment written differently still names its ICP; finding contacts failing leaves the fit alone.
     expect(L['Mystery Castings'].segment).toBe('Manufacturing');
-    expect(L['Mystery Castings'].status).toBe('Needs Manual Contact');
+    expect(L['Mystery Castings'].status).toBe('Deleted');
     expect(L['Mystery Castings']).toMatchObject({ fitStatus: 'qualified', qualified: true, fitScore: 6 });
     expect(L['Mystery Castings'].otherDecisionMakers).toContain('LinkedIn search error');
-    // No contact found, but the email and LinkedIn message are written anyway.
-    expect(L['Mystery Castings'].emailBody).toBeTruthy();
-    expect(L['Mystery Castings'].linkedinMessage).toBeTruthy();
+    // No contact found: it goes to Deleted (restorable) with no draft written, and the reason is recorded.
+    expect(L['Mystery Castings'].emailBody).toBe('');
+    expect(L['Mystery Castings'].statusBeforeDelete).toBe('Approved');
+    expect(L['Mystery Castings'].deletedReason).toMatch(/^No contact found/);
 
-    // An answer that can't be read even when asked again goes to review, never to Disqualified.
-    expect(L['Garbage Output Ltd'].status).toBe('Needs Review');
+    // An answer that can't be read even when asked again is Disqualified as unconfirmed, never as not a fit.
+    expect(L['Garbage Output Ltd']).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(L['Garbage Output Ltd'].qualified).toBeNull();
     expect(L['Garbage Output Ltd'].fitDecision).toContain('Could not read the AI JSON');
 
-    expect(L['Old Segment Co'].status).toBe('Needs Review');
+    expect(L['Old Segment Co']).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
     expect(L['Old Segment Co'].fitDecision).toContain('matches no ICP');
     expect(L['Old Segment Co'].segment).toBe('manufacturing & 3pl');
     expect(log.calls.some((c) => c.includes('oldsegment'))).toBe(false);
@@ -135,7 +138,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['No Draft Industries'].contactEmail).toBe('');
     expect(L['No Draft Industries'].contactPhone).toBe('');
     // Drafting failed: the lead keeps its research and contact, and the draft is retried later.
-    expect(L['No Draft Industries'].status).toBe('Awaiting Approval');
+    expect(L['No Draft Industries'].status).toBe('Approved');
     expect(L['No Draft Industries'].lastError).toMatch(/^Drafting failed \(retrying automatically\)/);
 
     // Not even an address published on the website, nor a guessed format; no email service is called.
@@ -160,7 +163,7 @@ describe('full run with DeepSeek-style messy answers', () => {
     ]);
     // The timeline records what research found.
     const hwTimeline = (await db.select().from(activities).where(eq(activities.leadId, L['Honeywell'].id))).map((a) => a.kind);
-    expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'contact', 'draft']));
+    expect(hwTimeline).toEqual(expect.arrayContaining(['researched', 'contact', 'approved']));
 
     // Everyone found at the company is kept, best first, with no email (none is looked up).
     const tataPeople = await db.select().from(people).where(eq(people.leadId, L['Tata Motors'].id));
@@ -179,18 +182,8 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(L['Finder Co'].contactEmail).toBe('');
     expect(log.calls.some((c) => /hunter\.io|apollo\.io|prospeo\.io/.test(c))).toBe(false);
     expect(L['Catchall Co'].contactEmail).toBe('');
-    expect(L['Catchall Co'].status).toBe('Awaiting Approval'); // reachable on LinkedIn
+    expect(L['Catchall Co'].status).toBe('Approved'); // reachable on LinkedIn
 
-    // Prospect search added new companies but skipped duplicates, clients and directories.
-    expect(L['Bharat Forge Ltd'].source).toBe('Lookalike of Haldex: forging plants');
-    expect(L['Sona Comstar']).toBeDefined();
-    expect(L['Tata Motors Limited']).toBeUndefined();
-    expect(L['Haldex India']).toBeUndefined();
-    expect(L['IndiaMART Listing Co'].website).toBe('');
-    // …and researched them in the same run.
-    expect(L['Bharat Forge Ltd'].status).not.toBe('New');
-
-    expect(finished.stats.prospectsAdded).toBe(3);
     expect(Object.values(L).every((l) => l.status !== 'New' && l.status !== 'Processing')).toBe(true);
   });
 
@@ -307,7 +300,7 @@ describe('full run with Claude', () => {
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     await executeRun(db, run.id, services({ aiProvider: 'anthropic', aiModel: 'claude-opus-5' }), Number.POSITIVE_INFINITY);
     const L = await byCompany();
-    expect(L['Tata Motors'].status).toBe('Awaiting Approval');
+    expect(L['Tata Motors'].status).toBe('Approved');
     expect(L['Bajaj Finance'].status).toBe('Disqualified');
     expect(log.calls.some((c) => c.startsWith('POST api.anthropic.com/v1/messages'))).toBe(true);
     expect(log.calls.some((c) => c.includes('deepseek'))).toBe(false);
@@ -452,7 +445,7 @@ describe('fresh start', () => {
 
     const [ta] = await db.select().from(leads).where(eq(leads.id, a.id));
     expect(ta).toMatchObject({
-      contactName: '', ownerId: null, status: 'Awaiting Approval', callFeedback: '', remark: '', sentAt: null, drawnOn: '', refetchPending: true,
+      contactName: '', ownerId: null, status: 'Approved', callFeedback: '', remark: '', sentAt: null, drawnOn: '', refetchPending: true,
       fitScore: 8, researchSummary: 'Acme makes parts.',
     });
     expect(await db.select().from(people)).toHaveLength(0);
@@ -536,7 +529,7 @@ describe('finding contacts again while search is down', () => {
   it('keeps the saved contacts instead of replacing them with nothing, and doesn\'t retry in a loop', async () => {
     const [l] = await db
       .insert(leads)
-      .values({ company: 'Acme Forgings', website: 'acmeforgings.in', city: 'Jaipur', segment: 'Manufacturing', status: 'Awaiting Approval', qualified: true, fitScore: 8, researchSummary: 'Acme forges parts.', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', refetchPending: true })
+      .values({ company: 'Acme Forgings', website: 'acmeforgings.in', city: 'Jaipur', segment: 'Manufacturing', status: 'Approved', qualified: true, fitScore: 8, researchSummary: 'Acme forges parts.', contactName: 'Rohan Katara', contactTitle: 'Supply Chain Manager', refetchPending: true })
       .returning();
     await db.insert(people).values({ leadId: l.id, name: 'Rohan Katara', title: 'Supply Chain Manager', isPrimary: true });
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
@@ -552,7 +545,7 @@ describe('a company with no contact while search is down', () => {
   it('says the search failed and keeps it waiting for a later run, without retrying in a loop', async () => {
     const [l] = await db
       .insert(leads)
-      .values({ company: 'Mojj Engineering Systems Limited', website: 'mojjpune.com', city: 'Pune', segment: 'Manufacturing', status: 'Needs Manual Contact', qualified: true, fitScore: 8, researchSummary: 'Mojj makes process equipment.', refetchPending: true })
+      .values({ company: 'Mojj Engineering Systems Limited', website: 'mojjpune.com', city: 'Pune', segment: 'Manufacturing', status: 'Approved', qualified: true, fitScore: 8, researchSummary: 'Mojj makes process equipment.', refetchPending: true })
       .returning();
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     const svc = { ...services(), keys: { ...services().keys, serper: 'wrong-key' } };
@@ -568,7 +561,7 @@ describe('stopping a run that is finding contacts again', () => {
   it('stops, and drops the rest of the queue so it does not start again by itself', async () => {
     const rows = await db
       .insert(leads)
-      .values(Array.from({ length: 4 }, (_, i) => ({ company: `Queued ${i}`, status: 'Awaiting Approval' as const, contactName: 'Old Contact', refetchPending: true })))
+      .values(Array.from({ length: 4 }, (_, i) => ({ company: `Queued ${i}`, status: 'Approved' as const, contactName: 'Old Contact', refetchPending: true })))
       .returning();
     const { run } = await startRun(db, { findProspects: false, trigger: 'test' });
     await db.update(runs).set({ cancelRequested: true }).where(eq(runs.id, run.id));

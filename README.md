@@ -183,7 +183,7 @@ page or its Today step.
 
 - **Follow-ups**: five rounds, every other working day, started only by a call saved on Today as No answer, Busy or voicemail, or Wrong number. The day of that call is Day 1; Follow-up 1 to 5 fall 2, 4, 6, 8 and 10 working days later (Saturdays, Sundays and the holidays set in **Settings → Holidays** never count). Each round is a call, a WhatsApp and an email; the AI drafts the round's email when it is due, the team edits it and marks it sent (nothing is sent automatically). A connected call stops the sequence for good. When all five rounds are done (every step done or skipped), the lead moves to **Deleted** as junk: it is only archived, and **Leads → Deleted** lists it with a Restore button. Existing records follow the same rules, from their saved call outcomes (see `src/lib/follow-up-reconcile.ts`).
 - **Buying signals**: qualified leads get a Google News check for new plants, expansions, acquisitions, funding or audit news. The best one opens the draft, and each links to its article.
-- **Pipeline**: a board from Awaiting Approval to Won/Lost; drag cards or use their menu.
+- **Pipeline**: a board from Approved to Won/Lost; drag cards or use their menu. There is no approval step: a company that passes the ICP check after research, with a reachable contact, is Approved straight away (Awaiting Approval was removed on 20 Oct 2026, and leads still in it were moved to Approved, with a note on their timeline).
 - **Timeline**: every lead shows what happened and when, and the team can add notes, calls and meetings.
 - **Dashboard**: the funnel with conversion rates, weekly emails and replies, the best segment and lead source, and follow-ups due.
 
@@ -232,13 +232,36 @@ Each report shows the funnel, every company with its outcome, and each search wi
    \* You need the key for whichever AI provider is selected in Settings.
 4. Redeploy so the variables take effect, then open the site and log in.
 
-A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new
-leads and runs the prospect search on the day chosen in Settings.
+A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
+working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
+`morningStartsOn` setting, which holds the 8 am draw back until then too), finds new prospects **people first**
+(`src/lib/sourcing/morning.ts`): Google searches of LinkedIn profiles with the ICP's P1 and P2 titles (plant
+heads first), each with an industry word and a town; then each person's company page on LinkedIn, screened
+on size, industry, headquarters and whether INVECK already has it (by name, website or LinkedIn page). Each
+company that passes becomes one lead with the people found there, and research makes the ICP check:
+Approved or Disqualified. It finds what the morning draw is short of in each segment (active associates times
+their quota, less the researched leads waiting), with a quarter more for those research rules out, and
+searches again (three rounds at most, none after 07:30) while the draw is still short. A search made in the
+last 30 days isn't made again. Every Google search the app makes is counted against a **daily budget**
+(Settings, 1,500 Serper credits by default; `src/lib/search-budget.ts`): research of companies already found
+comes first, then the 8 am contact checks, then finding more companies, and whatever is left waits for the next
+day. People searches ask for 100 results (2 credits). Research is the same for every company: the full
+search for its people on LinkedIn (the people the morning search found there are added as candidates), its
+LinkedIn page, evidence and news, about 30-50 searches a company. CA firms are
+never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
+segment has ready for the draw, and warns when the searches are running thin.
 
-At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate 20 leads:
-12 Manufacturing + 8 3PL & Logistics (Settings, "Manufacturing leads per associate" and "3PL & Logistics
-leads per associate"), so 80 a day for four associates (48 + 32). Each segment is drawn separately, at random,
-from researched leads nobody has been given yet and dealt round the team, so everyone gets the same mix. A
+To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
+(`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
+researches exactly as the run does, deals each active associate their quota from the pool and what it found,
+and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
+nobody is given anything and no search is remembered, so tomorrow's run starts fresh. CA firms aren't part of it.
+
+At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
+list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from
+the sheet), Parimal and Anuradha 24 Manufacturing + 16 3PL & Logistics each (40 in the 12:8 ratio), so 160 a
+day (128 + 32). Anyone without their own list gets the Settings defaults. Each segment is drawn separately, at
+random, from researched leads nobody has been given yet and dealt round the team. A
 shortage in one segment is shown per associate on the Team page and never filled from the other segment or
 from CA firms (CA firms are not part of this draw); leads that turn up later the same day top up each
 associate's missing segment. A lead is drawn only once. Inbound leads still go out in turn the moment they
@@ -303,7 +326,7 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   call is saved as no answer, busy or wrong number. Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
   an outcome: Not interested, No requirement right now or Already using a solution ticks off everything
   else for that company; any other outcome keeps today's WhatsApp, email and LinkedIn and stops the later
-  rounds. When every step is ticked the company is done for the day. Counters show leads assigned (20: 12 + 8), companies done (target 20), calls
+  rounds. When every step is ticked the company is done for the day. Counters show leads assigned (their daily list), companies done (target 20), calls
   attempted (target 20 a day, per associate), connected calls, WhatsApp, emails and LinkedIn requests.
 - **P2 flow**: after 5 unanswered calls to the point of contact, or a connected call logged as "Not the
   right person", the lead switches to the next person already found at the company (a P2 process owner

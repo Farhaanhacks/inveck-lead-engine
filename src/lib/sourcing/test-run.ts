@@ -1,4 +1,4 @@
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, lt, ne } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, knownCompanies, leads, sourcingTests, type Icp, type SourcingTest } from '../db/schema';
 import { DEFAULT_ICPS } from '../db/seed';
@@ -193,13 +193,21 @@ export async function knownToInveck(db: Db): Promise<Known> {
   return { names, domains };
 }
 
-/** The test now running, if any. A test left "running" past the time limit is marked as stopped first. */
-export async function activeSourcingTest(db: Db): Promise<SourcingTest | null> {
+/**
+ * The test now running, if any: a sourcing test, or a Morning Sample Run (each runs on its own). A test
+ * left "running" past the time limit is marked as stopped first.
+ */
+export async function activeSourcingTest(db: Db, kind: 'test' | 'morning' = 'test'): Promise<SourcingTest | null> {
   await db
     .update(sourcingTests)
     .set({ status: 'failed', error: "Stopped before finishing (the server's time limit). The report shows what it got to.", finishedAt: new Date() })
     .where(and(eq(sourcingTests.status, 'running'), lt(sourcingTests.updatedAt, new Date(Date.now() - SOURCING_LIMITS.staleMinutes * 60_000))));
-  const [running] = await db.select().from(sourcingTests).where(eq(sourcingTests.status, 'running')).orderBy(desc(sourcingTests.id)).limit(1);
+  const [running] = await db
+    .select()
+    .from(sourcingTests)
+    .where(and(eq(sourcingTests.status, 'running'), kind === 'morning' ? eq(sourcingTests.mode, 'morning') : ne(sourcingTests.mode, 'morning')))
+    .orderBy(desc(sourcingTests.id))
+    .limit(1);
   return running ?? null;
 }
 
@@ -219,6 +227,7 @@ export async function runSourcingTest(db: Db, svc: Services, id: number, budgetM
   const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
   if (!test || test.status !== 'running') return 'done';
   if (test.mode === 'people') return runPeopleFirst(db, svc, test, started, budgetMs);
+  if (test.mode === 'morning') return (await import('./sample-run')).runMorningSample(db, svc, test, started, budgetMs);
   const segment = validSegment(test.segment);
   const report: SourcingReport = { segment: test.segment, companySize: '', queries: [], companies: [], searches: { find: 0, facts: 0, people: 0 }, seconds: 0 };
   // Saves one at a time, so a slower save never overwrites a newer one.

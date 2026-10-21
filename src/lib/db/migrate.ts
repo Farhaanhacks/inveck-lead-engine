@@ -311,7 +311,7 @@ export const SCHEMA_STATEMENTS = [
   `DELETE FROM activities WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   `UPDATE leads SET owner_id = NULL, drawn_on = '', call_feedback = '', remark = '', call_remark = '', mail_outcome = '', linkedin_outcome = '',
      sent_at = NULL, follow_up_step = 0, next_follow_up_at = NULL, follow_up_subject = '', follow_up_body = '',
-     status = CASE WHEN status IN ('Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Rejected') THEN 'Awaiting Approval' ELSE status END
+     status = CASE WHEN status IN ('Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Rejected') THEN 'Approved' ELSE status END
    WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   `DELETE FROM settings WHERE (key LIKE 'draw:%' OR key = 'rrNext') AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   // No draw on the day of the fresh start: the first leads go out on the next working morning.
@@ -618,6 +618,25 @@ export const SCHEMA_STATEMENTS = [
   )`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'companies'`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+  // People first in the scheduled run: where its prospect search got to, and each company's LinkedIn page.
+  `ALTER TABLE runs ADD COLUMN IF NOT EXISTS sourcing JSONB`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_linkedin TEXT NOT NULL DEFAULT ''`,
+  // Each associate's own daily list for the morning draw (empty: the Settings numbers).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS draw_manufacturing INTEGER`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS draw_logistics INTEGER`,
+  // INVECK's daily lists (20 Oct 2026), set once: Anchal and Puja 40 Manufacturing each (their CA firms come
+  // apart); Parimal and Anuradha 40 each in the 12:8 ratio, 24 Manufacturing and 16 3PL. Editable on the Team page.
+  `UPDATE users SET draw_manufacturing = 40, draw_logistics = 0
+   WHERE role = 'bda' AND lower(split_part(btrim(name), ' ', 1)) IN ('anchal', 'aanchal', 'puja')
+   AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'drawQuotasV1')`,
+  `UPDATE users SET draw_manufacturing = 24, draw_logistics = 16
+   WHERE role = 'bda' AND lower(split_part(btrim(name), ' ', 1)) IN ('parimal', 'anuradha')
+   AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'drawQuotasV1')`,
+  `INSERT INTO settings (key, value) VALUES ('drawQuotasV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // INVECK's go-live (21 Oct 2026): the new morning search and draw start on Thursday 22 October, not before.
+  // Set once on the live database (a new one has no team yet when this runs, so it starts at once).
+  `INSERT INTO settings (key, value) SELECT 'morningStartsOn', to_jsonb('2026-10-22'::text)
+   WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
   // Clear the current leads before handover (asked for once): every lead and all that hangs off it,
   // research runs, radar finds and the prospect search history. Logins, attendance, ICPs, settings, the
   // clients list and the list of INVECK's own leads stay. Runs once, then never again.
@@ -633,4 +652,10 @@ export const SCHEMA_STATEMENTS = [
   `DELETE FROM leads WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
   `DELETE FROM settings WHERE key = 'rrNext' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearLeadsV2')`,
   `INSERT INTO settings (key, value) VALUES ('clearLeadsV2', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // Awaiting Approval is gone (INVECK's decision, 20 Oct 2026): passing the ICP check is the approval. Leads
+  // still in it become Approved, with a note on their timeline. Matches nothing once done.
+  `INSERT INTO activities (lead_id, kind, text, stage)
+   SELECT id, 'approved', 'Approved: Awaiting Approval was removed, so a company that passed the ICP check is Approved', 'Approved'
+   FROM leads WHERE status = 'Awaiting Approval'`,
+  `UPDATE leads SET status = 'Approved', updated_at = now() WHERE status = 'Awaiting Approval'`,
 ];

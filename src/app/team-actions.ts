@@ -19,7 +19,6 @@ import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { runCaDraw } from '@/lib/ca-sheet';
-import { reconcileContactStatus } from '@/lib/contact-status';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack, waNumber } from '@/lib/phones';
@@ -540,8 +539,6 @@ export async function updateTrackerPhoneAction(id: number, value: string): Promi
     await db.update(leads).set({ contactPhone: phone, updatedAt: now }).where(eq(leads.id, id));
     await db.update(people).set({ phone }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
     await logActivity(db, id, 'contact', phone ? `Number for ${lead.contactName} set to ${phone} (tracker)` : `Number for ${lead.contactName} removed (tracker)`);
-    // A number makes the contact reachable: a lead waiting for one may now be ready.
-    await reconcileContactStatus(db, id);
   } else {
     if (phone === lead.companyPhone) return { ok: true, value: phone };
     await db.update(leads).set({ companyPhone: phone, updatedAt: now }).where(eq(leads.id, id));
@@ -587,6 +584,23 @@ export async function drawNowAction() {
     console.error('[ca-sheet] draw failed:', e instanceof Error ? e.message : e);
   }
   for (const p of ['/team', '/today', '/tracker', '/leads']) revalidatePath(p);
+}
+
+/** An associate's own daily list for the morning draw, per segment (Team page). From the next draw (or a top-up today). */
+export async function saveDrawQuotaAction(form: FormData) {
+  const user = await requireUser();
+  if (user.role !== 'admin') return;
+  const id = Number(form.get('userId'));
+  const count = (name: string) => {
+    const n = Math.round(Number(form.get(name)));
+    return Number.isFinite(n) ? Math.min(200, Math.max(0, n)) : null;
+  };
+  const manufacturing = count('manufacturing');
+  const logistics = count('logistics');
+  if (!id || manufacturing === null || logistics === null) return;
+  const db = await getDb();
+  await db.update(users).set({ drawManufacturing: manufacturing, drawLogistics: logistics }).where(and(eq(users.id, id), eq(users.role, 'bda')));
+  for (const p of ['/team', '/today', '/']) revalidatePath(p);
 }
 
 const QUICK_FIELDS = { contactPhone: 'number', contactLinkedin: 'LinkedIn', contactEmail: 'email' } as const;

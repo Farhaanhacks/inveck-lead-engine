@@ -102,12 +102,12 @@ export function contactAvailability(l: ContactFields, found: PersonFields[] = []
       };
     }
     const detail =
-      l.status === 'Needs Review' || l.status === 'Disqualified' || l.qualified === false
+      l.status === 'Disqualified' || l.qualified === false
         ? 'Contacts are searched once the company is a confirmed fit.'
         : l.status === 'New' || l.status === 'Processing'
           ? 'Not searched yet.'
           : 'Nobody on the ICP lists could be confirmed at this company; the team finds someone.';
-    return { label: 'No contact yet', tone: l.status === 'Needs Manual Contact' ? 'warning' : 'neutral', detail };
+    return { label: 'No contact yet', tone: l.status === 'Approved' ? 'warning' : 'neutral', detail };
   }
   const ways = [l.contactEmail && 'email', l.contactLinkedin && 'LinkedIn'].filter(Boolean);
   return {

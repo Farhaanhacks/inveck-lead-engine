@@ -7,7 +7,7 @@ import { getHolidays } from './holidays';
 import { isCaSegment, isSameDayRetry, istDay } from './tasks';
 
 /** Where an existing lead can be enrolled; any other stage with a qualifying call is left for a person to look at. */
-const ENROLLABLE: LeadStatus[] = ['Awaiting Approval', 'Approved', 'Contacted'];
+const ENROLLABLE: LeadStatus[] = ['Approved', 'Contacted'];
 /** The old plan's rounds (Follow-up 1 to 3 on consecutive days). */
 const OLD_ROUND = /^Follow-up ([1-3])$/;
 

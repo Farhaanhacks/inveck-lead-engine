@@ -23,10 +23,14 @@ export const settingsSchema = z.object({
   logisticsPerAssociate: z.coerce.number().int().min(0).max(100).default(8),
   /** Scan the news for new plants and warehouses on each run. */
   radarEnabled: z.boolean().default(true),
-  /** Most new companies the prospect search adds per run. */
+  /** The fewest new companies "Find new prospects" adds (split across Manufacturing and 3PL by the draw's quotas). */
   prospectsPerRun: z.coerce.number().int().min(1).max(50).default(15),
-  /** On scheduled runs, also search for new prospects on this weekday (0 = Sunday … 6 = Saturday, 7 = every weekday Monday to Friday, -1 = never). */
+  /** No longer used (the weekday the old prospect search ran): see morningSearch. Kept so saved settings still parse. */
   prospectDay: z.coerce.number().int().min(-1).max(7).default(1),
+  /** The 6 am run finds new prospects, people first, for what the 8 am draw is short of (working days, not holidays). */
+  morningSearch: z.boolean().default(true),
+  /** Google search credits the app may spend in a day (India time), everything included: search, research, contact checks. */
+  dailySearchBudget: z.coerce.number().int().min(100).max(50000).default(1500),
   aiProvider: z.enum(['deepseek', 'anthropic']).default('deepseek'),
   aiModel: z.string().trim().min(1).default('deepseek-chat'),
   aiEffort: z.enum(['low', 'medium', 'high']).default('medium'),

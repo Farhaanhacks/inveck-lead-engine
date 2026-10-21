@@ -2,7 +2,6 @@ import { and, asc, eq, exists, inArray, isNotNull, isNull, like, lt, lte, ne, or
 import type { Db } from './db';
 import { activities, icps, leads, people, tasks, type Lead, type Person } from './db/schema';
 import { logActivity } from './activity';
-import { reconcileContactStatus } from './contact-status';
 import { vagueLocation } from './pipeline/employer';
 import { atOtherSite, canBeMain, candidateRank, findLinkedinProfile, rankCandidates, sameName, siteEvidence } from './pipeline/contacts';
 
@@ -30,7 +29,7 @@ import type { Services } from './pipeline/services';
 /** A designation can change; contacts are checked again after this long. */
 const RECHECK_AFTER_DAYS = 30;
 /** Leads whose contact is worth keeping right: being worked, or waiting to be handed out. */
-const LIVE = ['Awaiting Approval', 'Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Needs Manual Contact', 'Low Score'] as const;
+const LIVE = ['Approved', 'Contacted', 'Replied', 'Meeting Booked', 'Low Score'] as const;
 
 /** A real change of role, not the same role written shorter ("Plant Head at Lumax World" vs "Plant Head"). */
 const newRole = (saved: string, found: string) => {
@@ -149,10 +148,7 @@ async function dropFormerEmployees(db: Db, lead: Lead): Promise<number> {
  * rewrites the email for them. Runs on its own; nobody has to press anything.
  */
 export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new Date(), opts: { mainOnly?: boolean } = {}): Promise<CheckResult> {
-  const result = await checkLeadContacts(db, svc, lead, now, opts);
-  // Whatever the check found, the lead's status follows its contact.
-  await reconcileContactStatus(db, lead.id);
-  return result;
+  return checkLeadContacts(db, svc, lead, now, opts);
 }
 
 async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, opts: { mainOnly?: boolean }): Promise<CheckResult> {
@@ -281,10 +277,9 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
       .set({ passedAt: null, passedReason: '', whyNot: '', linkedin: p.linkedin || profile.url, ...(profile.title ? { title: profile.title } : {}) })
       .where(eq(people.id, p.id));
     await makePrimary(db, p.id, { why: 'LinkedIn now confirms them at this company and site' });
-    const reachable = !!(p.linkedin || profile.url) || !!p.email;
     await db
       .update(leads)
-      .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now, ...(lead.status === 'Needs Manual Contact' && reachable ? { status: 'Awaiting Approval' as const } : {}) })
+      .set({ contactCheckedAt: now, contactVerifiedAt: now, contactSince: now })
       .where(eq(leads.id, lead.id));
     if (lead.emailBody) await safely(() => redraftForContact(db, svc, lead.id));
     return 'confirmed';
@@ -299,7 +294,14 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
 export async function verifyContacts(
   db: Db,
   svc: Services,
-  opts: { ownerId?: number; limit?: number; dueToday?: boolean; mainOnly?: boolean } = {},
+  opts: {
+    ownerId?: number;
+    limit?: number;
+    dueToday?: boolean;
+    mainOnly?: boolean;
+    /** What is left of the day's Google search budget: the checks stop before it runs out (the rest are checked another day). */
+    budgetLeft?: () => Promise<number>;
+  } = {},
 ): Promise<Record<CheckResult, number>> {
   const tally: Record<CheckResult, number> = { corrected: 0, confirmed: 0, not_found: 0, left: 0, skipped: 0 };
   const stale = staleBefore();
@@ -362,6 +364,8 @@ export async function verifyContacts(
     .orderBy(sql`${onToday} desc`, sql`${leads.contactCheckedAt} nulls first`, asc(leads.id))
     .limit(opts.limit ?? 50);
   for (let i = 0; i < due.length; i += 5) {
+    // Five companies at a time can cost thirty searches or so.
+    if (opts.budgetLeft && (await opts.budgetLeft()) < 30) break;
     const results = await Promise.allSettled(due.slice(i, i + 5).map((l) => verifyContact(db, svc, l, new Date(), { mainOnly: opts.mainOnly })));
     for (const r of results) tally[r.status === 'fulfilled' ? r.value : 'skipped']++;
   }

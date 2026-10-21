@@ -6,7 +6,7 @@ import { applyStage } from './stages';
 import { KIND_LABEL } from './pipeline/fit';
 
 /** Stages where the fit was the reason the company isn't being worked: what "Reassess fit" is for. */
-export const REASSESSABLE = ['Disqualified', 'Needs Review'] as const;
+export const REASSESSABLE = ['Disqualified'] as const;
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
@@ -74,7 +74,8 @@ export async function confirmFit(db: Db, id: number, by: string, note: string): 
 /** A person decides the company isn't a fit: it is ruled out, and research again keeps that call. */
 export async function markNotFit(db: Db, id: number, by: string, note: string): Promise<boolean> {
   const [l] = await db.select().from(leads).where(eq(leads.id, id));
-  if (!l || l.status !== 'Needs Review') return false;
+  // Only a fit research couldn't confirm: a decided not-fit needs no second ruling.
+  if (!l || l.status !== 'Disqualified' || l.fitStatus !== 'review') return false;
   const decision = `Marked not a fit by ${by}${note ? `: ${note}` : ''}`;
   await logActivity(db, id, 'note', `${decision}.\n${assessmentRecord(l)}`);
   await db.update(leads).set({ fitOverride: 'not_fit', fitStatus: 'not_fit', qualified: false, fitDecision: decision, finalScore: null, updatedAt: new Date() }).where(eq(leads.id, id));

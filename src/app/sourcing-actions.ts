@@ -8,6 +8,7 @@ import { requireAdmin } from '@/lib/access';
 import { requestOrigin } from '@/lib/run-driver';
 import { driveSourcingTest } from '@/lib/sourcing/drive';
 import { activeSourcingTest, SOURCING_LIMITS, validSegment } from '@/lib/sourcing/test-run';
+import type { MorningSampleStart } from '@/lib/sourcing/sample-run';
 
 /**
  * Starts a sourcing test (one at a time) and shows it. It runs after the response; a people-first test
@@ -27,4 +28,23 @@ export async function startSourcingTestAction(form: FormData) {
   const origin = await requestOrigin();
   after(() => driveSourcingTest(test.id, origin));
   redirect(`/sourcing?test=${test.id}`);
+}
+
+/**
+ * Starts a Morning Sample Run (one at a time): tomorrow's 6 am run and 8 am draw on paper. Nothing is
+ * saved as a lead and nobody is given anything; only its report is kept.
+ */
+export async function startMorningSampleAction(form: FormData) {
+  const user = await requireAdmin();
+  const db = await getDb();
+  const running = await activeSourcingTest(db, 'morning');
+  if (running) redirect(`/sourcing?sample=${running.id}#morning`);
+  const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: form.get('fresh') === 'on' };
+  const [test] = await db
+    .insert(sourcingTests)
+    .values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, startedBy: user.id, progress: 'Starting…', report: start })
+    .returning({ id: sourcingTests.id });
+  const origin = await requestOrigin();
+  after(() => driveSourcingTest(test.id, origin));
+  redirect(`/sourcing?sample=${test.id}#morning`);
 }

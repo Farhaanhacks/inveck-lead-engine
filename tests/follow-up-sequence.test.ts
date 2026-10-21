@@ -40,7 +40,7 @@ const rounds = (leadId: number) => db.select().from(tasks).where(and(eq(tasks.le
 const leadOf = async (id: number) => (await db.select().from(leads).where(eq(leads.id, id)))[0];
 /** A lead with its Day 1 steps planned and due today. */
 async function mk(extra: Partial<typeof leads.$inferInsert> = {}) {
-  const [l] = await db.insert(leads).values({ company: 'Seq Co', segment: 'Manufacturing', status: 'Awaiting Approval', ownerId: me.id, contactName: 'Ravi Shah', contactTitle: 'Plant Head', contactPhone: '9800000001', ...extra }).returning();
+  const [l] = await db.insert(leads).values({ company: 'Seq Co', segment: 'Manufacturing', status: 'Approved', ownerId: me.id, contactName: 'Ravi Shah', contactTitle: 'Plant Head', contactPhone: '9800000001', ...extra }).returning();
   await ensureSequences(db, today());
   await db.update(tasks).set({ dueDate: today() }).where(eq(tasks.leadId, l.id));
   return l;

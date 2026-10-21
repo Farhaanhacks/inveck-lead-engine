@@ -232,7 +232,7 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
     message:
       `Added ${toAdd.length} ${toAdd.length === 1 ? 'company' : 'companies'}${skipped ? `, skipped ${skipped} already a lead or a client` : ''}.${toAdd.length ? ' Researching now; progress is on the dashboard.' : ''}` +
       (unmatched.length && toAdd.length
-        ? ` Segment ${unmatched.map((s) => `"${s || 'none'}"`).join(', ')} matches no active ICP: those companies wait in Needs Review until a segment is chosen.`
+        ? ` Segment ${unmatched.map((s) => `"${s || 'none'}"`).join(', ')} matches no active ICP: those companies are Disqualified until a segment is chosen (choose one, then Reassess fit).`
         : ''),
   };
 }
@@ -778,7 +778,9 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
     logisticsPerAssociate: str(form, 'logisticsPerAssociate'),
     radarEnabled: form.get('radarEnabled') === 'on',
     prospectsPerRun: str(form, 'prospectsPerRun'),
-    prospectDay: str(form, 'prospectDay'),
+    prospectDay: current.prospectDay,
+    morningSearch: form.get('morningSearch') === 'on',
+    dailySearchBudget: str(form, 'dailySearchBudget'),
     aiProvider: provider,
     aiModel: model,
     aiEffort: str(form, 'aiEffort'),
