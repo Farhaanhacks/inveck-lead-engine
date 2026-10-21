@@ -7,7 +7,7 @@ import { sourcingTests } from '@/lib/db/schema';
 import { requireAdmin } from '@/lib/access';
 import { requestOrigin } from '@/lib/run-driver';
 import { driveSourcingTest } from '@/lib/sourcing/drive';
-import { activeSourcingTest, SOURCING_LIMITS, validSegment } from '@/lib/sourcing/test-run';
+import { activeSourcingTest, reopenTest, SOURCING_LIMITS, validSegment } from '@/lib/sourcing/test-run';
 import type { MorningSampleStart } from '@/lib/sourcing/sample-run';
 
 /**
@@ -47,4 +47,21 @@ export async function startMorningSampleAction(form: FormData) {
   const origin = await requestOrigin();
   after(() => driveSourcingTest(test.id, origin));
   redirect(`/sourcing?sample=${test.id}#morning`);
+}
+
+/**
+ * Carries on a Morning Sample Run that stopped for the server's time limit, from where it got to: nothing
+ * it already searched or researched is done again.
+ */
+export async function carryOnSampleAction(form: FormData) {
+  await requireAdmin();
+  const id = Number(form.get('id'));
+  const db = await getDb();
+  const running = await activeSourcingTest(db, 'morning');
+  if (running) redirect(`/sourcing?sample=${running.id}#morning`);
+  if (id && (await reopenTest(db, id))) {
+    const origin = await requestOrigin();
+    after(() => driveSourcingTest(id, origin));
+  }
+  redirect(`/sourcing?sample=${id}#morning`);
 }

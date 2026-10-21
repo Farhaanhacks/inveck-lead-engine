@@ -232,6 +232,14 @@ Each report shows the funnel, every company with its outcome, and each search wi
    \* You need the key for whichever AI provider is selected in Settings.
 4. Redeploy so the variables take effect, then open the site and log in.
 
+**Long runs and Vercel's limit on hand-offs.** A run (or a Sourcing test or Morning Sample Run) longer than
+one invocation (300 s) hands itself to the next by calling the app's own address. Vercel ends such a chain
+after a few hand-offs (`508 INFINITE_LOOP_DETECTED`), so the run then pauses, with everything it did saved,
+and the next fresh request picks it up again: a page opened (Dashboard, Leads, Today, Team, or the Sourcing
+page while a test runs), the 8 am draw, or the checks every 10 minutes from 06:10 to 07:50 IST
+(`/api/cron/resume` in `vercel.json`). A Morning Sample Run stopped that way before this existed can be carried
+on from where it got to ("Carry on from here").
+
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
 working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
 `morningStartsOn` setting, which holds the 8 am draw back until then too), finds new prospects **people first**

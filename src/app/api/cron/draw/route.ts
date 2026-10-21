@@ -4,7 +4,7 @@ import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { getDraw, runDailyDraw, topUpDraw } from '@/lib/draw';
 import { runCaDraw } from '@/lib/ca-sheet';
-import { driveRun } from '@/lib/run-driver';
+import { driveRun, resumeStalledRun } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
 import { liveServices } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
@@ -23,6 +23,8 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
   const db = await getDb();
+  // The 6 am run, if it stalled (its chain of invocations ended), carries on from here.
+  await resumeStalledRun(new URL(request.url).origin);
   // Each step on its own: a failure in one (a search quota, a slow lookup) never stops the draw.
   // Every contact the team will see today checked on LinkedIn first: profile and current designation.
   const svc = await liveServices();

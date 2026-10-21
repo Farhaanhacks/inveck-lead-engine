@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, ne } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, knownCompanies, leads, sourcingTests, type Icp, type SourcingTest } from '../db/schema';
 import { DEFAULT_ICPS } from '../db/seed';
@@ -6,6 +6,7 @@ import { googleSearch, mapLimit, type SerperResult, type Services } from '../pip
 import { searchLinkedIn } from '../pipeline/contacts';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
+import { RESUME_AFTER_MS } from '../invocations';
 import { contactPriority, tierOf } from '../tiers';
 import { factsQuery, hqAbroad, needsFacts, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
 import { companyQuery, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
@@ -38,8 +39,8 @@ export const SOURCING_LIMITS = {
   quietSearches: 120,
   /** The test stops checking people after this long (the server allows 300s). */
   seconds: 240,
-  /** A test that hasn't saved anything for this long was stopped by the server's time limit. */
-  staleMinutes: 8,
+  /** A test that hasn't saved anything for this long is closed as stopped (one that stalls sooner is picked up again first). */
+  staleMinutes: 45,
 } as const;
 
 export type QueryReport = { q: string; form: PlannedQuery['form']; page: number; results: number; pages: number; newPages: number; passed: number; error?: string };
@@ -209,6 +210,52 @@ export async function activeSourcingTest(db: Db, kind: 'test' | 'morning' = 'tes
     .orderBy(desc(sourcingTests.id))
     .limit(1);
   return running ?? null;
+}
+
+/** Messages a test stops with when it couldn't carry on in a new invocation: what it got to is saved. */
+const STOPPED_FOR_TIME = [/^Could not carry on after the server's time limit/, /^Stopped before finishing \(the server's time limit\)/];
+
+/** Whether a stopped test can carry on from where it got to (it stopped for the server's time, not an error of its own). */
+export function canCarryOn(t: Pick<SourcingTest, 'status' | 'error'>): boolean {
+  return t.status === 'failed' && STOPPED_FOR_TIME.some((r) => r.test(t.error));
+}
+
+/** Puts a test that stopped for the server's time back to running, to carry on where it got to. False when it can't. */
+export async function reopenTest(db: Db, id: number): Promise<boolean> {
+  const [t] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+  if (!t || !canCarryOn(t)) return false;
+  const reopened = await db
+    .update(sourcingTests)
+    .set({ status: 'running', error: '', finishedAt: null, progress: 'Carrying on from where it got to…', updatedAt: new Date() })
+    .where(and(eq(sourcingTests.id, id), eq(sourcingTests.status, 'failed')))
+    .returning({ id: sourcingTests.id });
+  return reopened.length > 0;
+}
+
+/**
+ * Tests running whose invocations stopped (the next couldn't be called, or one died): claimed for carrying
+ * on, each by one caller only. Empty when none, or they're still working.
+ */
+export async function claimStalledTests(db: Db, now = new Date()): Promise<SourcingTest[]> {
+  return db
+    .update(sourcingTests)
+    .set({ updatedAt: now })
+    .where(
+      and(
+        eq(sourcingTests.status, 'running'),
+        lt(sourcingTests.updatedAt, new Date(now.getTime() - RESUME_AFTER_MS)),
+        gt(sourcingTests.updatedAt, new Date(now.getTime() - SOURCING_LIMITS.staleMinutes * 60_000)),
+      ),
+    )
+    .returning();
+}
+
+/** A test whose next invocation couldn't be called: ready to be picked up again by the next request (the page open on it). */
+export async function markTestPaused(db: Db, id: number) {
+  await db
+    .update(sourcingTests)
+    .set({ updatedAt: new Date(Date.now() - RESUME_AFTER_MS - 1000), progress: 'Paused for a moment: it carries on by itself while this page is open…' })
+    .where(and(eq(sourcingTests.id, id), eq(sourcingTests.status, 'running')));
 }
 
 export function validSegment(s: string): SourcingSegment | null {

@@ -435,7 +435,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   let active = workers.slice();
   while (active.length) {
     // Out of this invocation's time (after doing something, so every invocation gets further).
-    if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.6) {
+    if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.85) {
       await saveAll();
       return 'continue';
     }

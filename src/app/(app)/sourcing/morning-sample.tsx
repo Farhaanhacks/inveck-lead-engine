@@ -11,7 +11,8 @@ import { TierBadge } from '@/components/tier-badge';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
-import { startMorningSampleAction } from '@/app/sourcing-actions';
+import { carryOnSampleAction, startMorningSampleAction } from '@/app/sourcing-actions';
+import { canCarryOn } from '@/lib/sourcing/test-run';
 import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
@@ -386,6 +387,13 @@ export function MorningSample({
           {test.status === 'running' && <AutoRefresh />}
           {test.progress && <p className="mb-3 text-sm text-ink-2" role="status">{test.progress}</p>}
           {test.error && <p className="mb-3 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink">{test.error}</p>}
+          {canCarryOn(test) && !running && (
+            <form action={carryOnSampleAction} className="mb-3 flex flex-wrap items-center gap-3">
+              <input type="hidden" name="id" value={test.id} />
+              <SubmitButton pendingText="Carrying on…">Carry on from here</SubmitButton>
+              <span className="text-xs text-muted">Picks up where it stopped: what it already searched and researched isn&apos;t done (or paid for) again.</span>
+            </form>
+          )}
 
           {r && (
             <div className="mb-4 grid gap-3 sm:grid-cols-2">

@@ -28,7 +28,7 @@ import type { FoundContact } from './people-first';
  */
 
 /** Leads researched at a time, as in the run. */
-const CONCURRENCY = 3;
+const CONCURRENCY = 5;
 
 /** Someone at a company, as research left them. */
 export type SamplePerson = { name: string; title: string; tier: string; linkedin: string; location: string; isPrimary: boolean; setAside: boolean; whyNot: string };
@@ -165,7 +165,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 
     for (let step = 0; ; step++) {
       if (r.phase === 'search') {
-        if (step > 0 && outOfTime(0.6)) break;
+        if (step > 0 && outOfTime(0.85)) break;
         const outcome = await searchRound(db, metered, r.search!, {
           started,
           budgetMs,

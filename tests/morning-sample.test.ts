@@ -148,6 +148,30 @@ describe('the Morning Sample Run', () => {
     expect(r.hands.reduce((a, h) => a + h.cards.length, 0)).toBe(3);
   });
 
+  it("stopped by the server partway (Vercel ending its chain), it carries on from where it got to and gets to the same end", async () => {
+    const { reopenTest } = await import('@/lib/sourcing/test-run');
+    const id = await startSample();
+    // Two invocations' worth, then the old way of stopping: failed, with the report kept.
+    for (let i = 0; i < 2; i++) expect(await runSourcingTest(db, morningServices(log), id, 0)).toBe('continue');
+    const before = (await reportOf(id)).companies.length;
+    await db.update(sourcingTests).set({ status: 'failed', error: "Could not carry on after the server's time limit: 508 Infinite loop detected. The report shows what it got to.", finishedAt: new Date() }).where(eq(sourcingTests.id, id));
+    expect(await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY)).toBe('done');
+    // The page offers to carry on.
+    const [stopped] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const page = (running: boolean) => renderToStaticMarkup(createElement(MorningSample, { test: stopped, running, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(page(false)).toContain('Carry on from here');
+    expect(page(true)).not.toContain('Carry on from here');
+    expect(await reopenTest(db, id)).toBe(true);
+    const searchesBefore = log.calls.length;
+    expect(await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY)).toBe('done');
+    const r = await reportOf(id);
+    expect(r.phase).toBe('done');
+    expect(r.companies.length).toBeGreaterThanOrEqual(before);
+    expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+    expect(r.hands.reduce((a, h) => a + h.cards.length, 0)).toBe(3);
+    expect(log.calls.length).toBeGreaterThan(searchesBefore);
+  });
+
   it("shows the first morning the draw runs, when that's later than the next one", async () => {
     await db.insert(settings).values({ key: 'morningStartsOn', value: '2030-01-10' });
     const id = await startSample();

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { listKnownCompanies } from './known-companies';
 import { KnownBranches } from './branches';
@@ -18,27 +18,60 @@ import { scanRadar } from './pipeline/radar';
 import { logActivity } from './activity';
 import type { LeadResult, LeadUpdate } from './pipeline/process-lead';
 import { savePeople } from './people';
+import { RESUME_AFTER_MS } from './invocations';
 import { assignUnowned } from './assign';
 
 const EMPTY_STATS: RunStats = { prospectsAdded: 0, processed: 0, drafted: 0, disqualified: 0, needsReview: 0, existingClients: 0, errors: 0 };
-/** A run with no heartbeat for this long is considered dead (its function timed out or crashed). */
+/** A lead in "Processing" this long was being researched by an invocation that timed out or crashed. */
 const STALE_MS = 10 * 60 * 1000;
+/**
+ * A run with no heartbeat for this long is closed as dead. One that stalls sooner (Vercel ends a long
+ * chain of invocations each calling the next, after a few) is picked up again first: see claimStalledRun.
+ */
+const RUN_STALE_MS = 45 * 60 * 1000;
+/** Times a run is picked up again before it's closed as failed (one that keeps dying isn't retried forever). */
+export const MAX_RESUMES = 40;
 /** Research attempts that time out before a lead stops being retried (it goes to Error; Research again resets it). */
 export const MAX_RESEARCH_ATTEMPTS = 2;
 /** How far back the prospect finder looks: searches not to repeat, and companies already turned up. */
 const SEARCH_MEMORY_DAYS = 90;
 const SEEN_MEMORY_DAYS = 180;
 /** Leads researched in parallel. */
-const CONCURRENCY = 3;
+const CONCURRENCY = 5;
 
 export async function activeRun(db: Db): Promise<Run | undefined> {
   const [run] = await db.select().from(runs).where(eq(runs.status, 'running')).orderBy(desc(runs.id)).limit(1);
   if (!run) return undefined;
-  if (Date.now() - new Date(run.heartbeatAt).getTime() > STALE_MS) {
+  if (Date.now() - new Date(run.heartbeatAt).getTime() > RUN_STALE_MS) {
     await db.update(runs).set({ status: 'failed', error: 'Stopped responding', finishedAt: new Date() }).where(eq(runs.id, run.id));
     return undefined;
   }
   return run;
+}
+
+/**
+ * The run now running, if its invocations stopped (the next couldn't be called, or one died): claimed for
+ * carrying on, by one caller only (its heartbeat moves on). Null when there's none, or one is still working.
+ */
+export async function claimStalledRun(db: Db, now = new Date()): Promise<Run | null> {
+  const [run] = await db
+    .update(runs)
+    .set({ heartbeatAt: now })
+    .where(
+      and(
+        eq(runs.id, sql`(select max(${runs.id}) from ${runs} where ${runs.status} = 'running')`),
+        eq(runs.status, 'running'),
+        lt(runs.heartbeatAt, new Date(now.getTime() - RESUME_AFTER_MS)),
+        gt(runs.heartbeatAt, new Date(now.getTime() - RUN_STALE_MS)),
+      ),
+    )
+    .returning();
+  return run ?? null;
+}
+
+/** A run whose next invocation couldn't be called: ready to be picked up again by the next request. */
+export async function markRunPaused(db: Db, runId: number) {
+  await db.update(runs).set({ heartbeatAt: new Date(Date.now() - RESUME_AFTER_MS - 1000) }).where(and(eq(runs.id, runId), eq(runs.status, 'running')));
 }
 
 /** Starts a run, or returns the one already running (only one at a time). */
