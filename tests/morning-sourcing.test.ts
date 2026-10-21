@@ -11,7 +11,10 @@ import { settingsSchema, saveSettings } from '@/lib/settings';
 import { istDay } from '@/lib/tasks';
 import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, searchesThisMorning, type MorningSourcing } from '@/lib/sourcing/morning';
 import { fakeFetch, type FakeLog } from './fake-apis';
-import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
+import { dbSearchMeter, searchBudgetLeft, searchesUsed } from '@/lib/search-budget';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MorningCard } from '@/components/morning-card';
 import { processLead } from '@/lib/pipeline/process-lead';
 import { verifyContacts } from '@/lib/verify-contacts';
 import { sampleLead } from '@/lib/sourcing/sample-run';
@@ -101,10 +104,11 @@ describe('the 6 am run, people first', () => {
       [MANUFACTURING, 1, 1, 1, 2],
       [LOGISTICS, 1, 1, 1, 2],
     ]);
-    // Every search of the day is counted (the search and the research), against the budget.
+    // Every search of the day is counted (the search and the research); there's no daily limit unless one is set.
     expect(health.searchesToday).toBeGreaterThanOrEqual(sourcing.searches);
     expect(health.searchesToday).toBe(await searchesUsed(db));
-    expect(health.budget).toBe(1500);
+    expect(health.budget).toBe(0);
+    expect(renderToStaticMarkup(createElement(MorningCard, { health }))).toContain('credits, no daily limit');
     // This small world ran out of new people before the search had what it wanted: a sign the market is thin.
     expect(health.thin).toEqual([expect.stringMatching(/^Manufacturing: 1 of the last 1 rounds stopped short/), expect.stringMatching(/^3PL & Logistics: 1 of the last 1 rounds/)]);
 
@@ -187,8 +191,8 @@ describe('the search plan', () => {
   it('starts no new round after 7:30 am India time', () => {
     expect(beforeLastRound(new Date('2026-10-21T01:30:00Z'))).toBe(true); // 7:00 IST
     expect(beforeLastRound(new Date('2026-10-21T02:05:00Z'))).toBe(false); // 7:35 IST
-    // The whole day's Google searches are capped instead (Settings, 1,500 by default).
-    expect(settingsSchema.parse({}).dailySearchBudget).toBe(1500);
+    // There is no daily Google search limit unless one is set in Settings.
+    expect(settingsSchema.parse({}).dailySearchBudget).toBe(0);
     expect(MORNING_LIMITS.rounds).toBe(3);
   });
 });
@@ -253,7 +257,7 @@ describe('the day the morning search and draw start', () => {
 
 
 describe("the day's Google search budget", () => {
-  it('people searches ask for a hundred results at a time (2 credits)', async () => {
+  it('people searches ask for ten results at a time (1 credit)', async () => {
     const bodies: { q: string; num: number }[] = [];
     const base = services();
     const svc = {
@@ -269,7 +273,7 @@ describe("the day's Google search budget", () => {
     const words = Object.values(PEOPLE_KEYWORDS).flat();
     const people = bodies.filter((b) => b.q.startsWith('site:linkedin.com/in ') && words.some((w) => b.q.includes(`"${w}"`)));
     expect(people.length).toBeGreaterThan(0);
-    expect(people.every((b) => b.num === 100)).toBe(true);
+    expect(people.every((b) => b.num === 10)).toBe(true);
   });
 
   it('a company found people first still gets the full search for its people, with those found kept as candidates', async () => {
@@ -299,12 +303,24 @@ describe("the day's Google search budget", () => {
     const meter = dbSearchMeter(db);
     await meter.spend(1490);
     const { run } = await startRun(db, { findProspects: false, trigger: 'schedule' });
-    expect(await executeRun(db, run.id, services([], { meter }), Number.POSITIVE_INFINITY)).toBe('done');
+    expect(await executeRun(db, run.id, services([], { meter, budget: 1500 }), Number.POSITIVE_INFINITY)).toBe('done');
     const rows = await db.select().from(leads).where(eq(leads.segment, MANUFACTURING));
     expect(rows.filter((l) => l.company.startsWith('Waiting Co')).every((l) => l.status === 'New')).toBe(true);
     const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
     expect(events.some((e) => /search budget .* is used: 4 companies wait/.test(e.message))).toBe(true);
     expect(await searchesUsed(db)).toBe(1490);
+  });
+
+  it('with no daily limit (the default), every waiting company is researched however many searches were made, and they are all counted', async () => {
+    await db.insert(leads).values(Array.from({ length: 4 }, (_, i) => ({ company: `Waiting Co ${i}`, website: `waiting${i}.in`, segment: MANUFACTURING })));
+    const meter = dbSearchMeter(db);
+    await meter.spend(20000);
+    const { run } = await startRun(db, { findProspects: false, trigger: 'schedule' });
+    expect(await executeRun(db, run.id, services([], { meter }), Number.POSITIVE_INFINITY)).toBe('done');
+    const rows = await db.select().from(leads).where(eq(leads.segment, MANUFACTURING));
+    expect(rows.filter((l) => l.company.startsWith('Waiting Co')).some((l) => l.status === 'New')).toBe(false);
+    expect(await searchesUsed(db)).toBeGreaterThan(20000);
+    expect(await searchBudgetLeft(db, settingsSchema.parse({}))).toBe(Number.POSITIVE_INFINITY);
   });
 
   it('the contact checks stop when the budget is used', async () => {

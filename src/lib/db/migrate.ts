@@ -658,4 +658,9 @@ export const SCHEMA_STATEMENTS = [
    SELECT id, 'approved', 'Approved: Awaiting Approval was removed, so a company that passed the ICP check is Approved', 'Approved'
    FROM leads WHERE status = 'Awaiting Approval'`,
   `UPDATE leads SET status = 'Approved', updated_at = now() WHERE status = 'Awaiting Approval'`,
+  // No daily Google search limit for now (INVECK's decision, 21 Oct 2026), to see what a run really uses: a
+  // budget saved in Settings before is cleared once. One can be set again in Settings.
+  `UPDATE settings SET value = value - 'dailySearchBudget'
+   WHERE key = 'app' AND jsonb_typeof(value) = 'object' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'searchBudgetOffV1')`,
+  `INSERT INTO settings (key, value) VALUES ('searchBudgetOffV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
 ];

@@ -29,8 +29,8 @@ export const settingsSchema = z.object({
   prospectDay: z.coerce.number().int().min(-1).max(7).default(1),
   /** The 6 am run finds new prospects, people first, for what the 8 am draw is short of (working days, not holidays). */
   morningSearch: z.boolean().default(true),
-  /** Google search credits the app may spend in a day (India time), everything included: search, research, contact checks. */
-  dailySearchBudget: z.coerce.number().int().min(100).max(50000).default(1500),
+  /** Google search credits the app may spend in a day (India time), everything included: search, research, contact checks. 0: no daily limit (the default). */
+  dailySearchBudget: z.coerce.number().int().min(0).max(50000).default(0),
   aiProvider: z.enum(['deepseek', 'anthropic']).default('deepseek'),
   aiModel: z.string().trim().min(1).default('deepseek-chat'),
   aiEffort: z.enum(['low', 'medium', 'high']).default('medium'),

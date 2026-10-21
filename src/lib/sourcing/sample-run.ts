@@ -91,7 +91,7 @@ export type MorningSampleReport = {
   searches: number;
   researched: number;
   seconds: number;
-  /** Google search credits the sample spent (search and research), against the day's budget when it started. Absent on samples from before the budget. */
+  /** Google search credits the sample spent (search and research), against the day's budget when it started (none: no daily limit). Absent on samples from before the budget. */
   credits?: number;
   budget?: number;
 };
@@ -281,7 +281,7 @@ async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSamp
     wanted[s] = Math.ceil(short * MORNING_LIMITS.headroom);
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
   }
-  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget, credits: 0, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
+  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget || undefined, credits: 0, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
 }
 
 /** Researches a few of the sample's companies exactly as the run would (the ICP check, contacts, drafts), keeping the result in the report. */
@@ -391,9 +391,11 @@ export function summaryOf(r: MorningSampleReport): string {
   return `${r.companies.length} companies found, ${approved} approved with a confirmed contact${waiting ? `, ${waiting} left for the next day (over the search budget)` : ''}; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates. ${credits(r)}.`;
 }
 
-/** The Google search credits a sample spent, against the day's budget. */
+/** The Google search credits a sample spent, against the day's budget when there is one. */
 function credits(r: MorningSampleReport): string {
-  return r.budget ? `${(r.credits ?? 0).toLocaleString('en-IN')} of the day's ${r.budget.toLocaleString('en-IN')} Google search credits` : `${r.searches} Google searches`;
+  const used = (r.credits ?? 0).toLocaleString('en-IN');
+  if (r.budget) return `${used} of the day's ${r.budget.toLocaleString('en-IN')} Google search credits`;
+  return r.credits === undefined ? `${r.searches} Google searches` : `${used} Google search credits`;
 }
 
 /** A card's lead and people, wherever it came from. */

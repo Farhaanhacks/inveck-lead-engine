@@ -35,8 +35,8 @@ const PEOPLE_FIRST_EVIDENCE = 'Found by the people-first search: their LinkedIn 
 export const MORNING_LIMITS = {
   /** Times one run searches again after research ruled companies out. */
   rounds: 3,
-  /** A segment stops when this many searches in a row (a hundred results each) found nobody new on the ICP's lists. */
-  quietSearches: 40,
+  /** A segment stops when this many searches in a row found nobody new on the ICP's lists. */
+  quietSearches: 150,
   /** A search made in this many days is not made again. */
   memoryDays: 30,
   /** Companies asked for above the shortfall, for those research rules out. */
@@ -258,8 +258,8 @@ export type RoundOptions = {
   sink: RoundSink;
 };
 
-/** Results asked for in one people search: up to a hundred, for 2 credits instead of 1 for ten. */
-export const PEOPLE_RESULTS = 100;
+/** Results asked for in one people search: ten, for 1 credit. */
+export const PEOPLE_RESULTS = 10;
 /** The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks. */
 const STEP_CREDITS = 8 * searchCredits(PEOPLE_RESULTS);
 
@@ -545,7 +545,7 @@ export type MorningHealth = {
   run: { id: number; status: Run['status']; startedAt: Date; finishedAt: Date | null; added: number; researched: number; approved: number; disqualified: number; searches: number; rounds: number; error: string } | null;
   /** Per segment: what the draw needs, what's ready for it now, and what today's search found against what it wanted. */
   segments: { segment: SourcingSegment; need: number; ready: number; waiting: number; found: number; wanted: number; stopped?: MorningSegment['stopped'] }[];
-  /** Google search credits spent today, everything included, and the day's budget. */
+  /** Google search credits spent today, everything included, and the day's budget (0: no daily limit). */
   searchesToday: number;
   budget: number;
   /** Signs the searches are running out of new companies, from the last few scheduled runs. */
