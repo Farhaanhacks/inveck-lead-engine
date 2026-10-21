@@ -69,18 +69,6 @@ function remember(company: string, known: Known) {
 }
 
 /**
- * A company's LinkedIn page found another way (by the people-first search): remembered as if it had
- * been looked up, so research doesn't search for it again.
- */
-export async function knowFirmPage(svc: Pick<Services, 'cache'>, company: string, website: string | null | undefined, page: FirmPage): Promise<void> {
-  registerFirmWebsite(company, website);
-  const known: Known = { names: [page.name], page: { name: page.name, url: page.url, size: page.size, followers: page.followers, text: page.text }, at: new Date().toISOString() };
-  remember(company, known);
-  const domain = rootDomain(website);
-  if (domain) await svc.cache?.set(`linkedin-page:v2:${domain}`, known).catch(() => {});
-}
-
-/**
  * What an earlier lookup found, with no search (for jobs that have only the database): true when
  * the company's LinkedIn page was looked up before. A lookup from before sizes were read gives its
  * names, and the page is looked up again when there is a search to spend.
@@ -110,8 +98,7 @@ const townOf = (city: string) => city.split(',')[0].trim().toLowerCase();
  * throws. Returns the page when it is known.
  */
 export async function learnFirm(svc: Services, company: string, website: string | null | undefined, opts: { cacheOnly?: boolean; city?: string } = {}): Promise<FirmPage | null> {
-  // Known already (looked up earlier, or found by the people-first search): no search.
-  if (pages.has(firmKey(company)) || (await recallFirm(svc.cache, company, website)) || opts.cacheOnly || !svc.keys.serper) return firmPageOf(company);
+  if ((await recallFirm(svc.cache, company, website)) || opts.cacheOnly || !svc.keys.serper) return firmPageOf(company);
   const domain = rootDomain(website);
   if (!domain || !company.trim()) return null;
   try {

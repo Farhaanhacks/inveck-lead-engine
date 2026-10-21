@@ -16,6 +16,7 @@ import { processLead } from '@/lib/pipeline/process-lead';
 import { verifyContacts } from '@/lib/verify-contacts';
 import { sampleLead } from '@/lib/sourcing/sample-run';
 import { asLinkedInFinds } from '@/lib/sourcing/morning';
+import { PEOPLE_KEYWORDS } from '@/lib/sourcing/people-first';
 import { icps, runEvents } from '@/lib/db/schema';
 import { morningServices } from './morning-world';
 
@@ -68,8 +69,6 @@ describe('the 6 am run, people first', () => {
     // Everyone found there is kept, on the lists.
     const found = await db.select().from(people).where(eq(people.leadId, by['Forgeline Components'].id));
     expect(found.map((p) => p.name)).toEqual(expect.arrayContaining(['Rahul Patil', 'Sunita Rao']));
-    // Found on LinkedIn moments ago: the morning contact check doesn't search for them again.
-    for (const name of ['Rahul Patil', 'Sunita Rao']) expect(found.find((p) => p.name === name)!.checkedAt).not.toBeNull();
 
     expect(by['Swift Warehousing Solutions']).toMatchObject({ segment: LOGISTICS, status: 'Approved', contactName: 'Deepak Nair' });
     // Too small on its LinkedIn page: never a lead. Already known: not added twice.
@@ -266,12 +265,14 @@ describe("the day's Google search budget", () => {
     };
     const { run } = await startRun(db, { findProspects: true, trigger: 'schedule' });
     await executeRun(db, run.id, svc, Number.POSITIVE_INFINITY);
-    const people = bodies.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing|[a-z ]+)" /.test(b.q) && b.q.split('"').length >= 5);
+    // The morning search's people searches: a title and one of the industry words (research's own searches name the company).
+    const words = Object.values(PEOPLE_KEYWORDS).flat();
+    const people = bodies.filter((b) => b.q.startsWith('site:linkedin.com/in ') && words.some((w) => b.q.includes(`"${w}"`)));
     expect(people.length).toBeGreaterThan(0);
     expect(people.every((b) => b.num === 100)).toBe(true);
   });
 
-  it('a company found people first is researched with its own people: a handful of searches, not thirty', async () => {
+  it('a company found people first still gets the full search for its people, with those found kept as candidates', async () => {
     let serper = 0;
     const base = fakeFetch(log);
     const svc = { ...services(), fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base(u, i))) as typeof fetch };
@@ -280,20 +281,8 @@ describe("the day's Google search budget", () => {
     const r = await processLead(svc, lead, { icps: await db.select().from(icps), clients: [] }, async () => {}, { teamContact: false, found });
     expect(r).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil' });
     expect(r.contactVerifiedAt).toBeTruthy();
-    expect(serper).toBeLessThanOrEqual(8);
-  });
-
-  it("when none of them can be the contact, LinkedIn is searched for more", async () => {
-    let serper = 0;
-    const logs: string[] = [];
-    const base = fakeFetch(log);
-    const svc = { ...services(), fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base(u, i))) as typeof fetch };
-    // Their profile shows another employer now: not a contact here.
-    const found = [{ name: 'Rahul Patil', title: 'Plant Head', linkedin: 'https://in.linkedin.com/in/rahul-patil', snippet: 'Experience: Tata Steel', location: 'Pune', evidence: '' }];
-    const lead = sampleLead(-1, { company: 'Some Forge Co', website: 'someforge.in', city: 'Pune', segment: MANUFACTURING, status: 'Processing', source: PEOPLE_FIRST_SOURCE });
-    await processLead(svc, lead, { icps: await db.select().from(icps), clients: [] }, async (m) => void logs.push(m), { teamContact: false, found });
-    expect(logs.some((m) => /searching LinkedIn for more/.test(m))).toBe(true);
-    expect(serper).toBeGreaterThan(8);
+    // The full search ran: one designation at a time, the company's LinkedIn page, evidence and news.
+    expect(serper).toBeGreaterThan(20);
   });
 
   it('the search stops while there is still enough left to research what it found and check contacts', async () => {

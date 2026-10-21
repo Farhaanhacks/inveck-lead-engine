@@ -37,7 +37,10 @@ export async function searchBudgetLeft(db: Db, s: Pick<Services['settings'], 'da
   return s.dailySearchBudget - (await searchesUsed(db, day));
 }
 
-/** What research of one company found people first costs, at most (its own pages' evidence, news, a lookup or two); and of any other company. */
-export const RESEARCH_CREDITS = { peopleFirst: 8, other: 40 } as const;
+/**
+ * What researching one company costs, roughly: the full search for its people on LinkedIn (one designation
+ * at a time) and its LinkedIn page, evidence and news. The same for a company found people first.
+ */
+export const RESEARCH_CREDITS = { peopleFirst: 40, other: 40 } as const;
 /** Kept back for the 8 am contact checks. */
 export const CHECKS_RESERVE = 100;

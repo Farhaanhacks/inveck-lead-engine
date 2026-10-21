@@ -7,7 +7,6 @@ import { getHolidays } from '../holidays';
 import { normSegment } from '../icp-match';
 import { logActivity } from '../activity';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
-import { knowFirmPage } from '../pipeline/firm-identity';
 import { CHECKS_RESERVE, RESEARCH_CREDITS, searchBudgetLeft, searchesUsed } from '../search-budget';
 import { normQuery } from '../pipeline/query-history';
 import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services } from '../pipeline/services';
@@ -204,7 +203,7 @@ export async function wantsAnotherRound(db: Db, svc: Services, run: Run, now = n
   return SOURCING_SEGMENTS.some((s) => short[s].short > 0);
 }
 
-/** What researching the companies waiting for it will cost, at most: little for one found people first, more for any other. */
+/** What researching the companies waiting for it will cost, at most. */
 export async function researchReserve(db: Db): Promise<number> {
   const [r] = await db
     .select({
@@ -525,8 +524,6 @@ export async function sourceProspects(
           })
           .returning({ id: leads.id });
         if (c.page.website) registerFirmWebsite(c.name, c.page.website);
-        // Its LinkedIn page is known now: research doesn't search for it again.
-        await knowFirmPage(svc, c.name, c.page.website, c.page);
         await db.insert(people).values(c.contacts.map((p) => ({ leadId: lead.id, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
         await logActivity(db, lead.id, 'added', `Found by the people-first search: ${c.contacts.map((p) => `${p.name} (${p.title}, ${p.tier})`).slice(0, 4).join('; ')} work here. Company page: ${c.page.url}; ${c.note}.`);
         await opts.onAdded?.([lead.id]);

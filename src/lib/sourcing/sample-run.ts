@@ -14,7 +14,6 @@ import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, 
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
-import { knowFirmPage } from '../pipeline/firm-identity';
 import { CHECKS_RESERVE, RESEARCH_CREDITS } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
 import type { FoundContact } from './people-first';
@@ -307,8 +306,6 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
     });
     try {
-      // Its LinkedIn page is known already: research doesn't search for it again.
-      await knowFirmPage(svc, lead.company, c.page.website, c.page);
       const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken: taken.filter((t) => t.contactName), ownLeads }, async () => {}, {
         teamContact: false,
         found: asLinkedInFinds(c.contacts),
