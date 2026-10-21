@@ -71,3 +71,52 @@ describe('CA firms from the database', () => {
     expect(await db.select().from(tasks).where(and(eq(tasks.leadId, id), isNull(tasks.doneAt)))).toBeDefined();
   });
 });
+
+describe('the one lookup: a CA firm\'s LinkedIn page', () => {
+  const page = (title: string, slug: string, snippet = 'Chartered Accountants firm in Pune') => ({ title, link: `https://in.linkedin.com/company/${slug}`, snippet });
+
+  it('takes a page only when it carries the firm\'s own words and is a CA firm (or in its town)', async () => {
+    const { pickFirmPage, distinctiveWords } = await import('@/lib/ca-linkedin');
+    expect(distinctiveWords('Mehta & Associates, Chartered Accountants')).toEqual(['mehta']);
+    expect(pickFirmPage('Mehta & Co', 'Pune', [page('Mehta Traders | LinkedIn', 'mehta-traders', 'Wholesale grain'), page('Mehta & Co | LinkedIn', 'mehta-and-co')])).toBe('https://www.linkedin.com/company/mehta-and-co');
+    expect(pickFirmPage('Mehta & Co', 'Pune', [page('Other Firm | LinkedIn', 'other-firm')])).toBe('');
+    expect(pickFirmPage('Chartered Accountants', 'Pune', [page('Anyone | LinkedIn', 'anyone')])).toBe('');
+  });
+
+  it('looks each firm up once, saves only the page, and searches for nothing else', async () => {
+    const { findCaFirmLinkedin } = await import('@/lib/ca-linkedin');
+    const id = await importFirm('Approved');
+    const queries: string[] = [];
+    const svc = {
+      fetch: (async (_u: string, init?: RequestInit) => {
+        queries.push(JSON.parse(String(init?.body)).q);
+        return new Response(JSON.stringify({ organic: [{ title: 'Mehta & Co | LinkedIn', link: 'https://in.linkedin.com/company/mehta-and-co', snippet: 'Chartered Accountants, Pune' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch,
+      keys: { serper: 'k' },
+      settings: (await import('@/lib/settings')).settingsSchema.parse({}),
+    } as never;
+    expect(await findCaFirmLinkedin(db, svc, { ownerId: owner })).toBe(1);
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain('site:linkedin.com/company');
+    const [l] = await db.select().from(leads).where(eq(leads.id, id));
+    expect(l).toMatchObject({ contactLinkedin: 'https://www.linkedin.com/company/mehta-and-co', contactName: '', contactEmail: '', contactPhone: '9822012345' });
+    // Once only: a second visit searches nothing.
+    expect(await findCaFirmLinkedin(db, svc, { ownerId: owner })).toBe(0);
+    expect(queries).toHaveLength(1);
+  });
+
+  it('a firm with no page found is left blank and not searched again; other segments are never touched', async () => {
+    const { findCaFirmLinkedin } = await import('@/lib/ca-linkedin');
+    const id = await importFirm('Approved');
+    const mfg = (await db.insert(leads).values({ company: 'Gears Ltd', segment: 'Manufacturing', status: 'Approved', ownerId: owner }).returning())[0];
+    let calls = 0;
+    const svc = { fetch: (async () => { calls++; return new Response(JSON.stringify({ organic: [] }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch, keys: { serper: 'k' }, settings: (await import('@/lib/settings')).settingsSchema.parse({}) } as never;
+    expect(await findCaFirmLinkedin(db, svc)).toBe(0);
+    expect(calls).toBe(1);
+    expect((await db.select().from(leads).where(eq(leads.id, id)))[0]).toMatchObject({ contactLinkedin: '' });
+    expect((await db.select().from(leads).where(eq(leads.id, id)))[0].contactCheckedAt).not.toBeNull();
+    expect((await db.select().from(leads).where(eq(leads.id, mfg.id)))[0].contactCheckedAt).toBeNull();
+    await findCaFirmLinkedin(db, svc);
+    expect(calls).toBe(1);
+  });
+});
