@@ -10,6 +10,7 @@ import { leads, runEvents, runs } from './db/schema';
 import { runSecret } from './auth';
 import type { Services } from './pipeline/services';
 import { errorMessage } from './pipeline/text';
+import { pausedToday } from './pause';
 
 /** Seconds a run invocation may take; route files export the same value as `maxDuration`. */
 export const RUN_MAX_DURATION = 300;
@@ -39,6 +40,15 @@ export function baseUrl(requestOrigin?: string): string {
  */
 export async function driveRun(runId: number, origin: string) {
   const db = await getDb();
+  // Paused today: a run that started on its own stops here (one the admin started goes on).
+  if (await pausedToday(db)) {
+    const [run] = await db.select({ trigger: runs.trigger, status: runs.status }).from(runs).where(eq(runs.id, runId));
+    if (run?.status === 'running' && run.trigger !== 'manual') {
+      await db.update(runs).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(runs.id, runId));
+      await logEvent(db, runId, 'Stopped: everything that runs on its own is paused today', 'warn');
+      return;
+    }
+  }
   const onVercel = !!process.env.VERCEL;
   const result = await executeRun(db, runId, await liveServices(), onVercel ? BUDGET_MS : Number.POSITIVE_INFINITY);
   if (result !== 'continue') return;
@@ -64,6 +74,7 @@ const PICKED_UP = 'Picked up again after a pause';
 export async function resumeStalledRun(origin?: string): Promise<boolean> {
   try {
     const db = await getDb();
+    if (await pausedToday(db)) return false;
     const run = await claimStalledRun(db);
     if (!run) return false;
     const [{ n }] = await db
@@ -94,6 +105,7 @@ export async function ensureResearch(origin: string): Promise<void> {
   try {
     if (await resumeStalledRun(origin)) return;
     const db = await getDb();
+    if (await pausedToday(db)) return;
     const [{ waiting }] = await db
       .select({ waiting: sql<number>`count(*)::int` })
       .from(leads)
@@ -132,6 +144,7 @@ export async function startRefetchIfWaiting(origin?: string) {
   const { waiting } = await refetchProgress();
   if (!waiting) return;
   const db = await getDb();
+  if (await pausedToday(db)) return;
   if (await activeRun(db)) return;
   if ((await searchBudgetLeft(db, await getSettings(db))) < 30) return;
   // Not again straight after a run that just ended or was stopped.

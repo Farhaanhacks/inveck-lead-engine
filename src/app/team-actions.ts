@@ -576,7 +576,7 @@ export async function drawNowAction() {
   const user = await requireUser();
   if (user.role !== 'admin') return;
   const db = await getDb();
-  if (!(await runDailyDraw(db, { force: true }))) await topUpDraw(db);
+  if (!(await runDailyDraw(db, { force: true }))) await topUpDraw(db, { force: true });
   // The CA firms from the Google Sheet: whatever Anchal and Puja are still short of today.
   try {
     await runCaDraw(db, { force: true });

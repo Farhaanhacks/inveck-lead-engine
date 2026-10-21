@@ -14,6 +14,7 @@ import { StatusPill } from '@/components/status-pill';
 import { bulkLeadAction } from '../../actions';
 import { nextRounds, roundBadge } from '@/lib/follow-up-sequence';
 import { fitAssessment, TONE_CLASS } from '@/lib/fit-view';
+import { pausedToday } from '@/lib/pause';
 
 const PAGE_SIZE = 100;
 
@@ -51,8 +52,11 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const db = await getDb();
   await assignUnowned(db);
   await runDailyDraw(db);
-  // Qualified leads missing an email or LinkedIn draft get them written in the background.
-  after(async () => { await fillMissingDrafts(await getDb(), await liveServices(), { limit: 8 }); });
+  // Qualified leads missing an email or LinkedIn draft get them written in the background (not on a paused day).
+  after(async () => {
+    const d = await getDb();
+    if (!(await pausedToday(d))) await fillMissingDrafts(d, await liveServices(), { limit: 8 });
+  });
   const me = await getCurrentUser();
   const team = await listBdas(db);
   const names = new Map(team.map((b) => [b.id, b.name]));

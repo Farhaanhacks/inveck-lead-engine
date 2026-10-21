@@ -5,6 +5,7 @@ import { driveRun, resumeStalledRun } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
 import { getSettings } from '@/lib/settings';
 import { searchesThisMorning } from '@/lib/sourcing/morning';
+import { pausedToday } from '@/lib/pause';
 
 export const maxDuration = 300;
 
@@ -19,6 +20,8 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
   const db = await getDb();
+  // Paused today (Settings key pausedDays): no run at all.
+  if (await pausedToday(db)) return Response.json({ paused: true });
   const origin = new URL(request.url).origin;
   // A run that stalled (its chain of invocations ended) carries on instead of a new one starting.
   if (await resumeStalledRun(origin)) return Response.json({ resumed: true });

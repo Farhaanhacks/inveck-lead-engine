@@ -1,6 +1,8 @@
 import { runSecret } from '@/lib/auth';
 import { resumeStalledRun } from '@/lib/run-driver';
 import { resumeStalledTests } from '@/lib/sourcing/drive';
+import { getDb } from '@/lib/db';
+import { pausedToday } from '@/lib/pause';
 
 export const maxDuration = 300;
 
@@ -13,6 +15,7 @@ export async function GET(request: Request) {
   if (request.headers.get('authorization') !== `Bearer ${await runSecret()}`) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
+  if (await pausedToday(await getDb())) return Response.json({ paused: true });
   const origin = new URL(request.url).origin;
   const run = await resumeStalledRun(origin);
   const tests = await resumeStalledTests(origin);

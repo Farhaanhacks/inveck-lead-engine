@@ -25,6 +25,7 @@ import { escalate } from './escalate';
 import { istDay, notCaFirmSql } from './tasks';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
+import { pausedToday } from './pause';
 
 /** A designation can change; contacts are checked again after this long. */
 const RECHECK_AFTER_DAYS = 30;
@@ -304,6 +305,8 @@ export async function verifyContacts(
   } = {},
 ): Promise<Record<CheckResult, number>> {
   const tally: Record<CheckResult, number> = { corrected: 0, confirmed: 0, not_found: 0, left: 0, skipped: 0 };
+  // Paused today (see lib/pause.ts): nothing is checked.
+  if (await pausedToday(db)) return tally;
   const stale = staleBefore();
   // Companies with a step due today or earlier: what the team is about to call.
   const onToday = exists(

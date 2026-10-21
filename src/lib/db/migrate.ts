@@ -663,4 +663,6 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE settings SET value = value - 'dailySearchBudget'
    WHERE key = 'app' AND jsonb_typeof(value) = 'object' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'searchBudgetOffV1')`,
   `INSERT INTO settings (key, value) VALUES ('searchBudgetOffV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // Nothing runs on its own on Thursday 22 October 2026 (INVECK's decision, 22 Oct 00:15): see lib/pause.ts.
+  `INSERT INTO settings (key, value) SELECT 'pausedDays', '["2026-10-22"]'::jsonb WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
 ];
