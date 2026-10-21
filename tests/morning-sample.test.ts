@@ -11,6 +11,7 @@ import { cardLead, isMorningSample, sampleMorning, type MorningSampleReport, typ
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
+import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
 
 /**
  * The Morning Sample Run: tomorrow's 6 am run and 8 am draw on paper. The made-up Google (see
@@ -152,6 +153,17 @@ describe('the Morning Sample Run', () => {
     const id = await startSample();
     await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
     expect((await reportOf(id)).day).toBe('2030-01-10');
+  });
+
+  it("keeps to the day's Google search budget, as the run does", async () => {
+    const id = await startSample(true);
+    await runSourcingTest(db, morningServices(log, [], { meter: dbSearchMeter(db), budget: 150 }), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    expect(r.budget).toBe(150);
+    expect(r.credits).toBeGreaterThan(0);
+    expect(r.credits!).toBeLessThanOrEqual(150);
+    // Its searches are real: they count in the day's total too.
+    expect(await searchesUsed(db)).toBe(r.credits);
   });
 
   it('fails with the reason when Google refuses every search, and saves nothing', async () => {

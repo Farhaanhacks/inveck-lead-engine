@@ -19,7 +19,7 @@ const STOPPED: Record<string, string> = {
 };
 
 /** Today's 6 am run at a glance: what it found, what the 8 am draw needs, and whether the searches are running thin. */
-export function MorningCard({ health: h, dailySearches }: { health: MorningHealth; dailySearches: number }) {
+export function MorningCard({ health: h }: { health: MorningHealth }) {
   const r = h.run;
   const status = !r
     ? h.off === 'not_started'
@@ -47,9 +47,14 @@ export function MorningCard({ health: h, dailySearches }: { health: MorningHealt
       <p className={`mt-1 text-sm ${r?.status === 'failed' ? 'text-critical-ink' : 'text-ink-2'}`}>{status}</p>
       {r && (
         <p className="mt-1 text-xs text-muted">
-          {r.added} new companies found, {r.researched} researched: {r.approved} approved, {r.disqualified} ruled out by the ICP check. {h.searchesToday} of {dailySearches} prospect searches used today.
+          {r.added} new companies found, {r.researched} researched: {r.approved} approved, {r.disqualified} ruled out by the ICP check.
         </p>
       )}
+
+      <p className="mt-1 text-xs text-muted">
+        Google searches today: <span className={h.searchesToday >= h.budget ? 'font-medium text-warning-ink' : 'tabular-nums'}>{h.searchesToday.toLocaleString('en-IN')} of {h.budget.toLocaleString('en-IN')}</span> credits (Settings).
+        {h.searchesToday >= h.budget ? ' The budget is used: what is left waits for tomorrow.' : ''}
+      </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {h.segments.map((s) => {

@@ -780,6 +780,7 @@ export async function saveSettingsAction(_prev: { message: string; ok: boolean }
     prospectsPerRun: str(form, 'prospectsPerRun'),
     prospectDay: current.prospectDay,
     morningSearch: form.get('morningSearch') === 'on',
+    dailySearchBudget: str(form, 'dailySearchBudget'),
     aiProvider: provider,
     aiModel: model,
     aiEffort: str(form, 'aiEffort'),

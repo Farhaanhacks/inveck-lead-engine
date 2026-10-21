@@ -13,7 +13,12 @@ export type Services = {
   settings: Settings;
   /** Where lookups are kept between runs; without one, nothing is reused across runs. */
   cache?: EnrichmentCache;
+  /** Counts the Google search credits spent, against the day's budget (see search-budget.ts); without one, nothing is counted. */
+  meter?: SearchMeter;
 };
+
+/** Counts Google search credits: 1 a search, 2 for one that asks for more than ten results. */
+export type SearchMeter = { spend(credits: number): Promise<void> };
 
 export class HttpError extends Error {
   constructor(
@@ -53,16 +58,23 @@ export async function getJson<T = unknown>(svc: Services, url: string, init: Req
 
 export type SerperResult = { title?: string; link?: string; snippet?: string; subtitle?: string };
 
-/** Google search through Serper; `page` 2, 3… gives the next ten results. */
-export async function googleSearch(svc: Services, q: string, page = 1): Promise<SerperResult[]> {
+/**
+ * Google search through Serper; `page` 2, 3… gives the next results. `num` up to 100 results in one
+ * search costs 2 credits instead of 1 (worth it where every result counts, as in the people search).
+ */
+export async function googleSearch(svc: Services, q: string, page = 1, num = 10): Promise<SerperResult[]> {
   if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set');
   const data = await getJson<{ organic?: SerperResult[] }>(svc, 'https://google.serper.dev/search', {
     method: 'POST',
     headers: { 'X-API-KEY': svc.keys.serper, 'content-type': 'application/json' },
-    body: JSON.stringify(page > 1 ? { q, gl: 'in', num: 10, page } : { q, gl: 'in', num: 10 }),
+    body: JSON.stringify(page > 1 ? { q, gl: 'in', num, page } : { q, gl: 'in', num }),
   });
+  await svc.meter?.spend(searchCredits(num)).catch(() => {});
   return Array.isArray(data.organic) ? data.organic : [];
 }
+
+/** What one Google search costs on Serper: 1 credit for up to ten results, 2 for more. */
+export const searchCredits = (num: number) => (num > 10 ? 2 : 1);
 
 export type NewsResult = { title?: string; link?: string; snippet?: string; date?: string; source?: string };
 
@@ -74,6 +86,7 @@ export async function newsSearch(svc: Services, q: string, period = 'qdr:y'): Pr
     headers: { 'X-API-KEY': svc.keys.serper, 'content-type': 'application/json' },
     body: JSON.stringify({ q, gl: 'in', num: 10, tbs: period }),
   });
+  await svc.meter?.spend(1).catch(() => {});
   return Array.isArray(data.news) ? data.news : [];
 }
 

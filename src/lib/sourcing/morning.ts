@@ -7,8 +7,10 @@ import { getHolidays } from '../holidays';
 import { normSegment } from '../icp-match';
 import { logActivity } from '../activity';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
+import { knowFirmPage } from '../pipeline/firm-identity';
+import { CHECKS_RESERVE, RESEARCH_CREDITS, searchBudgetLeft, searchesUsed } from '../search-budget';
 import { normQuery } from '../pipeline/query-history';
-import { googleSearch, mapLimit, type SerperResult, type Services } from '../pipeline/services';
+import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services } from '../pipeline/services';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { contactPriority } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
@@ -32,12 +34,10 @@ export const PEOPLE_FIRST_SOURCE = 'People-first search';
 const PEOPLE_FIRST_EVIDENCE = 'Found by the people-first search: their LinkedIn profile shows this company as their current job';
 
 export const MORNING_LIMITS = {
-  /** Google searches the prospect search may make in one India day, across runs. */
-  dailySearches: 3000,
   /** Times one run searches again after research ruled companies out. */
   rounds: 3,
-  /** A segment stops when this many searches in a row found nobody new on the ICP's lists. */
-  quietSearches: 150,
+  /** A segment stops when this many searches in a row (a hundred results each) found nobody new on the ICP's lists. */
+  quietSearches: 40,
   /** A search made in this many days is not made again. */
   memoryDays: 30,
   /** Companies asked for above the shortfall, for those research rules out. */
@@ -149,16 +149,6 @@ export async function drawShortfall(db: Db, settings: Services['settings']): Pro
   return out;
 }
 
-/** Google searches the prospect search made today (India time) on other runs. */
-async function searchesTodayElsewhere(db: Db, runId: number): Promise<number> {
-  const { start } = istDayBounds(istDay());
-  const [{ used }] = await db
-    .select({ used: sql<number>`coalesce(sum((${runs.sourcing}->>'searches')::int), 0)::int` })
-    .from(runs)
-    .where(and(gte(runs.startedAt, start), ne(runs.id, runId)));
-  return Number(used);
-}
-
 /** Searches the morning runs made in the last 30 days (by their normalised form), not to be made again; `own` is a run's own. */
 export async function recentSearches(db: Db, own: number | null): Promise<Set<string>> {
   const since = new Date(Date.now() - MORNING_LIMITS.memoryDays * 86_400_000);
@@ -208,8 +198,22 @@ export async function wantsAnotherRound(db: Db, svc: Services, run: Run, now = n
   // Companies handed straight to the team aren't in the draw's pool: one round is what was asked.
   if (run.prospectsTo) return false;
   if (run.trigger === 'schedule' && !beforeLastRound(now)) return false;
+  // Nothing left of the day's search budget once the waiting companies are researched.
+  if (svc.meter && (await searchBudgetLeft(db, svc.settings)) - (await researchReserve(db)) - CHECKS_RESERVE < 50) return false;
   const short = await drawShortfall(db, svc.settings);
   return SOURCING_SEGMENTS.some((s) => short[s].short > 0);
+}
+
+/** What researching the companies waiting for it will cost, at most: little for one found people first, more for any other. */
+export async function researchReserve(db: Db): Promise<number> {
+  const [r] = await db
+    .select({
+      first: sql<number>`(count(*) filter (where ${leads.source} like ${`${PEOPLE_FIRST_SOURCE}%`}))::int`,
+      other: sql<number>`(count(*) filter (where ${leads.source} not like ${`${PEOPLE_FIRST_SOURCE}%`}))::int`,
+    })
+    .from(leads)
+    .where(inArray(leads.status, ['New', 'Processing']));
+  return Number(r?.first ?? 0) * RESEARCH_CREDITS.peopleFirst + Number(r?.other ?? 0) * RESEARCH_CREDITS.other;
 }
 
 /** People the search found, as the LinkedIn search's own finds, for research to choose from. */
@@ -243,8 +247,11 @@ export type RoundOptions = {
   stopped?: () => Promise<boolean>;
   /** Orders the plan: the same on every round and invocation, so the cursor stays where it was. */
   seed: number;
-  /** Searches already made today elsewhere, counted against the day's limit. */
-  usedToday: number;
+  /**
+   * What is left of the day's Google search budget for finding more companies: the budget, less what
+   * was spent, less what researching the companies already found will cost and the contact checks.
+   */
+  budgetLeft: () => Promise<number>;
   /** Searches made before (normalised), not made again. */
   recent: Set<string>;
   /** Companies taken besides INVECK's own: a sample run's earlier finds. */
@@ -252,10 +259,26 @@ export type RoundOptions = {
   sink: RoundSink;
 };
 
+/** Results asked for in one people search: up to a hundred, for 2 credits instead of 1 for ten. */
+export const PEOPLE_RESULTS = 100;
+/** The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks. */
+const STEP_CREDITS = 8 * searchCredits(PEOPLE_RESULTS);
+
+/** The credits a request to Serper costs, from the number of results it asks for. */
+function creditsOf(input: RequestInfo | URL, init?: RequestInit): number {
+  if (!isSerper(input)) return 0;
+  try {
+    return searchCredits(Number(JSON.parse(String(init?.body ?? '{}')).num) || 10);
+  } catch {
+    return 1;
+  }
+}
+
 /**
  * Works on a round until each segment has what it wants or stops, or `budgetMs` runs out ('continue':
- * where it got to is saved). Every company that passes goes to the sink at once. Throws when Google
- * refuses every search (out of credits, a wrong key).
+ * where it got to is saved). The segments take turns, the one furthest from what it wants first, so
+ * the day's search budget is shared between them. Every company that passes goes to the sink at once.
+ * Throws when Google refuses every search (out of credits, a wrong key).
  */
 export async function searchRound(db: Db, svc: Services, state: MorningSourcing, o: RoundOptions): Promise<'done' | 'continue'> {
   const save = () => o.sink.save(state);
@@ -266,7 +289,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
 
-  let steps = 0;
+  // Each segment's search, ready to take a step.
+  type Worker = { seg: MorningSegment; step: () => Promise<'more' | 'stop'>; checked: Set<string> };
+  const workers: Worker[] = [];
   for (const seg of state.segments) {
     if (seg.stopped || seg.added >= seg.wanted) {
       seg.stopped ??= 'target';
@@ -277,16 +302,15 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const counting: Services = {
       ...svc,
       fetch: ((input, init) => {
-        if (isSerper(input)) {
-          seg.searches++;
-          state.searches++;
-        }
+        const credits = creditsOf(input, init);
+        seg.searches += credits;
+        state.searches += credits;
         return svc.fetch(input, init);
       }) as typeof fetch,
     };
-    const search = async (q: string, page = 1): Promise<{ results: SerperResult[]; error?: string }> => {
+    const search = async (q: string, num = 10): Promise<{ results: SerperResult[]; error?: string }> => {
       try {
-        return { results: await googleSearch(counting, q, page) };
+        return { results: await googleSearch(counting, q, 1, num) };
       } catch (e) {
         return { results: [], error: errorMessage(e) };
       }
@@ -325,55 +349,33 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city });
     };
 
-    for (;;) {
-      if (seg.added >= seg.wanted) {
-        seg.stopped = 'target';
-        break;
-      }
-      if (o.usedToday + state.searches >= MORNING_LIMITS.dailySearches) {
-        seg.stopped = 'cap';
-        break;
-      }
-      // Out of this invocation's time (after doing something, so every invocation gets further).
-      if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.6) {
-        state.seen = [...seen];
-        seg.checked = [...checked];
-        await save();
-        return 'continue';
-      }
-      if (await o.stopped?.()) {
-        state.seen = [...seen];
-        seg.checked = [...checked];
-        state.roundDone = true;
-        await save();
-        return 'done';
-      }
-      steps++;
-      // Companies already found come first: their checks may be all that's needed.
+    // One step: check companies already found (their checks may be all that's needed), else search for more people.
+    const step = async (): Promise<'more' | 'stop'> => {
       seg.pending = seg.pending.filter((c) => !checked.has(normCompany(c.employer)));
       if (seg.pending.length) {
         seg.pending.sort((a, b) => rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
         const batch = seg.pending.splice(0, Math.max(1, Math.min(4, seg.wanted - seg.added)));
         await mapLimit(batch, 4, check);
-        continue;
+        return 'more';
       }
       if (seg.quiet >= MORNING_LIMITS.quietSearches) {
         seg.stopped = 'dry';
-        break;
+        return 'stop';
       }
       const batch = plan.slice(seg.cursor, seg.cursor + 8);
       if (!batch.length) {
         seg.stopped = 'exhausted';
-        break;
+        return 'stop';
       }
       seg.cursor += batch.length;
-      const got = await mapLimit(batch, 4, (pq) => search(pq.q));
+      const got = await mapLimit(batch, 4, (pq) => search(pq.q, PEOPLE_RESULTS));
       // Every search refused (out of credits, a wrong key): the run ends as failed, with the reason.
       if (got.every((g) => g.error)) {
         seg.stopped = 'failed';
         state.history.push({ round: state.round, segment: seg.segment, wanted: seg.wanted, added: seg.added, searches: seg.searches, stopped: 'failed' });
         state.seen = [...seen];
         state.roundDone = true;
+        seg.checked = [...checked];
         await save();
         throw new Error(`Google search failed: ${got[0]?.error ?? 'no answer'}`);
       }
@@ -404,19 +406,60 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, error: got[i].error });
       }
       for (const c of seg.pending) c.contacts.sort((a, b) => rank(a) - rank(b));
-    }
-    seg.checked = [...checked];
-    state.history.push({ round: state.round, segment: seg.segment, wanted: seg.wanted, added: seg.added, searches: seg.searches, stopped: seg.stopped });
-    if (seg.wanted) {
+      return 'more';
+    };
+    workers.push({ seg, step, checked });
+  }
+
+  const finish = async (w: Worker) => {
+    w.seg.checked = [...w.checked];
+    state.history.push({ round: state.round, segment: w.seg.segment, wanted: w.seg.wanted, added: w.seg.added, searches: w.seg.searches, stopped: w.seg.stopped });
+    if (w.seg.wanted) {
       const why =
-        seg.stopped === 'target'
+        w.seg.stopped === 'target'
           ? ''
-          : seg.stopped === 'cap'
-            ? ` (stopped at the day's limit of ${MORNING_LIMITS.dailySearches} searches)`
-            : seg.stopped === 'dry'
-              ? ` (the last ${seg.quiet} searches found nobody new on the lists)`
+          : w.seg.stopped === 'cap'
+            ? " (the day's Google search budget is kept for researching what was found)"
+            : w.seg.stopped === 'dry'
+              ? ` (the last ${w.seg.quiet} searches found nobody new on the lists)`
               : ` (every search planned has been made in the last ${MORNING_LIMITS.memoryDays} days)`;
-      await o.log(`${seg.segment}: ${seg.added} of ${seg.wanted} new companies with contacts, ${seg.searches} Google searches${why}`, seg.added < seg.wanted ? 'warn' : 'info');
+      await o.log(`${w.seg.segment}: ${w.seg.added} of ${w.seg.wanted} new companies with contacts, ${w.seg.searches} Google search credits${why}`, w.seg.added < w.seg.wanted ? 'warn' : 'info');
+    }
+  };
+  const saveAll = async () => {
+    state.seen = [...seen];
+    for (const w of workers) w.seg.checked = [...w.checked];
+    await save();
+  };
+
+  let steps = 0;
+  let active = workers.slice();
+  while (active.length) {
+    // Out of this invocation's time (after doing something, so every invocation gets further).
+    if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.6) {
+      await saveAll();
+      return 'continue';
+    }
+    if (await o.stopped?.()) {
+      state.roundDone = true;
+      await saveAll();
+      return 'done';
+    }
+    // The day's budget: what's left after researching what's been found, and the contact checks.
+    if ((await o.budgetLeft()) < STEP_CREDITS) {
+      for (const w of active) w.seg.stopped = 'cap';
+      for (const w of active) await finish(w);
+      active = [];
+      break;
+    }
+    // The segment furthest from what it wants takes the next step.
+    const w = active.reduce((a, b) => (b.seg.added / b.seg.wanted < a.seg.added / a.seg.wanted ? b : a));
+    steps++;
+    const outcome = await w.step();
+    if (w.seg.added >= w.seg.wanted) w.seg.stopped = 'target';
+    if (outcome === 'stop' || w.seg.stopped) {
+      await finish(w);
+      active = active.filter((x) => x !== w);
     }
   }
   state.seen = [...seen];
@@ -460,7 +503,8 @@ export async function sourceProspects(
     ...opts,
     // The same plan on every round and invocation of this run, so the cursor stays where it was.
     seed: run.id * 31,
-    usedToday: await searchesTodayElsewhere(db, run.id),
+    // The day's budget, less what researching the companies waiting will cost and the 8 am contact checks.
+    budgetLeft: async () => (await searchBudgetLeft(db, svc.settings)) - (await researchReserve(db)) - CHECKS_RESERVE,
     // Searches made on earlier runs: not made again for a while (this run's own are in its cursor).
     recent: await recentSearches(db, run.id),
     sink: {
@@ -481,6 +525,8 @@ export async function sourceProspects(
           })
           .returning({ id: leads.id });
         if (c.page.website) registerFirmWebsite(c.name, c.page.website);
+        // Its LinkedIn page is known now: research doesn't search for it again.
+        await knowFirmPage(svc, c.name, c.page.website, c.page);
         await db.insert(people).values(c.contacts.map((p) => ({ leadId: lead.id, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
         await logActivity(db, lead.id, 'added', `Found by the people-first search: ${c.contacts.map((p) => `${p.name} (${p.title}, ${p.tier})`).slice(0, 4).join('; ')} work here. Company page: ${c.page.url}; ${c.note}.`);
         await opts.onAdded?.([lead.id]);
@@ -502,7 +548,9 @@ export type MorningHealth = {
   run: { id: number; status: Run['status']; startedAt: Date; finishedAt: Date | null; added: number; researched: number; approved: number; disqualified: number; searches: number; rounds: number; error: string } | null;
   /** Per segment: what the draw needs, what's ready for it now, and what today's search found against what it wanted. */
   segments: { segment: SourcingSegment; need: number; ready: number; waiting: number; found: number; wanted: number; stopped?: MorningSegment['stopped'] }[];
+  /** Google search credits spent today, everything included, and the day's budget. */
   searchesToday: number;
+  budget: number;
   /** Signs the searches are running out of new companies, from the last few scheduled runs. */
   thin: string[];
 };
@@ -534,11 +582,8 @@ export async function morningHealth(db: Db, settings: Services['settings'], holi
     .limit(5);
   const todays = recent.find((r) => new Date(r.startedAt) >= start) ?? null;
   const short = await drawShortfall(db, settings);
-  const [{ used }] = await db
-    .select({ used: sql<number>`coalesce(sum((${runs.sourcing}->>'searches')::int), 0)::int` })
-    .from(runs)
-    .where(gte(runs.startedAt, start));
-  const searchesToday = Number(used);
+  // Every Google search the app made today, against the day's budget.
+  const searchesToday = await searchesUsed(db, day);
 
   const segments = SOURCING_SEGMENTS.map((segment) => {
     const rounds = todays?.history?.filter((h) => h.segment === segment) ?? [];
@@ -587,6 +632,7 @@ export async function morningHealth(db: Db, settings: Services['settings'], holi
       : null,
     segments,
     searchesToday,
+    budget: settings.dailySearchBudget,
     thin,
   };
 }

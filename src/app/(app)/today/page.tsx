@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
+import { searchBudgetLeft } from '@/lib/search-budget';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
@@ -614,7 +615,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       async () => {
         const svc = await liveServices();
         await Promise.race([
-          verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10 }),
+          verifyContacts(db, svc, { ownerId: viewId, dueToday: true, mainOnly: true, limit: 10, budgetLeft: () => searchBudgetLeft(db, svc.settings) }),
           new Promise((resolve) => setTimeout(resolve, 3000)),
         ]);
       },
@@ -624,7 +625,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
       const d = await getDb();
       const svc = await liveServices();
       for (const id of switched) await redraftForContact(d, svc, id);
-      await verifyContacts(d, svc, { ownerId: viewId, limit: 30 });
+      await verifyContacts(d, svc, { ownerId: viewId, limit: 30, budgetLeft: () => searchBudgetLeft(d, svc.settings) });
     });
   }
   const viewing = team.find((b) => b.id === viewId);

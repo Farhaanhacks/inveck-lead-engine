@@ -14,6 +14,8 @@ import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, 
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
+import { knowFirmPage } from '../pipeline/firm-identity';
+import { CHECKS_RESERVE, RESEARCH_CREDITS } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
 import type { FoundContact } from './people-first';
 
@@ -43,8 +45,8 @@ export type SampleCompany = {
   note: string;
   city: string;
   contacts: FoundContact[];
-  /** After research: approved with a confirmed contact (can be dealt), ruled out by the ICP check, nobody to contact, or failed. */
-  outcome?: 'approved' | 'ruled_out' | 'no_contact' | 'error';
+  /** After research: approved with a confirmed contact (can be dealt), ruled out by the ICP check, nobody to contact, failed, or left for the next day (over the search budget). */
+  outcome?: 'approved' | 'ruled_out' | 'no_contact' | 'error' | 'waiting';
   why?: string;
   /** The lead as research left it, and the people it kept. */
   lead?: Lead;
@@ -90,6 +92,9 @@ export type MorningSampleReport = {
   searches: number;
   researched: number;
   seconds: number;
+  /** Google search credits the sample spent (search and research), against the day's budget when it started. Absent on samples from before the budget. */
+  credits?: number;
+  budget?: number;
 };
 
 export const isMorningSample = (r: unknown): r is MorningSampleReport => (r as MorningSampleReport | null)?.mode === 'morning' && (r as MorningSampleReport).phase !== ('init' as string);
@@ -143,20 +148,32 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
     return saving;
   };
   const outOfTime = (share: number) => Date.now() - started > budgetMs * share;
+  // Every credit the sample spends is counted on it too, so it keeps to the day's budget as the run would.
+  const metered: Services = {
+    ...svc,
+    meter: {
+      async spend(n) {
+        if (report) report.credits = (report.credits ?? 0) + n;
+        await svc.meter?.spend(n);
+      },
+    },
+  };
   try {
     if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set: the sample searches Google through Serper.');
     if (!report) report = await begin(db, svc, (test.report as MorningSampleStart | null)?.fresh ?? false);
     const r = report;
+    const budgetLeft = () => (r.budget ?? Number.POSITIVE_INFINITY) - (r.credits ?? 0);
 
     for (let step = 0; ; step++) {
       if (r.phase === 'search') {
         if (step > 0 && outOfTime(0.6)) break;
-        const outcome = await searchRound(db, svc, r.search!, {
+        const outcome = await searchRound(db, metered, r.search!, {
           started,
           budgetMs,
           log: async () => {},
           seed: test.id * 31,
-          usedToday: 0,
+          // As the run: the day's budget, less researching what was found and the 8 am contact checks.
+          budgetLeft: async () => budgetLeft() - r.companies.filter((c) => !c.outcome).length * RESEARCH_CREDITS.peopleFirst - CHECKS_RESERVE,
           recent: await recentSearches(db, null),
           alsoKnown: {
             names: r.companies.flatMap((c) => [c.page.name, c.employer]),
@@ -183,9 +200,15 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 
       if (r.phase === 'research') {
         const waiting = r.companies.filter((c) => !c.outcome);
+        // Over the day's budget: the rest would be researched the next day.
+        if (waiting.length && budgetLeft() < CONCURRENCY * RESEARCH_CREDITS.peopleFirst) {
+          for (const c of waiting) Object.assign(c, { outcome: 'waiting', why: "Over the day's Google search budget: the run would research it the next day" });
+          await save({ progress: progressOf(r) });
+          continue;
+        }
         if (waiting.length) {
           if (step > 0 && outOfTime(0.5)) break;
-          await research(db, svc, waiting.slice(0, CONCURRENCY));
+          await research(db, metered, waiting.slice(0, CONCURRENCY));
           r.researched = r.companies.filter((c) => c.outcome).length;
           await save({ progress: progressOf(r) });
           continue;
@@ -197,7 +220,8 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           r.search!.round < MORNING_LIMITS.rounds &&
           DRAW_SEGMENTS.some((s) => short[s] > 0) &&
           last.some((h) => h.added > 0) &&
-          !last.some((h) => h.stopped === 'cap' || h.stopped === 'failed');
+          !last.some((h) => h.stopped === 'cap' || h.stopped === 'failed') &&
+          budgetLeft() > CHECKS_RESERVE + 50;
         if (again) {
           const wanted = Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, Math.ceil(short[s] * MORNING_LIMITS.headroom)])) as Record<SourcingSegment, number>;
           r.search = startRound(r.search, wanted);
@@ -258,7 +282,7 @@ async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSamp
     wanted[s] = Math.ceil(short * MORNING_LIMITS.headroom);
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
   }
-  return { mode: 'morning', day, phase: 'search', fresh, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
+  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget, credits: 0, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
 }
 
 /** Researches a few of the sample's companies exactly as the run would (the ICP check, contacts, drafts), keeping the result in the report. */
@@ -283,6 +307,8 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
     });
     try {
+      // Its LinkedIn page is known already: research doesn't search for it again.
+      await knowFirmPage(svc, lead.company, c.page.website, c.page);
       const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken: taken.filter((t) => t.contactName), ownLeads }, async () => {}, {
         teamContact: false,
         found: asLinkedInFinds(c.contacts),
@@ -353,9 +379,9 @@ export function progressOf(r: MorningSampleReport): string {
   const found = r.companies.length;
   if (r.phase === 'search') {
     const wanted = r.search!.segments.map((s) => `${s.added} of ${s.wanted} ${s.segment}`).join(', ');
-    return `Round ${r.search!.round}: searching LinkedIn for people (${wanted}; ${r.searches} Google searches so far)…`;
+    return `Round ${r.search!.round}: searching LinkedIn for people (${wanted}; ${credits(r)})…`;
   }
-  if (r.phase === 'research') return `Researching what the search found: ${r.researched} of ${found} done (the ICP check, contacts and drafts, as the run does)…`;
+  if (r.phase === 'research') return `Researching what the search found: ${r.researched} of ${found} done (the ICP check, contacts and drafts, as the run does; ${credits(r)})…`;
   if (r.phase === 'deal') return 'Dealing the leads to the team as the 8 am draw would…';
   return summaryOf(r);
 }
@@ -364,7 +390,13 @@ export function summaryOf(r: MorningSampleReport): string {
   const approved = r.companies.filter(releasable).length;
   const dealt = r.hands.reduce((a, h) => a + h.cards.length, 0);
   const wanted = r.team.reduce((a, t) => a + DRAW_SEGMENTS.reduce((b, s) => b + quotaFor(r, t.id)[s], 0), 0);
-  return `${r.companies.length} companies found (${r.searches} Google searches), ${approved} approved with a confirmed contact; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates.`;
+  const waiting = r.companies.filter((c) => c.outcome === 'waiting').length;
+  return `${r.companies.length} companies found, ${approved} approved with a confirmed contact${waiting ? `, ${waiting} left for the next day (over the search budget)` : ''}; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates. ${credits(r)}.`;
+}
+
+/** The Google search credits a sample spent, against the day's budget. */
+function credits(r: MorningSampleReport): string {
+  return r.budget ? `${(r.credits ?? 0).toLocaleString('en-IN')} of the day's ${r.budget.toLocaleString('en-IN')} Google search credits` : `${r.searches} Google searches`;
 }
 
 /** A card's lead and people, wherever it came from. */

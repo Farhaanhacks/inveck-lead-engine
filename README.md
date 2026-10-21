@@ -242,7 +242,12 @@ company that passes becomes one lead with the people found there, and research m
 Approved or Disqualified. It finds what the morning draw is short of in each segment (active associates times
 their quota, less the researched leads waiting), with a quarter more for those research rules out, and
 searches again (three rounds at most, none after 07:30) while the draw is still short. A search made in the
-last 30 days isn't made again, and the prospect search stops at 3,000 Google searches a day. CA firms are
+last 30 days isn't made again. Every Google search the app makes is counted against a **daily budget**
+(Settings, 1,500 Serper credits by default; `src/lib/search-budget.ts`): research of companies already found
+comes first, then the 8 am contact checks, then finding more companies, and whatever is left waits for the next
+day. People searches ask for 100 results (2 credits); a company found people first is researched with the
+people and LinkedIn page the search found (a few searches, not thirty), and LinkedIn is searched for more only
+when none of them can be the contact. CA firms are
 never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
 segment has ready for the draw, and warns when the searches are running thin.
 

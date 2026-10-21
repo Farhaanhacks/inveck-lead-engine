@@ -16,7 +16,7 @@ import { adminPage } from '@/lib/access';
 import { listBdas } from '@/lib/users';
 import { getSettings } from '@/lib/settings';
 import { getHolidays } from '@/lib/holidays';
-import { MORNING_LIMITS, morningHealth } from '@/lib/sourcing/morning';
+import { morningHealth } from '@/lib/sourcing/morning';
 import { MorningCard } from '@/components/morning-card';
 
 // Runs started from this page keep working after the response (see actions.ts).
@@ -107,7 +107,7 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
       </div>
 
       <div className="mt-6">
-        <MorningCard health={morning} dailySearches={MORNING_LIMITS.dailySearches} />
+        <MorningCard health={morning} />
       </div>
 
       <div className="mt-6">

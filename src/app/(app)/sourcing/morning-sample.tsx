@@ -25,6 +25,7 @@ const OUTCOME: Record<string, { label: string; tone: string }> = {
   ruled_out: { label: 'Ruled out by the ICP check', tone: 'bg-neutral-soft text-ink-2' },
   no_contact: { label: 'No contact found', tone: 'bg-warning-soft text-warning-ink' },
   error: { label: 'Research failed', tone: 'bg-critical-soft text-critical-ink' },
+  waiting: { label: 'Next day (search budget)', tone: 'bg-warning-soft text-warning-ink' },
 };
 
 function Counter({ label, value, goal, note }: { label: string; value: number; goal?: number; note?: string }) {

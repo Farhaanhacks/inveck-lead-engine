@@ -294,7 +294,14 @@ async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): 
 export async function verifyContacts(
   db: Db,
   svc: Services,
-  opts: { ownerId?: number; limit?: number; dueToday?: boolean; mainOnly?: boolean } = {},
+  opts: {
+    ownerId?: number;
+    limit?: number;
+    dueToday?: boolean;
+    mainOnly?: boolean;
+    /** What is left of the day's Google search budget: the checks stop before it runs out (the rest are checked another day). */
+    budgetLeft?: () => Promise<number>;
+  } = {},
 ): Promise<Record<CheckResult, number>> {
   const tally: Record<CheckResult, number> = { corrected: 0, confirmed: 0, not_found: 0, left: 0, skipped: 0 };
   const stale = staleBefore();
@@ -357,6 +364,8 @@ export async function verifyContacts(
     .orderBy(sql`${onToday} desc`, sql`${leads.contactCheckedAt} nulls first`, asc(leads.id))
     .limit(opts.limit ?? 50);
   for (let i = 0; i < due.length; i += 5) {
+    // Five companies at a time can cost thirty searches or so.
+    if (opts.budgetLeft && (await opts.budgetLeft()) < 30) break;
     const results = await Promise.allSettled(due.slice(i, i + 5).map((l) => verifyContact(db, svc, l, new Date(), { mainOnly: opts.mainOnly })));
     for (const r of results) tally[r.status === 'fulfilled' ? r.value : 'skipped']++;
   }

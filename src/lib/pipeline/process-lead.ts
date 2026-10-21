@@ -284,18 +284,73 @@ export async function processLead(
     ? { name: lead.contactName, title: lead.contactTitle, email: lead.contactEmail, phone: lead.contactPhone, linkedin: lead.contactLinkedin }
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
-  const [searched, leaders, news] = await Promise.all([
-    // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
-    // each person's verdict goes on the run's log.
-    searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`)),
-    searchLeaders(svc, lead.company, domain, site.text, pages),
+  // A company the people-first search found comes with its people: they are the candidates first, and
+  // LinkedIn is searched for more (one designation at a time, P1 first, see contactSearchPlan; each
+  // search and each verdict on the run's log) only when none of them can be the contact. That saves
+  // the thirty-odd searches the full search takes. Every other company's people are searched for at once.
+  const known = opts.found ?? [];
+  const searchStaff = () => searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`));
+  const searchTop = () => searchLeaders(svc, lead.company, domain, site.text, pages);
+  const [searchedFirst, leadersFirst, news] = await Promise.all([
+    known.length ? Promise.resolve<Awaited<ReturnType<typeof searchLinkedIn>>>({ people: [], accepted: [], error: '' }) : searchStaff(),
+    known.length ? Promise.resolve<Awaited<ReturnType<typeof searchLeaders>>>({ people: [], emails: [], error: '' }) : searchTop(),
     findSignals(svc, lead.company),
   ]);
-  // The people the people-first search found here are on LinkedIn too: added unless the search found them again.
-  const earlier = (opts.found ?? []).filter((f) => !searched.people.some((p) => sameName(p.name, f.name)));
-  const linkedin = earlier.length ? { ...searched, people: [...searched.people, ...earlier] } : searched;
-  if (earlier.length) await log(`${lead.company}: ${earlier.length} found earlier by the people-first search: ${earlier.map((p) => `${p.name} (${p.title})`).join(', ')}`);
   if (news.signals.length) await log(`${lead.company}: buying signal: ${news.signals[0].headline}${news.signals.length > 1 ? ` (+${news.signals.length - 1} more)` : ''}`);
+
+  // Nobody who works somewhere else now ("Plant Head at PepsiCo"), whatever source listed them.
+  // Another branch of this company already has its own main contact: they stay with that branch
+  // unless their profile places them at this one.
+  const firmName = normCompany(lead.company);
+  const firmSite = rootDomain(lead.website);
+  const otherBranches = (ctx.taken ?? []).filter(
+    (t) => t.leadId !== lead.id && t.contactName && ((firmName && normCompany(t.company) === firmName) || (firmSite && rootDomain(t.website) === firmSite)),
+  );
+  const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
+  /** Everyone found so far as candidates, the contact chosen among them and confirmed on LinkedIn. */
+  const choose = async (searched: Awaited<ReturnType<typeof searchLinkedIn>>, leaders: Awaited<ReturnType<typeof searchLeaders>>) => {
+    // The people the people-first search found here are on LinkedIn too: added unless the search found them again.
+    const earlier = known.filter((f) => !searched.people.some((p) => sameName(p.name, f.name)));
+    const linkedin = earlier.length ? { ...searched, people: [...searched.people, ...earlier] } : searched;
+    if (earlier.length) await log(`${lead.company}: ${earlier.length} found earlier by the people-first search: ${earlier.map((p) => `${p.name} (${p.title})`).join(', ')}`);
+    const candidates = buildCandidates(manual, linkedin.people, leaders.people).filter(
+      (c) =>
+        c.source === 'Sales team' ||
+        (currentEmployer(c, lead.company) !== 'elsewhere' &&
+          // Based at another of the company's sites (unless their role covers the whole company).
+          !atOtherSite(c, lead.city, icp) &&
+          !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
+    );
+    // The best-ranked people the search couldn't place (no location, or only "India" or a state, and no
+    // workplace shown): looked up by name, so they can be confirmed at the site (or not) instead of being
+    // set aside for a missing location. Every place the lookup shows is kept: where they live, where the
+    // job is, and the site their title names.
+    const unplaced = rankCandidates(
+      candidates.filter((c) => c.source === 'LinkedIn' && personSite(c, lead.city) === 'unknown' && contactPriority(c.title, icp) < 99),
+      icp,
+      lead.city,
+    ).slice(0, 3);
+    for (const c of lead.city ? unplaced : []) {
+      try {
+        const profile = await findLinkedinProfile(svc, c.name, lead.company, { title: c.title, city: lead.city });
+        if (profile?.employer !== 'here') continue;
+        if (profile.location && (vagueLocation(c.location) || !vagueLocation(profile.location))) c.location = profile.location;
+        if (profile.jobLocation) c.jobLocation = profile.jobLocation;
+        if (profile.responsibility) c.responsibility = profile.responsibility;
+        if (profile.evidence && !c.evidence?.includes('current')) c.evidence = profile.evidence;
+      } catch {
+        // Left without a location: not the main contact this time.
+      }
+    }
+    return { linkedin, leaders, vetted: await vetPick(svc, lead, candidates, linkedin.people, pick, notes, icp) };
+  };
+  let chosen = await choose(searchedFirst, leadersFirst);
+  if (known.length && !chosen.vetted.picked.contact.name) {
+    await log(`${lead.company}: none of the ${known.length} found by the people-first search can be the contact; searching LinkedIn for more`);
+    const [more, moreLeaders] = await Promise.all([searchStaff(), searchTop()]);
+    chosen = await choose(more, moreLeaders);
+  }
+  const { linkedin, leaders, vetted } = chosen;
   if (linkedin.error) {
     notes.push('LinkedIn search error: ' + linkedin.error);
     await log(`${lead.company}: LinkedIn search failed: ${linkedin.error}${/credit/i.test(linkedin.error) ? ' (Google search, SERPER_API_KEY, is out of credits)' : ''}`, 'error');
@@ -307,45 +362,6 @@ export async function processLead(
   if (opts.contactsOnly && linkedin.error && !linkedin.people.length) throw new Error('LinkedIn search failed: ' + linkedin.error);
   if (leaders.error) notes.push('Leadership search error: ' + leaders.error);
 
-  // Nobody who works somewhere else now ("Plant Head at PepsiCo"), whatever source listed them.
-  // Another branch of this company already has its own main contact: they stay with that branch
-  // unless their profile places them at this one.
-  const firmName = normCompany(lead.company);
-  const firmSite = rootDomain(lead.website);
-  const otherBranches = (ctx.taken ?? []).filter(
-    (t) => t.leadId !== lead.id && t.contactName && ((firmName && normCompany(t.company) === firmName) || (firmSite && rootDomain(t.website) === firmSite)),
-  );
-  const candidates = buildCandidates(manual, linkedin.people, leaders.people).filter(
-    (c) =>
-      c.source === 'Sales team' ||
-      (currentEmployer(c, lead.company) !== 'elsewhere' &&
-        // Based at another of the company's sites (unless their role covers the whole company).
-        !atOtherSite(c, lead.city, icp) &&
-        !(otherBranches.some((t) => sameName(t.contactName, c.name)) && !atBranch(c, lead.city))),
-  );
-  // The best-ranked people the search couldn't place (no location, or only "India" or a state, and no
-  // workplace shown): looked up by name, so they can be confirmed at the site (or not) instead of being
-  // set aside for a missing location. Every place the lookup shows is kept: where they live, where the
-  // job is, and the site their title names.
-  const unplaced = rankCandidates(
-    candidates.filter((c) => c.source === 'LinkedIn' && personSite(c, lead.city) === 'unknown' && contactPriority(c.title, icp) < 99),
-    icp,
-    lead.city,
-  ).slice(0, 3);
-  for (const c of lead.city ? unplaced : []) {
-    try {
-      const profile = await findLinkedinProfile(svc, c.name, lead.company, { title: c.title, city: lead.city });
-      if (profile?.employer !== 'here') continue;
-      if (profile.location && (vagueLocation(c.location) || !vagueLocation(profile.location))) c.location = profile.location;
-      if (profile.jobLocation) c.jobLocation = profile.jobLocation;
-      if (profile.responsibility) c.responsibility = profile.responsibility;
-      if (profile.evidence && !c.evidence?.includes('current')) c.evidence = profile.evidence;
-    } catch {
-      // Left without a location: not the main contact this time.
-    }
-  }
-  const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
-  const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes, icp);
   const picked = vetted.picked;
   const lookupFailed = vetted.lookupFailed;
   notes.unshift(...picked.notes);
@@ -435,6 +451,11 @@ export async function processLead(
     p.passedAt = now;
     p.passedReason = 'unverified';
     p.whyNot = conflict;
+  }
+  // Everyone just found on LinkedIn with a current job here was checked there now: the morning contact
+  // check doesn't search for them again until a recheck is due. Anyone set aside is checked again later.
+  for (const p of update.people) {
+    if (p.source === SOURCE_NAMES.LinkedIn && !p.passedAt && linkedin.people.some((c) => sameName(c.name, p.name))) p.checkedAt = now;
   }
 
   // Never wipe contact details the sales team typed in. A person chosen now gets their own email

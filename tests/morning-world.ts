@@ -51,11 +51,13 @@ function world(log: FakeLog, searched: string[]): typeof fetch {
   }) as typeof fetch;
 }
 
-export function morningServices(log: FakeLog, searched: string[] = []): Services {
+export function morningServices(log: FakeLog, searched: string[] = [], extra: Partial<Services> & { budget?: number } = {}): Services {
+  const { budget, ...rest } = extra;
   return {
     fetch: world(log, searched),
     keys: { deepseek: 'ds-test', anthropic: 'ant-test', serper: 'serper-test', jina: '' },
-    settings: settingsSchema.parse({ manufacturingPerAssociate: 1, logisticsPerAssociate: 1 }),
+    settings: settingsSchema.parse({ manufacturingPerAssociate: 1, logisticsPerAssociate: 1, ...(budget ? { dailySearchBudget: budget } : {}) }),
+    ...rest,
   };
 }
 

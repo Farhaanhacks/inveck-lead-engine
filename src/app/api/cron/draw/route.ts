@@ -10,6 +10,7 @@ import { liveServices } from '@/lib/run-driver';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 import { ensureSequences } from '@/lib/tasks';
+import { searchBudgetLeft } from '@/lib/search-budget';
 
 export const maxDuration = 300;
 
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
   const svc = await liveServices();
   const promoted = await bestEffort('tidying contacts', () => tidyContacts(db), [] as number[]);
   for (const id of promoted) await bestEffort('rewriting a draft', () => redraftForContact(db, svc, id), undefined);
-  const checked = await bestEffort('checking contacts on LinkedIn', () => verifyContacts(db, svc, { limit: 200 }), null);
+  const checked = await bestEffort('checking contacts on LinkedIn', () => verifyContacts(db, svc, { limit: 200, budgetLeft: () => searchBudgetLeft(db, svc.settings) }), null);
   const drawn = (await bestEffort('the morning draw', () => runDailyDraw(db), null)) ?? (await bestEffort('topping up the draw', () => topUpDraw(db), null));
   // CA firms: 10 each for Anchal and Puja from the Google Sheet, then researched like any other new lead.
   const ca = await bestEffort('the CA firm draw', () => runCaDraw(db), null);

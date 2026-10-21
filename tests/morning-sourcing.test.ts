@@ -10,7 +10,13 @@ import { executeRun, startRun } from '@/lib/runs';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { istDay } from '@/lib/tasks';
 import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, searchesThisMorning, type MorningSourcing } from '@/lib/sourcing/morning';
-import type { FakeLog } from './fake-apis';
+import { fakeFetch, type FakeLog } from './fake-apis';
+import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
+import { processLead } from '@/lib/pipeline/process-lead';
+import { verifyContacts } from '@/lib/verify-contacts';
+import { sampleLead } from '@/lib/sourcing/sample-run';
+import { asLinkedInFinds } from '@/lib/sourcing/morning';
+import { icps, runEvents } from '@/lib/db/schema';
 import { morningServices } from './morning-world';
 
 /**
@@ -22,7 +28,7 @@ import { morningServices } from './morning-world';
 let db: Db;
 let log: FakeLog;
 
-const services = (searched: string[] = []) => morningServices(log, searched);
+const services = (searched: string[] = [], extra: Parameters<typeof morningServices>[2] = {}) => morningServices(log, searched, extra);
 
 beforeEach(async () => {
   process.env.DATABASE_URL = 'memory://';
@@ -41,7 +47,8 @@ describe('the 6 am run, people first', () => {
   it('finds what the draw is short of, researches it, and the 8 am draw hands it out', async () => {
     const searched: string[] = [];
     const { run } = await startRun(db, { findProspects: true, trigger: 'schedule' });
-    expect(await executeRun(db, run.id, services(searched), Number.POSITIVE_INFINITY)).toBe('done');
+    // Counted against the day's Google search budget, as on the live site.
+    expect(await executeRun(db, run.id, services(searched, { meter: dbSearchMeter(db) }), Number.POSITIVE_INFINITY)).toBe('done');
 
     const all = await db.select().from(leads);
     const by = Object.fromEntries(all.map((l) => [l.company, l]));
@@ -61,6 +68,8 @@ describe('the 6 am run, people first', () => {
     // Everyone found there is kept, on the lists.
     const found = await db.select().from(people).where(eq(people.leadId, by['Forgeline Components'].id));
     expect(found.map((p) => p.name)).toEqual(expect.arrayContaining(['Rahul Patil', 'Sunita Rao']));
+    // Found on LinkedIn moments ago: the morning contact check doesn't search for them again.
+    for (const name of ['Rahul Patil', 'Sunita Rao']) expect(found.find((p) => p.name === name)!.checkedAt).not.toBeNull();
 
     expect(by['Swift Warehousing Solutions']).toMatchObject({ segment: LOGISTICS, status: 'Approved', contactName: 'Deepak Nair' });
     // Too small on its LinkedIn page: never a lead. Already known: not added twice.
@@ -93,7 +102,10 @@ describe('the 6 am run, people first', () => {
       [MANUFACTURING, 1, 1, 1, 2],
       [LOGISTICS, 1, 1, 1, 2],
     ]);
-    expect(health.searchesToday).toBe(sourcing.searches);
+    // Every search of the day is counted (the search and the research), against the budget.
+    expect(health.searchesToday).toBeGreaterThanOrEqual(sourcing.searches);
+    expect(health.searchesToday).toBe(await searchesUsed(db));
+    expect(health.budget).toBe(1500);
     // This small world ran out of new people before the search had what it wanted: a sign the market is thin.
     expect(health.thin).toEqual([expect.stringMatching(/^Manufacturing: 1 of the last 1 rounds stopped short/), expect.stringMatching(/^3PL & Logistics: 1 of the last 1 rounds/)]);
 
@@ -176,7 +188,9 @@ describe('the search plan', () => {
   it('starts no new round after 7:30 am India time', () => {
     expect(beforeLastRound(new Date('2026-10-21T01:30:00Z'))).toBe(true); // 7:00 IST
     expect(beforeLastRound(new Date('2026-10-21T02:05:00Z'))).toBe(false); // 7:35 IST
-    expect(MORNING_LIMITS.dailySearches).toBe(3000);
+    // The whole day's Google searches are capped instead (Settings, 1,500 by default).
+    expect(settingsSchema.parse({}).dailySearchBudget).toBe(1500);
+    expect(MORNING_LIMITS.rounds).toBe(3);
   });
 });
 
@@ -235,5 +249,84 @@ describe('the day the morning search and draw start', () => {
     await setStart('2030-01-10');
     const h = await morningHealth(db, settingsSchema.parse({}), new Set(), wed);
     expect(h).toMatchObject({ off: 'not_started', startsOn: '2030-01-10', run: null });
+  });
+});
+
+
+describe("the day's Google search budget", () => {
+  it('people searches ask for a hundred results at a time (2 credits)', async () => {
+    const bodies: { q: string; num: number }[] = [];
+    const base = services();
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('google.serper.dev/search')) bodies.push(JSON.parse(String(init?.body)));
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const { run } = await startRun(db, { findProspects: true, trigger: 'schedule' });
+    await executeRun(db, run.id, svc, Number.POSITIVE_INFINITY);
+    const people = bodies.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing|[a-z ]+)" /.test(b.q) && b.q.split('"').length >= 5);
+    expect(people.length).toBeGreaterThan(0);
+    expect(people.every((b) => b.num === 100)).toBe(true);
+  });
+
+  it('a company found people first is researched with its own people: a handful of searches, not thirty', async () => {
+    let serper = 0;
+    const base = fakeFetch(log);
+    const svc = { ...services(), fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base(u, i))) as typeof fetch };
+    const found = asLinkedInFinds([{ name: 'Rahul Patil', title: 'Plant Head', linkedin: 'https://in.linkedin.com/in/rahul-patil', location: 'Pune, Maharashtra, India' }]);
+    const lead = sampleLead(-1, { company: 'Some Forge Co', website: 'someforge.in', city: 'Pune', segment: MANUFACTURING, status: 'Processing', source: PEOPLE_FIRST_SOURCE });
+    const r = await processLead(svc, lead, { icps: await db.select().from(icps), clients: [] }, async () => {}, { teamContact: false, found });
+    expect(r).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil' });
+    expect(r.contactVerifiedAt).toBeTruthy();
+    expect(serper).toBeLessThanOrEqual(8);
+  });
+
+  it("when none of them can be the contact, LinkedIn is searched for more", async () => {
+    let serper = 0;
+    const logs: string[] = [];
+    const base = fakeFetch(log);
+    const svc = { ...services(), fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base(u, i))) as typeof fetch };
+    // Their profile shows another employer now: not a contact here.
+    const found = [{ name: 'Rahul Patil', title: 'Plant Head', linkedin: 'https://in.linkedin.com/in/rahul-patil', snippet: 'Experience: Tata Steel', location: 'Pune', evidence: '' }];
+    const lead = sampleLead(-1, { company: 'Some Forge Co', website: 'someforge.in', city: 'Pune', segment: MANUFACTURING, status: 'Processing', source: PEOPLE_FIRST_SOURCE });
+    await processLead(svc, lead, { icps: await db.select().from(icps), clients: [] }, async (m) => void logs.push(m), { teamContact: false, found });
+    expect(logs.some((m) => /searching LinkedIn for more/.test(m))).toBe(true);
+    expect(serper).toBeGreaterThan(8);
+  });
+
+  it('the search stops while there is still enough left to research what it found and check contacts', async () => {
+    const { run } = await startRun(db, { findProspects: true, trigger: 'schedule' });
+    await executeRun(db, run.id, services([], { meter: dbSearchMeter(db), budget: 150 }), Number.POSITIVE_INFINITY);
+    const [finished] = await db.select().from(runs).where(eq(runs.id, run.id));
+    expect(finished.status).toBe('done');
+    expect((finished.sourcing as MorningSourcing).history.every((h) => h.stopped === 'cap' || h.stopped === 'target')).toBe(true);
+    expect(await searchesUsed(db)).toBeLessThanOrEqual(150);
+  });
+
+  it("with the budget used, waiting companies are left for the next run, not researched halfway", async () => {
+    await db.insert(leads).values(Array.from({ length: 4 }, (_, i) => ({ company: `Waiting Co ${i}`, website: `waiting${i}.in`, segment: MANUFACTURING })));
+    const meter = dbSearchMeter(db);
+    await meter.spend(1490);
+    const { run } = await startRun(db, { findProspects: false, trigger: 'schedule' });
+    expect(await executeRun(db, run.id, services([], { meter }), Number.POSITIVE_INFINITY)).toBe('done');
+    const rows = await db.select().from(leads).where(eq(leads.segment, MANUFACTURING));
+    expect(rows.filter((l) => l.company.startsWith('Waiting Co')).every((l) => l.status === 'New')).toBe(true);
+    const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(events.some((e) => /search budget .* is used: 4 companies wait/.test(e.message))).toBe(true);
+    expect(await searchesUsed(db)).toBe(1490);
+  });
+
+  it('the contact checks stop when the budget is used', async () => {
+    // A researched company whose contact research picked (not the team's), not confirmed yet.
+    await db.insert(leads).values({ company: 'Check Co', website: 'checkco.in', segment: MANUFACTURING, status: 'Approved', qualified: true, contactName: 'Asha Kulkarni', contactTitle: 'Plant Head', researchSummary: 'Makes forgings.' });
+    let serper = 0;
+    const base = services();
+    const svc = { ...base, fetch: (async (u: RequestInfo | URL, i?: RequestInit) => (String(u).includes('serper') && serper++, base.fetch(u, i))) as typeof fetch };
+    await verifyContacts(db, svc, { limit: 50, budgetLeft: async () => 0 });
+    expect(serper).toBe(0);
+    await verifyContacts(db, svc, { limit: 50, budgetLeft: async () => 1500 });
+    expect(serper).toBeGreaterThan(0);
   });
 });

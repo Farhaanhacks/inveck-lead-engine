@@ -6,6 +6,7 @@ import { clients, icps, leads, prospectResults, prospectSearches, runEvents, run
 import { processLead } from './pipeline/process-lead';
 import type { ProspectHistory } from './pipeline/prospects';
 import { peopleFirstContacts, sourceProspects, wantsAnotherRound } from './sourcing/morning';
+import { RESEARCH_CREDITS, searchBudgetLeft } from './search-budget';
 import { normQuery } from './pipeline/query-history';
 import { contactFromTeam } from './team-contact';
 export { contactFromTeam };
@@ -159,6 +160,15 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
   };
   // Stop means stop: companies still waiting to have their contacts found again are dropped from the
   // queue (their saved contacts stay as they are), so opening Today doesn't start it all again.
+  // Whether the day's Google search budget (counted only on live runs, which have a meter) has room for this much.
+  const budgetFor = async (credits: number) => !svc.meter || (await searchBudgetLeft(db, svc.settings)) >= credits;
+  let budgetLogged = false;
+  const logBudgetUsed = async () => {
+    if (budgetLogged) return;
+    budgetLogged = true;
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(eq(leads.status, 'New'));
+    await log(`The day's Google search budget (${svc.settings.dailySearchBudget.toLocaleString('en-IN')}) is used${Number(n) ? `: ${n} compan${Number(n) === 1 ? 'y waits' : 'ies wait'} for research on the next run` : ''}`, 'warn');
+  };
   const stop = async (): Promise<'done'> => {
     const left = await db.update(leads).set({ refetchPending: false, refetchClaimedAt: null }).where(eq(leads.refetchPending, true)).returning({ id: leads.id });
     await log(`Stopped by user${left.length ? `; ${left.length} compan${left.length === 1 ? 'y' : 'ies'} left with the contacts they had` : ''}`, 'warn');
@@ -194,8 +204,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
     const activeIcps = allIcps.filter((i) => i.active);
     if (!activeIcps.length) throw new Error('No active ICP. Turn on at least one ICP.');
 
-    // New plants and warehouses in the news (at most every 12 hours).
-    if (stats.processed === 0 && svc.settings.radarEnabled) {
+    // New plants and warehouses in the news (at most every 12 hours), while the day's search budget allows.
+    if (stats.processed === 0 && svc.settings.radarEnabled && (await budgetFor(50))) {
       try {
         const r = await scanRadar(db, svc, (m, l) => log(m, l));
         if (r.error) await log('New facility radar: ' + r.error, 'warn');
@@ -262,6 +272,11 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           await save();
           return 'continue';
         }
+        // The day's Google search budget: companies left over wait for tomorrow's run (never researched halfway).
+        if (!(await budgetFor(CONCURRENCY * RESEARCH_CREDITS.peopleFirst))) {
+          await logBudgetUsed();
+          break;
+        }
         const batch = await claimLeads(db, CONCURRENCY);
         if (!batch.length) break;
 
@@ -308,6 +323,10 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       if (Date.now() - started > budgetMs * 0.6) {
         await save();
         return 'continue';
+      }
+      if (!(await budgetFor(CONCURRENCY * RESEARCH_CREDITS.other))) {
+        await logBudgetUsed();
+        break;
       }
       const batch = await claimRefetch(db, CONCURRENCY);
       if (!batch.length) break;
