@@ -305,3 +305,27 @@ describe('people, Drive links and to-dos', () => {
     await expect(deleteTodoAction(1)).rejects.toThrow('Marketing only');
   });
 });
+
+describe('the Both platform choice', () => {
+  it('makes the same content for Instagram and LinkedIn at once, each its own post; or neither if it is invalid', async () => {
+    const { createPostForBoth } = await import('@/lib/content-calendar');
+    const { SHARED_FORMATS } = await import('@/lib/content-meta');
+    expect(SHARED_FORMATS).toEqual(['post', 'carousel', 'video']);
+    const r = await createPostForBoth(db, { title: 'Diwali greeting', format: 'carousel', caption: 'Happy Diwali', status: 'draft', scheduledOn: '2026-11-08' });
+    if (!r.ok) throw new Error('both');
+    expect(r.posts.map((p) => p.platform).sort()).toEqual(['instagram', 'linkedin']);
+    expect(r.posts.every((p) => p.title === 'Diwali greeting' && p.format === 'carousel' && p.scheduledOn === '2026-11-08')).toBe(true);
+    // A format only one platform has is refused, and nothing is made.
+    const before = (await db.select().from(contentPosts)).length;
+    expect((await createPostForBoth(db, { title: 'Story', format: 'story', status: 'draft' })).ok).toBe(false);
+    expect((await createPostForBoth(db, { title: '', format: 'post', status: 'draft' })).ok).toBe(false);
+    expect((await db.select().from(contentPosts)).length).toBe(before);
+  });
+
+  it('is a Marketing-only action', async () => {
+    const { createPostsForBothAction } = await import('@/app/marketing-actions');
+    expect((await createPostsForBothAction({ title: 'Hello', format: 'post', status: 'draft' })).ok).toBe(true);
+    who.current = { ...who.current, role: 'bda', id: 7 };
+    await expect(createPostsForBothAction({ title: 'Nope', format: 'post', status: 'draft' })).rejects.toThrow('Marketing only');
+  });
+});

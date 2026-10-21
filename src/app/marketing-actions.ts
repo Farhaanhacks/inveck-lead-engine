@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { getDb } from '@/lib/db';
 import { requireMarketing } from '@/lib/access';
-import { addPerson, addTodo, completeTodo, createPost, deletePost, deleteTodo, moveTodo, removePerson, renamePerson, toPersonView, toTodoView, toView, updatePost, type PostInput, type PostView } from '@/lib/content-calendar';
+import { addPerson, addTodo, completeTodo, createPost, createPostForBoth, deletePost, deleteTodo, moveTodo, removePerson, renamePerson, toPersonView, toTodoView, toView, updatePost, type PostInput, type PostView } from '@/lib/content-calendar';
 import type { PersonView, TodoView } from '@/lib/content-meta';
 
 /** Every call here is checked on the server: only the Marketing profile (or an administrator) can use them, whatever page sent it. */
@@ -22,6 +22,15 @@ export async function createPostAction(input: Partial<Record<keyof PostInput, un
   if (!r.ok) return r;
   refresh();
   return { ok: true, post: toView(r.post) };
+}
+
+/** "Both": the same content made for Instagram and for LinkedIn at once. */
+export async function createPostsForBothAction(input: Partial<Record<keyof PostInput, unknown>>): Promise<{ ok: true; posts: PostView[] } | { ok: false; error: string }> {
+  await requireMarketing();
+  const r = await createPostForBoth(await getDb(), input ?? {});
+  if (!r.ok) return r;
+  refresh();
+  return { ok: true, posts: r.posts.map(toView) };
 }
 
 /** Saves the editor, or one change (a status, a new date): what isn't sent is kept as it was. */

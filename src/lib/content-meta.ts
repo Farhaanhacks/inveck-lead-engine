@@ -20,6 +20,8 @@ export const FORMATS: Record<ContentPlatform, readonly string[]> = {
   instagram: ['post', 'carousel', 'reel', 'story', 'video'],
   linkedin: ['post', 'carousel', 'video', 'article'],
 };
+/** The formats both platforms have: what "Both" offers (a new piece made once for Instagram and for LinkedIn). */
+export const SHARED_FORMATS = FORMATS.instagram.filter((f) => FORMATS.linkedin.includes(f));
 export const FORMAT_LABEL = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);
 
 /** A post as the browser gets it (dates as text). */

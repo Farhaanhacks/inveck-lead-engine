@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState, useTransition } from 'react';
-import { addTodoAction, completeTodoAction, createPostAction, deletePostAction, deleteTodoAction, movePostAction, moveTodoAction, updatePostAction } from '@/app/marketing-actions';
+import { addTodoAction, completeTodoAction, createPostAction, createPostsForBothAction, deletePostAction, deleteTodoAction, movePostAction, moveTodoAction, updatePostAction } from '@/app/marketing-actions';
 import { PlatformLogo } from '@/components/platform-logo';
-import { addDays, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMAT_LABEL, FORMATS, monthWeeks, PLATFORM_LABEL, STATUS_LABEL, weekOf, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from '@/lib/content-meta';
+import { addDays, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMAT_LABEL, FORMATS, SHARED_FORMATS, monthWeeks, PLATFORM_LABEL, STATUS_LABEL, weekOf, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from '@/lib/content-meta';
 
 const STATUS_TONE: Record<ContentStatus, string> = {
   draft: 'bg-neutral-soft text-ink-2',
@@ -278,8 +278,8 @@ export function CalendarBoard({ initialPosts, people, initialTodos, today }: { i
           draft={editor}
           people={people}
           onClose={() => setEditor(null)}
-          onSaved={(p) => {
-            put(p);
+          onSaved={(list) => {
+            list.forEach(put);
             setEditor(null);
             setNotice('');
           }}
@@ -354,8 +354,11 @@ function TodoRow({ todo, finishing, onToggle, onRemove, compact }: { todo: TodoV
   );
 }
 
-function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; people: PersonView[]; onClose: () => void; onSaved: (p: PostView) => void; onDeleted: (id: number) => void }) {
+function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; people: PersonView[]; onClose: () => void; onSaved: (p: PostView[]) => void; onDeleted: (id: number) => void }) {
   const [f, setF] = useState(draft);
+  // "Both": new content only. One piece made for Instagram and LinkedIn together (two posts).
+  const [both, setBoth] = useState(false);
+  const formats = both ? SHARED_FORMATS : FORMATS[f.platform];
   const [error, setError] = useState('');
   const [busy, start] = useTransition();
   const first = useRef<HTMLInputElement>(null);
@@ -372,8 +375,14 @@ function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; 
     setError('');
     const body = { title: f.title, platform: f.platform, format: f.format, caption: f.caption, scheduledOn: f.scheduledOn, status: f.status, dependencyNote: f.dependencyNote, assigneeId: f.assigneeId, driveLink: f.driveLink };
     start(async () => {
+      if (f.id === null && both) {
+        const r = await createPostsForBothAction(body);
+        if (r.ok) onSaved(r.posts);
+        else setError(r.error);
+        return;
+      }
       const r = f.id === null ? await createPostAction(body) : await updatePostAction(f.id, body);
-      if (r.ok) onSaved(r.post);
+      if (r.ok) onSaved([r.post]);
       else setError(r.error);
     });
   };
@@ -397,25 +406,33 @@ function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; 
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label htmlFor="c-platform" className="label flex items-center gap-1.5">Platform <PlatformLogo platform={f.platform} size={14} /></label>
+            <label htmlFor="c-platform" className="label flex items-center gap-1.5">Platform {both ? CONTENT_PLATFORMS.map((p) => <PlatformLogo key={p} platform={p} size={14} />) : <PlatformLogo platform={f.platform} size={14} />}</label>
             <select
               id="c-platform"
-              value={f.platform}
+              value={both ? 'both' : f.platform}
               onChange={(e) => {
+                if (e.target.value === 'both') {
+                  setBoth(true);
+                  setF((x) => ({ ...x, format: SHARED_FORMATS.includes(x.format) ? x.format : 'post' }));
+                  return;
+                }
+                setBoth(false);
                 const platform = e.target.value as ContentPlatform;
                 setF((x) => ({ ...x, platform, format: FORMATS[platform].includes(x.format) ? x.format : 'post' }));
               }}
               className="field"
             >
-              {CONTENT_PLATFORMS.map((p) => (
+ {CONTENT_PLATFORMS.map((p) => (
                 <option key={p} value={p}>{PLATFORM_LABEL[p]}</option>
               ))}
+              {f.id === null && <option value="both">Both (Instagram and LinkedIn)</option>}
             </select>
+            {both && <p className="mt-1 text-xs text-muted">Makes one post for Instagram and one for LinkedIn, with the same details. Each can be moved, edited and posted on its own.</p>}
           </div>
           <div>
             <label htmlFor="c-format" className="label">Format</label>
             <select id="c-format" value={f.format} onChange={(e) => set('format', e.target.value)} className="field">
-              {FORMATS[f.platform].map((x) => (
+              {formats.map((x) => (
                 <option key={x} value={x}>{FORMAT_LABEL(x)}</option>
               ))}
             </select>

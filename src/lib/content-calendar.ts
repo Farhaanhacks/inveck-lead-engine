@@ -81,6 +81,24 @@ export function checkPost(raw: Partial<Record<keyof PostInput, unknown>>, existi
   return { ok: true, value: { title, platform, format, caption, scheduledOn, status, dependencyNote, assigneeId, driveLink: drive.value } };
 }
 
+/**
+ * "Both" platforms: the same piece made once for Instagram and once for LinkedIn (two posts, each then moved, edited and
+ * posted on its own). Both are checked first, so either both are made or neither is.
+ */
+export async function createPostForBoth(db: Db, raw: Partial<Record<keyof PostInput, unknown>>, now = new Date()): Promise<{ ok: true; posts: ContentPost[] } | { ok: false; error: string }> {
+  const checks = CONTENT_PLATFORMS.map((platform) => checkPost({ ...raw, platform }, null, istDay(now)));
+  const bad = checks.find((c) => !c.ok);
+  if (bad && !bad.ok) return bad;
+  if (!(await assigneeExists(db, checks[0].ok ? checks[0].value.assigneeId : null))) return { ok: false, error: 'That person is no longer on the People list.' };
+  const posts: ContentPost[] = [];
+  for (const c of checks) {
+    if (!c.ok) continue;
+    const [post] = await db.insert(contentPosts).values({ ...c.value, postedAt: postedAtFor(c.value.status, null, now) }).returning();
+    posts.push(post);
+  }
+  return { ok: true, posts };
+}
+
 /** Marking Posted records when; taking it back clears that (the post was not posted after all). */
 const postedAtFor = (status: ContentStatus, existing: Pick<ContentPost, 'postedAt'> | null | undefined, now: Date) => (status === 'posted' ? (existing?.postedAt ?? now) : null);
 
