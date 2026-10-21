@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import type { FitEvidence, FitStatus, RiskFlag } from '../pipeline/fit';
 import type { ContentPlatform, ContentStatus } from '../content-meta';
 
@@ -666,3 +666,23 @@ export const leadMeetings = pgTable('lead_meetings', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type LeadMeeting = typeof leadMeetings.$inferSelect;
+
+/**
+ * LinkedIn activity for one contact, as the BDA tracks it on Today: a status and remarks. One row per contact
+ * (`personId` is the people row; 0 only for a lead whose main contact has no people row), so a second contact at the
+ * same company, or a new main contact, has its own and never overwrites another's.
+ */
+export const contactLinkedin = pgTable(
+  'contact_linkedin',
+  {
+    id: serial('id').primaryKey(),
+    leadId: integer('lead_id').notNull(),
+    personId: integer('person_id').notNull().default(0),
+    status: text('status').notNull().default('not_started'),
+    remarks: text('remarks').notNull().default(''),
+    updatedBy: integer('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('contact_linkedin_person_idx').on(t.leadId, t.personId)],
+);
+export type ContactLinkedin = typeof contactLinkedin.$inferSelect;

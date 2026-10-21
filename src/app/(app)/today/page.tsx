@@ -3,6 +3,8 @@ import { atMostEvery } from '@/lib/throttle';
 
 import { TierBadge } from '@/components/tier-badge';
 import { StepActions, TaskButton, TaskForm } from '@/components/step-actions';
+import { LinkedinTracker } from '@/components/linkedin-tracker';
+import { loadLinkedinActivity, statusFromOutcome, type LinkedinView } from '@/lib/linkedin-activity';
 import type { MeetingInfo } from '@/components/meeting-dialog';
 import { defaultMeetingTitle, meetingsOn } from '@/lib/meetings';
 import { addDays } from '@/lib/content-meta';
@@ -465,6 +467,8 @@ function DoneStep({ task, readOnly }: { task: Task; readOnly: boolean }) {
 
 function CompanyCard({
   group,
+  linkedin,
+  primaryId,
   bda,
   readOnly,
   others,
@@ -475,6 +479,9 @@ function CompanyCard({
   whatsapp,
 }: {
   group: CompanyGroup;
+  /** Saved LinkedIn activity for this company's contacts, keyed by person id (0: the main contact has no people row). */
+  linkedin: Map<number, LinkedinView>;
+  primaryId: number;
   bda: string;
   readOnly: boolean;
   others: Person[];
@@ -522,6 +529,17 @@ function CompanyCard({
             {lead.contactName ? <TierBadge tier={tier} /> : null}
           </div>
           <Reach lead={lead} emails={emails} />
+          {/* The main contact's own LinkedIn status and remarks (until set here, what the lead's tracker already says). */}
+          {(lead.contactName || primaryId > 0) && (
+            <LinkedinTracker
+              key={`li-${lead.id}-${primaryId}`}
+              leadId={lead.id}
+              personId={primaryId}
+              initialStatus={linkedin.get(primaryId)?.status ?? statusFromOutcome(lead.linkedinOutcome)}
+              initialRemarks={linkedin.get(primaryId)?.remarks ?? ''}
+              readOnly={readOnly}
+            />
+          )}
           {!readOnly && <EditContact lead={lead} others={others} />}
           {others.filter((p) => !p.passedAt).length > 0 && (
             <div className="mt-2 rounded-md border border-line bg-surface-2 px-3 py-2">
@@ -539,6 +557,11 @@ function CompanyCard({
                       {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}
                       {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
                       {!p.linkedin && !p.phone && !p.email && <span className="text-muted">no details yet</span>}
+                      {p.name !== 'Other number' && p.name !== 'Other email' && (
+                        <span className="basis-full">
+                          <LinkedinTracker key={`li-${lead.id}-${p.id}`} leadId={lead.id} personId={p.id} initialStatus={linkedin.get(p.id)?.status ?? 'not_started'} initialRemarks={linkedin.get(p.id)?.remarks ?? ''} readOnly={readOnly} label="LinkedIn" />
+                        </span>
+                      )}
                       {!readOnly && p.name !== 'Other number' && p.name !== 'Other email' && (
                         <form action={makePrimaryAction}>
                           <input type="hidden" name="id" value={lead.id} />
@@ -721,6 +744,10 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
+  // Each contact's own LinkedIn status and remarks.
+  const liSaved = await loadLinkedinActivity(db, visible.map((g) => g.lead.id));
+  const liFor = (leadId: number) => new Map([...liSaved].filter(([k]) => k.startsWith(`${leadId}:`)).map(([k, v]) => [Number(k.split(':')[1]), v] as const));
+  const primaryIdOf = (leadId: number) => peopleRows.find((p) => p.leadId === leadId && p.isPrimary && !p.passedAt)?.id ?? 0;
   // Email steps, on your own list: sent from your connected Outlook, or opened in your email app.
   const mailReady = !!mailConfig();
   const emailLeadIds = own ? visible.filter((g) => g.items.some((i) => i.task.kind === 'email')).map((g) => g.lead.id) : [];
@@ -1054,7 +1081,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           </div>
           <ul className="divide-y divide-line">
             {visible.map((g) => (
-              <CompanyCard key={g.lead.id} group={g} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead)} whatsapp={waFor(g.lead)} />
+              <CompanyCard key={g.lead.id} group={g} linkedin={liFor(g.lead.id)} primaryId={primaryIdOf(g.lead.id)} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead)} whatsapp={waFor(g.lead)} />
             ))}
           </ul>
           {visible.length < shownGroups.length && (

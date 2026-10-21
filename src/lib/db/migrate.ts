@@ -524,6 +524,16 @@ export const SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS content_posts_day_idx ON content_posts (scheduled_on)`,
+  `CREATE TABLE IF NOT EXISTS contact_linkedin (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    person_id INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'not_started',
+    remarks TEXT NOT NULL DEFAULT '',
+    updated_by INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_linkedin_person_idx ON contact_linkedin (lead_id, person_id)`,
   `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT ''`,
   `CREATE TABLE IF NOT EXISTS lead_meetings (
     id SERIAL PRIMARY KEY,
