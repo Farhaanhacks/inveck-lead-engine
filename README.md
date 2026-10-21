@@ -236,8 +236,8 @@ Each report shows the funnel, every company with its outcome, and each search wi
 one invocation (300 s) hands itself to the next by calling the app's own address. Vercel ends such a chain
 after a few hand-offs (`508 INFINITE_LOOP_DETECTED`), so the run then pauses, with everything it did saved,
 and the next fresh request picks it up again: a page opened (Dashboard, Leads, Today, Team, or the Sourcing
-page while a test runs), or the 8 am draw (`/api/cron/resume` does the same when called with
-`CRON_SECRET`). A Morning Sample Run stopped that way before this existed can be carried
+page while a test runs), the 8 am draw, or the checks every 10 minutes from 06:10 to 07:50 IST
+(`/api/cron/resume` in `vercel.json`). A Morning Sample Run stopped that way before this existed can be carried
 on from where it got to ("Carry on from here").
 
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
