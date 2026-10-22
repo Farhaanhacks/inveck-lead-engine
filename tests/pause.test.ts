@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
+import { sql, eq } from 'drizzle-orm';
 import { leads, settings } from '@/lib/db/schema';
+import { SCHEMA_STATEMENTS } from '@/lib/db/migrate';
 import { MANUFACTURING } from '@/lib/db/seed';
 import { pausedToday } from '@/lib/pause';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
@@ -47,4 +49,22 @@ describe('a paused day', () => {
     expect(Object.values(tally).reduce((a, b) => a + b, 0)).toBe(0);
     expect(calls).toBe(0);
   });
+
+  it('Friday 23 October is added to the live database\'s paused days, once', async () => {
+    const friday = new Date('2026-10-23T00:30:00Z');
+    const step = SCHEMA_STATEMENTS.filter((st) => st.includes('pauseFriday23V1'));
+    expect(step).toHaveLength(2);
+    // A new database has no paused days: nothing is added.
+    for (const st of step) await db.execute(sql.raw(st));
+    expect(await db.select().from(settings).where(eq(settings.key, 'pausedDays'))).toEqual([]);
+    // The live database: Thursday paused already; Friday added, and only once.
+    await db.delete(settings).where(eq(settings.key, 'pauseFriday23V1'));
+    await db.insert(settings).values({ key: 'pausedDays', value: ['2026-10-22'] });
+    for (let i = 0; i < 2; i++) for (const st of step) await db.execute(sql.raw(st));
+    const [row] = await db.select().from(settings).where(eq(settings.key, 'pausedDays'));
+    expect(row.value).toEqual(['2026-10-22', '2026-10-23']);
+    expect(await pausedToday(db, friday)).toBe(true);
+    expect(await pausedToday(db, new Date('2026-10-26T00:30:00Z'))).toBe(false);
+  });
 });
+
