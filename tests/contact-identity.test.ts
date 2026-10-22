@@ -4,7 +4,8 @@ import type { EnrichmentCache, Services } from '@/lib/pipeline/services';
 import { distanceKm, forgetPlaces, knowPlaces, placeKey, pointOf } from '@/lib/pipeline/places';
 import { learnFirm, linkedinPageName, recallFirm } from '@/lib/pipeline/firm-identity';
 import { firmAliasesOf, sameFirm, siteOf } from '@/lib/pipeline/employer';
-import { atOtherSite, confirmedAtSite, contactSearchPlan, personSite, searchLinkedIn, staffSearches } from '@/lib/pipeline/contacts';
+import { atOtherSite, confirmedAtSite, contactSearchPlan, findLinkedinProfile, personSite, PROFILE_MEMORY_DAYS, searchLinkedIn, staffSearches } from '@/lib/pipeline/contacts';
+import { findSignals, NEWS_MEMORY_DAYS } from '@/lib/pipeline/signals';
 import { cleanTitle, companyWide, contactPriority, noDepartment, tierOf } from '@/lib/tiers';
 import { DEFAULT_ICPS } from '@/lib/db/seed';
 
@@ -741,22 +742,54 @@ describe('people already found here (the people-first search) count towards the 
   });
 });
 
-describe('the Morning Sample Run\'s lean research (the 6 am run keeps four contacts and the hunt for a P1)', () => {
+describe('the Morning Sample Run\'s lean research (the 6 am run keeps four contacts)', () => {
   const company = 'Hosur Gears';
   const mfg = DEFAULT_ICPS[0];
   const person = (name: string, title: string) => ({ name, title, linkedin: `https://in.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, '-')}`, snippet: '', location: 'Hosur, Tamil Nadu, India', evidence: 'Found by the people-first search' });
   const linkedinSearches = () => seen.searches.filter((q) => q.startsWith('site:linkedin.com/in'));
+  const plantHead = { title: 'Bina B - Plant Head - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/bina-b', snippet: '' };
 
-  it('two acceptable contacts are enough, and with people the search found there no P1 is hunted for', async () => {
+  it('two acceptable contacts with a P1 among them: nothing more is searched, not even the staff', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: [person('Ravi Kumar', 'Plant Head'), person('Vikram P', 'Supply Chain Manager')], lean: true });
+    expect(linkedinSearches()).toEqual([]);
+    expect(logs.some((m) => m.startsWith('staff search not needed: 2 acceptable contacts with a P1 among them'))).toBe(true);
+  });
+
+  it('two acceptable without a P1: the staff, then every P1 designation (a plant head is always looked for), nothing below P1', async () => {
     const svc = services(seen);
     await knowPlaces(svc, ['Hosur']);
     const two = [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')];
     await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two, lean: true });
-    expect(linkedinSearches()).toEqual(staffSearches(company, 'Hosur'));
-    // Not lean (the run): two P2s are fewer than four, and no P1 among them, so the designations are searched.
+    const staff = staffSearches(company, 'Hosur');
+    expect(linkedinSearches().slice(0, staff.length)).toEqual(staff);
+    const designations = linkedinSearches().slice(staff.length);
+    expect(designations.length).toBeGreaterThan(0);
+    expect(designations.every((q) => tierOf(/"[^"]+" "([^"]+)"/.exec(q)![1], mfg) === 'P1')).toBe(true);
+    const p1 = contactSearchPlan(company, 'Hosur', mfg).filter((s) => s.tier === 'P1');
+    expect(designations).toEqual(p1.flatMap((s) => s.queries));
+    // Not lean (the run): two are fewer than four, so the P2 and P3 designations are searched too.
     seen.searches.length = 0;
     await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two });
-    expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length + 9);
+    expect(linkedinSearches().length).toBeGreaterThan(staff.length + p1.flatMap((s) => s.queries).length);
+  });
+
+  it('the staff search stops as soon as a P1 turns up with two in hand', async () => {
+    const staff = staffSearches(company, 'Hosur');
+    expect(staff.length).toBeGreaterThan(1);
+    const svc = services(seen, (q) => (q === staff[0] ? [plantHead] : []));
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    const result = await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')], lean: true });
+    expect(linkedinSearches()).toEqual([staff[0]]);
+    expect(result.accepted.map((p) => p.name)).toEqual(['Bina B']);
+    expect(logs.some((m) => m.startsWith('staff search stopped: 2 acceptable contacts with a P1 among them'))).toBe(true);
+    // The run searches its staff in full.
+    seen.searches.length = 0;
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')] });
+    expect(linkedinSearches().slice(0, staff.length)).toEqual(staff);
   });
 
   it('with one person found, it looks for one more, designation by designation', async () => {
@@ -767,5 +800,55 @@ describe('the Morning Sample Run\'s lean research (the 6 am run keeps four conta
     const designations = linkedinSearches().filter((q) => !staffSearches(company, 'Hosur').includes(q));
     expect(designations.at(-1)).toBe('site:linkedin.com/in "Hosur Gears" "Plant Manager" Hosur');
     expect(logs.at(-1)).toMatch(/^contact search done: 2 acceptable contacts/);
+  });
+});
+
+describe('the Morning Sample Run remembers look-ups (the 6 am run searches every time)', () => {
+  const profile = { title: 'Ravi Kumar - Plant Head - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Head · Hosur Gears', link: 'https://in.linkedin.com/in/ravi-kumar', snippet: '' };
+  const age = (cache: ReturnType<typeof memoryCache>, prefix: string, days: number) => {
+    for (const [k, v] of cache.store) if (k.startsWith(prefix)) cache.store.set(k, { ...(v as object), at: new Date(Date.now() - days * 86_400_000).toISOString() });
+  };
+
+  it(`a person's profile looked up in the last ${PROFILE_MEMORY_DAYS} days isn't searched again, with the same answer`, async () => {
+    const cache = memoryCache();
+    const svc = services(seen, (q) => (q.includes('"Ravi Kumar"') ? [profile] : []), cache);
+    const first = await findLinkedinProfile(svc, 'Ravi Kumar', 'Hosur Gears', { title: 'Plant Head', city: 'Hosur' }, { remember: true });
+    expect(first?.employer).toBe('here');
+    const searched = seen.searches.length;
+    expect(searched).toBeGreaterThan(0);
+    expect(await findLinkedinProfile(svc, 'Ravi Kumar', 'Hosur Gears', { title: 'Plant Head', city: 'Hosur' }, { remember: true })).toEqual(first);
+    expect(seen.searches.length).toBe(searched);
+    // Without asking to remember (the run, the contact checks): searched again.
+    await findLinkedinProfile(svc, 'Ravi Kumar', 'Hosur Gears', { title: 'Plant Head', city: 'Hosur' });
+    expect(seen.searches.length).toBe(searched * 2);
+    // Older than that: searched again.
+    age(cache, 'profile-search:', PROFILE_MEMORY_DAYS + 1);
+    await findLinkedinProfile(svc, 'Ravi Kumar', 'Hosur Gears', { title: 'Plant Head', city: 'Hosur' }, { remember: true });
+    expect(seen.searches.length).toBe(searched * 3);
+  });
+
+  it('a failed look-up is not remembered', async () => {
+    const cache = memoryCache();
+    let down = true;
+    const svc = services(seen, (q) => (q.includes('"Ravi Kumar"') ? [profile] : []), cache);
+    const flaky: Services = { ...svc, fetch: (async (u: RequestInfo | URL, init?: RequestInit) => (down ? new Response('{"message":"no credits"}', { status: 400 }) : svc.fetch(u, init))) as typeof fetch };
+    await expect(findLinkedinProfile(flaky, 'Ravi Kumar', 'Hosur Gears', {}, { remember: true })).rejects.toThrow(/LinkedIn search failed/);
+    expect([...cache.store.keys()].filter((k) => k.startsWith('profile-search:'))).toEqual([]);
+    down = false;
+    expect((await findLinkedinProfile(flaky, 'Ravi Kumar', 'Hosur Gears', {}, { remember: true }))?.employer).toBe('here');
+  });
+
+  it(`a company's news checked in the last ${NEWS_MEMORY_DAYS} days isn't checked again`, async () => {
+    const cache = memoryCache();
+    const svc = services(seen, () => [], cache);
+    await findSignals(svc, 'Hosur Gears', { remember: true });
+    expect(seen.searches.length).toBe(1);
+    await findSignals(svc, 'Hosur Gears Pvt Ltd', { remember: true });
+    expect(seen.searches.length).toBe(1);
+    await findSignals(svc, 'Hosur Gears');
+    expect(seen.searches.length).toBe(2);
+    age(cache, 'news-check:', NEWS_MEMORY_DAYS + 1);
+    await findSignals(svc, 'Hosur Gears', { remember: true });
+    expect(seen.searches.length).toBe(3);
   });
 });

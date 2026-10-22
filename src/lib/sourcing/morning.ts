@@ -58,8 +58,8 @@ export type MorningSegment = {
   quiet: number;
   /** Why it stopped: it had what was wanted, hit the day's search limit, stopped finding anyone, ran out of searches, or Google failed. */
   stopped?: 'target' | 'cap' | 'dry' | 'exhausted' | 'failed';
-  /** Companies found with contacts, not checked yet. */
-  pending: { employer: string; contacts: FoundContact[] }[];
+  /** Companies found with contacts, not checked yet; `via`, the search that first found them (normalised). */
+  pending: { employer: string; contacts: FoundContact[]; via?: string }[];
   /** Companies already checked this run, by the name their people write. */
   checked: string[];
   ruledOut: number;
@@ -228,14 +228,17 @@ export async function peopleFirstContacts(db: Db, lead: Pick<Lead, 'id' | 'sourc
   return asLinkedInFinds(rows);
 }
 
-/** A company that passed the screen, with the people found there (best first). */
-export type PassedCompany = { segment: SourcingSegment; name: string; employer: string; page: CompanyPage; contacts: FoundContact[]; note: string; city: string };
+/** A company that passed the screen, with the people found there (best first); `via`, the search that first found it (normalised). */
+export type PassedCompany = { segment: SourcingSegment; name: string; employer: string; page: CompanyPage; contacts: FoundContact[]; note: string; city: string; via?: string };
 
 /** Where a round's finds go: the run's leads, or a sample run's report. */
 export type RoundSink = {
   add(c: PassedCompany): Promise<void>;
-  /** A search made: the run remembers it, so it isn't made again for a while (a sample run doesn't). */
-  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; error?: string }): Promise<void>;
+  /**
+   * A search made: the run remembers it, so it isn't made again for a while (a sample run keeps its own
+   * memory, see search-memory.ts). `listed`: the people on the ICP's lists it showed, seen before or not.
+   */
+  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; listed: number; error?: string }): Promise<void>;
   save(state: MorningSourcing): Promise<unknown>;
 };
 
@@ -274,6 +277,8 @@ export type RoundOptions = {
    * its own after.
    */
   cheaperChecks?: boolean;
+  /** Reorders or shortens a segment's plan (a sample run's memory of its searches); the same answer on every invocation. */
+  plan?: (segment: SourcingSegment, plan: PeopleQuery[]) => Promise<PeopleQuery[]>;
   sink: RoundSink;
 };
 
@@ -283,7 +288,7 @@ export const PEOPLE_RESULTS = 10;
 const RULED_OUT_DAYS = 90;
 
 /** The credits a request to Serper costs, from the number of results it asks for. */
-function creditsOf(input: RequestInfo | URL, init?: RequestInit): number {
+export function creditsOf(input: RequestInfo | URL, init?: RequestInit): number {
   if (!isSerper(input)) return 0;
   try {
     return searchCredits(Number(JSON.parse(String(init?.body ?? '{}')).num) || 10);
@@ -320,7 +325,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       continue;
     }
     const icp = await icpFor(db, seg.segment);
-    const plan = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
+    const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
+    const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
       ...svc,
       fetch: ((input, init) => {
@@ -405,7 +411,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       state.added++;
       const best = c.contacts[0];
       const city = page.hq && !hqAbroad(page.hq) ? page.hq.split(',')[0].trim() : placeNamedIn(page.text) || (best.location.split(',')[0] ?? '').trim();
-      await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city });
+      await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city, ...(c.via ? { via: c.via } : {}) });
     };
 
     // One step: check companies already found (their checks may be all that's needed), else search for more people.
@@ -455,6 +461,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       }
       for (const [i, pq] of batch.entries()) {
         let onLists = 0;
+        let listed = 0;
         let newCompanies = 0;
         for (const r of got[i].results) {
           let person: FoundContact | null;
@@ -463,6 +470,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           } catch {
             person = null;
           }
+          if (person && !person.why && normCompany(person.employer)) listed++;
           if (!person || seen.has(profileKey(person.linkedin))) continue;
           seen.add(profileKey(person.linkedin));
           const key = normCompany(person.employer);
@@ -473,12 +481,12 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           const c = seg.pending.find((x) => normCompany(x.employer) === key);
           if (c) c.contacts.push(person);
           else {
-            seg.pending.push({ employer: person.employer, contacts: [person] });
+            seg.pending.push({ employer: person.employer, contacts: [person], ...(o.plan ? { via: normQuery(pq.q) } : {}) });
             newCompanies++;
           }
         }
         seg.quiet = onLists ? 0 : seg.quiet + 1;
-        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, error: got[i].error });
+        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, listed, error: got[i].error });
       }
       for (const c of seg.pending) c.contacts.sort((a, b) => rank(a) - rank(b));
       return 'more';

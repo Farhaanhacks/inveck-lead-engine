@@ -83,7 +83,11 @@ export async function processLead(
     teamContact?: boolean;
     /** People already found at the company on LinkedIn (the people-first search): candidates like the search's own finds, counted towards the contacts it looks for. */
     found?: Awaited<ReturnType<typeof searchLinkedIn>>['people'];
-    /** The Morning Sample Run's cheaper rules, tried there first: two contacts, no Google search for officers in the news and filings. */
+    /**
+     * The Morning Sample Run's cheaper rules, tried there first: two contacts (with the hunt for a P1), no
+     * Google search for officers in the news and filings, and a person's profile looked up in the last 14
+     * days, or the company's news checked in the last 7, not searched again.
+     */
     lean?: boolean;
   } = {},
 ): Promise<LeadResult> {
@@ -292,7 +296,7 @@ export async function processLead(
     // towards the contacts it looks for, so it stops sooner.
     searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`), { known: opts.found, lean: opts.lean }),
     searchLeaders(svc, lead.company, domain, site.text, pages, { webSearch: !opts.lean }),
-    findSignals(svc, lead.company),
+    findSignals(svc, lead.company, { remember: opts.lean }),
   ]);
   // The people the people-first search found here are on LinkedIn too: added unless the search found them again.
   const earlier = (opts.found ?? []).filter((f) => !searched.people.some((p) => sameName(p.name, f.name)));
@@ -337,7 +341,7 @@ export async function processLead(
   ).slice(0, 3);
   for (const c of lead.city ? unplaced : []) {
     try {
-      const profile = await findLinkedinProfile(svc, c.name, lead.company, { title: c.title, city: lead.city });
+      const profile = await findLinkedinProfile(svc, c.name, lead.company, { title: c.title, city: lead.city }, { remember: opts.lean });
       if (profile?.employer !== 'here') continue;
       if (profile.location && (vagueLocation(c.location) || !vagueLocation(profile.location))) c.location = profile.location;
       if (profile.jobLocation) c.jobLocation = profile.jobLocation;
@@ -348,7 +352,7 @@ export async function processLead(
     }
   }
   const pick = (list: Candidate[]) => pickContact(svc, { company: lead.company, domain, city: lead.city, segment: icp.segment }, research, icp, list);
-  const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes, icp);
+  const vetted = await vetPick(svc, lead, candidates, linkedin.people, pick, notes, icp, { remember: opts.lean });
   const picked = vetted.picked;
   const lookupFailed = vetted.lookupFailed;
   notes.unshift(...picked.notes);
@@ -506,6 +510,8 @@ export async function vetPick(
   pick: (list: Candidate[]) => Promise<Picked>,
   notes: string[],
   icp?: Parameters<typeof contactPriority>[1],
+  /** A profile looked up in the last 14 days isn't searched again (see findLinkedinProfile). */
+  lookup: { remember?: boolean } = {},
 ): Promise<{ picked: Picked; lookupFailed: boolean; verified: boolean }> {
   let list = candidates;
   let picked = await pick(list);
@@ -519,7 +525,7 @@ export async function vetPick(
     if (linkedinPeople.some((p) => sameName(p.name, contact.name) && p.title)) return { picked, lookupFailed: false, verified: true };
     let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
     try {
-      profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city });
+      profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city }, lookup);
     } catch (e) {
       notes.push(`LinkedIn lookup for ${contact.name} failed, will retry: ${errorMessage(e)}`);
       return { picked, lookupFailed: true, verified: false };

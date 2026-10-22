@@ -3,7 +3,7 @@ import { askJson } from './ai';
 import { SIGNALS_PROMPT } from './prompts';
 import type { NewsResult, Services } from './services';
 import { newsSearch } from './services';
-import { asList, asText, errorMessage, searchName } from './text';
+import { asList, asText, errorMessage, normCompany, searchName } from './text';
 import { nameTokens } from './website';
 
 const KINDS = ['expansion', 'new_facility', 'acquisition', 'funding', 'audit', 'hiring', 'leadership', 'other'];
@@ -36,14 +36,28 @@ const schema = {
   additionalProperties: false,
 };
 
+/** A company's news checked in the last this many days isn't checked again, where that's asked for (the Morning Sample Run). */
+export const NEWS_MEMORY_DAYS = 7;
+
 /**
  * Buying signals: one Google News search for the company's last year, then the AI picks
  * the items that suggest it needs INVECK now. It answers with item numbers, so every
- * signal links to a real article about this company.
+ * signal links to a real article about this company. With `remember`, the signals found for the
+ * company in the last NEWS_MEMORY_DAYS are used again (no search); a failed check isn't remembered.
  */
-export async function findSignals(svc: Services, company: string): Promise<{ signals: Signal[]; error: string }> {
+export async function findSignals(svc: Services, company: string, opts: { remember?: boolean } = {}): Promise<{ signals: Signal[]; error: string }> {
   const name = searchName(company);
   if (!name) return { signals: [], error: '' };
+  if (!opts.remember) return checkNews(svc, company, name);
+  const key = `news-check:v1:${normCompany(company)}`;
+  const was = (await svc.cache?.get(key).catch(() => null)) as { at?: string; signals?: Signal[] } | null;
+  if (was?.at && Array.isArray(was.signals) && Date.now() - new Date(was.at).getTime() < NEWS_MEMORY_DAYS * 86_400_000) return { signals: was.signals, error: '' };
+  const found = await checkNews(svc, company, name);
+  if (!found.error) await svc.cache?.set(key, { at: new Date().toISOString(), signals: found.signals }).catch(() => {});
+  return found;
+}
+
+async function checkNews(svc: Services, company: string, name: string): Promise<{ signals: Signal[]; error: string }> {
   let news: NewsResult[];
   try {
     news = await newsSearch(
