@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/cron/inbound-demos",
-      "schedule": "*/5 * * * *"
+      "schedule": "15 3 * * *"
     },
     {
       "path": "/api/cron/resume",

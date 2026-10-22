@@ -400,5 +400,5 @@ app never writes to it.
   and the meeting shows on the BDA's Today on its date with Join meeting. A row with no time, only a preferred time, an
   unconnected Outlook or no calendar permission is reported on Settings and tried again at the next sync. Nothing is booked
   by guesswork.
-- **When it runs.** Whenever Today is open (every few minutes), a daily Vercel cron (`/api/cron/inbound-demos`) and **Settings
+- **When it runs.** Whenever Today is open (every few minutes), a daily Vercel cron (`/api/cron/inbound-demos`; Hobby plans allow no more often than daily) and **Settings
   → Sync now**.

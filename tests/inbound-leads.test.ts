@@ -111,9 +111,12 @@ describe('kept apart from prospecting leads', () => {
 });
 
 describe('the automatic sync', () => {
-  it('runs every five minutes: the scheduled job in vercel.json, and Today never syncs more often than that', () => {
-    const cron = (JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] }).crons.find((c) => c.path === '/api/cron/inbound-demos');
-    expect(cron?.schedule).toBe('*/5 * * * *');
+  it('is a daily scheduled job (the most a Vercel Hobby plan allows), plus Today syncing at most every five minutes', () => {
+    const crons = (JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] }).crons;
+    const mine = crons.filter((c) => c.path === '/api/cron/inbound-demos');
+    expect(mine).toHaveLength(1);
+    // Hobby plans reject anything that runs more than once a day, and the deploy fails: minute and hour are fixed numbers.
+    expect(mine[0].schedule).toMatch(/^\d+ \d+ \* \* \S+$/);
     const today = readFileSync('src/app/(app)/today/page.tsx', 'utf8');
     expect(today).toContain('const INBOUND_SYNC_EVERY = 5 * 60 * 1000;');
     expect(today).toContain("atMostEvery('inbound-demo-sync', INBOUND_SYNC_EVERY");
