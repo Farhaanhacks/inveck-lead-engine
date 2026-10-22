@@ -26,6 +26,7 @@ export default async function SettingsPage() {
     { name: 'SERPER_API_KEY', ok: !!keys.serper, use: 'Google search: LinkedIn profiles & prospects', needed: true },
     { name: 'GOOGLE_SERVICE_ACCOUNT_JSON', ok: !!googleCredentials(), use: 'CA firms: the service-account key (whole JSON file) that reads the master Google Sheet; read-only', needed: false },
     { name: 'INBOUND_DEMO_SHEET_ID', ok: !!process.env.INBOUND_DEMO_SHEET_ID, use: `Optional: the inbound demo sheet's ID (defaults to the website form's sheet); tab name in INBOUND_DEMO_SHEET_TAB (default Leads)`, needed: false },
+    { name: 'INBOUND_SYNC_SECRET', ok: (process.env.INBOUND_SYNC_SECRET ?? '').length >= 24, use: 'Optional: a random string (24+ characters) an outside timer (cron-job.org) sends to sync the inbound demo sheet every five minutes', needed: false },
     { name: 'JINA_API_KEY', ok: !!keys.jina, use: 'Optional: higher limits for reading JavaScript-heavy websites', needed: false },
     { name: 'APP_PASSWORD', ok: !!process.env.APP_PASSWORD, use: 'Team login', needed: true },
     { name: 'CRON_SECRET', ok: !!process.env.CRON_SECRET, use: 'Scheduled runs on Vercel', needed: !!process.env.VERCEL },

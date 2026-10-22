@@ -402,3 +402,13 @@ app never writes to it.
   by guesswork.
 - **When it runs.** Whenever Today is open (every few minutes), a daily Vercel cron (`/api/cron/inbound-demos`; Hobby plans allow no more often than daily) and **Settings
   → Sync now**.
+
+#### Syncing every five minutes without Vercel Pro
+
+Vercel's free plan runs scheduled jobs once a day, so a free outside timer calls the sync every five minutes:
+
+1. In Vercel (Settings → Environment Variables) add `INBOUND_SYNC_SECRET`: a random string of 24+ characters (for example from a password generator). Redeploy.
+2. On cron-job.org (free), create a job: URL `https://inveck-lead-engine.vercel.app/api/cron/inbound-demos`, method GET, schedule every 5 minutes, and under Advanced add the header `Authorization` with the value `Bearer <your INBOUND_SYNC_SECRET>`.
+3. The job's history should show status 200 and a short JSON result (`read`, `created`, `meetings`...). A 403 means the secret doesn't match.
+
+This secret can only start the read-only sheet sync; it does not open anything else. Do not put it in the URL.

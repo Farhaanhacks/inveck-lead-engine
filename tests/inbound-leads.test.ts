@@ -124,3 +124,24 @@ describe('the automatic sync', () => {
     expect(readFileSync('src/app/api/cron/inbound-demos/route.ts', 'utf8')).toContain('Bearer ${await runSecret()}');
   });
 });
+
+describe('the outside timer', () => {
+  it('can start the sync with its own secret, and nothing else works', async () => {
+    process.env.DATABASE_URL = 'memory://';
+    process.env.CRON_SECRET = 'vercel-cron-secret-value';
+    process.env.INBOUND_SYNC_SECRET = 'outside-timer-secret-0123456789';
+    delete process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    delete process.env.GOOGLE_SERVICE_ACCOUNT_FILE;
+    const { GET } = await import('@/app/api/cron/inbound-demos/route');
+    const call = (auth?: string) => GET(new Request('https://x/api/cron/inbound-demos', { headers: auth ? { authorization: auth } : {} }));
+    expect((await call()).status).toBe(403);
+    expect((await call('Bearer wrong')).status).toBe(403);
+    expect((await call('Bearer outside-timer-secret-0123456789')).status).toBe(200);
+    expect((await call('Bearer vercel-cron-secret-value')).status).toBe(200);
+    // Too short a timer secret is never accepted.
+    process.env.INBOUND_SYNC_SECRET = 'short';
+    expect((await call('Bearer short')).status).toBe(403);
+    delete process.env.INBOUND_SYNC_SECRET;
+    delete process.env.CRON_SECRET;
+  });
+});
