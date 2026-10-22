@@ -15,10 +15,10 @@ import { cleanPhone } from './tracker';
  */
 export const INBOUND_SHEET_ID = '1_QU1mQsOrgavxGU7Xmo8XsZdVr8Bhneo4Ojudsn-bD4';
 export const INBOUND_SHEET_TAB = 'Leads';
-/** The rotation, in order, repeating. */
-export const ROTATION = ['Pooja', 'Anuradha', 'Parimal'] as const;
+/** The rotation, in order, repeating (matched to existing BDA users by first name). */
+export const ROTATION = ['Puja', 'Anuradha', 'Parimal', 'Anchal'] as const;
 /** First names a rotation name is found under in the CRM (a spelling variant of the same person, nothing else). */
-const ALIASES: Record<(typeof ROTATION)[number], string[]> = { Pooja: ['pooja', 'puja'], Anuradha: ['anuradha'], Parimal: ['parimal'] };
+const ALIASES: Record<(typeof ROTATION)[number], string[]> = { Puja: ['puja', 'pooja'], Anuradha: ['anuradha'], Parimal: ['parimal'], Anchal: ['anchal', 'aanchal'] };
 export const INBOUND_SOURCE = 'Inbound demo request (website form)';
 const CURSOR_KEY = 'inboundDemoCursor';
 const REPORT_KEY = 'inboundDemoSync';

@@ -80,13 +80,14 @@ describe('the rotation and the import', () => {
     return all.map((r) => [r.allocName, r.ownerId ? names.get(r.ownerId) : null, r.state]);
   };
 
-  it('finds the three BDAs by name, never guessing or creating: Pooja is Puja (reported)', async () => {
+  it('finds the four BDAs by name, never guessing or creating', async () => {
     const { by, mismatches } = await resolveBdas(db);
-    expect(by.get('Pooja')?.name).toBe('Puja');
+    expect(by.get('Puja')?.name).toBe('Puja');
+    expect(by.get('Anchal')?.name).toBe('Anchal');
     expect(by.get('Anuradha')?.name).toBe('Anuradha');
     expect(by.get('Parimal')?.name).toBe('Parimal');
     expect(by.has('Anshul')).toBe(false);
-    expect(mismatches.map((m) => m.rotationName)).toEqual(['Pooja']);
+    expect(mismatches).toEqual([]);
     expect((await db.select().from(users)).some((u) => u.name === 'Anshul')).toBe(false);
   });
 
@@ -94,7 +95,7 @@ describe('the rotation and the import', () => {
     const rows = [R('Ravi', 'ravi@a.com', { submitted_at: '2026-10-22T04:00:00Z' }), R('Sita', 'sita@a.com', { submitted_at: '2026-10-22T04:01:00Z' }), R('Tom', 'tom@a.com', { submitted_at: '2026-10-22T04:02:00Z' }), R('Uma', 'uma@a.com', { submitted_at: '2026-10-22T04:03:00Z' })];
     const report = await syncInboundDemos(db, { source: source(rows), now: NOW });
     expect(report).toMatchObject({ read: 4, created: 4, meetings: 0 });
-    expect(await ownerNames()).toEqual([['Pooja', 'Puja', 'imported'], ['Anuradha', 'Anuradha', 'imported'], ['Parimal', 'Parimal', 'imported'], ['Pooja', 'Puja', 'imported']]);
+    expect(await ownerNames()).toEqual([['Puja', 'Puja', 'imported'], ['Anuradha', 'Anuradha', 'imported'], ['Parimal', 'Parimal', 'imported'], ['Anchal', 'Anchal', 'imported']]);
     expect(report.blocked).toHaveLength(0);
     expect(report.noMeeting).toHaveLength(4);
     expect(report.noMeeting[0].reason).toMatch(/no meeting date or time/);
@@ -116,10 +117,10 @@ describe('the rotation and the import', () => {
     expect(again.created).toBe(0);
     expect(await db.select().from(leads)).toHaveLength(2);
     expect(await cursorOf(db)).toBe(2);
-    // Next batch: Parimal, then back to Pooja, then Anuradha.
+    // Next batch: Parimal, Anchal, then back to Puja.
     const batch2 = [...batch1, R('Tom', 'tom@a.com', { submitted_at: '2026-10-22T05:00:00Z' }), R('Uma', 'uma@a.com', { submitted_at: '2026-10-22T05:01:00Z' }), R('Vik', 'vik@a.com', { submitted_at: '2026-10-22T05:02:00Z' })];
     await syncInboundDemos(db, { source: source(batch2), now: new Date(NOW.getTime() + 20 * 60_000) });
-    expect((await ownerNames()).map((r) => r[0])).toEqual(['Pooja', 'Anuradha', 'Parimal', 'Pooja', 'Anuradha']);
+    expect((await ownerNames()).map((r) => r[0])).toEqual(['Puja', 'Anuradha', 'Parimal', 'Anchal', 'Puja']);
   });
 
   it('a row held for Anshul (who was in the rotation once) is given a new place in it', async () => {
@@ -148,11 +149,11 @@ describe('the rotation and the import', () => {
 
   it("shows whose turn is next and who the latest requests went to", async () => {
     const { rotationView } = await import('@/lib/inbound-demo');
-    expect((await rotationView(db)).next).toEqual({ name: 'Pooja', user: 'Puja' });
+    expect((await rotationView(db)).next).toEqual({ name: 'Puja', user: 'Puja' });
     await syncInboundDemos(db, { source: source([R('Ravi', 'ravi@a.com'), R('Sita', 'sita@a.com', { submitted_at: '2026-10-22T04:01:00Z' })]), now: NOW });
     const v = await rotationView(db);
     expect(v.next.name).toBe('Parimal');
-    expect(v.recent.map((r) => [r.who, r.bda, r.state])).toEqual([['Sita', 'Anuradha', 'imported'], ['Ravi', 'Pooja', 'imported']]);
+    expect(v.recent.map((r) => [r.who, r.bda, r.state])).toEqual([['Sita', 'Anuradha', 'imported'], ['Ravi', 'Puja', 'imported']]);
   });
 
   it('reports an unreadable sheet instead of failing, and never writes to it', async () => {
