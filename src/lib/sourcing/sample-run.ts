@@ -11,6 +11,8 @@ import { knowFirmPage } from '../pipeline/firm-identity';
 import { mapLimit, type Services } from '../pipeline/services';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { logActivity } from '../activity';
+import { saveBacklog, takeBacklog } from './backlog';
+import { knownToInveck } from './test-run';
 import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
@@ -67,6 +69,9 @@ export type SampleCompany = {
   pushed?: number;
 };
 
+/** Companies earlier searches found but didn't check, carried into this sample (checked first), per segment. */
+export type Carried = Partial<Record<SourcingSegment, number>>;
+
 /** One card on a person's day: a lead waiting in the pool now, or a company the sample found. */
 export type SampleCard = { from: 'pool' | 'sample'; key: number };
 
@@ -109,6 +114,9 @@ export type MorningSampleReport = {
   /** Google search credits the sample spent (search and research), against the day's budget when it started (none: no daily limit). Absent on samples from before the budget. */
   credits?: number;
   budget?: number;
+  carried?: Carried;
+  /** Its own leftovers (found, not checked) were kept for the next search. */
+  leftKept?: boolean;
 };
 
 export const isMorningSample = (r: unknown): r is MorningSampleReport => (r as MorningSampleReport | null)?.mode === 'morning' && (r as MorningSampleReport).phase !== ('init' as string);
@@ -182,6 +190,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 
     for (let step = 0; ; step++) {
       if (await stopped()) {
+        await keepLeftovers(db, r);
         await save();
         await saving;
         return 'done';
@@ -252,7 +261,10 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           const wanted = Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, Math.ceil(short[s] * SAMPLE_RULES.headroom)])) as Record<SourcingSegment, number>;
           r.search = startRound(r.search, wanted);
           r.phase = 'search';
-        } else r.phase = 'deal';
+        } else {
+          await keepLeftovers(db, r);
+          r.phase = 'deal';
+        }
         await save({ progress: progressOf(r) });
         continue;
       }
@@ -393,7 +405,27 @@ async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSamp
     wanted[s] = Math.ceil(short * SAMPLE_RULES.headroom);
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
   }
-  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget || SAMPLE_RULES.credits, credits: 0, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
+  // Companies earlier searches found but didn't check go first: no people search is paid for them again.
+  const search = startRound(null, wanted);
+  const known = (await knownToInveck(db)).names;
+  const carried: Carried = {};
+  for (const seg of search.segments) {
+    if (!seg.wanted) continue;
+    const taken = await takeBacklog(db, seg.segment, known);
+    seg.pending.push(...taken.map((c) => ({ employer: c.employer, contacts: c.contacts })));
+    carried[seg.segment] = taken.length;
+  }
+  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget || SAMPLE_RULES.credits, credits: 0, team, quota, quotas, start, search, companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0, carried };
+}
+
+/** Keeps what a sample found but didn't check for the next search (once). */
+async function keepLeftovers(db: Db, r: MorningSampleReport) {
+  if (r.leftKept || !r.search) return;
+  for (const seg of r.search.segments) {
+    const checked = new Set(seg.checked);
+    await saveBacklog(db, seg.segment, seg.pending.filter((c) => !checked.has(normCompany(c.employer))));
+  }
+  r.leftKept = true;
 }
 
 /** Researches a few of the sample's companies exactly as the run would (the ICP check, contacts, drafts), keeping the result in the report. */

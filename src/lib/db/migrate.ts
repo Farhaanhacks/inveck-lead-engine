@@ -618,6 +618,15 @@ export const SCHEMA_STATEMENTS = [
   )`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'companies'`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+  `CREATE TABLE IF NOT EXISTS candidate_companies (
+    id SERIAL PRIMARY KEY,
+    segment TEXT NOT NULL,
+    employer TEXT NOT NULL,
+    norm TEXT NOT NULL,
+    contacts JSONB NOT NULL,
+    found_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS candidate_companies_segment_norm ON candidate_companies (segment, norm)`,
   // People first in the scheduled run: where its prospect search got to, and each company's LinkedIn page.
   `ALTER TABLE runs ADD COLUMN IF NOT EXISTS sourcing JSONB`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_linkedin TEXT NOT NULL DEFAULT ''`,

@@ -411,7 +411,7 @@ export function MorningSample({
                 <div key={s} className="card p-4 text-sm">
                   <div className="font-medium">{s}</div>
                   <p className="mt-1 text-xs text-muted">
-                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.
+                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}
                     {r.start[s].waiting ? ` ${r.start[s].waiting} companies already waiting for research would be researched first at 6 am (not shown here).` : ''}
                   </p>
                   <p className="mt-2">

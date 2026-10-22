@@ -451,6 +451,28 @@ describe('people first: as many prospects as asked for', () => {
     expect(row.progress).toMatch(/^Found 3 prospects with a contact, as asked\./);
   });
 
+  it('keeps the companies it did not need for the next test, which checks them before searching for anyone new', async () => {
+    const { backlogCounts } = await import('@/lib/sourcing/backlog');
+    const [first] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 3 }).returning();
+    await runSourcingTest(db, endless([]), first.id);
+    const left = peopleFunnelOf((await db.select().from(sourcingTests).where(eq(sourcingTests.id, first.id)))[0].report as PeopleReport).unchecked;
+    expect(left).toBeGreaterThan(10);
+    expect((await backlogCounts(db))[MANUFACTURING]).toBe(left);
+
+    // The next test: the leftovers are enough for three more prospects, so no people search at all.
+    const [second] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 3 }).returning();
+    const searches: string[] = [];
+    expect(await runSourcingTest(db, endless(searches), second.id)).toBe('done');
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, second.id));
+    const report = row.report as PeopleReport;
+    expect(report.carried).toBe(left);
+    expect(peopleFunnelOf(report).ready).toBe(3);
+    expect(report.searches.people).toBe(0);
+    expect(searches.some((q) => q.startsWith('site:linkedin.com/in '))).toBe(false);
+    // What it didn't need goes back for the one after.
+    expect((await backlogCounts(db))[MANUFACTURING]).toBe(peopleFunnelOf(report).unchecked);
+  });
+
   it('carries on from where it got to when an invocation runs out of time, until it has them all', async () => {
     const [test] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 20 }).returning();
     const searches: string[] = [];
@@ -498,5 +520,30 @@ describe('the Sourcing tests\' rules for companies (the 6 am run keeps its own)'
     expect(hotel.pass).toBe(false);
     // Nothing either way: kept, for research.
     expect(screenPage(blank, MANUFACTURING, '200+ employees', known, { passUnclearIndustry: true })).toMatchObject({ pass: true, note: expect.stringContaining('research checks it') });
+  });
+});
+
+describe('the backlog of companies found but not checked', () => {
+  let db: Db;
+  beforeEach(async () => {
+    process.env.DATABASE_URL = 'memory://';
+    resetDbForTests();
+    db = await getDb();
+  });
+
+  it('takes each company once, leaves out known ones and old ones, and picks up what earlier reports left', async () => {
+    const { saveBacklog, takeBacklog, backlogCounts } = await import('@/lib/sourcing/backlog');
+    const { candidateCompanies } = await import('@/lib/db/schema');
+    const person = (name: string) => ({ name, title: 'Plant Head', tier: 'P1', employer: '', location: 'Pune', linkedin: `https://in.linkedin.com/in/${name}`, why: '' });
+    // Left in an earlier test's report, before the backlog existed.
+    await db.insert(sourcingTests).values({ segment: MANUFACTURING, mode: 'people', companies: 1, status: 'done', report: { mode: 'people', companies: [{ employer: 'Old Forge', screen: 'unchecked', contacts: [person('a')] }, { employer: 'Done Forge', screen: 'pass', contacts: [person('b')] }] } });
+    await saveBacklog(db, MANUFACTURING, [{ employer: 'New Forge', contacts: [person('c')] }, { employer: 'Known Forge', contacts: [person('d')] }]);
+    await saveBacklog(db, MANUFACTURING, [{ employer: 'Stale Forge', contacts: [person('e')] }]);
+    await db.update(candidateCompanies).set({ foundAt: new Date(Date.now() - 40 * 86_400_000) }).where(eq(candidateCompanies.employer, 'Stale Forge'));
+    const { normCompany } = await import('@/lib/pipeline/text');
+    const taken = await takeBacklog(db, MANUFACTURING, new Set([normCompany('Known Forge')]));
+    expect(taken.map((c) => c.employer).sort()).toEqual(['New Forge', 'Old Forge']);
+    expect(await takeBacklog(db, MANUFACTURING, new Set())).toEqual([]);
+    expect(await backlogCounts(db)).toEqual({});
   });
 });

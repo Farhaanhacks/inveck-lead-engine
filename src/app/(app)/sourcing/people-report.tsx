@@ -68,7 +68,8 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
           <p className="mt-3 text-sm text-ink-2">
             {searches} Google searches gave {f.ready} new, right-sized {f.ready === 1 ? 'company' : 'companies'} with a named contact
             {f.ready > 0 && <> (one per {Math.round(searches / f.ready)} searches)</>}
-            {f.unchecked > 0 && <>; {f.unchecked} more companies with contacts weren&apos;t needed</>}.
+            {f.unchecked > 0 && <>; {f.unchecked} more companies with contacts weren&apos;t needed and are kept for the next search to check first</>}
+            {report.carried ? <>; {report.carried} companies found by earlier searches were checked first</> : null}.
           </p>
         )}
       </section>

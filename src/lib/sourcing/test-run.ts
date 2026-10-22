@@ -10,6 +10,7 @@ import { RESUME_AFTER_MS } from '../invocations';
 import { contactPriority, tierOf } from '../tiers';
 import { factsQuery, hqAbroad, industryUnclear, needsFacts, noCompanyName, pagelessCompany, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
 import { websiteWords } from './website-words';
+import { saveBacklog, takeBacklog } from './backlog';
 import { companyQuery, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
 
 /**
@@ -136,6 +137,8 @@ export type PeopleReport = {
   searches: { people: number; companies: number; facts: number };
   seconds: number;
   stoppedEarly?: string;
+  /** Companies carried over from earlier tests and samples (found, not checked), checked first. */
+  carried?: number;
 };
 
 export const isPeopleReport = (r: unknown): r is PeopleReport => (r as PeopleReport | null)?.mode === 'people';
@@ -449,6 +452,15 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
     report.companySize = icp.companySize;
     const known = await knownToInveck(db);
     const target = report.target ?? test.companies;
+    // Companies earlier tests and samples found but didn't check: checked first, before any new search.
+    if (report.carried === undefined) {
+      const carried = await takeBacklog(db, segment, known.names);
+      for (const c of carried) {
+        if (report.companies.some((x) => normCompany(x.employer) === normCompany(c.employer))) continue;
+        report.companies.push({ employer: c.employer, page: null, screen: 'unchecked', note: 'carried over from an earlier search', contacts: c.contacts });
+      }
+      report.carried = carried.length;
+    }
     const plan = planPeopleQueries(segment, icp, SOURCING_LIMITS.peoplePlan, test.id);
     if (!plan.length) throw new Error(`The ${segment} ICP has no P1 or P2 titles to search for (ICPs & clients).`);
 
@@ -592,6 +604,8 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       }
       await save({ progress: `${ready()} of ${target} prospects found; searching LinkedIn for people (${total()} Google searches)…` });
     }
+    // What it found but didn't need to check waits for the next test or sample.
+    await saveBacklog(db, segment, report.companies.filter((c) => c.screen === 'unchecked').map((c) => ({ employer: c.employer, contacts: c.contacts })));
     const f = peopleFunnelOf(report);
     const why =
       report.stopped === 'target'
@@ -607,6 +621,8 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       progress: `${why}. ${f.profiles} people found, ${f.contacts} on your lists at ${f.companies} companies, ${f.checked} companies checked; ${total()} Google searches.`,
     });
   } catch (e) {
+    // What it had found but not checked isn't lost with it.
+    if (segment) await saveBacklog(db, segment, report.companies.filter((c) => c.screen === 'unchecked').map((c) => ({ employer: c.employer, contacts: c.contacts }))).catch(() => {});
     await save({ status: 'failed', finishedAt: new Date(), error: errorMessage(e), progress: '' });
   }
   await saving;
