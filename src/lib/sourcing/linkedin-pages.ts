@@ -235,6 +235,38 @@ const OTHER_WORDS: Record<SourcingSegment, RegExp> = {
  * label is a catch-all ("Manufacturing") or missing, and its page says what it makes in the ICP's
  * words, with nothing marking it as something else. '' when it is; why not when it isn't.
  */
+/**
+ * Words in a company's name that put it outside both segments whatever it says elsewhere (a bank, an IT
+ * or consulting firm, a hospital, a school, a hotel), and well-known names of that kind: LinkedIn's label
+ * for them is never one the ICP covers, so checking them would only rule them out.
+ */
+const NOT_ICP_NAME = /\b(bank|banking|insurance|assurance|hospitals?|clinics?|schools?|college|university|software|infotech|it services|it solutions|consultancy|consulting|consultants|staffing|recruitment|hotels?|resorts?|realty|real estate|securities|finance|financial services|airlines?|telecom|media|entertainment)\b/i;
+// The whole name, give or take "India", "Ltd" and the like ("Shell Moulds" isn't Shell).
+const NOT_ICP_COMPANIES = /^(infosys|tata consultancy services|tcs|wipro|hcl ?tech(?:nologies)?|tech mahindra|accenture|cognizant|capgemini|deloitte|kpmg|ey|ernst (?:&|and) young|pwc|pricewaterhousecoopers|ibm|oracle|microsoft|google|genpact|mphasis|ltimindtree|mindtree|hdfc|icici|kotak mahindra|sbi|state bank of india|shell)(?:[\s,.]+(?:india|ltd|limited|pvt|private|plc|inc|llp|group|services|technologies))*[\s.]*$/i;
+/** A name that says the company makes or moves things: never ruled out by its name alone. */
+const MAKES_THINGS = /\b(engineering|engineers|machines?|machinery|equipment|industries|manufactur\w*|forg\w*|cast\w*|auto\w*|motors?|components?|works|steel|metals?|tools?|plants?|logistics|warehous\w*|freight|cargo|transport\w*|supply chain)\b/i;
+
+/**
+ * Why a company is outside the ICP by its name alone ('' when its name doesn't say): only names LinkedIn's
+ * check would certainly rule out, so nothing that could be a prospect is left out. Costs no search.
+ */
+export function outsideIcpByName(employer: string, segment: SourcingSegment): string {
+  const name = employer.trim();
+  if (!name || MAKES_THINGS.test(name) || ICP_WORDS[segment].test(name)) return '';
+  const word = NOT_ICP_COMPANIES.exec(name)?.[1] ?? NOT_ICP_NAME.exec(name)?.[0];
+  return word ? `its name shows it's outside the ICP ("${word}"), so it wasn't looked up` : '';
+}
+
+/**
+ * What a person's own LinkedIn result says about where they work (their headline and Google's text):
+ * 'icp' when it shows the segment's industries, 'other' when it shows only another industry, '' when it
+ * says neither. Only the order companies are checked in uses it, never whether they're kept.
+ */
+export function industryHint(text: string, segment: SourcingSegment): 'icp' | 'other' | '' {
+  if (ICP_WORDS[segment].test(text)) return 'icp';
+  return OTHER_WORDS[segment].test(text) ? 'other' : '';
+}
+
 /** The industry LinkedIn doesn't settle: no label (or only "Manufacturing"), and nothing in the page's text either way. */
 export function industryUnclear(p: CompanyPage, segment: SourcingSegment): boolean {
   const label = p.industry.trim();

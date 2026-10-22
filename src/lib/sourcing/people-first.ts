@@ -76,6 +76,8 @@ export type FoundContact = {
   linkedin: string;
   /** Why they can't be a contact; '' when they can. */
   why: string;
+  /** What their own LinkedIn result says of their company's industry (see industryHint): only the order companies are checked in. */
+  hint?: 'icp' | 'other' | '';
 };
 
 /** A current employer no company can be: self-employed, between jobs, undisclosed. */
@@ -135,6 +137,17 @@ export function readPerson(r: SerperResult, icp: TitleIcp): FoundContact | null 
 /** The search for a company's LinkedIn page by the name its staff write. */
 export function companyQuery(employer: string): string {
   return `site:linkedin.com/company "${(searchName(employer) || employer).replace(/"/g, '')}"`;
+}
+
+/** One search for several companies' LinkedIn pages at once: `site:linkedin.com/company ("A" OR "B" OR "C")`. */
+export function companiesQuery(employers: string[]): string {
+  if (employers.length === 1) return companyQuery(employers[0]);
+  return `site:linkedin.com/company (${employers.map((e) => `"${(searchName(e) || e).replace(/"/g, '')}"`).join(' OR ')})`;
+}
+
+/** The order to check companies in: any whose people's own results show another industry last, then by their best contact. */
+export function hintRank(contacts: Pick<FoundContact, 'hint'>[]): number {
+  return contacts.some((p) => p.hint === 'icp') || !contacts.some((p) => p.hint === 'other') ? 0 : 1;
 }
 
 /**

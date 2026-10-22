@@ -35,15 +35,19 @@ import type { FoundContact } from './people-first';
 const CONCURRENCY = 5;
 
 /**
- * Rules tried in the Morning Sample Run first (the 6 am run doesn't use them): no LinkedIn page doesn't rule
- * a company out and an industry LinkedIn doesn't show is read from its website (see lenientScreen), people searches of a
- * hundred results (ten if Serper refuses that), companies ruled out remembered and not checked again, two
- * contacts a company with no hunt for a P1 when the search found people there, no Google search for the
- * company's LinkedIn page (the search found it) or for officers in the news and filings, 10% extra
- * companies, and 2,300 Google search credits at most for a new sample. They apply to a sample carried on
- * from where it stopped too.
+ * Rules tried in the Morning Sample Run first (the 6 am run doesn't use them yet):
+ * - no LinkedIn page doesn't rule a company out, and an industry LinkedIn doesn't show is read from the
+ *   company's own website (no search credit), else left to research (see lenientScreen);
+ * - cheaper company checks with the same companies kept: names that show a company is outside the ICP
+ *   aren't looked up, likely misfits are checked last, and several companies are looked up in one search
+ *   (see cheaperChecks); companies ruled out are remembered and not checked again;
+ * - people searches of ten results, and a segment stops after 15 searches in a row find nobody new;
+ * - two contacts a company, with no hunt for a P1 when the search found people there, and no Google search
+ *   for the company's LinkedIn page (the search found it) or for officers in the news and filings;
+ * - 10% extra companies, and 2,300 Google search credits at most for a new sample.
+ * A sample carried on from where it stopped uses them too.
  */
-export const SAMPLE_RULES = { peopleResults: 100, quietSearches: 40, headroom: 1.1, credits: 2300, researchCredits: 12 } as const;
+export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.1, credits: 2300, researchCredits: 12 } as const;
 
 /** Someone at a company, as research left them. */
 export type SamplePerson = { name: string; title: string; tier: string; linkedin: string; location: string; isPrimary: boolean; setAside: boolean; whyNot: string };
@@ -209,6 +213,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           quietSearches: SAMPLE_RULES.quietSearches,
           rememberRuledOut: true,
           lenientScreen: true,
+          cheaperChecks: true,
           recent: await recentSearches(db, null),
           alsoKnown: {
             names: r.companies.flatMap((c) => [c.page.name, c.employer]),

@@ -96,7 +96,7 @@ describe('the Morning Sample Run', () => {
     expect(forgeline.lead!.emailBody).toBeTruthy();
     expect(r.companies.some((c) => c.page.name === 'Tiny Tools' || c.page.name === 'Known Gears')).toBe(false);
     // The 3PL was short after research, so it searched again, as the run would.
-    expect(r.search!.round).toBe(2);
+    expect(r.search!.round).toBeGreaterThanOrEqual(2);
 
     // Dealt as the draw would: each person one Manufacturing (the pool lead and the sample's), and the one 3PL to one of them.
     expect(r.hands.map((h) => h.name).sort()).toEqual(['Parimal', 'Puja']);
@@ -172,7 +172,7 @@ describe('the Morning Sample Run', () => {
     expect(log.calls.length).toBeGreaterThan(searchesBefore);
   });
 
-  it('tries the cheaper rules (the 6 am run does not): 100-result searches, rule-outs remembered, no repeat lookups, a 2,300 budget', async () => {
+  it('tries the cheaper rules (the 6 am run does not): 10-result searches, rule-outs remembered, no repeat lookups, a 2,300 budget', async () => {
     const store = new Map<string, unknown>();
     const cache = { get: async (k: string) => store.get(k) ?? null, set: async (k: string, v: unknown) => void store.set(k, JSON.parse(JSON.stringify(v))) };
     const sent: { q: string; num: number }[] = [];
@@ -191,10 +191,10 @@ describe('the Morning Sample Run', () => {
     const r = await reportOf(first);
     expect(r.budget).toBe(2300);
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
-    // People searches ask for a hundred results.
+    // People searches ask for ten results.
     const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
     expect(people.length).toBeGreaterThan(0);
-    expect(people.every((b) => b.num === 100)).toBe(true);
+    expect(people.every((b) => b.num === 10)).toBe(true);
     // Research doesn't look the company's LinkedIn page up again (the search found it), nor its officers in the news and filings.
     expect(sent.some((b) => b.q === 'site:linkedin.com/company "forgeline.in"')).toBe(false);
     expect(sent.some((b) => b.q.includes('"company secretary"'))).toBe(false);

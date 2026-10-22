@@ -8,10 +8,10 @@ import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { RESUME_AFTER_MS } from '../invocations';
 import { contactPriority, tierOf } from '../tiers';
-import { factsQuery, hqAbroad, industryUnclear, needsFacts, noCompanyName, pagelessCompany, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
+import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
 import { websiteWords } from './website-words';
 import { saveBacklog, takeBacklog } from './backlog';
-import { companyQuery, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
+import { companiesQuery, companyQuery, hintRank, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
 
 /**
  * The sourcing test: finds companies through their LinkedIn pages, screens them on what the page
@@ -38,7 +38,7 @@ export const SOURCING_LIMITS = {
   peoplePlan: 600,
   maxSearches: 1500,
   /** People first stops when this many searches in a row found nobody new on the ICP's lists. */
-  quietSearches: 120,
+  quietSearches: 15,
   /** The test stops checking people after this long (the server allows 300s). */
   seconds: 240,
   /** A test that hasn't saved anything for this long is closed as stopped (one that stalls sooner is picked up again first). */
@@ -494,6 +494,8 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
         report.people.push(person);
         const key = normCompany(person.employer);
         if (person.why || !key) continue;
+        // What their own result says of their company's industry: only the order companies are checked in.
+        person.hint = industryHint(`${r.title ?? ''} ${r.subtitle ?? ''} ${r.snippet ?? ''}`, segment);
         onLists++;
         let c = byCompany.get(key);
         if (!c) {
@@ -516,12 +518,14 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
 
     // No LinkedIn page doesn't rule a company out: it's checked by its name, and research checks the rest
     // on its website. An employer written as an industry word ("Foundry") has no name to look up.
-    const check = async (c: PeopleCompany) => {
+    const check = async (c: PeopleCompany, pre?: SerperResult[]) => {
       if (noCompanyName(c.employer)) {
         Object.assign(c, { screen: 'noname', note: `"${c.employer}" is an industry word, not a company name: nothing to look up` });
         return;
       }
-      const got = await search(companySvc, companyQuery(c.employer));
+      // In a search for several at once when it's there, else on its own.
+      const fromPre = pre ? matchingPage(pre, c.employer) : null;
+      const got = fromPre ? { results: pre!, error: undefined } : await search(companySvc, companyQuery(c.employer));
       if (got.error) {
         Object.assign(c, { screen: 'nopage', note: `search failed: ${got.error}` });
         return;
@@ -573,10 +577,21 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       // Companies already found come first: their checks may be all that's needed.
       const pending = report.companies
         .filter((c) => c.screen === 'unchecked')
-        .sort((a, b) => rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
+        // Companies whose people's own results show another industry last; then the best contacts first.
+        .sort((a, b) => hintRank(a.contacts) - hintRank(b.contacts) || rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
       if (pending.length) {
         // Four at a time, but never more than are still wanted: it ends with exactly the number asked for.
-        await mapLimit(pending.slice(0, Math.min(4, target - ready())), 4, check);
+        const batch = pending.slice(0, Math.min(4, target - ready()));
+        // Outside the ICP by its name: not looked up (LinkedIn's check would only rule it out).
+        const toLook = batch.filter((c) => {
+          const why = outsideIcpByName(c.employer, segment);
+          if (why) Object.assign(c, { screen: 'industry', note: why });
+          return !why;
+        });
+        // The rest in one search; any it doesn't show is looked up on its own.
+        const lookable = toLook.filter((c) => !noCompanyName(c.employer));
+        const pre = lookable.length > 1 ? await search(companySvc, companiesQuery(lookable.map((c) => c.employer))) : null;
+        await mapLimit(toLook, 4, (c) => check(c, pre && !pre.error ? pre.results : undefined));
         await save({ progress: `${ready()} of ${target} prospects found; checking companies on LinkedIn (${total()} Google searches)…` });
         continue;
       }

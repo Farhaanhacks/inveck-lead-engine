@@ -360,8 +360,9 @@ describe('people first', () => {
         if (q.startsWith('site:linkedin.com/in ')) return json({ organic: PEOPLE });
         const one = /^site:linkedin\.com\/company\/(\S+) /.exec(q)?.[1];
         if (one) return json({ organic: FACTS[one] ?? [] });
-        const name = /^site:linkedin\.com\/company "([^"]+)"/.exec(q)?.[1] ?? '';
-        return json({ organic: BY_NAME[name] ?? [] });
+        // One company, or several at once ("A" OR "B"): each one's page, as Google would list them.
+        const names = [...q.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+        return json({ organic: names.flatMap((n) => BY_NAME[n] ?? []) });
       }) as typeof fetch;
       return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     }
@@ -392,7 +393,9 @@ describe('people first', () => {
       expect(peopleFunnelOf(report)).toEqual({ profiles: 10, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 0, abroad: 0, small: 1, industry: 1, ready: 3, readyWithP1: 3, unchecked: 0 });
       // The known company isn't looked up; MEI Brakes' size needed a second search.
       expect(searches.some((q) => q.includes('"Known Forge"'))).toBe(false);
-      expect(report.searches).toMatchObject({ companies: 5, facts: 1 });
+      // Five companies looked up in 3 searches (several at once; Ghost Gears, missing from them, on its own), with
+      // every verdict the same as one search each would give.
+      expect(report.searches).toMatchObject({ companies: 3, facts: 1 });
       // Ten wanted, three to be had: it searched on until searches stopped finding anyone new.
       expect(report).toMatchObject({ target: 10, stopped: 'dry' });
       expect(row.progress).toMatch(/^Stopped with 3 of 10 prospects: the last \d+ searches found nobody new on your lists/);
@@ -425,10 +428,11 @@ describe('people first: as many prospects as asked for', () => {
           }),
         });
       }
-      const k = Number(/^site:linkedin\.com\/company "Forge (\d+)"/.exec(q)?.[1] ?? 0);
-      if (!k) return json({ organic: [] });
-      const industry = k % 2 ? 'Machinery Manufacturing' : 'Hospitality';
-      return json({ organic: [{ title: `Forge ${k} | LinkedIn`, link: `https://in.linkedin.com/company/forge-${k}`, snippet: `Industry: ${industry}. Company size: 201-500 employees. Headquarters: Pune, Maharashtra` }] });
+      // One company, or several at once ("Forge 1" OR "Forge 2").
+      const ks = [...q.matchAll(/"Forge (\d+)"/g)].map((m) => Number(m[1]));
+      return json({
+        organic: ks.map((k) => ({ title: `Forge ${k} | LinkedIn`, link: `https://in.linkedin.com/company/forge-${k}`, snippet: `Industry: ${k % 2 ? 'Machinery Manufacturing' : 'Hospitality'}. Company size: 201-500 employees. Headquarters: Pune, Maharashtra` })),
+      });
     }) as typeof fetch;
     return { fetch: fetchFn, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
   }
@@ -447,7 +451,8 @@ describe('people first: as many prospects as asked for', () => {
     // One round of people searches was plenty; most companies found were never looked up.
     expect(report.searches.people).toBe(8);
     expect(f.unchecked).toBeGreaterThan(10);
-    expect(report.searches.companies).toBe(f.checked);
+    // Several companies looked up in one search: fewer searches than companies checked.
+    expect(report.searches.companies).toBeLessThan(f.checked);
     expect(row.progress).toMatch(/^Found 3 prospects with a contact, as asked\./);
   });
 
@@ -504,6 +509,26 @@ describe('the Sourcing tests\' rules for companies (the 6 am run keeps its own)'
     const { noCompanyName } = await import('@/lib/sourcing/linkedin-pages');
     expect(['Foundry', 'Manufacturing Industry', 'Logistics Pvt Ltd'].map(noCompanyName)).toEqual([true, true, true]);
     expect(['UTL', 'Supercraft foundry jaysingpur', 'SARRALLE - Industrial Engineering Leader'].map(noCompanyName)).toEqual([false, false, false]);
+  });
+
+  it('a name rules a company out only when LinkedIn would certainly rule it out too', async () => {
+    const { outsideIcpByName } = await import('@/lib/sourcing/linkedin-pages');
+    const out = (n: string, s = MANUFACTURING) => !!outsideIcpByName(n, s as never);
+    for (const n of ['Shell', 'Shell India', 'Infosys Limited', 'Tata Consultancy Services', 'HDFC Bank', 'Apollo Hospitals', 'Taj Hotels', 'XYZ Software', 'ABC Consulting']) expect(out(n)).toBe(true);
+    // Anything that might make or move things is still looked up: nothing that could be a prospect is lost.
+    for (const n of ['Shell Moulds', 'Philips', 'Sun Pharma', 'XYZ Pharma Machinery', 'ABC Engineering Consultants', 'Fuller Technologies', 'UTL', 'Maini Precision Products Limited', 'Supercraft foundry jaysingpur', 'Bank Forgings']) expect(out(n)).toBe(false);
+    for (const n of ['Mahindra Logistics', 'Delhivery', 'Blue Dart Express']) expect(out(n, LOGISTICS)).toBe(false);
+  });
+
+  it("what people's own results say only orders the checks: likely misfits last, none left out", async () => {
+    const { industryHint } = await import('@/lib/sourcing/linkedin-pages');
+    const { hintRank } = await import('@/lib/sourcing/people-first');
+    expect(industryHint('Plant Head at Acme | Forgings and castings for automotive', MANUFACTURING)).toBe('icp');
+    expect(industryHint('Plant Head at Zeta | A leading pharma company', MANUFACTURING)).toBe('other');
+    expect(industryHint('Plant Head at Zeta', MANUFACTURING)).toBe('');
+    expect(hintRank([{ hint: 'other' }])).toBe(1);
+    expect(hintRank([{ hint: 'other' }, { hint: 'icp' }])).toBe(0);
+    expect(hintRank([{ hint: '' }])).toBe(0);
   });
 
   it('an industry LinkedIn does not show is read from the website; if nothing settles it, research does', async () => {

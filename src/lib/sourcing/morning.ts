@@ -13,9 +13,9 @@ import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { contactPriority } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
-import { factsQuery, hqAbroad, industryUnclear, needsFacts, noCompanyName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
+import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
 import { websiteWords } from './website-words';
-import { companyQuery, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
+import { companiesQuery, companyQuery, hintRank, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
 
 /**
@@ -267,6 +267,13 @@ export type RoundOptions = {
    * industry LinkedIn doesn't show is read from the company's own website (no search credit), else left to research.
    */
   lenientScreen?: boolean;
+  /**
+   * Cheaper company checks, the same companies kept: a company whose name shows it's outside the ICP isn't
+   * looked up (LinkedIn's check would only rule it out); companies whose people's own results show another
+   * industry are checked last; several companies are looked up in one search, each not found that way on
+   * its own after.
+   */
+  cheaperChecks?: boolean;
   sink: RoundSink;
 };
 
@@ -349,8 +356,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);
 
-    // Checks one company's LinkedIn page; one that passes goes to the sink with its people.
-    const check = async (c: MorningSegment['pending'][number]) => {
+    // Checks one company's LinkedIn page (in `pre`, a search for several at once, when it's there); one that
+    // passes goes to the sink with its people.
+    const check = async (c: MorningSegment['pending'][number], pre?: SerperResult[]) => {
       checked.add(normCompany(c.employer));
       if (await ruledOutBefore(c.employer)) {
         seg.ruledOut++;
@@ -360,8 +368,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         seg.noPage++;
         return;
       }
-      const got = await search(companyQuery(c.employer));
-      let page: CompanyPage | null = got.error ? null : matchingPage(got.results, c.employer);
+      const fromPre = pre ? matchingPage(pre, c.employer) : null;
+      const got = fromPre ? { results: pre!, error: undefined } : await search(companyQuery(c.employer));
+      let page: CompanyPage | null = fromPre ?? (got.error ? null : matchingPage(got.results, c.employer));
       if (!page && !got.error && o.lenientScreen) page = pagelessCompany(c.employer);
       if (!page) {
         seg.noPage++;
@@ -403,9 +412,24 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const step = async (): Promise<'more' | 'stop'> => {
       seg.pending = seg.pending.filter((c) => !checked.has(normCompany(c.employer)));
       if (seg.pending.length) {
-        seg.pending.sort((a, b) => rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
+        seg.pending.sort((a, b) => (o.cheaperChecks ? hintRank(a.contacts) - hintRank(b.contacts) : 0) || rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
         const batch = seg.pending.splice(0, Math.max(1, Math.min(4, seg.wanted - seg.added)));
-        await mapLimit(batch, 4, check);
+        if (!o.cheaperChecks) await mapLimit(batch, 4, (c) => check(c));
+        else {
+          // Outside the ICP by name, or ruled out before: not looked up. The rest in one search; any it doesn't
+          // show, on their own.
+          const toLook: typeof batch = [];
+          for (const c of batch) {
+            if (!outsideIcpByName(c.employer, seg.segment) && !(await ruledOutBefore(c.employer))) toLook.push(c);
+            else {
+              checked.add(normCompany(c.employer));
+              seg.ruledOut++;
+            }
+          }
+          const lookable = toLook.filter((c) => !noCompanyName(c.employer));
+          const pre = lookable.length > 1 ? await search(companiesQuery(lookable.map((c) => c.employer))) : null;
+          await mapLimit(toLook, 4, (c) => check(c, pre && !pre.error ? pre.results : undefined));
+        }
         return 'more';
       }
       if (seg.quiet >= quietLimit) {
@@ -443,6 +467,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           seen.add(profileKey(person.linkedin));
           const key = normCompany(person.employer);
           if (person.why || !key) continue;
+          if (o.cheaperChecks) person.hint = industryHint(`${r.title ?? ''} ${r.subtitle ?? ''} ${r.snippet ?? ''}`, seg.segment);
           onLists++;
           if (known.names.has(key) || checked.has(key)) continue;
           const c = seg.pending.find((x) => normCompany(x.employer) === key);
