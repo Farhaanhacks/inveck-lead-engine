@@ -16,9 +16,9 @@ import { cleanPhone } from './tracker';
 export const INBOUND_SHEET_ID = '1_QU1mQsOrgavxGU7Xmo8XsZdVr8Bhneo4Ojudsn-bD4';
 export const INBOUND_SHEET_TAB = 'Leads';
 /** The rotation, in order, repeating. */
-export const ROTATION = ['Pooja', 'Anshul', 'Anuradha', 'Parimal'] as const;
+export const ROTATION = ['Pooja', 'Anuradha', 'Parimal'] as const;
 /** First names a rotation name is found under in the CRM (a spelling variant of the same person, nothing else). */
-const ALIASES: Record<(typeof ROTATION)[number], string[]> = { Pooja: ['pooja', 'puja'], Anshul: ['anshul'], Anuradha: ['anuradha'], Parimal: ['parimal'] };
+const ALIASES: Record<(typeof ROTATION)[number], string[]> = { Pooja: ['pooja', 'puja'], Anuradha: ['anuradha'], Parimal: ['parimal'] };
 export const INBOUND_SOURCE = 'Inbound demo request (website form)';
 const CURSOR_KEY = 'inboundDemoCursor';
 const REPORT_KEY = 'inboundDemoSync';
@@ -376,6 +376,13 @@ export async function syncInboundDemos(db: Db, opts: SyncOptions = {}): Promise<
         // A repeat submission has its lead already; it only matters again if it brings a time and the lead has no meeting.
         if (ledger.state === 'merged' && slotOf(c).kind !== 'confirmed') continue;
 
+        // A row held for someone no longer in the rotation (Anshul was in it once) is given a new place in it.
+        if (!ledger.leadId && !(ROTATION as readonly string[]).includes(ledger.allocName)) {
+          const slot = await takeSlot(db);
+          const [row] = await db.update(inboundDemoRows).set({ allocSlot: slot, allocName: ROTATION[slot % ROTATION.length], updatedAt: now }).where(eq(inboundDemoRows.id, ledger.id)).returning();
+          ledger = row;
+          known.set(key, row);
+        }
         // A row waiting for its BDA to exist gets its lead now if the BDA does.
         if (!ledger.leadId) {
           const owner = by.get(ledger.allocName) ?? null;

@@ -72,7 +72,7 @@ export default async function SettingsPage() {
           <section className="card p-5">
             <h2 className="text-sm font-semibold">Inbound demo sheet</h2>
             <p className="mb-3 text-xs text-muted">
-              Demo requests from the website form (sheet <code>{process.env.INBOUND_DEMO_SHEET_ID?.trim() || INBOUND_SHEET_ID}</code>, tab <code>{process.env.INBOUND_DEMO_SHEET_TAB?.trim() || INBOUND_SHEET_TAB}</code>), read-only with the CA sheet&apos;s service account. New rows go to Pooja, Anshul, Anuradha and Parimal in turn.
+              Demo requests from the website form (sheet <code>{process.env.INBOUND_DEMO_SHEET_ID?.trim() || INBOUND_SHEET_ID}</code>, tab <code>{process.env.INBOUND_DEMO_SHEET_TAB?.trim() || INBOUND_SHEET_TAB}</code>), read-only with the CA sheet&apos;s service account. New rows go to Pooja, Anuradha and Parimal in turn.
             </p>
             <form action={syncInboundDemosAction}><button className="btn-secondary">Sync now</button></form>
             <p className="mt-3 text-sm">Next request goes to <span className="font-semibold">{rotation.next.name}</span>{rotation.next.user ? (rotation.next.user !== rotation.next.name ? ` (${rotation.next.user})` : '') : <span className="text-warning-ink"> (no matching user yet)</span>}.</p>

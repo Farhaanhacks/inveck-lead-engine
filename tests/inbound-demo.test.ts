@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { inboundDemoRows, leadMeetings, leads, tasks, users } from '@/lib/db/schema';
 import { cursorOf, parseSheet, parseWhen, resolveBdas, rowKeyOf, rowProblem, slotOf, sourceDetails, sourceLine, syncInboundDemos } from '@/lib/inbound-demo';
-import { hashPassword } from '@/lib/passwords';
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 const NOW = new Date('2026-10-22T05:00:00Z');
@@ -81,23 +80,23 @@ describe('the rotation and the import', () => {
     return all.map((r) => [r.allocName, r.ownerId ? names.get(r.ownerId) : null, r.state]);
   };
 
-  it('finds the four BDAs by name, never guessing or creating: Pooja is Puja (reported), Anshul has no user', async () => {
+  it('finds the three BDAs by name, never guessing or creating: Pooja is Puja (reported)', async () => {
     const { by, mismatches } = await resolveBdas(db);
     expect(by.get('Pooja')?.name).toBe('Puja');
     expect(by.get('Anuradha')?.name).toBe('Anuradha');
     expect(by.get('Parimal')?.name).toBe('Parimal');
-    expect(by.get('Anshul')).toBeNull();
-    expect(mismatches.map((m) => m.rotationName).sort()).toEqual(['Anshul', 'Pooja']);
+    expect(by.has('Anshul')).toBe(false);
+    expect(mismatches.map((m) => m.rotationName)).toEqual(['Pooja']);
     expect((await db.select().from(users)).some((u) => u.name === 'Anshul')).toBe(false);
   });
 
-  it('creates inbound demo leads (Replied, no research, no steps), in rotation, with the sheet\'s details; an unmatched BDA\'s turn waits', async () => {
+  it('creates inbound demo leads (Replied, no research, no steps), in rotation, with the sheet\'s details', async () => {
     const rows = [R('Ravi', 'ravi@a.com', { submitted_at: '2026-10-22T04:00:00Z' }), R('Sita', 'sita@a.com', { submitted_at: '2026-10-22T04:01:00Z' }), R('Tom', 'tom@a.com', { submitted_at: '2026-10-22T04:02:00Z' }), R('Uma', 'uma@a.com', { submitted_at: '2026-10-22T04:03:00Z' })];
     const report = await syncInboundDemos(db, { source: source(rows), now: NOW });
-    expect(report).toMatchObject({ read: 4, created: 3, meetings: 0 });
-    expect(await ownerNames()).toEqual([['Pooja', 'Puja', 'imported'], ['Anshul', null, 'blocked'], ['Anuradha', 'Anuradha', 'imported'], ['Parimal', 'Parimal', 'imported']]);
-    expect(report.blocked).toHaveLength(1);
-    expect(report.noMeeting).toHaveLength(3);
+    expect(report).toMatchObject({ read: 4, created: 4, meetings: 0 });
+    expect(await ownerNames()).toEqual([['Pooja', 'Puja', 'imported'], ['Anuradha', 'Anuradha', 'imported'], ['Parimal', 'Parimal', 'imported'], ['Pooja', 'Puja', 'imported']]);
+    expect(report.blocked).toHaveLength(0);
+    expect(report.noMeeting).toHaveLength(4);
     expect(report.noMeeting[0].reason).toMatch(/no meeting date or time/);
     const made = await db.select().from(leads);
     expect(made.every((l) => l.status === 'Replied' && l.inbound && l.source === 'Inbound demo request (website form)')).toBe(true);
@@ -110,22 +109,26 @@ describe('the rotation and the import', () => {
     expect((await db.select().from(inboundDemoRows))[0].raw.utm_campaign).toBe('oct');
   });
 
-  it('running again changes nothing; a later batch carries on from where the rotation stopped; the waiting turn is filled once the user exists', async () => {
+  it('running again changes nothing; a later batch carries on from where the rotation stopped', async () => {
     const batch1 = [R('Ravi', 'ravi@a.com', { submitted_at: '2026-10-22T04:00:00Z' }), R('Sita', 'sita@a.com', { submitted_at: '2026-10-22T04:01:00Z' })];
     await syncInboundDemos(db, { source: source(batch1), now: NOW });
     const again = await syncInboundDemos(db, { source: source(batch1), now: new Date(NOW.getTime() + 10 * 60_000) });
     expect(again.created).toBe(0);
-    expect(await db.select().from(leads)).toHaveLength(1);
+    expect(await db.select().from(leads)).toHaveLength(2);
     expect(await cursorOf(db)).toBe(2);
-    // Next batch: Anuradha, then Parimal, then back to Pooja.
+    // Next batch: Parimal, then back to Pooja, then Anuradha.
     const batch2 = [...batch1, R('Tom', 'tom@a.com', { submitted_at: '2026-10-22T05:00:00Z' }), R('Uma', 'uma@a.com', { submitted_at: '2026-10-22T05:01:00Z' }), R('Vik', 'vik@a.com', { submitted_at: '2026-10-22T05:02:00Z' })];
     await syncInboundDemos(db, { source: source(batch2), now: new Date(NOW.getTime() + 20 * 60_000) });
-    expect((await ownerNames()).map((r) => r[0])).toEqual(['Pooja', 'Anshul', 'Anuradha', 'Parimal', 'Pooja']);
-    // Anshul joins: the waiting row goes to them, nobody else's share moves.
-    await db.insert(users).values({ username: 'anshul@inveck', name: 'Anshul', role: 'bda', passwordHash: await hashPassword('x'.repeat(10)), mustChangePassword: true });
-    const done = await syncInboundDemos(db, { source: source(batch2), now: new Date(NOW.getTime() + 30 * 60_000) });
-    expect(done.created).toBe(1);
-    expect((await ownerNames()).map((r) => r[1])).toEqual(['Puja', 'Anshul', 'Anuradha', 'Parimal', 'Puja']);
+    expect((await ownerNames()).map((r) => r[0])).toEqual(['Pooja', 'Anuradha', 'Parimal', 'Pooja', 'Anuradha']);
+  });
+
+  it('a row held for Anshul (who was in the rotation once) is given a new place in it', async () => {
+    const rows = [R('Ravi', 'ravi@a.com')];
+    await syncInboundDemos(db, { source: source([]), now: NOW });
+    await db.insert(inboundDemoRows).values({ rowKey: rowKeyOf(Object.fromEntries(HEAD.map((h, i) => [h, rows[0][i]]))), sheetRow: 2, email: 'ravi@a.com', allocSlot: 1, allocName: 'Anshul', state: 'blocked', raw: Object.fromEntries(HEAD.map((h, i) => [h, rows[0][i]])) });
+    const r = await syncInboundDemos(db, { source: source(rows), now: new Date(NOW.getTime() + 600_000) });
+    expect(r.created).toBe(1);
+    expect((await ownerNames()).map((x) => x[0])).not.toContain('Anshul');
   });
 
   it('skips junk rows, folds an identical re-submission into one, and one person is one lead however often they submit', async () => {
@@ -148,8 +151,8 @@ describe('the rotation and the import', () => {
     expect((await rotationView(db)).next).toEqual({ name: 'Pooja', user: 'Puja' });
     await syncInboundDemos(db, { source: source([R('Ravi', 'ravi@a.com'), R('Sita', 'sita@a.com', { submitted_at: '2026-10-22T04:01:00Z' })]), now: NOW });
     const v = await rotationView(db);
-    expect(v.next.name).toBe('Anuradha');
-    expect(v.recent.map((r) => [r.who, r.bda, r.state])).toEqual([['Sita', 'Anshul', 'blocked'], ['Ravi', 'Pooja', 'imported']]);
+    expect(v.next.name).toBe('Parimal');
+    expect(v.recent.map((r) => [r.who, r.bda, r.state])).toEqual([['Sita', 'Anuradha', 'imported'], ['Ravi', 'Pooja', 'imported']]);
   });
 
   it('reports an unreadable sheet instead of failing, and never writes to it', async () => {

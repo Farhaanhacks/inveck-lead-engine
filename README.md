@@ -391,7 +391,7 @@ app never writes to it.
   show on the lead page and as a source line on Today.
 - **No duplicates.** A row's key is its `booking_id` (the form's booking id). Rows without one use submission time + email + form type. The same person
   submitting again is added to their one lead as a note; nothing is made twice however often the sync runs.
-- **Who gets it.** A persistent rotation: Pooja, Anshul, Anuradha, Parimal, then again. The place reached is saved, so later
+- **Who gets it.** A persistent rotation: Pooja, Anuradha, Parimal, then again. The place reached is saved, so later
   batches carry on. Names are matched to existing users by first name (Pooja also matches the spelling "Puja"); a name with no
   user is reported, never created or guessed, and that turn is given to them once the user exists.
 - **The meeting.** The slot the visitor chose on the form (`preferred_start_utc`, or `preferred_start_ist` such as "Sat 24 Oct
