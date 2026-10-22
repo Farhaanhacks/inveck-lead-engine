@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { INBOUND_SOURCE } from '@/lib/inbound-source';
 import { getCurrentUser } from '@/lib/users';
 import { ownerScope } from '@/lib/access';
 import { getDb } from '@/lib/db';
@@ -14,7 +15,7 @@ export default async function PipelinePage() {
   const rows = await db
     .select()
     .from(leads)
-    .where(and(inArray(leads.status, [...PIPELINE_STAGES]), owner === null ? undefined : eq(leads.ownerId, owner)))
+    .where(and(inArray(leads.status, [...PIPELINE_STAGES]), ne(leads.source, INBOUND_SOURCE), owner === null ? undefined : eq(leads.ownerId, owner)))
     .orderBy(desc(leads.finalScore), desc(leads.updatedAt));
 
   const rounds = await nextRounds(db, rows.map((l) => l.id));

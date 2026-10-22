@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne, notInArray } from 'drizzle-orm';
+import { INBOUND_SOURCE } from './inbound-source';
 import type { Db } from './db';
 import { leads, tasks, users, type Lead } from './db/schema';
 
@@ -94,7 +95,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
     .select()
     .from(leads)
     // Not companies ruled out, or whose fit is still being reviewed (they aren't worked yet).
-    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), notInArray(leads.status, ['Disqualified', 'Deleted'])))
+    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), notInArray(leads.status, ['Disqualified', 'Deleted']), ne(leads.source, INBOUND_SOURCE)))
     .orderBy(desc(leads.updatedAt))
     .limit(2000);
   if (!rows.length) return [];

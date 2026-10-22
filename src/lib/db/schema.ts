@@ -286,7 +286,7 @@ export type ProspectResult = typeof prospectResults.$inferSelect;
 
 export const ACTIVITY_KINDS = [
   'added', 'researched', 'contact', 'draft', 'approved', 'sent', 'follow_up_drafted', 'follow_up_sent',
-  'stage', 'note', 'call', 'meeting', 'signal', 'error',
+  'stage', 'note', 'call', 'meeting', 'signal', 'error', 'response',
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 

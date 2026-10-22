@@ -8,6 +8,7 @@ const LINKS = [
   { href: '/', label: 'Dashboard', admin: true },
   { href: '/team', label: 'Team', admin: true },
   { href: '/leads', label: 'Leads' },
+  { href: '/inbound', label: 'Inbound leads', admin: true },
   { href: '/tracker', label: 'Tracker' },
   { href: '/pipeline', label: 'Pipeline' },
   { href: '/contacts', label: 'Contacts' },

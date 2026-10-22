@@ -23,7 +23,7 @@ import { learnFirm, recallFirm } from './pipeline/firm-identity';
 import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
 import { istDay, notCaFirmSql } from './tasks';
-import { INBOUND_SOURCE } from './inbound-demo';
+import { INBOUND_SOURCE } from './inbound-source';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
 import { pausedToday } from './pause';

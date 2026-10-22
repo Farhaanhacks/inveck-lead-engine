@@ -19,7 +19,8 @@ export const INBOUND_SHEET_TAB = 'Leads';
 export const ROTATION = ['Puja', 'Anuradha', 'Parimal', 'Anchal'] as const;
 /** First names a rotation name is found under in the CRM (a spelling variant of the same person, nothing else). */
 const ALIASES: Record<(typeof ROTATION)[number], string[]> = { Puja: ['puja', 'pooja'], Anuradha: ['anuradha'], Parimal: ['parimal'], Anchal: ['anchal', 'aanchal'] };
-export const INBOUND_SOURCE = 'Inbound demo request (website form)';
+import { INBOUND_SOURCE } from './inbound-source';
+export { INBOUND_SOURCE };
 const CURSOR_KEY = 'inboundDemoCursor';
 const REPORT_KEY = 'inboundDemoSync';
 const LOCK_KEY = 'inboundDemoLock';

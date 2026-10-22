@@ -80,6 +80,8 @@ import { dismissWhatsAppReplyAction } from '../../whatsapp-actions';
 
 /** How often Today's housekeeping runs (contact checks, new steps), at most. */
 const HOUSEKEEPING_EVERY = 2 * 60 * 1000;
+/** How often opening Today may sync the inbound demo sheet (matches the cron: every five minutes). */
+const INBOUND_SYNC_EVERY = 5 * 60 * 1000;
 
 // Saving a step redraws this page in the same request: never cut short.
 export const maxDuration = 300;
@@ -620,9 +622,15 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     await bestEffort('the CA firm draw', () => runCaDraw(db), null);
     await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
     await bestEffort('planning Today steps', () => ensureSequences(db), 0);
-    // The inbound demo sheet: new requests become leads (and Teams meetings when the sheet gives a time). Read-only.
-    await bestEffort('syncing the inbound demo sheet', () => syncInboundDemos(db), null);
   }, undefined);
+  // The inbound demo sheet (read-only): new requests become leads, and Teams meetings when the sheet gives a slot. At most
+  // every five minutes (the same cadence as the scheduled sync in vercel.json), however many pages are opened.
+  // (After the page is sent, so reading the sheet never makes Today wait.)
+  if (!fromAction) {
+    after(async () => {
+      await atMostEvery('inbound-demo-sync', INBOUND_SYNC_EVERY, async () => bestEffort('syncing the inbound demo sheet', async () => syncInboundDemos(await getDb()), null), null);
+    });
+  }
 
   const team = await listBdas(db);
   const sp = await searchParams;
