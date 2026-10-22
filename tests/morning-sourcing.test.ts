@@ -347,3 +347,38 @@ describe("the day's Google search budget", () => {
     expect(serper).toBeGreaterThan(0);
   });
 });
+
+describe('Find new prospects for a number of leads in each segment', () => {
+  it('searches only the segments asked for, and the leads go to the person chosen', async () => {
+    const [me] = await db.select().from(users).where(eq(users.active, true)).limit(1);
+    const searched: string[] = [];
+    const { run } = await startRun(db, { findProspects: true, trigger: 'manual', prospectsTo: String(me.id), prospectsWanted: { [LOGISTICS]: 1 } });
+    expect(await executeRun(db, run.id, services(searched), Number.POSITIVE_INFINITY)).toBe('done');
+    // Only 3PL searches: no Manufacturing company found.
+    expect(searched.length).toBeGreaterThan(0);
+    expect(searched.every((q) => q.includes('"warehousing"'))).toBe(true);
+    const added = await db.select().from(leads).where(sql`${leads.source} like ${`${PEOPLE_FIRST_SOURCE}%`}`);
+    expect(added.map((l) => l.segment)).toEqual([LOGISTICS]);
+    expect(added[0]).toMatchObject({ status: 'Approved', ownerId: me.id });
+  });
+
+  it('searches again while research has approved fewer than asked, a few rounds at most, then stops', async () => {
+    // Two asked for; the made-up Google has one 3PL company.
+    const { run } = await startRun(db, { findProspects: true, trigger: 'manual', prospectsWanted: { [LOGISTICS]: 2 } });
+    expect(await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY)).toBe('done');
+    const [done] = await db.select().from(runs).where(eq(runs.id, run.id));
+    const state = done.sourcing as MorningSourcing;
+    expect(state.round).toBeGreaterThan(1);
+    expect(state.round).toBeLessThanOrEqual(MORNING_LIMITS.rounds);
+    expect(state.history.filter((h) => h.segment === MANUFACTURING).every((h) => h.wanted === 0)).toBe(true);
+    expect(state.addedIds).toHaveLength(1);
+  });
+
+  it('with nothing filled in, finds what the morning draw is short of, as before', async () => {
+    const { run } = await startRun(db, { findProspects: true, trigger: 'manual' });
+    expect(run.prospectsWanted).toBeNull();
+    await executeRun(db, run.id, services(), Number.POSITIVE_INFINITY);
+    const segments = (await db.select().from(leads).where(sql`${leads.source} like ${`${PEOPLE_FIRST_SOURCE}%`}`)).map((l) => l.segment).sort();
+    expect(segments).toEqual([LOGISTICS, MANUFACTURING].sort());
+  });
+});

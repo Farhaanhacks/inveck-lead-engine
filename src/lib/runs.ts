@@ -75,12 +75,12 @@ export async function markRunPaused(db: Db, runId: number) {
 }
 
 /** Starts a run, or returns the one already running (only one at a time). */
-export async function startRun(db: Db, opts: { findProspects: boolean; trigger: string; prospectsTo?: string }): Promise<{ run: Run; created: boolean }> {
+export async function startRun(db: Db, opts: { findProspects: boolean; trigger: string; prospectsTo?: string; prospectsWanted?: Partial<Record<string, number>> | null }): Promise<{ run: Run; created: boolean }> {
   const existing = await activeRun(db);
   if (existing) return { run: existing, created: false };
   const [run] = await db
     .insert(runs)
-    .values({ findProspects: opts.findProspects, trigger: opts.trigger, prospectsTo: opts.prospectsTo ?? '', stats: EMPTY_STATS })
+    .values({ findProspects: opts.findProspects, trigger: opts.trigger, prospectsTo: opts.prospectsTo ?? '', prospectsWanted: opts.prospectsWanted ?? null, stats: EMPTY_STATS })
     .returning();
   return { run, created: true };
 }

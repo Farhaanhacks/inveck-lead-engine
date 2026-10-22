@@ -323,6 +323,7 @@ export const SCHEMA_STATEMENTS = [
   `INSERT INTO settings (key, value) VALUES ('contactsResetV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('at', now()) WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'freshStartV1')`,
   `INSERT INTO settings (key, value) VALUES ('freshStartV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
   `ALTER TABLE runs ADD COLUMN IF NOT EXISTS prospects_to TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE runs ADD COLUMN IF NOT EXISTS prospects_wanted JSONB`,
   // Clear everything (asked for once, before the team starts): every lead and all that hangs off it,
   // research runs and radar finds. Logins, ICPs, settings and the current-clients list stay.
   `DELETE FROM people WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'clearAllV1')`,

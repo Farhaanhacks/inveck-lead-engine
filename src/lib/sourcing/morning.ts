@@ -78,6 +78,8 @@ export type MorningSourcing = {
   added: number;
   /** Each finished round, per segment, for the dashboard. */
   history: { round: number; segment: string; wanted: number; added: number; searches: number; stopped?: MorningSegment['stopped'] }[];
+  /** The leads this run's search added (every round). */
+  addedIds?: number[];
 };
 
 const isSerper = (input: RequestInfo | URL) => String(input instanceof Request ? input.url : input).includes('google.serper.dev');
@@ -169,11 +171,31 @@ export function startRound(prev: MorningSourcing | null, wanted: Record<Sourcing
     const before = prev?.segments.find((p) => p.segment === segment);
     return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
   });
-  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [] };
+  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [] };
 }
 
-/** The companies a round of the run asks for, per segment. A manual search finds at least its share of "New prospects per search". */
-async function runWants(db: Db, svc: Services, run: Run, round: number): Promise<Record<SourcingSegment, number>> {
+/** Leads this run's search added that research approved, per segment. */
+async function approvedBy(db: Db, state: MorningSourcing | null): Promise<Record<SourcingSegment, number>> {
+  const out = Object.fromEntries(SOURCING_SEGMENTS.map((s) => [s, 0])) as Record<SourcingSegment, number>;
+  const ids = state?.addedIds ?? [];
+  if (!ids.length) return out;
+  const rows = await db.select({ segment: leads.segment }).from(leads).where(and(inArray(leads.id, ids), eq(leads.status, 'Approved')));
+  for (const r of rows) {
+    const s = SOURCING_SEGMENTS.find((x) => normSegment(x) === normSegment(r.segment));
+    if (s) out[s]++;
+  }
+  return out;
+}
+
+/**
+ * The companies a round of the run asks for, per segment. A manual search finds at least its share of "New prospects per search".
+ * One the admin asked for a number of leads in each segment searches only those, for what research hasn't approved yet.
+ */
+async function runWants(db: Db, svc: Services, run: Run, round: number, prev: MorningSourcing | null): Promise<Record<SourcingSegment, number>> {
+  if (run.prospectsWanted) {
+    const approved = await approvedBy(db, prev);
+    return Object.fromEntries(SOURCING_SEGMENTS.map((s) => [s, Math.ceil(Math.max(0, (run.prospectsWanted![s] ?? 0) - approved[s]) * MORNING_LIMITS.headroom)])) as Record<SourcingSegment, number>;
+  }
   const short = await drawShortfall(db, svc.settings);
   // A manual search's share per segment follows the team's daily lists.
   const team = teamTotal(await teamQuotas(db, svc.settings));
@@ -195,6 +217,11 @@ export async function wantsAnotherRound(db: Db, svc: Services, run: Run, now = n
   const last = state.history.filter((h) => h.round === state.round);
   if (!last.some((h) => h.added > 0)) return false;
   if (last.some((h) => h.stopped === 'cap' || h.stopped === 'failed')) return false;
+  // Asked for a number of leads: again while research has approved fewer than that.
+  if (run.prospectsWanted) {
+    const approved = await approvedBy(db, state);
+    return SOURCING_SEGMENTS.some((s) => (run.prospectsWanted![s] ?? 0) > approved[s]);
+  }
   // Companies handed straight to the team aren't in the draw's pool: one round is what was asked.
   if (run.prospectsTo) return false;
   if (run.trigger === 'schedule' && !beforeLastRound(now)) return false;
@@ -565,7 +592,7 @@ export async function sourceProspects(
   const [row] = await db.select({ sourcing: runs.sourcing }).from(runs).where(eq(runs.id, run.id));
   const prev = (row?.sourcing ?? null) as MorningSourcing | null;
   const fresh = !prev || prev.roundDone;
-  const state = fresh ? startRound(prev, await runWants(db, svc, run, (prev?.round ?? 0) + 1)) : prev;
+  const state = fresh ? startRound(prev, await runWants(db, svc, run, (prev?.round ?? 0) + 1, prev)) : prev;
   const save = (s: MorningSourcing) => db.update(runs).set({ sourcing: JSON.parse(JSON.stringify(s)), heartbeatAt: new Date() }).where(eq(runs.id, run.id));
   if (fresh) {
     const wanted = state.segments.filter((s) => s.wanted > 0);
@@ -607,6 +634,7 @@ export async function sourceProspects(
             source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
           })
           .returning({ id: leads.id });
+        state.addedIds = [...(state.addedIds ?? []), lead.id];
         if (c.page.website) registerFirmWebsite(c.name, c.page.website);
         await db.insert(people).values(c.contacts.map((p) => ({ leadId: lead.id, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
         await logActivity(db, lead.id, 'added', `Found by the people-first search: ${c.contacts.map((p) => `${p.name} (${p.title}, ${p.tier})`).slice(0, 4).join('; ')} work here. Company page: ${c.page.url}; ${c.note}.`);

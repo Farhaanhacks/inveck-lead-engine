@@ -216,6 +216,8 @@ export const runs = pgTable('runs', {
   findProspects: boolean('find_prospects').notNull().default(false),
   /** Who gets the prospects this run finds: '' (the morning draw), 'team' (split across the team now) or a user id. */
   prospectsTo: text('prospects_to').notNull().default(''),
+  /** How many leads the admin asked for in each segment (Find new prospects); null: what the morning draw is short of. */
+  prospectsWanted: jsonb('prospects_wanted').$type<Partial<Record<string, number>> | null>(),
   status: text('status').$type<'running' | 'done' | 'failed' | 'cancelled'>().notNull().default('running'),
   trigger: text('trigger').notNull().default('manual'),
   stats: jsonb('stats').$type<RunStats>().notNull(),
