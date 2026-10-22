@@ -235,6 +235,26 @@ const OTHER_WORDS: Record<SourcingSegment, RegExp> = {
  * label is a catch-all ("Manufacturing") or missing, and its page says what it makes in the ICP's
  * words, with nothing marking it as something else. '' when it is; why not when it isn't.
  */
+/** The industry LinkedIn doesn't settle: no label (or only "Manufacturing"), and nothing in the page's text either way. */
+export function industryUnclear(p: CompanyPage, segment: SourcingSegment): boolean {
+  const label = p.industry.trim();
+  if (label && !GENERIC_INDUSTRY.test(label)) return false;
+  const text = `${p.name}. ${p.text}`;
+  return !OTHER_WORDS[segment].test(text) && !ICP_WORDS[segment].test(text);
+}
+
+/** A company the search found without a LinkedIn page: its name only (its website and research tell the rest). */
+export function pagelessCompany(employer: string): CompanyPage {
+  return { name: employer, url: '', size: '', industry: '', hq: '', website: '', followers: 0, text: '' };
+}
+
+const NAME_FILLER = /\b(foundry|foundries|forging|forgings|casting|castings|manufacturing|manufacturer|manufacturers|industries|industry|industrial|engineering|works|company|co|corp|corporation|group|pvt|private|ltd|limited|llp|inc|india|the|and|of|plant|factory|logistics|warehouse|warehousing)\b/gi;
+
+/** An employer written as an industry word, not a name ("Foundry", "Manufacturing Industry"): nothing to look up. */
+export function noCompanyName(employer: string): boolean {
+  return employer.replace(/[^a-z0-9\s]/gi, ' ').replace(NAME_FILLER, ' ').trim().length < 2;
+}
+
 export function industryProblem(p: CompanyPage, segment: SourcingSegment): string {
   const label = p.industry.trim();
   if (label && !GENERIC_INDUSTRY.test(label)) return ICP_INDUSTRY[segment].test(label) ? '' : `industry not in the ICP: ${label}`;
@@ -258,8 +278,10 @@ export type Screen =
  * The first checks, from the page alone: based in India, big enough (a band at half the target or
  * less is out; up to the target is borderline and kept), new to INVECK (not a lead in any state, a
  * client or on INVECK's own lists), and shown to be in an industry the ICP covers (see industryProblem).
+ * `passUnclearIndustry` (the Sourcing tests' rule): an industry nothing shows either way doesn't rule it
+ * out; research checks it on the company's website.
  */
-export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize: string, known: Known): Screen {
+export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize: string, known: Known, opts: { passUnclearIndustry?: boolean } = {}): Screen {
   // Based abroad with a site in India (MEI Brakes: Sheffield and Chennai) is a prospect for that site;
   // with none named, it isn't.
   let abroad = '';
@@ -274,14 +296,15 @@ export function screenPage(p: CompanyPage, segment: SourcingSegment, companySize
   const domain = rootDomain(p.website);
   if (known.names.has(normCompany(p.name)) || (domain && known.domains.has(domain))) return { pass: false, reason: 'known', note: 'already known to INVECK (a lead, a client or on its own lists)' };
   const industry = industryProblem(p, segment);
-  if (industry) return { pass: false, reason: 'industry', note: industry };
+  const unclear = !!industry && !!opts.passUnclearIndustry && industryUnclear(p, segment);
+  if (industry && !unclear) return { pass: false, reason: 'industry', note: industry };
   if (segment === LOGISTICS && CONSUMER_DELIVERY.test(`${p.name} ${p.industry} ${p.text}`)) return { pass: false, reason: 'industry', note: `consumer delivery (courier, parcel, last mile or B2C), out of the 3PL ICP` };
   const note = !p.size
     ? 'size not shown'
     : target && top != null && top <= target
       ? `borderline size: ${p.size} against ${companySize}`
       : `size ${p.size}`;
-  return { pass: true, note: abroad + note };
+  return { pass: true, note: abroad + note + (unclear ? '; industry not shown on LinkedIn or its website: research checks it' : '') };
 }
 
 /** Big enough for certain (a band above the target), borderline, or not shown: the order companies are checked for people. */

@@ -8,7 +8,8 @@ import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { RESUME_AFTER_MS } from '../invocations';
 import { contactPriority, tierOf } from '../tiers';
-import { factsQuery, hqAbroad, needsFacts, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
+import { factsQuery, hqAbroad, industryUnclear, needsFacts, noCompanyName, pagelessCompany, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
+import { websiteWords } from './website-words';
 import { companyQuery, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
 
 /**
@@ -110,7 +111,7 @@ export type PeopleCompany = {
   employer: string;
   /** Its LinkedIn page, once found. */
   page: CompanyPage | null;
-  screen: CompanyReport['screen'] | 'nopage' | 'unchecked';
+  screen: CompanyReport['screen'] | 'nopage' | 'noname' | 'unchecked';
   note: string;
   facts?: string;
   /** The people found there who can be contacts, best first. */
@@ -501,14 +502,21 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       return r;
     };
 
+    // No LinkedIn page doesn't rule a company out: it's checked by its name, and research checks the rest
+    // on its website. An employer written as an industry word ("Foundry") has no name to look up.
     const check = async (c: PeopleCompany) => {
-      const got = await search(companySvc, companyQuery(c.employer));
-      let page = got.error ? null : matchingPage(got.results, c.employer);
-      if (!page) {
-        Object.assign(c, { screen: 'nopage', note: got.error ? `search failed: ${got.error}` : `no LinkedIn company page found for "${c.employer}"` });
+      if (noCompanyName(c.employer)) {
+        Object.assign(c, { screen: 'noname', note: `"${c.employer}" is an industry word, not a company name: nothing to look up` });
         return;
       }
-      if (needsFacts(page)) {
+      const got = await search(companySvc, companyQuery(c.employer));
+      if (got.error) {
+        Object.assign(c, { screen: 'nopage', note: `search failed: ${got.error}` });
+        return;
+      }
+      const found = matchingPage(got.results, c.employer);
+      let page = found ?? pagelessCompany(c.employer);
+      if (found && needsFacts(page)) {
         const before = { size: page.size, industry: page.industry, hq: page.hq };
         const again = await search(factSvc, factsQuery(page));
         page = withFacts(page, again.results);
@@ -516,10 +524,20 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
           ? `search failed: ${again.error}`
           : [page.size !== before.size && page.size, page.industry !== before.industry && page.industry, page.hq !== before.hq && `HQ ${page.hq}`].filter(Boolean).join(', ');
       }
-      c.page = page;
+      c.page = found ? page : null;
       // Its people work in India, so it has a site here whatever its headquarters.
-      const s = screenPage({ ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` }, segment, icp.companySize, known);
-      Object.assign(c, { screen: s.pass ? 'pass' : s.reason, note: s.note });
+      const seen = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
+      let s = screenPage(seen, segment, icp.companySize, known);
+      let fromSite = false;
+      // The industry not shown on LinkedIn: the company's own website (read directly, no search credit) decides,
+      // and when that doesn't settle it either, research does.
+      if (!s.pass && s.reason === 'industry' && industryUnclear(page, segment)) {
+        const words = await websiteWords(svc, page.website);
+        fromSite = !!words;
+        s = screenPage({ ...seen, text: `${seen.text}\n${words}` }, segment, icp.companySize, known, { passUnclearIndustry: true });
+      }
+      const note = [found ? '' : 'no LinkedIn company page found', fromSite && !s.note.includes('research checks it') ? 'industry from its website' : '', s.note].filter(Boolean).join('; ');
+      Object.assign(c, { screen: s.pass ? 'pass' : s.reason, note });
     };
 
     let failedBatches = 0;

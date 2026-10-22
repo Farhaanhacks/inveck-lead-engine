@@ -13,7 +13,8 @@ import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { contactPriority } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
-import { factsQuery, hqAbroad, needsFacts, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
+import { factsQuery, hqAbroad, industryUnclear, needsFacts, noCompanyName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
+import { websiteWords } from './website-words';
 import { companyQuery, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
 
@@ -261,6 +262,11 @@ export type RoundOptions = {
   quietSearches?: number;
   /** Companies ruled out (too small, the wrong industry, no LinkedIn page) are remembered and not checked again. */
   rememberRuledOut?: boolean;
+  /**
+   * No LinkedIn page doesn't rule a company out (it's checked by its name, research does the rest), and an
+   * industry LinkedIn doesn't show is read from the company's own website (no search credit), else left to research.
+   */
+  lenientScreen?: boolean;
   sink: RoundSink;
 };
 
@@ -350,17 +356,29 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         seg.ruledOut++;
         return;
       }
+      if (o.lenientScreen && noCompanyName(c.employer)) {
+        seg.noPage++;
+        return;
+      }
       const got = await search(companyQuery(c.employer));
       let page: CompanyPage | null = got.error ? null : matchingPage(got.results, c.employer);
+      if (!page && !got.error && o.lenientScreen) page = pagelessCompany(c.employer);
       if (!page) {
         seg.noPage++;
         if (!got.error) await rememberRuledOut(c.employer, 'no LinkedIn page');
         return;
       }
-      if (needsFacts(page)) page = withFacts(page, (await search(factsQuery(page))).results);
+      if (page.url && needsFacts(page)) page = withFacts(page, (await search(factsQuery(page))).results);
       // Its people work in India, so it has a site here whatever its headquarters.
-      const s = screenPage({ ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` }, seg.segment, icp.companySize, known);
-      if (!s.pass || pages.has(page.url)) {
+      const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
+      let s = screenPage(seenAs, seg.segment, icp.companySize, known);
+      if (o.lenientScreen && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+        const words = await websiteWords(svc, page.website);
+        s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
+        if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };
+      }
+      if (s.pass && !page.url) s = { ...s, note: `no LinkedIn company page found; ${s.note}` };
+      if (!s.pass || (page.url && pages.has(page.url))) {
         seg.ruledOut++;
         // Too small or the wrong industry doesn't change soon; abroad depends on who was found there.
         if (!s.pass && (s.reason === 'small' || s.reason === 'industry')) await rememberRuledOut(c.employer, s.note);
@@ -369,7 +387,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (seg.added >= seg.wanted) return;
       const name = page.nameCut ? c.employer : page.name;
       // Taken before it's added, so two checks at once can't add the same company.
-      pages.add(page.url);
+      if (page.url) pages.add(page.url);
       known.names.add(normCompany(name));
       known.names.add(normCompany(c.employer));
       const domain = rootDomain(page.website);

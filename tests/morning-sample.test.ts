@@ -281,6 +281,41 @@ describe('the Morning Sample Run', () => {
     expect((await peopleFirstContacts(db, fresh)).map((p) => p.name)).toEqual(swift.contacts.map((p) => p.name));
   });
 
+  it('keeps a company with no LinkedIn page, and skips an employer that is only an industry word', async () => {
+    // Two more people in the forging search: a plant head at a company with no LinkedIn page, and one whose employer is just "Foundry".
+    const extra = [
+      { title: 'Kiran Rao - Plant Head - Pageless Forge Works | LinkedIn', link: 'https://in.linkedin.com/in/kiran-rao', subtitle: 'Pune, Maharashtra, India · Plant Head · Pageless Forge Works', snippet: '' },
+      { title: 'Hemant D - Plant Head - Foundry | LinkedIn', link: 'https://in.linkedin.com/in/hemant-d', subtitle: 'Pune, Maharashtra, India · Plant Head · Foundry', snippet: '' },
+    ];
+    const asked: string[] = [];
+    const svc = () => {
+      const base = morningServices(log);
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const body = String(input).includes('google.serper.dev/search') ? JSON.parse(String(init?.body)) : null;
+          if (body) asked.push(body.q);
+          const res = await base.fetch(input, init);
+          if (body?.q.startsWith('site:linkedin.com/in ') && /"forging"/.test(body.q)) {
+            const data = await res.json();
+            return new Response(JSON.stringify({ ...data, organic: [...(data.organic ?? []), ...extra] }), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+          return res;
+        }) as typeof fetch,
+      };
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, svc(), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    const pageless = r.companies.find((c) => c.page.name === 'Pageless Forge Works');
+    expect(pageless).toBeDefined();
+    expect(pageless!.page.url).toBe('');
+    expect(pageless!.note).toMatch(/^no LinkedIn company page found/);
+    // "Foundry" has no name to look up: never searched for, never kept.
+    expect(asked.some((q) => q === 'site:linkedin.com/company "Foundry"')).toBe(false);
+    expect(r.companies.some((c) => c.employer === 'Foundry')).toBe(false);
+  });
+
   it("shows the first morning the draw runs, when that's later than the next one", async () => {
     await db.insert(settings).values({ key: 'morningStartsOn', value: '2030-01-10' });
     const id = await startSample();

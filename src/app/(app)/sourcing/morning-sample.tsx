@@ -96,7 +96,7 @@ function Card({ r, card, person, senderName, icps }: { r: MorningSampleReport; c
         {card.from === 'pool' ? (
           <Link href={`/leads/${lead.id}`} className="font-medium hover:underline">{lead.company}</Link>
         ) : (
-          <a href={lead.companyLinkedin || company?.page.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{lead.company}</a>
+          <a href={lead.companyLinkedin || company?.page.url || undefined} target="_blank" rel="noreferrer" className="font-medium hover:underline">{lead.company}</a>
         )}
         {lead.city && <span className="ml-1.5 text-sm text-muted">{lead.city}</span>}
         <span className="ml-2 text-xs text-muted">First contact · <span className="tabular-nums">0 of 4 done</span></span>
@@ -296,7 +296,7 @@ function WhoGetsWhat({ r, icps }: { r: MorningSampleReport; icps: Icp[] }) {
                         {c.from === 'pool' ? (
                           <Link href={`/leads/${lead.id}`} className="hover:underline">{lead.company}</Link>
                         ) : (
-                          <a href={lead.companyLinkedin || company?.page.url} target="_blank" rel="noreferrer" className="hover:underline">{lead.company}</a>
+                          <a href={lead.companyLinkedin || company?.page.url || undefined} target="_blank" rel="noreferrer" className="hover:underline">{lead.company}</a>
                         )}
                       </td>
                       <td className={td}>{lead.segment === LOGISTICS ? '3PL' : lead.segment}</td>
@@ -358,7 +358,7 @@ export function MorningSample({
           The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything and no search is remembered: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
         </p>
         <p className="mt-2 text-sm text-ink-2">
-          <span className="font-medium">Cheaper rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): people searches of 100 results, companies already ruled out not checked again, 2 contacts a company, no repeat lookups of a company&apos;s LinkedIn page or of its officers in the news, 10% extra companies, and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample. A sample carried on from where it stopped uses them too.
+          <span className="font-medium">Rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): no LinkedIn page doesn&apos;t rule a company out, an industry LinkedIn doesn&apos;t show is read from the company&apos;s own website (no search credit), people searches of 100 results, companies already ruled out not checked again, 2 contacts a company, no repeat lookups of a company&apos;s LinkedIn page or of its officers in the news, 10% extra companies, and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample. A sample carried on from where it stopped uses them too.
         </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
@@ -480,7 +480,14 @@ export function MorningSample({
                           </td>
                         )}
                         <td className={`${td} font-medium`}>
-                          <a href={c.page.url} target="_blank" rel="noreferrer" className="hover:underline">{c.page.name}</a>
+                          {c.page.url ? (
+                            <a href={c.page.url} target="_blank" rel="noreferrer" className="hover:underline">{c.page.name}</a>
+                          ) : (
+                            <>
+                              {c.page.name}
+                              <span className="block text-xs font-normal text-muted">no LinkedIn company page found</span>
+                            </>
+                          )}
                           {c.page.website && <span className="block text-xs font-normal text-muted">{c.page.website}</span>}
                         </td>
                         <td className={td}>{c.segment}</td>

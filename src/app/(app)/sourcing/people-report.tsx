@@ -9,8 +9,9 @@ const SCREEN_LABEL: Record<PeopleCompany['screen'], string> = {
   small: 'Too small',
   industry: 'Industry',
   known: 'Already known',
-  nopage: 'No LinkedIn page',
-  unchecked: 'Not checked',
+  nopage: 'Search failed',
+  noname: 'No company name',
+  unchecked: 'Not needed',
 };
 
 function Tile({ label, value, note }: { label: string; value: number | string; note?: string }) {
@@ -58,10 +59,10 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <Tile label="People found" value={f.profiles} note={`from ${report.searches.people} searches`} />
           <Tile label="On your lists" value={f.contacts} note={`P1/P2/P3, in India, at ${f.companies} companies`} />
-          <Tile label="Companies checked" value={f.checked} note={`${f.known} already known${f.unchecked ? `, ${f.unchecked} not checked` : ''}; ${report.searches.companies + report.searches.facts} searches`} />
+          <Tile label="Companies checked" value={f.checked} note={`${f.known} already known${f.unchecked ? `, ${f.unchecked} ${done ? 'not needed' : 'waiting'}` : ''}; ${report.searches.companies + report.searches.facts} searches`} />
           <Tile label="Ready with a contact" value={report.target ? `${f.ready} of ${report.target}` : f.ready} note={`${pct(f.ready, f.checked)} of those checked; ${f.readyWithP1} with a P1`} />
           <Tile label="Ruled out" value={f.abroad + f.small + f.industry} note={`${f.small} too small, ${f.industry} industry, ${f.abroad} abroad`} />
-          <Tile label="No LinkedIn page" value={f.nopage} note="company page not found by name" />
+          <Tile label="No LinkedIn page" value={report.companies.filter((c) => c.screen === 'pass' && !c.page).length} note="kept: checked by name, research checks the rest" />
         </div>
         {done && f.checked > 0 && (
           <p className="mt-3 text-sm text-ink-2">
@@ -99,6 +100,7 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
                     {c.page?.industry || <span className="text-muted">industry not shown</span>}
                     <span className="block text-xs text-muted">{c.page?.hq || 'headquarters not shown'}</span>
                     {c.note.startsWith('headquartered abroad') && <span className="block text-xs text-muted">{c.note.split(';')[0]}</span>}
+                    {(!c.page || /website|research checks/.test(c.note)) && <span className="block text-xs text-muted">{c.note}</span>}
                   </td>
                   <td className={td}>
                     <ul className="space-y-0.5">
@@ -121,8 +123,8 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
       {others.length > 0 && (
         <section className="card mb-6 overflow-x-auto">
           <div className="border-b border-line px-4 py-3">
-            <h2 className="text-sm font-semibold">Ruled out or not checked</h2>
-            <p className="text-xs text-muted">Companies where someone on the lists works, that didn&apos;t pass, or weren&apos;t checked within the number of companies to check.</p>
+            <h2 className="text-sm font-semibold">Ruled out, or not needed</h2>
+            <p className="text-xs text-muted">Companies where someone on the lists works that didn&apos;t pass. &quot;Not needed&quot;: the test had the prospects asked for before it got to them, so they weren&apos;t looked up and no credits were spent on them.</p>
           </div>
           <table className="w-full min-w-[860px] text-sm">
             <thead className="text-xs text-ink-2">
@@ -139,8 +141,12 @@ export function PeopleReportView({ report, done }: { report: PeopleReport; done:
                   <CompanyCell c={c} />
                   <td className={`${td} whitespace-nowrap`}>{c.page?.size || <span className="text-muted">–</span>}</td>
                   <td className={td}>
-                    <span className="text-ink-2">{SCREEN_LABEL[c.screen]}</span>
-                    {c.note && <span className="block text-xs text-muted">{c.note}</span>}
+                    <span className="text-ink-2">{c.screen === 'unchecked' && !done ? 'Waiting to be checked' : SCREEN_LABEL[c.screen]}</span>
+                    {c.screen === 'unchecked' ? (
+                      <span className="block text-xs text-muted">{done ? `The test had its ${report.target ?? ''} prospects before getting to it: not looked up, no credits spent` : 'Next in line'}</span>
+                    ) : (
+                      c.note && <span className="block text-xs text-muted">{c.note}</span>
+                    )}
                   </td>
                   <td className={td}>
                     <span className="text-xs text-muted">{c.contacts.map((p) => `${p.name} (${p.tier})`).join(', ')}</span>

@@ -33,7 +33,8 @@ import type { FoundContact } from './people-first';
 const CONCURRENCY = 5;
 
 /**
- * Cheaper rules tried in the Morning Sample Run first (the 6 am run doesn't use them): people searches of a
+ * Rules tried in the Morning Sample Run first (the 6 am run doesn't use them): no LinkedIn page doesn't rule
+ * a company out and an industry LinkedIn doesn't show is read from its website (see lenientScreen), people searches of a
  * hundred results (ten if Serper refuses that), companies ruled out remembered and not checked again, two
  * contacts a company with no hunt for a P1 when the search found people there, no Google search for the
  * company's LinkedIn page (the search found it) or for officers in the news and filings, 10% extra
@@ -198,11 +199,12 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           peopleResults: SAMPLE_RULES.peopleResults,
           quietSearches: SAMPLE_RULES.quietSearches,
           rememberRuledOut: true,
+          lenientScreen: true,
           recent: await recentSearches(db, null),
           alsoKnown: {
             names: r.companies.flatMap((c) => [c.page.name, c.employer]),
             domains: r.companies.map((c) => rootDomain(c.page.website)).filter(Boolean),
-            pages: r.companies.map((c) => c.page.url),
+            pages: r.companies.map((c) => c.page.url).filter(Boolean),
           },
           sink: {
             save: async () => {
@@ -308,7 +310,7 @@ export async function pushSampleCompanies(db: Db, testId: number, keys: number[]
     if (!wanted.has(c.key) || c.pushed) continue;
     const name = c.page.nameCut ? c.employer : c.page.name;
     const domain = rootDomain(c.page.website);
-    if (pages.has(c.page.url) || names.has(normCompany(name)) || (domain && domains.has(domain))) {
+    if ((c.page.url && pages.has(c.page.url)) || names.has(normCompany(name)) || (domain && domains.has(domain))) {
       skipped.push(name);
       continue;
     }
@@ -342,17 +344,17 @@ export async function pushSampleCompanies(db: Db, testId: number, keys: number[]
           segment: c.segment,
           status: 'New',
           companyLinkedin: c.page.url,
-          source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
+          source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url || 'not found'} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
         })
         .returning({ id: leads.id });
       leadId = lead.id;
       if (c.contacts.length) await db.insert(people).values(c.contacts.map((p) => ({ leadId, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
     }
-    await logActivity(db, leadId, 'added', `Pushed into the pipeline from Morning Sample Run ${testId}${researched ? ' (researched there)' : ': not researched yet, so the pipeline researches it'}. Company page: ${c.page.url}.`);
+    await logActivity(db, leadId, 'added', `Pushed into the pipeline from Morning Sample Run ${testId}${researched ? ' (researched there)' : ': not researched yet, so the pipeline researches it'}. Company page: ${c.page.url || 'none found on LinkedIn'}.`);
     c.pushed = leadId;
     pushed++;
     names.add(normCompany(name));
-    pages.add(c.page.url);
+    if (c.page.url) pages.add(c.page.url);
     if (domain) domains.add(domain);
   }
   await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify(r)) }).where(eq(sourcingTests.id, testId));
@@ -413,11 +415,11 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       city: c.city,
       segment: c.segment,
       status: 'Processing',
-      source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
+      source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url || 'not found'} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
     });
     try {
       // Its LinkedIn page is known already: research doesn't search for it again (a sample rule).
-      await knowFirmPage(svc, lead.company, c.page.website, c.page);
+      if (c.page.url) await knowFirmPage(svc, lead.company, c.page.website, c.page);
       const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken: taken.filter((t) => t.contactName), ownLeads }, async () => {}, {
         teamContact: false,
         found: asLinkedInFinds(c.contacts),

@@ -387,14 +387,15 @@ describe('people first', () => {
       expect(by['Tiny Works']).toMatchObject({ screen: 'small' });
       expect(by['Pharma Co']).toMatchObject({ screen: 'industry' });
       expect(by['Known Forge']).toMatchObject({ screen: 'known' });
-      expect(by['Ghost Gears']).toMatchObject({ screen: 'nopage' });
-      expect(peopleFunnelOf(report)).toEqual({ profiles: 10, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 1, abroad: 0, small: 1, industry: 1, ready: 2, readyWithP1: 2, unchecked: 0 });
+      // No LinkedIn page found doesn't rule it out: kept by its name, for research to check on its website.
+      expect(by['Ghost Gears']).toMatchObject({ screen: 'pass', page: null, note: 'no LinkedIn company page found; size not shown' });
+      expect(peopleFunnelOf(report)).toEqual({ profiles: 10, contacts: 7, companies: 6, known: 1, checked: 5, nopage: 0, abroad: 0, small: 1, industry: 1, ready: 3, readyWithP1: 3, unchecked: 0 });
       // The known company isn't looked up; MEI Brakes' size needed a second search.
       expect(searches.some((q) => q.includes('"Known Forge"'))).toBe(false);
       expect(report.searches).toMatchObject({ companies: 5, facts: 1 });
-      // Ten wanted, two to be had: it searched on until searches stopped finding anyone new.
+      // Ten wanted, three to be had: it searched on until searches stopped finding anyone new.
       expect(report).toMatchObject({ target: 10, stopped: 'dry' });
-      expect(row.progress).toMatch(/^Stopped with 2 of 10 prospects: the last \d+ searches found nobody new on your lists/);
+      expect(row.progress).toMatch(/^Stopped with 3 of 10 prospects: the last \d+ searches found nobody new on your lists/);
       expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
       expect((await db.select().from(leads)).length).toBe(leadsBefore);
     });
@@ -473,5 +474,29 @@ describe('people first: as many prospects as asked for', () => {
     expect(new Set(report.people.map((p) => p.linkedin)).size).toBe(report.people.length);
     expect(new Set(searches).size).toBe(searches.length);
     expect(report.searches.people + report.searches.companies + report.searches.facts).toBe(searches.length);
+  });
+});
+
+describe('the Sourcing tests\' rules for companies (the 6 am run keeps its own)', () => {
+  it('an industry word is not a company name; a short real name is', async () => {
+    const { noCompanyName } = await import('@/lib/sourcing/linkedin-pages');
+    expect(['Foundry', 'Manufacturing Industry', 'Logistics Pvt Ltd'].map(noCompanyName)).toEqual([true, true, true]);
+    expect(['UTL', 'Supercraft foundry jaysingpur', 'SARRALLE - Industrial Engineering Leader'].map(noCompanyName)).toEqual([false, false, false]);
+  });
+
+  it('an industry LinkedIn does not show is read from the website; if nothing settles it, research does', async () => {
+    const { industryUnclear, screenPage, pagelessCompany } = await import('@/lib/sourcing/linkedin-pages');
+    const known = { names: new Set<string>(), domains: new Set<string>() };
+    const blank = { ...pagelessCompany('Zeta Works'), url: 'https://in.linkedin.com/company/zeta', size: '501-1,000 employees' };
+    expect(industryUnclear(blank, MANUFACTURING)).toBe(true);
+    // The run's rule: not shown, so out.
+    expect(screenPage(blank, MANUFACTURING, '200+ employees', known)).toMatchObject({ pass: false, reason: 'industry' });
+    // The website shows forgings: in.
+    expect(screenPage({ ...blank, text: 'We manufacture precision forgings and castings for automotive OEMs.' }, MANUFACTURING, '200+ employees', known, { passUnclearIndustry: true })).toMatchObject({ pass: true });
+    // The website shows a hotel: out.
+    const hotel = screenPage({ ...blank, text: 'A boutique hotel and resort with fine dining.' }, MANUFACTURING, '200+ employees', known, { passUnclearIndustry: true });
+    expect(hotel.pass).toBe(false);
+    // Nothing either way: kept, for research.
+    expect(screenPage(blank, MANUFACTURING, '200+ employees', known, { passUnclearIndustry: true })).toMatchObject({ pass: true, note: expect.stringContaining('research checks it') });
   });
 });
