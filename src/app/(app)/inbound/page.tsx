@@ -10,6 +10,8 @@ import { filterRows, inboundCounts, loadInbound, monthLabel, monthsOf, SOURCE_LA
 import { sourceLine } from '@/lib/inbound-demo';
 
 export const dynamic = 'force-dynamic';
+// "Sync now" runs as part of this page: reading the sheet and booking meetings can take longer than the default limit.
+export const maxDuration = 300;
 
 function Card({ label, value }: { label: string; value: number }) {
   return (

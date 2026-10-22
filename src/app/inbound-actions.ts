@@ -23,7 +23,8 @@ export async function syncNowAction(): Promise<SyncSummary> {
       `${r.created} new inbound lead${r.created === 1 ? '' : 's'}`,
       `${r.meetings} Teams meeting${r.meetings === 1 ? '' : 's'} booked`,
       ...(r.merged ? [`${r.merged} repeat submission${r.merged === 1 ? '' : 's'} added to existing leads`] : []),
-      ...(r.skipped.length ? [`${r.skipped.length} row${r.skipped.length === 1 ? '' : 's'} not imported (test, formula or no email)`] : []),
+      // Every row that was not imported, with why (a test or formula row, no email, or an error that needs fixing).
+      ...r.skipped.map((s) => `Not imported, row ${s.row} (${s.who}): ${s.reason}`),
       ...r.noMeeting.map((n) => `No meeting for ${n.who}: ${n.reason}`),
       ...r.blocked.map((b) => `Waiting, ${b.who}: ${b.reason}`),
     ];

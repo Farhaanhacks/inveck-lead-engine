@@ -12,6 +12,7 @@ import { sourceDetails } from '@/lib/inbound-demo';
 import { logInboundActivityAction, setInboundStatusAction } from '@/app/inbound-actions';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 const KIND_LABEL: Record<string, string> = { response: 'Response', follow_up_sent: 'Follow-up sent', note: 'Note', stage: 'Status', added: 'Added', contact: 'Contact', meeting: 'Meeting', call: 'Call', error: 'Error' };
 

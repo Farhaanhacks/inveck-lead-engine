@@ -24,7 +24,8 @@ export { INBOUND_SOURCE };
 const CURSOR_KEY = 'inboundDemoCursor';
 const REPORT_KEY = 'inboundDemoSync';
 const LOCK_KEY = 'inboundDemoLock';
-const LOCK_MS = 4 * 60_000;
+// A sync takes seconds; if one is cut off (a timeout), the next may start after this long.
+const LOCK_MS = 90_000;
 const IST_MS = 330 * 60_000;
 
 // ─── Reading the sheet ───
@@ -415,7 +416,8 @@ export async function syncInboundDemos(db: Db, opts: SyncOptions = {}): Promise<
         } else report.meetings++;
       } catch (e) {
         // One bad row never stops the others; it is tried again next time.
-        report.skipped.push({ row: sr.sheetRow, who, reason: `Error: ${e instanceof Error ? e.message : 'unknown'}`.slice(0, 200) });
+        console.error(`[inbound-demo] row ${sr.sheetRow} failed:`, e instanceof Error ? e.message : e);
+        report.skipped.push({ row: sr.sheetRow, who, reason: `Error: ${e instanceof Error ? e.message : 'unknown'}`.slice(0, 300) });
       }
     }
     return report;
