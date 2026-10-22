@@ -52,8 +52,8 @@ export function MorningCard({ health: h }: { health: MorningHealth }) {
       )}
 
       <p className="mt-1 text-xs text-muted">
-        Google searches today: <span className={h.searchesToday >= h.budget ? 'font-medium text-warning-ink' : 'tabular-nums'}>{h.searchesToday.toLocaleString('en-IN')} of {h.budget.toLocaleString('en-IN')}</span> credits (Settings).
-        {h.searchesToday >= h.budget ? ' The budget is used: what is left waits for tomorrow.' : ''}
+        Google searches today: <span className={h.budget && h.searchesToday >= h.budget ? 'font-medium text-warning-ink' : 'tabular-nums'}>{h.searchesToday.toLocaleString('en-IN')}{h.budget ? ` of ${h.budget.toLocaleString('en-IN')}` : ''}</span> credits{h.budget ? ' (Settings)' : ', no daily limit'}.
+        {h.budget && h.searchesToday >= h.budget ? ' The budget is used: what is left waits for tomorrow.' : ''}
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">

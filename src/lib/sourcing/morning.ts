@@ -13,8 +13,9 @@ import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { contactPriority } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
-import { factsQuery, hqAbroad, needsFacts, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
-import { companyQuery, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
+import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
+import { websiteWords } from './website-words';
+import { companiesQuery, companyQuery, hintRank, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
 
 /**
@@ -30,13 +31,13 @@ import { knownToInveck } from './test-run';
 
 /** Leads found this way say so in their source; their people are handed to research as LinkedIn finds. */
 export const PEOPLE_FIRST_SOURCE = 'People-first search';
-const PEOPLE_FIRST_EVIDENCE = 'Found by the people-first search: their LinkedIn profile shows this company as their current job';
+export const PEOPLE_FIRST_EVIDENCE = 'Found by the people-first search: their LinkedIn profile shows this company as their current job';
 
 export const MORNING_LIMITS = {
   /** Times one run searches again after research ruled companies out. */
   rounds: 3,
-  /** A segment stops when this many searches in a row (a hundred results each) found nobody new on the ICP's lists. */
-  quietSearches: 40,
+  /** A segment stops when this many searches in a row found nobody new on the ICP's lists. */
+  quietSearches: 150,
   /** A search made in this many days is not made again. */
   memoryDays: 30,
   /** Companies asked for above the shortfall, for those research rules out. */
@@ -255,13 +256,31 @@ export type RoundOptions = {
   recent: Set<string>;
   /** Companies taken besides INVECK's own: a sample run's earlier finds. */
   alsoKnown?: { names: string[]; domains: string[]; pages: string[] };
+  /** The Morning Sample Run's cheaper rules (see SAMPLE_RULES); the run uses the defaults. Results per people search. */
+  peopleResults?: number;
+  /** Searches in a row finding nobody new before a segment stops (default MORNING_LIMITS.quietSearches). */
+  quietSearches?: number;
+  /** Companies ruled out (too small, the wrong industry, no LinkedIn page) are remembered and not checked again. */
+  rememberRuledOut?: boolean;
+  /**
+   * No LinkedIn page doesn't rule a company out (it's checked by its name, research does the rest), and an
+   * industry LinkedIn doesn't show is read from the company's own website (no search credit), else left to research.
+   */
+  lenientScreen?: boolean;
+  /**
+   * Cheaper company checks, the same companies kept: a company whose name shows it's outside the ICP isn't
+   * looked up (LinkedIn's check would only rule it out); companies whose people's own results show another
+   * industry are checked last; several companies are looked up in one search, each not found that way on
+   * its own after.
+   */
+  cheaperChecks?: boolean;
   sink: RoundSink;
 };
 
-/** Results asked for in one people search: up to a hundred, for 2 credits instead of 1 for ten. */
-export const PEOPLE_RESULTS = 100;
-/** The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks. */
-const STEP_CREDITS = 8 * searchCredits(PEOPLE_RESULTS);
+/** Results asked for in one people search: ten, for 1 credit. */
+export const PEOPLE_RESULTS = 10;
+/** A company ruled out (or with no LinkedIn page) isn't checked again for this long, where that's asked for. */
+const RULED_OUT_DAYS = 90;
 
 /** The credits a request to Serper costs, from the number of results it asks for. */
 function creditsOf(input: RequestInfo | URL, init?: RequestInit): number {
@@ -287,6 +306,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const d of o.alsoKnown?.domains ?? []) known.domains.add(d);
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
+  const peopleResults = o.peopleResults ?? PEOPLE_RESULTS;
+  const quietLimit = o.quietSearches ?? MORNING_LIMITS.quietSearches;
+  // The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks.
+  const stepCredits = 8 * searchCredits(peopleResults);
 
   // Each segment's search, ready to take a step.
   type Worker = { seg: MorningSegment; step: () => Promise<'more' | 'stop'>; checked: Set<string> };
@@ -307,36 +330,73 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return svc.fetch(input, init);
       }) as typeof fetch,
     };
+    // An account Serper doesn't allow more than ten results on: ten at a time, for the rest of the round.
+    let fewer = false;
     const search = async (q: string, num = 10): Promise<{ results: SerperResult[]; error?: string }> => {
       try {
-        return { results: await googleSearch(counting, q, 1, num) };
+        return { results: await googleSearch(counting, q, 1, fewer ? Math.min(num, 10) : num) };
       } catch (e) {
+        if (num > 10 && !fewer && /not allowed/i.test(errorMessage(e))) {
+          fewer = true;
+          return search(q, 10);
+        }
         return { results: [], error: errorMessage(e) };
       }
+    };
+    // Companies ruled out earlier for this segment and size (when asked): not checked (searched) again.
+    const ruledOutKey = (employer: string) => `company-check:v1:${seg.segment}:${icp.companySize}:${normCompany(employer)}`;
+    const ruledOutBefore = async (employer: string) => {
+      if (!o.rememberRuledOut) return false;
+      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string } | null;
+      return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
+    };
+    const rememberRuledOut = async (employer: string, why: string) => {
+      if (o.rememberRuledOut) await svc.cache?.set(ruledOutKey(employer), { at: new Date().toISOString(), why }).catch(() => {});
     };
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);
 
-    // Checks one company's LinkedIn page; one that passes goes to the sink with its people.
-    const check = async (c: MorningSegment['pending'][number]) => {
+    // Checks one company's LinkedIn page (in `pre`, a search for several at once, when it's there); one that
+    // passes goes to the sink with its people.
+    const check = async (c: MorningSegment['pending'][number], pre?: SerperResult[]) => {
       checked.add(normCompany(c.employer));
-      const got = await search(companyQuery(c.employer));
-      let page: CompanyPage | null = got.error ? null : matchingPage(got.results, c.employer);
-      if (!page) {
+      if (await ruledOutBefore(c.employer)) {
+        seg.ruledOut++;
+        return;
+      }
+      if (o.lenientScreen && noCompanyName(c.employer)) {
         seg.noPage++;
         return;
       }
-      if (needsFacts(page)) page = withFacts(page, (await search(factsQuery(page))).results);
+      const fromPre = pre ? matchingPage(pre, c.employer) : null;
+      const got = fromPre ? { results: pre!, error: undefined } : await search(companyQuery(c.employer));
+      let page: CompanyPage | null = fromPre ?? (got.error ? null : matchingPage(got.results, c.employer));
+      if (!page && !got.error && o.lenientScreen) page = pagelessCompany(c.employer);
+      if (!page) {
+        seg.noPage++;
+        if (!got.error) await rememberRuledOut(c.employer, 'no LinkedIn page');
+        return;
+      }
+      if (page.url && needsFacts(page)) page = withFacts(page, (await search(factsQuery(page))).results);
       // Its people work in India, so it has a site here whatever its headquarters.
-      const s = screenPage({ ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` }, seg.segment, icp.companySize, known);
-      if (!s.pass || pages.has(page.url)) {
+      const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
+      let s = screenPage(seenAs, seg.segment, icp.companySize, known);
+      if (o.lenientScreen && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+        const words = await websiteWords(svc, page.website);
+        s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
+        if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };
+      }
+      if (s.pass && !page.url) s = { ...s, note: `no LinkedIn company page found; ${s.note}` };
+      if (!s.pass || (page.url && pages.has(page.url))) {
         seg.ruledOut++;
+        // Too small or the wrong industry doesn't change soon; abroad depends on who was found there.
+        if (!s.pass && (s.reason === 'small' || s.reason === 'industry')) await rememberRuledOut(c.employer, s.note);
         return;
       }
       if (seg.added >= seg.wanted) return;
       const name = page.nameCut ? c.employer : page.name;
       // Taken before it's added, so two checks at once can't add the same company.
-      pages.add(page.url);
+      if (page.url) pages.add(page.url);
       known.names.add(normCompany(name));
       known.names.add(normCompany(c.employer));
       const domain = rootDomain(page.website);
@@ -352,12 +412,27 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const step = async (): Promise<'more' | 'stop'> => {
       seg.pending = seg.pending.filter((c) => !checked.has(normCompany(c.employer)));
       if (seg.pending.length) {
-        seg.pending.sort((a, b) => rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
+        seg.pending.sort((a, b) => (o.cheaperChecks ? hintRank(a.contacts) - hintRank(b.contacts) : 0) || rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
         const batch = seg.pending.splice(0, Math.max(1, Math.min(4, seg.wanted - seg.added)));
-        await mapLimit(batch, 4, check);
+        if (!o.cheaperChecks) await mapLimit(batch, 4, (c) => check(c));
+        else {
+          // Outside the ICP by name, or ruled out before: not looked up. The rest in one search; any it doesn't
+          // show, on their own.
+          const toLook: typeof batch = [];
+          for (const c of batch) {
+            if (!outsideIcpByName(c.employer, seg.segment) && !(await ruledOutBefore(c.employer))) toLook.push(c);
+            else {
+              checked.add(normCompany(c.employer));
+              seg.ruledOut++;
+            }
+          }
+          const lookable = toLook.filter((c) => !noCompanyName(c.employer));
+          const pre = lookable.length > 1 ? await search(companiesQuery(lookable.map((c) => c.employer))) : null;
+          await mapLimit(toLook, 4, (c) => check(c, pre && !pre.error ? pre.results : undefined));
+        }
         return 'more';
       }
-      if (seg.quiet >= MORNING_LIMITS.quietSearches) {
+      if (seg.quiet >= quietLimit) {
         seg.stopped = 'dry';
         return 'stop';
       }
@@ -367,7 +442,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return 'stop';
       }
       seg.cursor += batch.length;
-      const got = await mapLimit(batch, 4, (pq) => search(pq.q, PEOPLE_RESULTS));
+      const got = await mapLimit(batch, 4, (pq) => search(pq.q, peopleResults));
       // Every search refused (out of credits, a wrong key): the run ends as failed, with the reason.
       if (got.every((g) => g.error)) {
         seg.stopped = 'failed';
@@ -392,6 +467,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           seen.add(profileKey(person.linkedin));
           const key = normCompany(person.employer);
           if (person.why || !key) continue;
+          if (o.cheaperChecks) person.hint = industryHint(`${r.title ?? ''} ${r.subtitle ?? ''} ${r.snippet ?? ''}`, seg.segment);
           onLists++;
           if (known.names.has(key) || checked.has(key)) continue;
           const c = seg.pending.find((x) => normCompany(x.employer) === key);
@@ -435,7 +511,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   let active = workers.slice();
   while (active.length) {
     // Out of this invocation's time (after doing something, so every invocation gets further).
-    if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.6) {
+    if (steps > 0 && Date.now() - o.started > o.budgetMs * 0.85) {
       await saveAll();
       return 'continue';
     }
@@ -445,7 +521,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       return 'done';
     }
     // The day's budget: what's left after researching what's been found, and the contact checks.
-    if ((await o.budgetLeft()) < STEP_CREDITS) {
+    if ((await o.budgetLeft()) < stepCredits) {
       for (const w of active) w.seg.stopped = 'cap';
       for (const w of active) await finish(w);
       active = [];
@@ -545,7 +621,7 @@ export type MorningHealth = {
   run: { id: number; status: Run['status']; startedAt: Date; finishedAt: Date | null; added: number; researched: number; approved: number; disqualified: number; searches: number; rounds: number; error: string } | null;
   /** Per segment: what the draw needs, what's ready for it now, and what today's search found against what it wanted. */
   segments: { segment: SourcingSegment; need: number; ready: number; waiting: number; found: number; wanted: number; stopped?: MorningSegment['stopped'] }[];
-  /** Google search credits spent today, everything included, and the day's budget. */
+  /** Google search credits spent today, everything included, and the day's budget (0: no daily limit). */
   searchesToday: number;
   budget: number;
   /** Signs the searches are running out of new companies, from the last few scheduled runs. */

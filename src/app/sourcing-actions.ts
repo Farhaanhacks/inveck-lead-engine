@@ -7,8 +7,8 @@ import { sourcingTests } from '@/lib/db/schema';
 import { requireAdmin } from '@/lib/access';
 import { requestOrigin } from '@/lib/run-driver';
 import { driveSourcingTest } from '@/lib/sourcing/drive';
-import { activeSourcingTest, SOURCING_LIMITS, validSegment } from '@/lib/sourcing/test-run';
-import type { MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { activeSourcingTest, reopenTest, SOURCING_LIMITS, validSegment } from '@/lib/sourcing/test-run';
+import { pushSampleCompanies, stopSample, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 
 /**
  * Starts a sourcing test (one at a time) and shows it. It runs after the response; a people-first test
@@ -47,4 +47,38 @@ export async function startMorningSampleAction(form: FormData) {
   const origin = await requestOrigin();
   after(() => driveSourcingTest(test.id, origin));
   redirect(`/sourcing?sample=${test.id}#morning`);
+}
+
+/**
+ * Carries on a Morning Sample Run that stopped for the server's time limit, from where it got to: nothing
+ * it already searched or researched is done again.
+ */
+export async function carryOnSampleAction(form: FormData) {
+  await requireAdmin();
+  const id = Number(form.get('id'));
+  const db = await getDb();
+  const running = await activeSourcingTest(db, 'morning');
+  if (running) redirect(`/sourcing?sample=${running.id}#morning`);
+  if (id && (await reopenTest(db, id))) {
+    const origin = await requestOrigin();
+    after(() => driveSourcingTest(id, origin));
+  }
+  redirect(`/sourcing?sample=${id}#morning`);
+}
+
+/** Stops a running Morning Sample Run where it is: nothing more is searched or researched. */
+export async function stopSampleAction(form: FormData) {
+  await requireAdmin();
+  const id = Number(form.get('id'));
+  if (id) await stopSample(await getDb(), id);
+  redirect(`/sourcing?sample=${id}#morning`);
+}
+
+/** Puts the companies ticked in a stopped or finished sample into the pipeline as real leads (see pushSampleCompanies). */
+export async function pushSampleAction(form: FormData) {
+  await requireAdmin();
+  const id = Number(form.get('id'));
+  const keys = form.getAll('key').map(Number).filter((k) => Number.isFinite(k));
+  if (id && keys.length) await pushSampleCompanies(await getDb(), id, keys);
+  redirect(`/sourcing?sample=${id}#morning`);
 }

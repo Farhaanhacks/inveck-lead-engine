@@ -593,6 +593,21 @@ export const sourcingTests = pgTable('sourcing_tests', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });
+
+/**
+ * Companies a search found people at but didn't get to check (it had what it wanted): kept for the next
+ * test or sample to check first, so finding them isn't paid for again. One per segment and company.
+ */
+export const candidateCompanies = pgTable('candidate_companies', {
+  id: serial('id').primaryKey(),
+  segment: text('segment').notNull(),
+  /** As the people write it, and its normalised form (one row per segment). */
+  employer: text('employer').notNull(),
+  norm: text('norm').notNull(),
+  /** The people found there (FoundContact, best first). */
+  contacts: jsonb('contacts').notNull(),
+  foundAt: timestamp('found_at', { withTimezone: true }).notNull().defaultNow(),
+});
 export type SourcingTest = typeof sourcingTests.$inferSelect;
 
 export type { ContentPlatform, ContentStatus };

@@ -684,3 +684,88 @@ describe('contact search, one designation at a time (Hosur Gears, manufacturing)
     expect(result.error).toContain('403');
   });
 });
+
+describe('people already found here (the people-first search) count towards the contacts searched for', () => {
+  const company = 'Hosur Gears';
+  const mfg = DEFAULT_ICPS[0];
+  const person = (name: string, title: string) => ({ name, title, linkedin: `https://in.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, '-')}`, snippet: '', location: 'Hosur, Tamil Nadu, India', evidence: 'Found by the people-first search' });
+  const four = [person('Ravi Kumar', 'Plant Head'), person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager'), person('Kiran D', 'Purchase Manager')];
+  const linkedinSearches = () => seen.searches.filter((q) => q.startsWith('site:linkedin.com/in'));
+
+  it('with four acceptable among them, a P1 included, the search looks at the company\'s staff and stops there', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    const result = await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: four });
+    expect(linkedinSearches()).toEqual(staffSearches(company, 'Hosur'));
+    // They're the caller's already: not returned again.
+    expect(result.people).toEqual([]);
+    expect(logs.some((m) => m.includes('4 found here earlier by the people-first search'))).toBe(true);
+    expect(logs.some((m) => /contact search done: 4 acceptable contacts/.test(m))).toBe(true);
+
+    // Without them, every designation is searched.
+    seen.searches.length = 0;
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg);
+    expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length + 9);
+  });
+
+  it('with fewer than four, or no P1 among them, the search goes on for the rest', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Hosur']);
+    // One P1: three more are looked for, designation by designation.
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: [four[0]] });
+    const withOne = linkedinSearches().length;
+    expect(withOne).toBeGreaterThan(staffSearches(company, 'Hosur').length + 9);
+    // Four, none a P1: every P1 designation is still searched, then it stops.
+    seen.searches.length = 0;
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: [...four.slice(1), person('Meena R', 'Production Manager')] });
+    const searched = linkedinSearches().filter((q) => !staffSearches(company, 'Hosur').includes(q));
+    expect(searched.length).toBeGreaterThan(0);
+    expect(searched.every((q) => tierOf(/"[^"]+" "([^"]+)"/.exec(q)![1], mfg) === 'P1')).toBe(true);
+  });
+
+  it('people who fail the checks are not counted: a title off the lists, or someone the search reads as elsewhere now', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Hosur']);
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: [person('Asha R', 'HR Manager'), person('Uma T', 'HR Manager'), person('Raj V', 'HR Manager'), person('Sunil K', 'HR Manager')] });
+    expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length + 9);
+
+    // The search finds one of them again with a conflicting current job: counted as the search reads them, not taken as fact.
+    seen.searches.length = 0;
+    const conflicted = { title: 'Ravi Kumar - Plant Head', subtitle: 'Hosur, Tamil Nadu, India · Consultant · Lean Partners', link: 'https://in.linkedin.com/in/ravi-kumar', snippet: 'Plant Head. Hosur Gears Pvt Ltd. Jan 2023 - Present. Hosur, Tamil Nadu, India' };
+    const svc2 = services(seen, (q) => (q === staffSearches(company, 'Hosur')[0] ? [conflicted] : []));
+    const result = await searchLinkedIn(svc2, '', company, 'Hosur', mfg, undefined, { known: four });
+    expect(result.people.map((p) => [p.name, !!p.conflict])).toEqual([['Ravi Kumar', true]]);
+    // Three acceptable left, and no P1: the search went on.
+    expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length);
+  });
+});
+
+describe('the Morning Sample Run\'s lean research (the 6 am run keeps four contacts and the hunt for a P1)', () => {
+  const company = 'Hosur Gears';
+  const mfg = DEFAULT_ICPS[0];
+  const person = (name: string, title: string) => ({ name, title, linkedin: `https://in.linkedin.com/in/${name.toLowerCase().replace(/\s+/g, '-')}`, snippet: '', location: 'Hosur, Tamil Nadu, India', evidence: 'Found by the people-first search' });
+  const linkedinSearches = () => seen.searches.filter((q) => q.startsWith('site:linkedin.com/in'));
+
+  it('two acceptable contacts are enough, and with people the search found there no P1 is hunted for', async () => {
+    const svc = services(seen);
+    await knowPlaces(svc, ['Hosur']);
+    const two = [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')];
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two, lean: true });
+    expect(linkedinSearches()).toEqual(staffSearches(company, 'Hosur'));
+    // Not lean (the run): two P2s are fewer than four, and no P1 among them, so the designations are searched.
+    seen.searches.length = 0;
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two });
+    expect(linkedinSearches().length).toBeGreaterThan(staffSearches(company, 'Hosur').length + 9);
+  });
+
+  it('with one person found, it looks for one more, designation by designation', async () => {
+    const svc = services(seen, (q) => (q.includes('"Plant Manager"') ? [{ title: 'Bina B - Plant Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Manager · Hosur Gears', link: 'https://in.linkedin.com/in/bina-b', snippet: '' }] : []));
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: [person('Ravi Kumar', 'Plant Head')], lean: true });
+    const designations = linkedinSearches().filter((q) => !staffSearches(company, 'Hosur').includes(q));
+    expect(designations.at(-1)).toBe('site:linkedin.com/in "Hosur Gears" "Plant Manager" Hosur');
+    expect(logs.at(-1)).toMatch(/^contact search done: 2 acceptable contacts/);
+  });
+});

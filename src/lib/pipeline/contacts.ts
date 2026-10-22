@@ -310,7 +310,11 @@ export type SearchLog = (message: string) => unknown;
  * several searches is merged. Without an ICP, `query` and a broad search are run instead. `staffOnly`
  * runs only the staff searches (no designations, no second looks, no leadership search): a quick check
  * of whether anyone reachable works there, for the sourcing test. `accepted` are the acceptable people
- * on the ICP's P1/P2/P3 lists, best first.
+ * on the ICP's P1/P2/P3 lists, best first. `known` are people already found working here on LinkedIn (the
+ * people-first search): checked like anyone the search finds, the acceptable ones count towards enough
+ * contacts and a P1, so the search stops sooner; they aren't returned (the caller already has them).
+ * `lean` is the Morning Sample Run's cheaper rules, tried there first: two contacts are enough, and with
+ * people already found here a P1 isn't hunted for.
  */
 export async function searchLinkedIn(
   svc: Services,
@@ -319,7 +323,7 @@ export async function searchLinkedIn(
   city = '',
   icp?: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>,
   log?: SearchLog,
-  opts: { staffOnly?: boolean } = {},
+  opts: { staffOnly?: boolean; known?: LinkedInPerson[]; lean?: boolean } = {},
 ): Promise<{ people: LinkedInPerson[]; accepted: LinkedInPerson[]; error: string }> {
   const name = searchName(company);
   const firm = firmQuery(company);
@@ -373,13 +377,24 @@ export async function searchLinkedIn(
     return { ok: true, why: [tier && tier !== 'Top' ? tier : tier === 'Top' ? 'head of the company' : '', p.evidence || '', city ? siteEvidence(p, city) : ''].filter(Boolean).join('; ') };
   };
   const passes = (p: FoundPerson) => verdict(p).ok;
-  const done = () => current().some(passes);
+  // People already found working here (the people-first search), as long as the search hasn't found
+  // them itself: then they count as the search reads them.
+  const known: FoundPerson[] = company ? (opts.known ?? []).map((p) => ({ ...p, employer: 'here' as const, abroad: false })) : [];
+  const knownOnly = () => {
+    const now = current();
+    return known.filter((k) => !now.some((p) => keyOf(p) === keyOf(k) || sameName(p.name, k.name)));
+  };
+  const done = () => current().some(passes) || knownOnly().some(passes);
   // Acceptable people on the ICP's P1/P2/P3 lists, one per profile: the head of the company found on
   // the way is kept, but isn't one of the contacts searched for.
-  const accepted = () => current().filter((p) => passes(p) && (!icp || TIERED.has(tierOf(p.title, icp))));
-  const enough = () => accepted().length >= CONTACT_SEARCH_BUDGET.contacts;
+  const onLists = (p: FoundPerson) => passes(p) && (!icp || TIERED.has(tierOf(p.title, icp)));
+  const accepted = () => current().filter(onLists);
+  // Those, and the acceptable people already found here.
+  const allAccepted = () => [...accepted(), ...knownOnly().filter(onLists)];
+  const wanted = opts.lean ? 2 : CONTACT_SEARCH_BUDGET.contacts;
+  const enough = () => allAccepted().length >= wanted;
   // Enough people found is not enough while no P1 is among them: the P1 designations are still searched.
-  const hasP1 = () => !!icp && accepted().some((p) => tierOf(p.title, icp) === 'P1');
+  const hasP1 = () => !!icp && allAccepted().some((p) => tierOf(p.title, icp) === 'P1');
   const searchDown = () => failures.length > 0 && !answered;
   // Each person's verdict is logged once, and again only if more evidence changes it.
   const reported = new Map<string, string>();
@@ -412,7 +427,11 @@ export async function searchLinkedIn(
     const staff = staffSearches(company, city);
     let staffLeft: number = CONTACT_SEARCH_BUDGET.staff;
     if (opts.staffOnly) await say(`contact search: the company's staff on LinkedIn only (${staff.length} search${staff.length === 1 ? '' : 'es'})`);
-    else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${CONTACT_SEARCH_BUDGET.contacts} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${wanted} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    if (known.length) {
+      await say(`${known.length} found here earlier by the people-first search, counted towards the ${wanted} contacts when they pass: ${known.map((p) => `${p.name} (${p.title})`).join('; ')}`);
+      for (const p of known) await report(p);
+    }
     for (const q of staff) {
       if (failedInRow >= 2) break;
       for (const page of [1, 2]) {
@@ -435,7 +454,8 @@ export async function searchLinkedIn(
     }
     designations: for (const [i, step] of plan.entries()) {
       if (failedInRow >= 2) break;
-      if (enough() && (step.tier !== 'P1' || hasP1())) break;
+      // Lean: with people the people-first search found here (on the ICP's P1/P2 lists), enough is enough.
+      if (enough() && (step.tier !== 'P1' || hasP1() || (opts.lean && known.length > 0))) break;
       for (const q of step.queries) {
         if (left <= 0) {
           await say(`search limit of ${CONTACT_SEARCH_BUDGET.designationQueries} designation searches reached; ${plan.length - i} designation${plan.length - i === 1 ? '' : 's'} not searched (from "${step.designation}")`);
@@ -491,7 +511,7 @@ export async function searchLinkedIn(
   }
   const people = icp ? rankCandidates(current(), icp, city) : current();
   if (icp && name) {
-    const ok = accepted();
+    const ok = allAccepted();
     await say(
       ok.length
         ? `contact search done: ${ok.length} acceptable contact${ok.length === 1 ? '' : 's'} (${rankCandidates(ok, icp, city).map((p) => `${p.name}, ${p.title}`).join('; ')})`
@@ -531,16 +551,19 @@ export async function searchLeaders(
   domain: string,
   homeText: string,
   crawled: { url: string; text: string }[] = [],
+  opts: { webSearch?: boolean } = {},
 ): Promise<{ people: Omit<Candidate, 'id' | 'source' | 'email' | 'phone'>[]; emails: string[]; error: string }> {
   const name = searchName(company);
   if (!name) return { people: [], emails: [], error: '' };
+  // The Google searches for officers named in the news and filings (left out with webSearch: false).
+  const web = opts.webSearch !== false;
   // A team/leadership page from the site crawl saves a search and a fetch.
   const teamPage = crawled.find((p) => /team|leadership|management|board|directors|people|key-?(managerial|person)/i.test(new URL(p.url).pathname));
   try {
-    const [web, filings, pages] = await Promise.all([
-      googleSearch(svc, `"${name}" (founder OR director OR CEO OR "managing director" OR chairman OR partner OR "head of")`).catch(() => []),
+    const [webResults, filings, pages] = await Promise.all([
+      web ? googleSearch(svc, `"${name}" (founder OR director OR CEO OR "managing director" OR chairman OR partner OR "head of")`).catch(() => []) : Promise.resolve([]),
       // Official records: annual reports and stock-exchange filings name these officers, often with emails.
-      googleSearch(svc, `"${name}" ("company secretary" OR "compliance officer" OR "chief financial officer" OR "plant head" OR "works manager" OR "general manager")`).catch(() => []),
+      web ? googleSearch(svc, `"${name}" ("company secretary" OR "compliance officer" OR "chief financial officer" OR "plant head" OR "works manager" OR "general manager")`).catch(() => []) : Promise.resolve([]),
       domain && !teamPage
         ? googleSearch(svc, `site:${domain} (leadership OR management OR team OR directors OR "about us" OR founder)`).catch(() => [])
         : Promise.resolve([]),
@@ -549,7 +572,7 @@ export async function searchLeaders(
     const pageLink = teamPage?.url || pages.map((r) => r.link || '').find((l) => l && !/\.(pdf|jpg|png)$/i.test(l));
     const page = teamPage ?? (pageLink ? await fetchWebsiteText(svc, pageLink, { useGoogle: false }) : { text: '' });
 
-    const results = [...web, ...filings];
+    const results = [...webResults, ...filings];
     const webLines = results
       .filter((r) => !isBlockedDomain((r.link || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0]) || /zaubacorp|tofler|thecompanycheck|instafinancials|bseindia|nseindia/.test(r.link || ''))
       .slice(0, 16)

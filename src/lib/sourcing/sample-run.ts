@@ -7,14 +7,18 @@ import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
 import { normSegment } from '../icp-match';
 import { processLead } from '../pipeline/process-lead';
+import { knowFirmPage } from '../pipeline/firm-identity';
 import { mapLimit, type Services } from '../pipeline/services';
-import { errorMessage, rootDomain } from '../pipeline/text';
+import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
+import { logActivity } from '../activity';
+import { saveBacklog, takeBacklog } from './backlog';
+import { knownToInveck } from './test-run';
 import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
-import { PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
-import { CHECKS_RESERVE, RESEARCH_CREDITS } from '../search-budget';
+import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
+import { CHECKS_RESERVE } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
 import type { FoundContact } from './people-first';
 
@@ -28,7 +32,22 @@ import type { FoundContact } from './people-first';
  */
 
 /** Leads researched at a time, as in the run. */
-const CONCURRENCY = 3;
+const CONCURRENCY = 5;
+
+/**
+ * Rules tried in the Morning Sample Run first (the 6 am run doesn't use them yet):
+ * - no LinkedIn page doesn't rule a company out, and an industry LinkedIn doesn't show is read from the
+ *   company's own website (no search credit), else left to research (see lenientScreen);
+ * - cheaper company checks with the same companies kept: names that show a company is outside the ICP
+ *   aren't looked up, likely misfits are checked last, and several companies are looked up in one search
+ *   (see cheaperChecks); companies ruled out are remembered and not checked again;
+ * - people searches of ten results, and a segment stops after 15 searches in a row find nobody new;
+ * - two contacts a company, with no hunt for a P1 when the search found people there, and no Google search
+ *   for the company's LinkedIn page (the search found it) or for officers in the news and filings;
+ * - 10% extra companies, and 2,300 Google search credits at most for a new sample.
+ * A sample carried on from where it stopped uses them too.
+ */
+export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.1, credits: 2300, researchCredits: 12 } as const;
 
 /** Someone at a company, as research left them. */
 export type SamplePerson = { name: string; title: string; tier: string; linkedin: string; location: string; isPrimary: boolean; setAside: boolean; whyNot: string };
@@ -50,7 +69,12 @@ export type SampleCompany = {
   /** The lead as research left it, and the people it kept. */
   lead?: Lead;
   people?: SamplePerson[];
+  /** The real lead it became when the admin pushed it into the pipeline. */
+  pushed?: number;
 };
+
+/** Companies earlier searches found but didn't check, carried into this sample (checked first), per segment. */
+export type Carried = Partial<Record<SourcingSegment, number>>;
 
 /** One card on a person's day: a lead waiting in the pool now, or a company the sample found. */
 export type SampleCard = { from: 'pool' | 'sample'; key: number };
@@ -91,9 +115,12 @@ export type MorningSampleReport = {
   searches: number;
   researched: number;
   seconds: number;
-  /** Google search credits the sample spent (search and research), against the day's budget when it started. Absent on samples from before the budget. */
+  /** Google search credits the sample spent (search and research), against the day's budget when it started (none: no daily limit). Absent on samples from before the budget. */
   credits?: number;
   budget?: number;
+  carried?: Carried;
+  /** Its own leftovers (found, not checked) were kept for the next search. */
+  leftKept?: boolean;
 };
 
 export const isMorningSample = (r: unknown): r is MorningSampleReport => (r as MorningSampleReport | null)?.mode === 'morning' && (r as MorningSampleReport).phase !== ('init' as string);
@@ -162,22 +189,36 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
     if (!report) report = await begin(db, svc, (test.report as MorningSampleStart | null)?.fresh ?? false);
     const r = report;
     const budgetLeft = () => (r.budget ?? Number.POSITIVE_INFINITY) - (r.credits ?? 0);
+    // Stopped by the admin: it ends where it is (nothing more searched or researched).
+    const stopped = async () => (await db.select({ status: sourcingTests.status }).from(sourcingTests).where(eq(sourcingTests.id, test.id)))[0]?.status !== 'running';
 
     for (let step = 0; ; step++) {
+      if (await stopped()) {
+        await keepLeftovers(db, r);
+        await save();
+        await saving;
+        return 'done';
+      }
       if (r.phase === 'search') {
-        if (step > 0 && outOfTime(0.6)) break;
+        if (step > 0 && outOfTime(0.85)) break;
         const outcome = await searchRound(db, metered, r.search!, {
           started,
           budgetMs,
           log: async () => {},
           seed: test.id * 31,
-          // As the run: the day's budget, less researching what was found and the 8 am contact checks.
-          budgetLeft: async () => budgetLeft() - r.companies.filter((c) => !c.outcome).length * RESEARCH_CREDITS.peopleFirst - CHECKS_RESERVE,
+          stopped,
+          // As the run: the budget, less researching what was found and the 8 am contact checks.
+          budgetLeft: async () => budgetLeft() - r.companies.filter((c) => !c.outcome).length * SAMPLE_RULES.researchCredits - CHECKS_RESERVE,
+          peopleResults: SAMPLE_RULES.peopleResults,
+          quietSearches: SAMPLE_RULES.quietSearches,
+          rememberRuledOut: true,
+          lenientScreen: true,
+          cheaperChecks: true,
           recent: await recentSearches(db, null),
           alsoKnown: {
             names: r.companies.flatMap((c) => [c.page.name, c.employer]),
             domains: r.companies.map((c) => rootDomain(c.page.website)).filter(Boolean),
-            pages: r.companies.map((c) => c.page.url),
+            pages: r.companies.map((c) => c.page.url).filter(Boolean),
           },
           sink: {
             save: async () => {
@@ -200,8 +241,8 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
       if (r.phase === 'research') {
         const waiting = r.companies.filter((c) => !c.outcome);
         // Over the day's budget: the rest would be researched the next day.
-        if (waiting.length && budgetLeft() < CONCURRENCY * RESEARCH_CREDITS.peopleFirst) {
-          for (const c of waiting) Object.assign(c, { outcome: 'waiting', why: "Over the day's Google search budget: the run would research it the next day" });
+        if (waiting.length && budgetLeft() < CONCURRENCY * SAMPLE_RULES.researchCredits) {
+          for (const c of waiting) Object.assign(c, { outcome: 'waiting', why: "Over the Google search budget: the run would research it the next day" });
           await save({ progress: progressOf(r) });
           continue;
         }
@@ -222,10 +263,13 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           !last.some((h) => h.stopped === 'cap' || h.stopped === 'failed') &&
           budgetLeft() > CHECKS_RESERVE + 50;
         if (again) {
-          const wanted = Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, Math.ceil(short[s] * MORNING_LIMITS.headroom)])) as Record<SourcingSegment, number>;
+          const wanted = Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, Math.ceil(short[s] * SAMPLE_RULES.headroom)])) as Record<SourcingSegment, number>;
           r.search = startRound(r.search, wanted);
           r.phase = 'search';
-        } else r.phase = 'deal';
+        } else {
+          await keepLeftovers(db, r);
+          r.phase = 'deal';
+        }
         await save({ progress: progressOf(r) });
         continue;
       }
@@ -247,6 +291,91 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
   }
   await saving;
   return 'done';
+}
+
+/** The admin stops a running sample: it ends where it is, and what it found can still be pushed into the pipeline. */
+export async function stopSample(db: Db, id: number): Promise<boolean> {
+  const done = await db
+    .update(sourcingTests)
+    .set({ status: 'failed', error: 'Stopped by you. The report shows what it got to.', finishedAt: new Date() })
+    .where(and(eq(sourcingTests.id, id), eq(sourcingTests.mode, 'morning'), eq(sourcingTests.status, 'running')))
+    .returning({ id: sourcingTests.id });
+  return done.length > 0;
+}
+
+const timestampColumns = new Set(Object.entries(getTableColumns(leads)).filter(([, c]) => c.dataType === 'date').map(([k]) => k));
+
+/**
+ * Puts companies a sample found into the pipeline as real leads, nobody's yet (the 8 am draw deals them).
+ * One research finished stays as research left it: an approved one is ready to be dealt, with its contact
+ * and drafts, and isn't researched (or paid for) again. One not researched goes in as the 6 am run would
+ * add it: New, with the people found there, and the pipeline researches it. One already in the pipeline
+ * (by LinkedIn page, name or website) is left out. Only once the sample has stopped or finished.
+ */
+export async function pushSampleCompanies(db: Db, testId: number, keys: number[]): Promise<{ pushed: number; skipped: string[] }> {
+  const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, testId));
+  if (!test || test.status === 'running' || !isMorningSample(test.report)) return { pushed: 0, skipped: [] };
+  const r = test.report;
+  const wanted = new Set(keys);
+  const existing = await db.select({ company: leads.company, website: leads.website, page: leads.companyLinkedin }).from(leads);
+  const names = new Set(existing.map((l) => normCompany(l.company)));
+  const domains = new Set(existing.map((l) => rootDomain(l.website)).filter(Boolean));
+  const pages = new Set(existing.map((l) => l.page).filter(Boolean));
+  let pushed = 0;
+  const skipped: string[] = [];
+  for (const c of r.companies) {
+    if (!wanted.has(c.key) || c.pushed) continue;
+    const name = c.page.nameCut ? c.employer : c.page.name;
+    const domain = rootDomain(c.page.website);
+    if ((c.page.url && pages.has(c.page.url)) || names.has(normCompany(name)) || (domain && domains.has(domain))) {
+      skipped.push(name);
+      continue;
+    }
+    const researched = !!c.lead && !!c.outcome && c.outcome !== 'waiting' && c.outcome !== 'error';
+    let leadId: number;
+    if (researched) {
+      const values: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(c.lead!)) {
+        if (k === 'id' || !(k in getTableColumns(leads))) continue;
+        values[k] = timestampColumns.has(k) && typeof v === 'string' ? new Date(v) : v;
+      }
+      Object.assign(values, { ownerId: null, processingStartedAt: null, createdAt: new Date(), updatedAt: new Date() });
+      if (values.status === 'Processing') values.status = 'New';
+      const [lead] = await db.insert(leads).values(values as typeof leads.$inferInsert).returning({ id: leads.id });
+      leadId = lead.id;
+      const kept = c.people ?? [];
+      if (kept.length) {
+        await db.insert(people).values(
+          kept.map((p) => ({ leadId, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, isPrimary: p.isPrimary, source: 'LinkedIn', whyNot: p.whyNot, ...(p.setAside ? { passedAt: new Date(), passedReason: 'excluded' } : {}) })),
+        );
+      }
+    } else {
+      const best = c.contacts[0];
+      const [lead] = await db
+        .insert(leads)
+        .values({
+          company: name,
+          nameAsFound: c.employer,
+          website: c.page.website,
+          city: c.city,
+          segment: c.segment,
+          status: 'New',
+          companyLinkedin: c.page.url,
+          source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url || 'not found'} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
+        })
+        .returning({ id: leads.id });
+      leadId = lead.id;
+      if (c.contacts.length) await db.insert(people).values(c.contacts.map((p) => ({ leadId, name: p.name, title: p.title, linkedin: p.linkedin, location: p.location, source: 'LinkedIn', evidence: PEOPLE_FIRST_EVIDENCE })));
+    }
+    await logActivity(db, leadId, 'added', `Pushed into the pipeline from Morning Sample Run ${testId}${researched ? ' (researched there)' : ': not researched yet, so the pipeline researches it'}. Company page: ${c.page.url || 'none found on LinkedIn'}.`);
+    c.pushed = leadId;
+    pushed++;
+    names.add(normCompany(name));
+    if (c.page.url) pages.add(c.page.url);
+    if (domain) domains.add(domain);
+  }
+  await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify(r)) }).where(eq(sourcingTests.id, testId));
+  return { pushed, skipped };
 }
 
 /**
@@ -278,10 +407,30 @@ async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSamp
   for (const s of DRAW_SEGMENTS) {
     const need = Object.values(quotas).reduce((a, q) => a + q[s], 0);
     const short = Math.max(0, need - (fresh ? 0 : pool.bySegment[s]));
-    wanted[s] = Math.ceil(short * MORNING_LIMITS.headroom);
+    wanted[s] = Math.ceil(short * SAMPLE_RULES.headroom);
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
   }
-  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget, credits: 0, team, quota, quotas, start, search: startRound(null, wanted), companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0 };
+  // Companies earlier searches found but didn't check go first: no people search is paid for them again.
+  const search = startRound(null, wanted);
+  const known = (await knownToInveck(db)).names;
+  const carried: Carried = {};
+  for (const seg of search.segments) {
+    if (!seg.wanted) continue;
+    const taken = await takeBacklog(db, seg.segment, known);
+    seg.pending.push(...taken.map((c) => ({ employer: c.employer, contacts: c.contacts })));
+    carried[seg.segment] = taken.length;
+  }
+  return { mode: 'morning', day, phase: 'search', fresh, budget: svc.settings.dailySearchBudget || SAMPLE_RULES.credits, credits: 0, team, quota, quotas, start, search, companies: [], pool: [], hands: [], searches: 0, researched: 0, seconds: 0, carried };
+}
+
+/** Keeps what a sample found but didn't check for the next search (once). */
+async function keepLeftovers(db: Db, r: MorningSampleReport) {
+  if (r.leftKept || !r.search) return;
+  for (const seg of r.search.segments) {
+    const checked = new Set(seg.checked);
+    await saveBacklog(db, seg.segment, seg.pending.filter((c) => !checked.has(normCompany(c.employer))));
+  }
+  r.leftKept = true;
 }
 
 /** Researches a few of the sample's companies exactly as the run would (the ICP check, contacts, drafts), keeping the result in the report. */
@@ -303,12 +452,15 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       city: c.city,
       segment: c.segment,
       status: 'Processing',
-      source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
+      source: `${PEOPLE_FIRST_SOURCE}: ${best.name}, ${best.title} (${best.tier}), on LinkedIn; company page ${c.page.url || 'not found'} (${c.page.size || 'size not shown'}${c.page.industry ? `, ${c.page.industry}` : ''})`,
     });
     try {
+      // Its LinkedIn page is known already: research doesn't search for it again (a sample rule).
+      if (c.page.url) await knowFirmPage(svc, lead.company, c.page.website, c.page);
       const result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken: taken.filter((t) => t.contactName), ownLeads }, async () => {}, {
         teamContact: false,
         found: asLinkedInFinds(c.contacts),
+        lean: true,
       });
       const { people: found, ...update } = result;
       const icp = allIcps.find((i) => normSegment(i.segment) === normSegment(c.segment));
@@ -391,9 +543,11 @@ export function summaryOf(r: MorningSampleReport): string {
   return `${r.companies.length} companies found, ${approved} approved with a confirmed contact${waiting ? `, ${waiting} left for the next day (over the search budget)` : ''}; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates. ${credits(r)}.`;
 }
 
-/** The Google search credits a sample spent, against the day's budget. */
+/** The Google search credits a sample spent, against its budget when there is one. */
 function credits(r: MorningSampleReport): string {
-  return r.budget ? `${(r.credits ?? 0).toLocaleString('en-IN')} of the day's ${r.budget.toLocaleString('en-IN')} Google search credits` : `${r.searches} Google searches`;
+  const used = (r.credits ?? 0).toLocaleString('en-IN');
+  if (r.budget) return `${used} of ${r.budget.toLocaleString('en-IN')} Google search credits`;
+  return r.credits === undefined ? `${r.searches} Google searches` : `${used} Google search credits`;
 }
 
 /** A card's lead and people, wherever it came from. */

@@ -232,6 +232,14 @@ Each report shows the funnel, every company with its outcome, and each search wi
    \* You need the key for whichever AI provider is selected in Settings.
 4. Redeploy so the variables take effect, then open the site and log in.
 
+**Long runs and Vercel's limit on hand-offs.** A run (or a Sourcing test or Morning Sample Run) longer than
+one invocation (300 s) hands itself to the next by calling the app's own address. Vercel ends such a chain
+after a few hand-offs (`508 INFINITE_LOOP_DETECTED`), so the run then pauses, with everything it did saved,
+and the next fresh request picks it up again: a page opened (Dashboard, Leads, Today, Team, or the Sourcing
+page while a test runs), the 8 am draw, or the checks every 10 minutes from 06:10 to 07:50 IST
+(`/api/cron/resume` in `vercel.json`). A Morning Sample Run stopped that way before this existed can be carried
+on from where it got to ("Carry on from here").
+
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
 working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
 `morningStartsOn` setting, which holds the 8 am draw back until then too), finds new prospects **people first**
@@ -242,12 +250,15 @@ company that passes becomes one lead with the people found there, and research m
 Approved or Disqualified. It finds what the morning draw is short of in each segment (active associates times
 their quota, less the researched leads waiting), with a quarter more for those research rules out, and
 searches again (three rounds at most, none after 07:30) while the draw is still short. A search made in the
-last 30 days isn't made again. Every Google search the app makes is counted against a **daily budget**
-(Settings, 1,500 Serper credits by default; `src/lib/search-budget.ts`): research of companies already found
-comes first, then the 8 am contact checks, then finding more companies, and whatever is left waits for the next
-day. People searches ask for 100 results (2 credits). Research is the same for every company: the full
-search for its people on LinkedIn (the people the morning search found there are added as candidates), its
-LinkedIn page, evidence and news, about 30-50 searches a company. CA firms are
+last 30 days isn't made again. Every Google search the app makes is counted per day, and the Dashboard shows
+the day's Serper credits (`src/lib/search-budget.ts`). There is no daily limit unless one is set in Settings
+("Google searches a day"); with one, research of companies already found comes first, then the 8 am contact
+checks, then finding more companies, and whatever is left waits for the next day. People searches ask for 10
+results (1 credit). Research is the same for every company: the search for its people on LinkedIn (the
+company's staff, then the ICP's designations one at a time until 4 acceptable contacts with a P1 among them),
+its LinkedIn page, evidence and news, about 30-50 searches a company. For a company found people first, the
+people the morning search found there are checked like anyone the search finds, and the acceptable ones count
+towards those 4, so it stops sooner; all of them are kept as candidates. CA firms are
 never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
 segment has ready for the draw, and warns when the searches are running thin.
 
@@ -256,6 +267,11 @@ To see what tomorrow will look like first, the Sourcing page has a **Morning Sam
 researches exactly as the run does, deals each active associate their quota from the pool and what it found,
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
 nobody is given anything and no search is remembered, so tomorrow's run starts fresh. CA firms aren't part of it.
+The sample is also where cheaper rules are tried before the 6 am run uses them (`SAMPLE_RULES` in
+`sample-run.ts`): people searches of 100 results, companies ruled out remembered for 90 days, two contacts a
+company (no hunt for a P1 when the search found people there), no repeat lookup of the company's LinkedIn page
+or of its officers in the news and filings, 10% extra companies, and 2,300 Google search credits at most for a
+new sample. A sample carried on from where it stopped uses them too.
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
 list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from

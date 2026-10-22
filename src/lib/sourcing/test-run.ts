@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, ne } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, knownCompanies, leads, sourcingTests, type Icp, type SourcingTest } from '../db/schema';
 import { DEFAULT_ICPS } from '../db/seed';
@@ -6,9 +6,12 @@ import { googleSearch, mapLimit, type SerperResult, type Services } from '../pip
 import { searchLinkedIn } from '../pipeline/contacts';
 import { placeNamedIn, registerFirmWebsite } from '../pipeline/employer';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
+import { RESUME_AFTER_MS } from '../invocations';
 import { contactPriority, tierOf } from '../tiers';
-import { factsQuery, hqAbroad, needsFacts, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
-import { companyQuery, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
+import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, planQueries, readCompanyPage, screenPage, sizeRank, SOURCING_SEGMENTS, withFacts, type CompanyPage, type Known, type PlannedQuery, type SourcingSegment } from './linkedin-pages';
+import { websiteWords } from './website-words';
+import { saveBacklog, takeBacklog } from './backlog';
+import { companiesQuery, companyQuery, hintRank, matchingPage, planPeopleQueries, readPerson, type FoundContact, type PeopleQuery } from './people-first';
 
 /**
  * The sourcing test: finds companies through their LinkedIn pages, screens them on what the page
@@ -35,11 +38,11 @@ export const SOURCING_LIMITS = {
   peoplePlan: 600,
   maxSearches: 1500,
   /** People first stops when this many searches in a row found nobody new on the ICP's lists. */
-  quietSearches: 120,
+  quietSearches: 15,
   /** The test stops checking people after this long (the server allows 300s). */
   seconds: 240,
-  /** A test that hasn't saved anything for this long was stopped by the server's time limit. */
-  staleMinutes: 8,
+  /** A test that hasn't saved anything for this long is closed as stopped (one that stalls sooner is picked up again first). */
+  staleMinutes: 45,
 } as const;
 
 export type QueryReport = { q: string; form: PlannedQuery['form']; page: number; results: number; pages: number; newPages: number; passed: number; error?: string };
@@ -109,7 +112,7 @@ export type PeopleCompany = {
   employer: string;
   /** Its LinkedIn page, once found. */
   page: CompanyPage | null;
-  screen: CompanyReport['screen'] | 'nopage' | 'unchecked';
+  screen: CompanyReport['screen'] | 'nopage' | 'noname' | 'unchecked';
   note: string;
   facts?: string;
   /** The people found there who can be contacts, best first. */
@@ -134,6 +137,8 @@ export type PeopleReport = {
   searches: { people: number; companies: number; facts: number };
   seconds: number;
   stoppedEarly?: string;
+  /** Companies carried over from earlier tests and samples (found, not checked), checked first. */
+  carried?: number;
 };
 
 export const isPeopleReport = (r: unknown): r is PeopleReport => (r as PeopleReport | null)?.mode === 'people';
@@ -209,6 +214,52 @@ export async function activeSourcingTest(db: Db, kind: 'test' | 'morning' = 'tes
     .orderBy(desc(sourcingTests.id))
     .limit(1);
   return running ?? null;
+}
+
+/** Messages a test stops with when it couldn't carry on in a new invocation: what it got to is saved. */
+const STOPPED_FOR_TIME = [/^Could not carry on after the server's time limit/, /^Stopped before finishing \(the server's time limit\)/];
+
+/** Whether a stopped test can carry on from where it got to (it stopped for the server's time, not an error of its own). */
+export function canCarryOn(t: Pick<SourcingTest, 'status' | 'error'>): boolean {
+  return t.status === 'failed' && STOPPED_FOR_TIME.some((r) => r.test(t.error));
+}
+
+/** Puts a test that stopped for the server's time back to running, to carry on where it got to. False when it can't. */
+export async function reopenTest(db: Db, id: number): Promise<boolean> {
+  const [t] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+  if (!t || !canCarryOn(t)) return false;
+  const reopened = await db
+    .update(sourcingTests)
+    .set({ status: 'running', error: '', finishedAt: null, progress: 'Carrying on from where it got to…', updatedAt: new Date() })
+    .where(and(eq(sourcingTests.id, id), eq(sourcingTests.status, 'failed')))
+    .returning({ id: sourcingTests.id });
+  return reopened.length > 0;
+}
+
+/**
+ * Tests running whose invocations stopped (the next couldn't be called, or one died): claimed for carrying
+ * on, each by one caller only. Empty when none, or they're still working.
+ */
+export async function claimStalledTests(db: Db, now = new Date()): Promise<SourcingTest[]> {
+  return db
+    .update(sourcingTests)
+    .set({ updatedAt: now })
+    .where(
+      and(
+        eq(sourcingTests.status, 'running'),
+        lt(sourcingTests.updatedAt, new Date(now.getTime() - RESUME_AFTER_MS)),
+        gt(sourcingTests.updatedAt, new Date(now.getTime() - SOURCING_LIMITS.staleMinutes * 60_000)),
+      ),
+    )
+    .returning();
+}
+
+/** A test whose next invocation couldn't be called: ready to be picked up again by the next request (the page open on it). */
+export async function markTestPaused(db: Db, id: number) {
+  await db
+    .update(sourcingTests)
+    .set({ updatedAt: new Date(Date.now() - RESUME_AFTER_MS - 1000), progress: 'Paused for a moment: it carries on by itself while this page is open…' })
+    .where(and(eq(sourcingTests.id, id), eq(sourcingTests.status, 'running')));
 }
 
 export function validSegment(s: string): SourcingSegment | null {
@@ -401,6 +452,15 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
     report.companySize = icp.companySize;
     const known = await knownToInveck(db);
     const target = report.target ?? test.companies;
+    // Companies earlier tests and samples found but didn't check: checked first, before any new search.
+    if (report.carried === undefined) {
+      const carried = await takeBacklog(db, segment, known.names);
+      for (const c of carried) {
+        if (report.companies.some((x) => normCompany(x.employer) === normCompany(c.employer))) continue;
+        report.companies.push({ employer: c.employer, page: null, screen: 'unchecked', note: 'carried over from an earlier search', contacts: c.contacts });
+      }
+      report.carried = carried.length;
+    }
     const plan = planPeopleQueries(segment, icp, SOURCING_LIMITS.peoplePlan, test.id);
     if (!plan.length) throw new Error(`The ${segment} ICP has no P1 or P2 titles to search for (ICPs & clients).`);
 
@@ -434,6 +494,8 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
         report.people.push(person);
         const key = normCompany(person.employer);
         if (person.why || !key) continue;
+        // What their own result says of their company's industry: only the order companies are checked in.
+        person.hint = industryHint(`${r.title ?? ''} ${r.subtitle ?? ''} ${r.snippet ?? ''}`, segment);
         onLists++;
         let c = byCompany.get(key);
         if (!c) {
@@ -454,14 +516,23 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       return r;
     };
 
-    const check = async (c: PeopleCompany) => {
-      const got = await search(companySvc, companyQuery(c.employer));
-      let page = got.error ? null : matchingPage(got.results, c.employer);
-      if (!page) {
-        Object.assign(c, { screen: 'nopage', note: got.error ? `search failed: ${got.error}` : `no LinkedIn company page found for "${c.employer}"` });
+    // No LinkedIn page doesn't rule a company out: it's checked by its name, and research checks the rest
+    // on its website. An employer written as an industry word ("Foundry") has no name to look up.
+    const check = async (c: PeopleCompany, pre?: SerperResult[]) => {
+      if (noCompanyName(c.employer)) {
+        Object.assign(c, { screen: 'noname', note: `"${c.employer}" is an industry word, not a company name: nothing to look up` });
         return;
       }
-      if (needsFacts(page)) {
+      // In a search for several at once when it's there, else on its own.
+      const fromPre = pre ? matchingPage(pre, c.employer) : null;
+      const got = fromPre ? { results: pre!, error: undefined } : await search(companySvc, companyQuery(c.employer));
+      if (got.error) {
+        Object.assign(c, { screen: 'nopage', note: `search failed: ${got.error}` });
+        return;
+      }
+      const found = matchingPage(got.results, c.employer);
+      let page = found ?? pagelessCompany(c.employer);
+      if (found && needsFacts(page)) {
         const before = { size: page.size, industry: page.industry, hq: page.hq };
         const again = await search(factSvc, factsQuery(page));
         page = withFacts(page, again.results);
@@ -469,10 +540,20 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
           ? `search failed: ${again.error}`
           : [page.size !== before.size && page.size, page.industry !== before.industry && page.industry, page.hq !== before.hq && `HQ ${page.hq}`].filter(Boolean).join(', ');
       }
-      c.page = page;
+      c.page = found ? page : null;
       // Its people work in India, so it has a site here whatever its headquarters.
-      const s = screenPage({ ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` }, segment, icp.companySize, known);
-      Object.assign(c, { screen: s.pass ? 'pass' : s.reason, note: s.note });
+      const seen = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
+      let s = screenPage(seen, segment, icp.companySize, known);
+      let fromSite = false;
+      // The industry not shown on LinkedIn: the company's own website (read directly, no search credit) decides,
+      // and when that doesn't settle it either, research does.
+      if (!s.pass && s.reason === 'industry' && industryUnclear(page, segment)) {
+        const words = await websiteWords(svc, page.website);
+        fromSite = !!words;
+        s = screenPage({ ...seen, text: `${seen.text}\n${words}` }, segment, icp.companySize, known, { passUnclearIndustry: true });
+      }
+      const note = [found ? '' : 'no LinkedIn company page found', fromSite && !s.note.includes('research checks it') ? 'industry from its website' : '', s.note].filter(Boolean).join('; ');
+      Object.assign(c, { screen: s.pass ? 'pass' : s.reason, note });
     };
 
     let failedBatches = 0;
@@ -496,10 +577,21 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       // Companies already found come first: their checks may be all that's needed.
       const pending = report.companies
         .filter((c) => c.screen === 'unchecked')
-        .sort((a, b) => rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
+        // Companies whose people's own results show another industry last; then the best contacts first.
+        .sort((a, b) => hintRank(a.contacts) - hintRank(b.contacts) || rank(a.contacts[0]) - rank(b.contacts[0]) || b.contacts.length - a.contacts.length);
       if (pending.length) {
         // Four at a time, but never more than are still wanted: it ends with exactly the number asked for.
-        await mapLimit(pending.slice(0, Math.min(4, target - ready())), 4, check);
+        const batch = pending.slice(0, Math.min(4, target - ready()));
+        // Outside the ICP by its name: not looked up (LinkedIn's check would only rule it out).
+        const toLook = batch.filter((c) => {
+          const why = outsideIcpByName(c.employer, segment);
+          if (why) Object.assign(c, { screen: 'industry', note: why });
+          return !why;
+        });
+        // The rest in one search; any it doesn't show is looked up on its own.
+        const lookable = toLook.filter((c) => !noCompanyName(c.employer));
+        const pre = lookable.length > 1 ? await search(companySvc, companiesQuery(lookable.map((c) => c.employer))) : null;
+        await mapLimit(toLook, 4, (c) => check(c, pre && !pre.error ? pre.results : undefined));
         await save({ progress: `${ready()} of ${target} prospects found; checking companies on LinkedIn (${total()} Google searches)…` });
         continue;
       }
@@ -527,6 +619,8 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       }
       await save({ progress: `${ready()} of ${target} prospects found; searching LinkedIn for people (${total()} Google searches)…` });
     }
+    // What it found but didn't need to check waits for the next test or sample.
+    await saveBacklog(db, segment, report.companies.filter((c) => c.screen === 'unchecked').map((c) => ({ employer: c.employer, contacts: c.contacts })));
     const f = peopleFunnelOf(report);
     const why =
       report.stopped === 'target'
@@ -542,6 +636,8 @@ async function runPeopleFirst(db: Db, svc: Services, test: SourcingTest, started
       progress: `${why}. ${f.profiles} people found, ${f.contacts} on your lists at ${f.companies} companies, ${f.checked} companies checked; ${total()} Google searches.`,
     });
   } catch (e) {
+    // What it had found but not checked isn't lost with it.
+    if (segment) await saveBacklog(db, segment, report.companies.filter((c) => c.screen === 'unchecked').map((c) => ({ employer: c.employer, contacts: c.contacts }))).catch(() => {});
     await save({ status: 'failed', finishedAt: new Date(), error: errorMessage(e), progress: '' });
   }
   await saving;

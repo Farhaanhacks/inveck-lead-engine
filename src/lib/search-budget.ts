@@ -5,10 +5,10 @@ import type { SearchMeter, Services } from './pipeline/services';
 import { istDay } from './tasks';
 
 /**
- * The day's Google search budget (Settings, 1,500 credits by default): every search the app makes is
- * counted against it per India day, and the work that searches stops before it runs out, in order of
- * importance: research of companies already found first, then the 8 am contact checks, then finding
- * more companies. Whatever is left waits for the next day; nothing fails because of it.
+ * Every search the app makes is counted per India day (the Dashboard shows the day's credits). There is no
+ * daily limit unless one is set in Settings; with one, the work that searches stops before it runs out, in
+ * order of importance: research of companies already found first, then the 8 am contact checks, then
+ * finding more companies. Whatever is left waits for the next day; nothing fails because of it.
  */
 
 const key = (day: string) => `searches:${day}`;
@@ -32,8 +32,9 @@ export async function searchesUsed(db: Db, day = istDay()): Promise<number> {
   return Number(row?.value ?? 0) || 0;
 }
 
-/** What is left of the day's budget. */
+/** What is left of the day's budget (no end when there's no daily limit). */
 export async function searchBudgetLeft(db: Db, s: Pick<Services['settings'], 'dailySearchBudget'>, day = istDay()): Promise<number> {
+  if (!s.dailySearchBudget) return Number.POSITIVE_INFINITY;
   return s.dailySearchBudget - (await searchesUsed(db, day));
 }
 

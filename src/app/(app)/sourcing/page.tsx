@@ -8,6 +8,8 @@ import { formatDateTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
+import { resumeStalledTests } from '@/lib/sourcing/drive';
+import { requestOrigin } from '@/lib/run-driver';
 import { startSourcingTestAction } from '@/app/sourcing-actions';
 import { SOURCING_SEGMENTS } from '@/lib/sourcing/linkedin-pages';
 import { activeSourcingTest, funnelOf, isPeopleReport, SOURCING_LIMITS, type CompanyReport, type PeopleOutcome, type SourcingReport } from '@/lib/sourcing/test-run';
@@ -63,6 +65,8 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
   await adminPage();
   const db = await getDb();
   const sp = await searchParams;
+  // A test or sample whose chain of invocations stopped carries on from this request.
+  await resumeStalledTests(await requestOrigin());
   const running = await activeSourcingTest(db);
   const sampleRunning = await activeSourcingTest(db, 'morning');
   const listed = { id: sourcingTests.id, segment: sourcingTests.segment, mode: sourcingTests.mode, status: sourcingTests.status, startedAt: sourcingTests.startedAt };

@@ -15,6 +15,7 @@ import { after } from 'next/server';
 import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
 import { searchBudgetLeft } from '@/lib/search-budget';
 import { findCaFirmLinkedin } from '@/lib/ca-linkedin';
+import { pausedToday } from '@/lib/pause';
 import { tidyContacts, verifyContacts } from '@/lib/verify-contacts';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
@@ -656,9 +657,11 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     });
   }
   // CA firms from the database have no LinkedIn page yet: it is looked up (once per firm) after the page is sent.
+  // Not on a day everything that runs on its own is paused (see lib/pause.ts).
   if (!fromAction && viewId) {
     after(async () => {
       const d = await getDb();
+      if (await pausedToday(d)) return;
       await bestEffort(
         'finding CA firms on LinkedIn',
         async () => {

@@ -17,6 +17,9 @@ const hours = (m: number) => (m ? `${Math.floor(m / 60)}h ${String(Math.round(m 
 const rate = (r: number | null) => (r === null ? '—' : `${r}%`);
 const dayLabel = (d: string) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(`${d}T00:00:00Z`));
 
+// A run picked up again from here (see startRefetchIfWaiting) works in this invocation.
+export const maxDuration = 300;
+
 export default async function TeamPage({ searchParams }: PageProps<'/team'>) {
   await adminPage();
   const sp = await searchParams;

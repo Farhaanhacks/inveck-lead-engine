@@ -81,8 +81,10 @@ export async function processLead(
   opts: {
     contactsOnly?: boolean;
     teamContact?: boolean;
-    /** People already found at the company on LinkedIn (the people-first search): candidates like the search's own finds. */
+    /** People already found at the company on LinkedIn (the people-first search): candidates like the search's own finds, counted towards the contacts it looks for. */
     found?: Awaited<ReturnType<typeof searchLinkedIn>>['people'];
+    /** The Morning Sample Run's cheaper rules, tried there first: two contacts, no Google search for officers in the news and filings. */
+    lean?: boolean;
   } = {},
 ): Promise<LeadResult> {
   const client = matchClient(lead, ctx.clients);
@@ -286,9 +288,10 @@ export async function processLead(
   const notes: string[] = [];
   const [searched, leaders, news] = await Promise.all([
     // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
-    // each person's verdict goes on the run's log.
-    searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`)),
-    searchLeaders(svc, lead.company, domain, site.text, pages),
+    // each person's verdict goes on the run's log. People the people-first search found here count
+    // towards the contacts it looks for, so it stops sooner.
+    searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`), { known: opts.found, lean: opts.lean }),
+    searchLeaders(svc, lead.company, domain, site.text, pages, { webSearch: !opts.lean }),
     findSignals(svc, lead.company),
   ]);
   // The people the people-first search found here are on LinkedIn too: added unless the search found them again.

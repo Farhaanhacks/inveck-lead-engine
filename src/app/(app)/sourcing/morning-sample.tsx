@@ -11,8 +11,9 @@ import { TierBadge } from '@/components/tier-badge';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
-import { startMorningSampleAction } from '@/app/sourcing-actions';
-import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
+import { carryOnSampleAction, pushSampleAction, startMorningSampleAction, stopSampleAction } from '@/app/sourcing-actions';
+import { canCarryOn } from '@/lib/sourcing/test-run';
+import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, SAMPLE_RULES, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 const th = 'px-3 py-2 text-left font-medium whitespace-nowrap';
@@ -95,7 +96,7 @@ function Card({ r, card, person, senderName, icps }: { r: MorningSampleReport; c
         {card.from === 'pool' ? (
           <Link href={`/leads/${lead.id}`} className="font-medium hover:underline">{lead.company}</Link>
         ) : (
-          <a href={lead.companyLinkedin || company?.page.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{lead.company}</a>
+          <a href={lead.companyLinkedin || company?.page.url || undefined} target="_blank" rel="noreferrer" className="font-medium hover:underline">{lead.company}</a>
         )}
         {lead.city && <span className="ml-1.5 text-sm text-muted">{lead.city}</span>}
         <span className="ml-2 text-xs text-muted">First contact · <span className="tabular-nums">0 of 4 done</span></span>
@@ -295,7 +296,7 @@ function WhoGetsWhat({ r, icps }: { r: MorningSampleReport; icps: Icp[] }) {
                         {c.from === 'pool' ? (
                           <Link href={`/leads/${lead.id}`} className="hover:underline">{lead.company}</Link>
                         ) : (
-                          <a href={lead.companyLinkedin || company?.page.url} target="_blank" rel="noreferrer" className="hover:underline">{lead.company}</a>
+                          <a href={lead.companyLinkedin || company?.page.url || undefined} target="_blank" rel="noreferrer" className="hover:underline">{lead.company}</a>
                         )}
                       </td>
                       <td className={td}>{lead.segment === LOGISTICS ? '3PL' : lead.segment}</td>
@@ -356,6 +357,9 @@ export function MorningSample({
         <p className="mt-1 text-sm text-ink-2">
           The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything and no search is remembered: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
         </p>
+        <p className="mt-2 text-sm text-ink-2">
+          <span className="font-medium">Rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): no LinkedIn page doesn&apos;t rule a company out; an industry LinkedIn doesn&apos;t show is read from the company&apos;s own website (no search credit); companies whose name shows they&apos;re outside the ICP (banks, IT and consulting firms, hospitals, hotels) aren&apos;t looked up; several companies are looked up in one search; companies found but not needed are kept for the next search; people searches of 10 results, giving up on a segment after 15 searches in a row find nobody new; 2 contacts a company; 10% extra companies; and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample. A sample carried on from where it stopped uses them too.
+        </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" name="fresh" className="mt-1" />
@@ -385,7 +389,21 @@ export function MorningSample({
           </div>
           {test.status === 'running' && <AutoRefresh />}
           {test.progress && <p className="mb-3 text-sm text-ink-2" role="status">{test.progress}</p>}
+          {test.status === 'running' && (
+            <form action={stopSampleAction} className="mb-3 flex flex-wrap items-center gap-3">
+              <input type="hidden" name="id" value={test.id} />
+              <SubmitButton pendingText="Stopping…">Stop</SubmitButton>
+              <span className="text-xs text-muted">Ends it where it is: nothing more is searched or researched. What it found can then be pushed into the pipeline.</span>
+            </form>
+          )}
           {test.error && <p className="mb-3 rounded-lg border border-line bg-critical-soft px-4 py-3 text-sm text-critical-ink">{test.error}</p>}
+          {canCarryOn(test) && !running && (
+            <form action={carryOnSampleAction} className="mb-3 flex flex-wrap items-center gap-3">
+              <input type="hidden" name="id" value={test.id} />
+              <SubmitButton pendingText="Carrying on…">Carry on from here</SubmitButton>
+              <span className="text-xs text-muted">Picks up where it stopped: what it already searched and researched isn&apos;t done (or paid for) again.</span>
+            </form>
+          )}
 
           {r && (
             <div className="mb-4 grid gap-3 sm:grid-cols-2">
@@ -393,7 +411,7 @@ export function MorningSample({
                 <div key={s} className="card p-4 text-sm">
                   <div className="font-medium">{s}</div>
                   <p className="mt-1 text-xs text-muted">
-                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.
+                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}
                     {r.start[s].waiting ? ` ${r.start[s].waiting} companies already waiting for research would be researched first at 6 am (not shown here).` : ''}
                   </p>
                   <p className="mt-2">
@@ -428,9 +446,18 @@ export function MorningSample({
           {r && r.companies.length > 0 && (
             <details className="card mt-4 overflow-x-auto">
               <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Everything the search found ({r.companies.length}), and what research made of it</summary>
+              <form action={pushSampleAction}>
+              <input type="hidden" name="id" value={test.id} />
+              {test.status !== 'running' && (
+                <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3">
+                  <SubmitButton pendingText="Pushing…">Push selected to the pipeline</SubmitButton>
+                  <span className="text-xs text-muted">Nobody&apos;s yet: the 8 am draw deals them. An approved one goes in ready, with its contact and drafts; one not researched yet goes in as New and the pipeline researches it (that uses Google search credits). One already in the pipeline is left out.</span>
+                </div>
+              )}
               <table className="w-full min-w-[860px] text-sm">
                 <thead className="text-xs text-ink-2">
                   <tr>
+                    {test.status !== 'running' && <th className={th}><span className="sr-only">Select</span></th>}
                     <th className={th}>Company</th>
                     <th className={th}>Segment</th>
                     <th className={th}>LinkedIn page</th>
@@ -443,8 +470,24 @@ export function MorningSample({
                     const o = c.outcome ? OUTCOME[c.outcome] : null;
                     return (
                       <tr key={c.key}>
+                        {test.status !== 'running' && (
+                          <td className={td}>
+                            {c.pushed ? (
+                              <Link href={`/leads/${c.pushed}`} className="whitespace-nowrap text-xs text-accent hover:underline">In the pipeline</Link>
+                            ) : (
+                              <input type="checkbox" name="key" value={c.key} defaultChecked={c.outcome === 'approved'} aria-label={`Push ${c.page.name}`} />
+                            )}
+                          </td>
+                        )}
                         <td className={`${td} font-medium`}>
-                          <a href={c.page.url} target="_blank" rel="noreferrer" className="hover:underline">{c.page.name}</a>
+                          {c.page.url ? (
+                            <a href={c.page.url} target="_blank" rel="noreferrer" className="hover:underline">{c.page.name}</a>
+                          ) : (
+                            <>
+                              {c.page.name}
+                              <span className="block text-xs font-normal text-muted">no LinkedIn company page found</span>
+                            </>
+                          )}
                           {c.page.website && <span className="block text-xs font-normal text-muted">{c.page.website}</span>}
                         </td>
                         <td className={td}>{c.segment}</td>
@@ -465,6 +508,7 @@ export function MorningSample({
                   })}
                 </tbody>
               </table>
+              </form>
             </details>
           )}
         </div>

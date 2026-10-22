@@ -5,6 +5,7 @@ import { LOGISTICS, MANUFACTURING } from './db/seed';
 import { normSegment } from './icp-match';
 import { getSettings, type Settings } from './settings';
 import { getHolidays } from './holidays';
+import { pausedToday } from './pause';
 import { istDay } from './tasks';
 
 /** The draw happens from this hour, India time, so the lists are ready before the team starts. */
@@ -228,6 +229,8 @@ export async function runDailyDraw(db: Db, opts: { now?: Date; force?: boolean; 
   // No draw on a holiday marked in Settings (nobody is working), nor before the day it starts.
   if (!opts.force && (await getHolidays(db)).has(day)) return null;
   if (!opts.force && day < ((await morningStartsOn(db)) || day)) return null;
+  // Paused today (see lib/pause.ts).
+  if (!opts.force && (await pausedToday(db, now))) return null;
   if (await getDraw(db, day)) return null;
 
   const settingsNow = await getSettings(db);
@@ -253,9 +256,10 @@ export async function runDailyDraw(db: Db, opts: { now?: Date; force?: boolean; 
 }
 
 /** After a short draw, hands out more once leads are available, filling each associate's missing segment quotas. */
-export async function topUpDraw(db: Db, opts: { now?: Date; random?: () => number } = {}): Promise<DrawRecord | null> {
+export async function topUpDraw(db: Db, opts: { now?: Date; random?: () => number; force?: boolean } = {}): Promise<DrawRecord | null> {
   const now = opts.now ?? new Date();
   const day = istDay(now);
+  if (!opts.force && (await pausedToday(db, now))) return null;
   const current = await getDraw(db, day);
   if (!current?.short) return null;
   // The quotas the day's draw ran with (a draw from before per-person quotas: each associate's now).

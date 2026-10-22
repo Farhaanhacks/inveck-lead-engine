@@ -646,6 +646,15 @@ export const SCHEMA_STATEMENTS = [
   )`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'companies'`,
   `ALTER TABLE sourcing_tests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+  `CREATE TABLE IF NOT EXISTS candidate_companies (
+    id SERIAL PRIMARY KEY,
+    segment TEXT NOT NULL,
+    employer TEXT NOT NULL,
+    norm TEXT NOT NULL,
+    contacts JSONB NOT NULL,
+    found_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS candidate_companies_segment_norm ON candidate_companies (segment, norm)`,
   // People first in the scheduled run: where its prospect search got to, and each company's LinkedIn page.
   `ALTER TABLE runs ADD COLUMN IF NOT EXISTS sourcing JSONB`,
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_linkedin TEXT NOT NULL DEFAULT ''`,
@@ -686,4 +695,11 @@ export const SCHEMA_STATEMENTS = [
    SELECT id, 'approved', 'Approved: Awaiting Approval was removed, so a company that passed the ICP check is Approved', 'Approved'
    FROM leads WHERE status = 'Awaiting Approval'`,
   `UPDATE leads SET status = 'Approved', updated_at = now() WHERE status = 'Awaiting Approval'`,
+  // No daily Google search limit for now (INVECK's decision, 21 Oct 2026), to see what a run really uses: a
+  // budget saved in Settings before is cleared once. One can be set again in Settings.
+  `UPDATE settings SET value = value - 'dailySearchBudget'
+   WHERE key = 'app' AND jsonb_typeof(value) = 'object' AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'searchBudgetOffV1')`,
+  `INSERT INTO settings (key, value) VALUES ('searchBudgetOffV1', jsonb_build_object('at', now())) ON CONFLICT (key) DO NOTHING`,
+  // Nothing runs on its own on Thursday 22 October 2026 (INVECK's decision, 22 Oct 00:15): see lib/pause.ts.
+  `INSERT INTO settings (key, value) SELECT 'pausedDays', '["2026-10-22"]'::jsonb WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
 ];

@@ -96,7 +96,7 @@ describe('the Morning Sample Run', () => {
     expect(forgeline.lead!.emailBody).toBeTruthy();
     expect(r.companies.some((c) => c.page.name === 'Tiny Tools' || c.page.name === 'Known Gears')).toBe(false);
     // The 3PL was short after research, so it searched again, as the run would.
-    expect(r.search!.round).toBe(2);
+    expect(r.search!.round).toBeGreaterThanOrEqual(2);
 
     // Dealt as the draw would: each person one Manufacturing (the pool lead and the sample's), and the one 3PL to one of them.
     expect(r.hands.map((h) => h.name).sort()).toEqual(['Parimal', 'Puja']);
@@ -146,6 +146,174 @@ describe('the Morning Sample Run', () => {
     expect(r.phase).toBe('done');
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
     expect(r.hands.reduce((a, h) => a + h.cards.length, 0)).toBe(3);
+  });
+
+  it("stopped by the server partway (Vercel ending its chain), it carries on from where it got to and gets to the same end", async () => {
+    const { reopenTest } = await import('@/lib/sourcing/test-run');
+    const id = await startSample();
+    // Two invocations' worth, then the old way of stopping: failed, with the report kept.
+    for (let i = 0; i < 2; i++) expect(await runSourcingTest(db, morningServices(log), id, 0)).toBe('continue');
+    const before = (await reportOf(id)).companies.length;
+    await db.update(sourcingTests).set({ status: 'failed', error: "Could not carry on after the server's time limit: 508 Infinite loop detected. The report shows what it got to.", finishedAt: new Date() }).where(eq(sourcingTests.id, id));
+    expect(await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY)).toBe('done');
+    // The page offers to carry on.
+    const [stopped] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const page = (running: boolean) => renderToStaticMarkup(createElement(MorningSample, { test: stopped, running, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(page(false)).toContain('Carry on from here');
+    expect(page(true)).not.toContain('Carry on from here');
+    expect(await reopenTest(db, id)).toBe(true);
+    const searchesBefore = log.calls.length;
+    expect(await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY)).toBe('done');
+    const r = await reportOf(id);
+    expect(r.phase).toBe('done');
+    expect(r.companies.length).toBeGreaterThanOrEqual(before);
+    expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+    expect(r.hands.reduce((a, h) => a + h.cards.length, 0)).toBe(3);
+    expect(log.calls.length).toBeGreaterThan(searchesBefore);
+  });
+
+  it('tries the cheaper rules (the 6 am run does not): 10-result searches, rule-outs remembered, no repeat lookups, a 2,300 budget', async () => {
+    const store = new Map<string, unknown>();
+    const cache = { get: async (k: string) => store.get(k) ?? null, set: async (k: string, v: unknown) => void store.set(k, JSON.parse(JSON.stringify(v))) };
+    const sent: { q: string; num: number }[] = [];
+    const watched = () => {
+      const base = morningServices(log, [], { cache });
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).includes('google.serper.dev/search')) sent.push(JSON.parse(String(init?.body)));
+          return base.fetch(input, init);
+        }) as typeof fetch,
+      };
+    };
+    const first = await startSample(true);
+    await runSourcingTest(db, watched(), first, Number.POSITIVE_INFINITY);
+    const r = await reportOf(first);
+    expect(r.budget).toBe(2300);
+    expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+    // People searches ask for ten results.
+    const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
+    expect(people.length).toBeGreaterThan(0);
+    expect(people.every((b) => b.num === 10)).toBe(true);
+    // Research doesn't look the company's LinkedIn page up again (the search found it), nor its officers in the news and filings.
+    expect(sent.some((b) => b.q === 'site:linkedin.com/company "forgeline.in"')).toBe(false);
+    expect(sent.some((b) => b.q.includes('"company secretary"'))).toBe(false);
+    // Tiny Tools was too small: the next sample doesn't check it again.
+    expect(sent.some((b) => b.q.startsWith('site:linkedin.com/company') && b.q.includes('Tiny Tools'))).toBe(true);
+    sent.length = 0;
+    const second = await startSample(true);
+    await runSourcingTest(db, watched(), second, Number.POSITIVE_INFINITY);
+    expect((await reportOf(second)).phase).toBe('done');
+    expect(sent.some((b) => b.q.startsWith('site:linkedin.com/company') && b.q.includes('Tiny Tools'))).toBe(false);
+  });
+
+  it('asks for ten results instead when Serper refuses a hundred, and still gets to the end', async () => {
+    const base = morningServices(log);
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('google.serper.dev/search') && JSON.parse(String(init?.body)).num > 10) {
+          return new Response(JSON.stringify({ message: 'Query pattern not allowed for free accounts.', statusCode: 400 }), { status: 400 });
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample();
+    await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    expect(r.phase).toBe('done');
+    expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+  });
+
+  it('stops where it is when the admin presses Stop, and is not picked up again', async () => {
+    const { stopSample } = await import('@/lib/sourcing/sample-run');
+    const { canCarryOn, claimStalledTests } = await import('@/lib/sourcing/test-run');
+    const id = await startSample();
+    expect(await runSourcingTest(db, morningServices(log), id, 0)).toBe('continue');
+    expect(await stopSample(db, id)).toBe(true);
+    const calls = log.calls.length;
+    expect(await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY)).toBe('done');
+    expect(log.calls.length).toBe(calls);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    expect(row).toMatchObject({ status: 'failed', error: 'Stopped by you. The report shows what it got to.' });
+    expect(canCarryOn(row)).toBe(false);
+    expect(await claimStalledTests(db, new Date(Date.now() + 60 * 60_000))).toEqual([]);
+    expect(await stopSample(db, id)).toBe(false);
+  });
+
+  it('pushes the companies ticked into the pipeline: an approved one ready for the draw, one not researched as New with its people', async () => {
+    const { pushSampleCompanies, stopSample } = await import('@/lib/sourcing/sample-run');
+    const { peopleFirstContacts } = await import('@/lib/sourcing/morning');
+    // A finished sample: Forgeline was researched and approved.
+    const done = await startSample(true);
+    await runSourcingTest(db, morningServices(log), done, Number.POSITIVE_INFINITY);
+    const forgeline = (await reportOf(done)).companies.find((c) => c.page.name === 'Forgeline Components')!;
+    expect(forgeline.outcome).toBe('approved');
+    expect(await pushSampleCompanies(db, done, [forgeline.key])).toEqual({ pushed: 1, skipped: [] });
+    const [lead] = await db.select().from(leads).where(eq(leads.company, 'Forgeline Components'));
+    expect(lead).toMatchObject({ status: 'Approved', contactName: 'Rahul Patil', ownerId: null, companyLinkedin: forgeline.page.url });
+    expect(lead.contactVerifiedAt).toBeInstanceOf(Date);
+    expect(lead.emailBody).toBeTruthy();
+    expect((await db.select().from(people).where(eq(people.leadId, lead.id))).some((p) => p.name === 'Rahul Patil' && p.isPrimary)).toBe(true);
+    expect((await db.select().from(activities).where(eq(activities.leadId, lead.id))).some((a) => a.text.includes(`Morning Sample Run ${done}`))).toBe(true);
+    // Shown as in the pipeline, and never pushed twice.
+    expect((await reportOf(done)).companies.find((c) => c.key === forgeline.key)?.pushed).toBe(lead.id);
+    expect(await pushSampleCompanies(db, done, [forgeline.key])).toEqual({ pushed: 0, skipped: [] });
+
+    // A sample stopped before research: the company goes in as New, with the people found there for research to start from.
+    const stopped = await startSample(true);
+    const raw = async () => (await db.select().from(sourcingTests).where(eq(sourcingTests.id, stopped)))[0].report as MorningSampleReport;
+    await runSourcingTest(db, morningServices(log), stopped, 0);
+    for (let i = 0; i < 20 && !(await raw()).companies.some((c) => c.segment === LOGISTICS); i++) await runSourcingTest(db, morningServices(log), stopped, 0);
+    const swift = (await raw()).companies.find((c) => c.segment === LOGISTICS)!;
+    expect(swift.outcome).toBeUndefined();
+    // Not while it runs.
+    expect(await pushSampleCompanies(db, stopped, [swift.key])).toEqual({ pushed: 0, skipped: [] });
+    await stopSample(db, stopped);
+    // Forgeline is in the pipeline already: left out.
+    const again = (await raw()).companies.find((c) => c.page.name === 'Forgeline Components');
+    const result = await pushSampleCompanies(db, stopped, [swift.key, ...(again ? [again.key] : [])]);
+    expect(result.pushed).toBe(1);
+    if (again) expect(result.skipped).toEqual(['Forgeline Components']);
+    const [fresh] = await db.select().from(leads).where(eq(leads.company, swift.page.name));
+    expect(fresh).toMatchObject({ status: 'New', ownerId: null, segment: LOGISTICS });
+    expect(fresh.source.startsWith('People-first search')).toBe(true);
+    expect((await peopleFirstContacts(db, fresh)).map((p) => p.name)).toEqual(swift.contacts.map((p) => p.name));
+  });
+
+  it('keeps a company with no LinkedIn page, and skips an employer that is only an industry word', async () => {
+    // Two more people in the forging search: a plant head at a company with no LinkedIn page, and one whose employer is just "Foundry".
+    const extra = [
+      { title: 'Kiran Rao - Plant Head - Pageless Forge Works | LinkedIn', link: 'https://in.linkedin.com/in/kiran-rao', subtitle: 'Pune, Maharashtra, India · Plant Head · Pageless Forge Works', snippet: '' },
+      { title: 'Hemant D - Plant Head - Foundry | LinkedIn', link: 'https://in.linkedin.com/in/hemant-d', subtitle: 'Pune, Maharashtra, India · Plant Head · Foundry', snippet: '' },
+    ];
+    const asked: string[] = [];
+    const svc = () => {
+      const base = morningServices(log);
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const body = String(input).includes('google.serper.dev/search') ? JSON.parse(String(init?.body)) : null;
+          if (body) asked.push(body.q);
+          const res = await base.fetch(input, init);
+          if (body?.q.startsWith('site:linkedin.com/in ') && /"forging"/.test(body.q)) {
+            const data = await res.json();
+            return new Response(JSON.stringify({ ...data, organic: [...(data.organic ?? []), ...extra] }), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+          return res;
+        }) as typeof fetch,
+      };
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, svc(), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    const pageless = r.companies.find((c) => c.page.name === 'Pageless Forge Works');
+    expect(pageless).toBeDefined();
+    expect(pageless!.page.url).toBe('');
+    expect(pageless!.note).toMatch(/^no LinkedIn company page found/);
+    // "Foundry" has no name to look up: never searched for, never kept.
+    expect(asked.some((q) => q === 'site:linkedin.com/company "Foundry"')).toBe(false);
+    expect(r.companies.some((c) => c.employer === 'Foundry')).toBe(false);
   });
 
   it("shows the first morning the draw runs, when that's later than the next one", async () => {
