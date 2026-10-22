@@ -143,6 +143,15 @@ describe('the rotation and the import', () => {
     expect(await cursorOf(db)).toBe(1);
   });
 
+  it("shows whose turn is next and who the latest requests went to", async () => {
+    const { rotationView } = await import('@/lib/inbound-demo');
+    expect((await rotationView(db)).next).toEqual({ name: 'Pooja', user: 'Puja' });
+    await syncInboundDemos(db, { source: source([R('Ravi', 'ravi@a.com'), R('Sita', 'sita@a.com', { submitted_at: '2026-10-22T04:01:00Z' })]), now: NOW });
+    const v = await rotationView(db);
+    expect(v.next.name).toBe('Anuradha');
+    expect(v.recent.map((r) => [r.who, r.bda, r.state])).toEqual([['Sita', 'Anshul', 'blocked'], ['Ravi', 'Pooja', 'imported']]);
+  });
+
   it('reports an unreadable sheet instead of failing, and never writes to it', async () => {
     const r = await syncInboundDemos(db, { source: async () => { throw new Error('Google Sheets: The caller does not have permission'); }, now: NOW });
     expect(r.error).toMatch(/couldn't be read/);

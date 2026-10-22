@@ -8,7 +8,7 @@ import { googleCredentials } from '@/lib/google-sheet';
 import { addHolidayAction, removeHolidayAction } from '@/app/actions';
 import { formatDate } from '@/lib/dates';
 import { istDay } from '@/lib/tasks';
-import { lastSyncReport, INBOUND_SHEET_ID, INBOUND_SHEET_TAB } from '@/lib/inbound-demo';
+import { lastSyncReport, rotationView, INBOUND_SHEET_ID, INBOUND_SHEET_TAB } from '@/lib/inbound-demo';
 import { syncInboundDemosAction } from '@/app/inbound-demo-actions';
 
 export default async function SettingsPage() {
@@ -19,6 +19,7 @@ export default async function SettingsPage() {
   const url = databaseUrl();
   const holidays = [...(await getHolidays(db))].sort();
   const demoSync = await lastSyncReport(db);
+  const rotation = await rotationView(db);
   const status = [
     { name: 'DEEPSEEK_API_KEY', ok: !!keys.deepseek, use: 'AI (DeepSeek)', needed: settings.aiProvider === 'deepseek' },
     { name: 'ANTHROPIC_API_KEY', ok: !!keys.anthropic, use: 'AI (Claude)', needed: settings.aiProvider === 'anthropic' },
@@ -74,6 +75,20 @@ export default async function SettingsPage() {
               Demo requests from the website form (sheet <code>{process.env.INBOUND_DEMO_SHEET_ID?.trim() || INBOUND_SHEET_ID}</code>, tab <code>{process.env.INBOUND_DEMO_SHEET_TAB?.trim() || INBOUND_SHEET_TAB}</code>), read-only with the CA sheet&apos;s service account. New rows go to Pooja, Anshul, Anuradha and Parimal in turn.
             </p>
             <form action={syncInboundDemosAction}><button className="btn-secondary">Sync now</button></form>
+            <p className="mt-3 text-sm">Next request goes to <span className="font-semibold">{rotation.next.name}</span>{rotation.next.user ? (rotation.next.user !== rotation.next.name ? ` (${rotation.next.user})` : '') : <span className="text-warning-ink"> (no matching user yet)</span>}.</p>
+            {rotation.recent.length > 0 && (
+              <div className="mt-2 text-xs">
+                <div className="font-medium text-ink-2">Latest requests and who got them</div>
+                <ul className="mt-1 divide-y divide-line">
+                  {rotation.recent.map((r, i) => (
+                    <li key={i} className="py-1.5">
+                      <span className="font-medium">{r.who}</span>{r.company ? `, ${r.company}` : ''} → <span className="font-medium">{r.bda}</span>
+                      <span className="text-muted"> · {formatDate(r.when)} · {r.state === 'meeting' ? 'Teams meeting booked' : r.state === 'blocked' ? 'waiting for the user' : 'imported'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {demoSync ? (
               <div className="mt-3 space-y-2 text-xs">
                 <p className="text-muted">Last sync {formatDate(new Date(demoSync.at))}: {demoSync.read} rows read, {demoSync.created} new leads, {demoSync.meetings} Teams meetings, {demoSync.merged} repeat submissions.</p>

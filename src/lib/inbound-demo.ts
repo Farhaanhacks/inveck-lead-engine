@@ -176,6 +176,17 @@ export async function takeSlot(db: Db): Promise<number> {
   return Number(row?.next ?? 0);
 }
 
+/** For Settings: whose turn is next, and the latest rows with who they went to. */
+export async function rotationView(db: Db): Promise<{ next: { name: string; user: string | null }; recent: { when: Date; who: string; company: string; bda: string; state: string; reason: string }[] }> {
+  const next = ROTATION[(await cursorOf(db)) % ROTATION.length];
+  const { by } = await resolveBdas(db);
+  const rows = await db.select().from(inboundDemoRows).orderBy(sql`${inboundDemoRows.id} desc`).limit(15);
+  const recent = rows
+    .filter((r) => r.state !== 'skipped' && r.state !== 'merged')
+    .map((r) => ({ when: r.submittedAt ?? r.createdAt, who: r.raw.name ?? r.email, company: r.raw.company ?? '', bda: r.allocName, state: r.state, reason: r.reason }));
+  return { next: { name: next, user: by.get(next)?.name ?? null }, recent };
+}
+
 export const cursorOf = async (db: Db) => Number((((await db.select().from(settings).where(eq(settings.key, CURSOR_KEY)))[0]?.value ?? {}) as { next?: number }).next ?? 0);
 
 // ─── Showing what the sheet said ───
