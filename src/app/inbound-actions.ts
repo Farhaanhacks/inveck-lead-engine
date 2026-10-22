@@ -10,7 +10,7 @@ const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
 export type SyncSummary = { ok: boolean; message: string; lines: string[] };
 
-/** 🔄 Sync now: reads the inbound demo sheet (read-only) and reports what it did. Administrators only. */
+/** Sync now: reads the inbound demo sheet (read-only) and reports what it did. Administrators only. */
 export async function syncNowAction(): Promise<SyncSummary> {
   await requireAdmin();
   try {

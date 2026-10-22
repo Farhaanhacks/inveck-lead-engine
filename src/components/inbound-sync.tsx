@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { syncNowAction, type SyncSummary } from '@/app/inbound-actions';
 
-/** 🔄 Sync now: starts a sync of the sheet, shows that it is working, then what it did. */
+/** Sync now: starts a sync of the sheet, shows that it is working, then what it did. */
 export function InboundSync() {
   const [pending, start] = useTransition();
   const [result, setResult] = useState<SyncSummary | null>(null);
@@ -27,7 +27,7 @@ export function InboundSync() {
           });
         }}
       >
-        <span aria-hidden className={pending ? 'inline-block animate-spin' : ''}>🔄</span> {pending ? 'Syncing…' : 'Sync now'}
+        {pending ? 'Syncing…' : 'Sync now'}
       </button>
       {pending && <p role="status" className="max-w-sm text-right text-xs text-muted">Reading the Google Sheet and bringing the leads up to date. This can take a few seconds.</p>}
       {result && (
