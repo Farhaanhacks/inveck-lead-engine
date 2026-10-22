@@ -1,7 +1,7 @@
-import { and, asc, eq, getTableColumns, inArray, is, SQL } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, is, isNull, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
-import { clients, icps, leads, people, sourcingTests, users, type Lead, type SourcingTest } from '../db/schema';
-import { dealToDeficits, DRAW_HOUR_IST, DRAW_SEGMENTS, drawPool, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
+import { clients, icps, leads, people, sourcingTests, tasks, users, type Lead, type SourcingTest } from '../db/schema';
+import { dealToDeficits, DRAW_HOUR_IST, DRAW_SEGMENTS, DRAWABLE, drawPool, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
@@ -14,7 +14,7 @@ import { logActivity } from '../activity';
 import { saveBacklog, takeBacklog } from './backlog';
 import { knownToInveck } from './test-run';
 import { tierOf } from '../tiers';
-import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, worksCaFirms, type Holidays } from '../tasks';
+import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, planSequence, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
@@ -138,6 +138,8 @@ export type MorningSampleReport = {
   leftKept?: boolean;
   /** People searches left out of the plan, per segment, because earlier samples' same searches found nothing (see search-memory.ts). */
   skipped?: Partial<Record<SourcingSegment, number>>;
+  /** Its dealt leads were put into the pipeline and given out as dealt (see assignSampleLeads): when, for which morning, to whom. */
+  assigned?: { at: string; day: string; given: { userId: number; name: string; leads: number }[]; skipped: string[] };
 };
 
 export const isMorningSample = (r: unknown): r is MorningSampleReport => (r as MorningSampleReport | null)?.mode === 'morning' && (r as MorningSampleReport).phase !== ('init' as string);
@@ -422,6 +424,61 @@ export async function pushSampleCompanies(db: Db, testId: number, keys: number[]
   }
   await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify(r)) }).where(eq(sourcingTests.id, testId));
   return { pushed, skipped };
+}
+
+/**
+ * For a morning the 8 am draw doesn't run: puts every lead a finished sample dealt into the pipeline and gives it
+ * to the associate the sample dealt it to, as the draw would have. The sample's own companies go in as research
+ * left them (Approved, with their contact and drafts; see pushSampleCompanies); a pool lead it dealt is given out
+ * if nobody has it yet. Each counts as handed out on the sample's morning (today, once that has passed), and its
+ * Day 1 steps are due then. A lead someone already has, or one already in the pipeline as another lead, is left
+ * as it is (`skipped`). Giving out again changes nothing.
+ */
+export async function assignSampleLeads(db: Db, testId: number, now = new Date()): Promise<NonNullable<MorningSampleReport['assigned']> | null> {
+  const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, testId));
+  if (!test || test.status === 'running' || !isMorningSample(test.report) || test.report.phase !== 'done') return null;
+  if (test.report.assigned) return test.report.assigned;
+  const dealt = test.report.hands.flatMap((h) => h.cards.filter((c) => c.from === 'sample').map((c) => c.key));
+  const pushed = await pushSampleCompanies(db, testId, dealt);
+  // Read again: pushing recorded each company's new lead.
+  const [after] = await db.select({ report: sourcingTests.report }).from(sourcingTests).where(eq(sourcingTests.id, testId));
+  const r = after.report as MorningSampleReport;
+  const today = istDay(now);
+  const day = r.day > today ? r.day : today;
+  const holidays = await getHolidays(db);
+  const active = new Set((await db.select({ id: users.id }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true)))).map((u) => u.id));
+  const given: NonNullable<MorningSampleReport['assigned']>['given'] = [];
+  const skipped = [...pushed.skipped];
+  for (const h of r.hands) {
+    let n = 0;
+    for (const card of h.cards) {
+      const company = card.from === 'sample' ? r.companies.find((c) => c.key === card.key) : undefined;
+      const name = company ? (company.page.nameCut ? company.employer : company.page.name) : (r.pool.find((p) => p.lead.id === card.key)?.lead.company ?? `Lead ${card.key}`);
+      const leadId = card.from === 'sample' ? company?.pushed : card.key;
+      if (!leadId || !active.has(h.userId)) {
+        if (leadId) skipped.push(name);
+        continue;
+      }
+      // Only a lead nobody has yet, still ready to be worked.
+      const [lead] = await db
+        .update(leads)
+        .set({ ownerId: h.userId, drawnOn: day, updatedAt: now })
+        .where(and(eq(leads.id, leadId), isNull(leads.ownerId), inArray(leads.status, DRAWABLE)))
+        .returning({ id: leads.id });
+      if (!lead) {
+        skipped.push(name);
+        continue;
+      }
+      const open = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, lead.id), isNull(tasks.doneAt))).limit(1);
+      if (!open.length) await db.insert(tasks).values(planSequence(day, holidays).map((t) => ({ ...t, leadId: lead.id, ownerId: h.userId })));
+      await logActivity(db, lead.id, 'note', `Given to ${h.name} from Morning Sample Run ${testId}, for ${day} (as the sample dealt it)`);
+      n++;
+    }
+    if (n) given.push({ userId: h.userId, name: h.name, leads: n });
+  }
+  const assigned = { at: now.toISOString(), day, given, skipped: [...new Set(skipped)] };
+  await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify({ ...r, assigned })) }).where(eq(sourcingTests.id, testId));
+  return assigned;
 }
 
 /** When research finished with a company (samples from before this was kept: when it assessed the fit or checked the news). */

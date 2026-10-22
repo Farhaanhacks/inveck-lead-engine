@@ -469,6 +469,66 @@ describe('the Morning Sample Run', () => {
     expect(searched.some((q) => q.includes('"New Person"'))).toBe(true);
   });
 
+  it('adds the leads it dealt as approved leads, each given to the person it was dealt to, for a morning with no draw', async () => {
+    const { assignSampleLeads } = await import('@/lib/sourcing/sample-run');
+    const { handedOut } = await import('@/lib/draw');
+    const { istDay, firstWorkingDay } = await import('@/lib/tasks');
+    const id = await startSample();
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    const dealt = r.hands.flatMap((h) => h.cards.map((c) => ({ owner: h.userId, company: cardLead(r, c)!.lead.company })));
+    expect(dealt.length).toBe(3);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const page = () => renderToStaticMarkup(createElement(MorningSample, { test: row, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(page()).toContain('Add as approved leads and assign them');
+
+    const done = await assignSampleLeads(db, id);
+    const day = r.day > istDay() ? r.day : istDay();
+    expect(done).toMatchObject({ day, skipped: [] });
+    expect(done!.given.reduce((a, g) => a + g.leads, 0)).toBe(3);
+    for (const d of dealt) {
+      const [lead] = await db.select().from(leads).where(eq(leads.company, d.company));
+      // Approved, researched, with its contact and drafts, and given to the person the sample dealt it to.
+      expect(lead).toMatchObject({ status: 'Approved', ownerId: d.owner, drawnOn: day });
+      expect(lead.contactName).toBeTruthy();
+      // Its Day 1 steps on that morning, on that person's Today.
+      const steps = await db.select().from(tasks).where(eq(tasks.leadId, lead.id));
+      expect(steps.length).toBe(4);
+      expect(steps.every((t) => t.ownerId === d.owner && t.dueDate === firstWorkingDay(day, new Set()) && t.step === 'Day 1')).toBe(true);
+      expect((await db.select().from(activities).where(eq(activities.leadId, lead.id))).some((a) => a.text.startsWith(`Given to `) && a.text.includes(`Morning Sample Run ${id}`))).toBe(true);
+    }
+    // Counted as that morning's hand-out, so a draw by hand then only fills what is still short.
+    const hands = await handedOut(db, day);
+    for (const h of r.hands) expect(Object.values(hands[String(h.userId)] ?? {}).reduce((a, n) => a + n, 0)).toBe(h.cards.length);
+
+    // Pressed again: nothing changes.
+    const before = await counts();
+    expect(await assignSampleLeads(db, id)).toEqual(done);
+    expect(await counts()).toEqual(before);
+    const [after] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const html = renderToStaticMarkup(createElement(MorningSample, { test: after, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(html).toContain('Added and assigned');
+    expect(html).not.toContain('Add as approved leads and assign them');
+  });
+
+  it('leaves a lead someone already has as it is, and does nothing while the sample runs', async () => {
+    const { assignSampleLeads } = await import('@/lib/sourcing/sample-run');
+    const running = await startSample();
+    expect(await runSourcingTest(db, morningServices(log), running, 0)).toBe('continue');
+    expect(await assignSampleLeads(db, running)).toBeNull();
+    await db.delete(sourcingTests).where(eq(sourcingTests.id, running));
+
+    const id = await startSample();
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    // Given out by hand meanwhile.
+    const [someone] = await db.select().from(users).where(eq(users.name, 'Puja'));
+    await db.update(leads).set({ ownerId: someone.id }).where(eq(leads.company, 'Ready Pool Co'));
+    const done = await assignSampleLeads(db, id);
+    expect(done!.skipped).toEqual(['Ready Pool Co']);
+    expect(done!.given.reduce((a, g) => a + g.leads, 0)).toBe(2);
+    expect((await db.select().from(leads).where(eq(leads.company, 'Ready Pool Co')))[0].ownerId).toBe(someone.id);
+  });
+
   it('fails with the reason when Google refuses every search, and saves nothing', async () => {
     const before = await counts();
     const id = await startSample();
