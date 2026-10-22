@@ -7,6 +7,7 @@ import { LinkedinTracker } from '@/components/linkedin-tracker';
 import { loadLinkedinActivity, statusFromOutcome, type LinkedinView } from '@/lib/linkedin-activity';
 import type { MeetingInfo } from '@/components/meeting-dialog';
 import { defaultMeetingTitle, meetingsOn } from '@/lib/meetings';
+import { awaitingMeeting, inboundDetailsFor, sourceLine, syncInboundDemos } from '@/lib/inbound-demo';
 import { addDays } from '@/lib/content-meta';
 import Link from 'next/link';
 import { headers } from 'next/headers';
@@ -618,6 +619,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     await bestEffort('the CA firm draw', () => runCaDraw(db), null);
     await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
     await bestEffort('planning Today steps', () => ensureSequences(db), 0);
+    // The inbound demo sheet: new requests become leads (and Teams meetings when the sheet gives a time). Read-only.
+    await bestEffort('syncing the inbound demo sheet', () => syncInboundDemos(db), null);
   }, undefined);
 
   const team = await listBdas(db);
@@ -675,7 +678,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // This person's own daily list (Team page), else the Settings numbers.
   const drawSettings = await getSettings(db);
   const drawQuota = (await teamQuotas(db, drawSettings)).get(viewId) ?? quotaOf(drawSettings);
-  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later, assigned, meetingsToday] = await Promise.all([
+  const [items, counts, progress, caProgress, attendance, unattended, demos, upcoming, later, assigned, meetingsToday, awaitingDemo] = await Promise.all([
     loadTodayTasks(db, viewId, day),
     dayCounts(db, viewId, day),
     // Someone who works CA firms has them counted apart from the other companies.
@@ -690,7 +693,10 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     allocationFor(db, viewId, day),
     // Teams meetings on today's date only (India time).
     bestEffort('loading meetings', () => meetingsOn(db, viewId, day), []),
+    bestEffort('loading inbound demo requests', () => awaitingMeeting(db, viewId), []),
   ]);
+  // What the sheet said about these leads (source, answers, campaign), for the meeting and request rows.
+  const inboundInfo = await inboundDetailsFor(db, [...meetingsToday.map((m) => m.lead.id), ...awaitingDemo.map((a) => a.lead.id)]);
   // Where this person's follow-ups stand, with a link to the funnel.
   const funnel = viewId ? await bestEffort('loading follow-ups', () => loadFunnel(db, viewId, day), []) : [];
   const funnelCount = (stage: string) => funnel.filter((c) => c.stage === stage).length;
@@ -802,7 +808,8 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // A meeting today is shown with its time and Join button; its lead isn't listed a second time as a booked demo.
   const meetingLeadIds = new Set(meetingsToday.map((m) => m.lead.id));
   const demoRows = demos.filter((l) => !meetingLeadIds.has(l.id));
-  const startHere = unattended.length + demoRows.length + meetingsToday.length;
+  const awaitingRows = awaitingDemo.filter((a) => !meetingLeadIds.has(a.lead.id));
+  const startHere = unattended.length + demoRows.length + meetingsToday.length + awaitingRows.length;
 
   return (
     <>
@@ -917,11 +924,27 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
                     Teams meeting today at <span className="font-semibold tabular-nums">{new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }).format(meeting.startsAt)}</span> IST
                     {l.contactName ? ` with ${l.contactName}` : ''}.
                   </div>
+                  {inboundInfo.get(l.id) && <div className="mt-0.5 text-xs text-muted">{sourceLine(inboundInfo.get(l.id)!.raw)}</div>}
                 </div>
                 <div className="flex items-center gap-2">
                   {meeting.joinUrl.startsWith('https://') && <a href={meeting.joinUrl} target="_blank" rel="noreferrer" className="btn-primary px-2.5 py-1 text-xs">Join meeting</a>}
                   <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
                 </div>
+              </li>
+            ))}
+            {awaitingRows.map(({ row, lead: l }) => (
+              <li key={`inbound-${row.id}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <Link href={`/leads/${l.id}`} className="font-medium hover:underline">{l.company}</Link>
+                  <div className="text-xs text-ink-2">
+                    Inbound demo request{l.contactName ? ` from ${l.contactName}` : ''}
+                    {l.contactPhone ? ` · ${l.contactPhone}` : ''}
+                    {l.contactEmail ? ` · ${l.contactEmail}` : ''}
+                  </div>
+                  <div className="text-xs text-muted">{sourceLine(row.raw)}</div>
+                  {row.reason && <div className="text-xs text-warning-ink">No meeting booked yet: {row.reason}</div>}
+                </div>
+                <Link href={`/leads/${l.id}`} className={SMALL}>Open lead</Link>
               </li>
             ))}
             {demoRows.map((l) => (

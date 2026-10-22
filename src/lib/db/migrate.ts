@@ -524,6 +524,24 @@ export const SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS content_posts_day_idx ON content_posts (scheduled_on)`,
+  `CREATE TABLE IF NOT EXISTS inbound_demo_rows (
+    id SERIAL PRIMARY KEY,
+    row_key TEXT NOT NULL UNIQUE,
+    sheet_row INTEGER NOT NULL DEFAULT 0,
+    submitted_at TIMESTAMPTZ,
+    email TEXT NOT NULL DEFAULT '',
+    alloc_slot INTEGER,
+    alloc_name TEXT NOT NULL DEFAULT '',
+    owner_id INTEGER,
+    lead_id INTEGER,
+    meeting_id INTEGER,
+    state TEXT NOT NULL DEFAULT 'imported',
+    reason TEXT NOT NULL DEFAULT '',
+    raw JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS inbound_demo_rows_lead_idx ON inbound_demo_rows (lead_id)`,
   `CREATE TABLE IF NOT EXISTS contact_linkedin (
     id SERIAL PRIMARY KEY,
     lead_id INTEGER NOT NULL,

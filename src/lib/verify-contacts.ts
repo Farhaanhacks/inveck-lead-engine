@@ -23,6 +23,7 @@ import { learnFirm, recallFirm } from './pipeline/firm-identity';
 import { dbEnrichmentCache } from './enrichment-cache';
 import { escalate } from './escalate';
 import { istDay, notCaFirmSql } from './tasks';
+import { INBOUND_SOURCE } from './inbound-demo';
 import { redraftForContact } from './pipeline/redraft';
 import type { Services } from './pipeline/services';
 
@@ -45,7 +46,8 @@ const staleBefore = (now = new Date()) => new Date(now.getTime() - RECHECK_AFTER
 export type Scope = { leadId?: number; ownerId?: number };
 // CA firms come from the database only: their contacts are never looked up, tidied or replaced.
 const inScope = (scope: Scope) =>
-  and(scope.leadId ? eq(leads.id, scope.leadId) : undefined, scope.ownerId ? eq(leads.ownerId, scope.ownerId) : undefined, notCaFirmSql);
+  // Nor are inbound demo requests: their contact is the person who filled in the form.
+  and(scope.leadId ? eq(leads.id, scope.leadId) : undefined, scope.ownerId ? eq(leads.ownerId, scope.ownerId) : undefined, notCaFirmSql, ne(leads.source, INBOUND_SOURCE));
 
 /**
  * A "designation" that is only the company's name ("CIE Automotive India Ltd") says nothing about the
@@ -319,6 +321,7 @@ export async function verifyContacts(
       and(
         inArray(leads.status, [...LIVE]),
         notCaFirmSql,
+        ne(leads.source, INBOUND_SOURCE),
         opts.dueToday ? onToday : undefined,
         or(
           // No point of contact, and someone set aside as unconfirmed is due another look.

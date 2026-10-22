@@ -686,3 +686,30 @@ export const contactLinkedin = pgTable(
   (t) => [uniqueIndex('contact_linkedin_person_idx').on(t.leadId, t.personId)],
 );
 export type ContactLinkedin = typeof contactLinkedin.$inferSelect;
+
+/**
+ * One row of the inbound demo Google Sheet, as taken in: its stable key (the sheet has no booking id, so the
+ * submission time + email + form type), where it stands, and the whole row kept as it was (`raw`, header to value) so no
+ * source or UTM column is lost. `allocSlot` is the place in the Pooja, Anshul, Anuradha, Parimal rotation this row took.
+ * state: 'skipped' (not a lead: see reason), 'blocked' (waiting on something: no CRM user for its BDA), 'imported'
+ * (a lead exists; a meeting may still be missing, see reason), 'meeting' (Teams meeting created), 'merged' (a later
+ * submission by someone already a lead).
+ */
+export const inboundDemoRows = pgTable('inbound_demo_rows', {
+  id: serial('id').primaryKey(),
+  rowKey: text('row_key').notNull().unique(),
+  sheetRow: integer('sheet_row').notNull().default(0),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  email: text('email').notNull().default(''),
+  allocSlot: integer('alloc_slot'),
+  allocName: text('alloc_name').notNull().default(''),
+  ownerId: integer('owner_id'),
+  leadId: integer('lead_id'),
+  meetingId: integer('meeting_id'),
+  state: text('state').notNull().default('imported'),
+  reason: text('reason').notNull().default(''),
+  raw: jsonb('raw').$type<Record<string, string>>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type InboundDemoRow = typeof inboundDemoRows.$inferSelect;

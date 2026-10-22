@@ -359,3 +359,30 @@ npm run lint && npm run typecheck
 
 Put the API keys in `.env.local` to run real research locally. Without `APP_PASSWORD`,
 login is off in local development only.
+
+### Inbound demo sheet
+
+Demo requests from the website form land in a Google Sheet (default: the sheet ID in `INBOUND_DEMO_SHEET_ID`, tab
+`INBOUND_DEMO_SHEET_TAB`, defaulting to the website form's sheet and its `Leads` tab). It is read with the same service
+account as the CA firms sheet (`GOOGLE_SERVICE_ACCOUNT_JSON`): **share the sheet with that account's email as Viewer**. The
+app never writes to it.
+
+- **Who is imported.** Each valid row becomes a lead in the CRM as an inbound demo request (source "Inbound demo request
+  (website form)", status Replied). Nothing is researched and no cold-call steps are planned. Formula-looking rows, rows marked
+  "(ignore)" and rows with no name or email are not imported (they are listed on Settings).
+- **Fields.** name, email, phone, company, location (city), persona (segment), plus the whole row is kept, including source,
+  form type, answers, page, landing, referrer, UTM source/medium/campaign/term/content and the LinkedIn/Google click ids. They
+  show on the lead page and as a source line on Today.
+- **No duplicates.** A row's key is its `booking_id` (the form's booking id). Rows without one use submission time + email + form type. The same person
+  submitting again is added to their one lead as a note; nothing is made twice however often the sync runs.
+- **Who gets it.** A persistent rotation: Pooja, Anshul, Anuradha, Parimal, then again. The place reached is saved, so later
+  batches carry on. Names are matched to existing users by first name (Pooja also matches the spelling "Puja"); a name with no
+  user is reported, never created or guessed, and that turn is given to them once the user exists.
+- **The meeting.** The slot the visitor chose on the form (`preferred_start_utc`, or `preferred_start_ist` such as "Sat 24 Oct
+  2026, 10:00 IST"; a cancelled `status` books nothing), or a confirmed date/time column (`meeting_date`/`meeting_time`) books a Microsoft Teams meeting, titled "Demo for [Company] - Inveck", in
+  that BDA's own calendar with the prospect as attendee; Microsoft sends the invitation. Then the lead becomes Meeting Booked
+  and the meeting shows on the BDA's Today on its date with Join meeting. A row with no time, only a preferred time, an
+  unconnected Outlook or no calendar permission is reported on Settings and tried again at the next sync. Nothing is booked
+  by guesswork.
+- **When it runs.** Whenever Today is open (every few minutes), a daily Vercel cron (`/api/cron/inbound-demos`) and **Settings
+  → Sync now**.

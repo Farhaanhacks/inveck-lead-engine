@@ -15,6 +15,8 @@ import { Timeline } from '@/components/timeline';
 import { istDay } from '@/lib/tasks';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { SendWhatsApp } from '@/components/send-whatsapp';
+import { inboundDetailsFor, sourceDetails } from '@/lib/inbound-demo';
+import { latestMeeting } from '@/lib/meetings';
 import { waNumber } from '@/lib/phones';
 import { getSettings, type Settings } from '@/lib/settings';
 import { waConfig } from '@/lib/whatsapp/cloud';
@@ -524,6 +526,9 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
       Number(isCorporateContact(b)) - Number(isCorporateContact(a)) ||
       candidateRank(a, icp ?? undefined, lead.city) - candidateRank(b, icp ?? undefined, lead.city),
   );
+  // An inbound demo request from the website form: what the sheet said (source, answers, campaign) and its Teams meeting.
+  const demo = (await inboundDetailsFor(db, [id])).get(id);
+  const meeting = demo ? await latestMeeting(db, id) : null;
   const inSequence = !!lead.followUpStartedOn;
   const rounds = inSequence ? await db.select().from(tasks).where(and(eq(tasks.leadId, id), gt(tasks.followUpRound, 0))).orderBy(asc(tasks.followUpRound), asc(tasks.id)) : [];
   // WhatsApp with the contact: shown once there is a number, or messages.
@@ -629,6 +634,30 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
         <div className="mb-6 rounded-lg border border-line bg-neutral-soft px-4 py-3 text-sm text-ink-2" role="status">
           <span className="font-medium">Deleted{lead.deletedAt ? ` on ${formatDate(lead.deletedAt)}` : ''}.</span> {lead.deletedReason} Its timeline, calls and research are kept; restore it to work it again.
         </div>
+      )}
+
+      {demo && (
+        <section className="card mb-6 p-5" aria-label="Inbound demo request">
+          <h2 className="text-sm font-semibold">Inbound demo request</h2>
+          <p className="mt-0.5 text-xs text-muted">From the website demo form (Google Sheet). Not a cold prospect: nothing here was researched.</p>
+          {meeting ? (
+            <p className="mt-2 text-sm">
+              Teams meeting: <span className="font-medium">{meeting.title}</span> on{' '}
+              {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(meeting.startsAt)} IST.{' '}
+              {meeting.joinUrl.startsWith('https://') && <a href={meeting.joinUrl} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">Join meeting</a>}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-warning-ink">No meeting booked yet{demo.reason ? `: ${demo.reason}` : '.'}</p>
+          )}
+          <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+            {sourceDetails(demo.raw).map((d) => (
+              <div key={d.label} className="min-w-0">
+                <dt className="text-xs text-muted">{d.label}</dt>
+                <dd className="break-words">{d.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
       )}
 
       {lead.lastError && (
