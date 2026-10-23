@@ -57,26 +57,41 @@ function refreshToday() {
   revalidatePath('/followups');
 }
 
+/**
+ * What logging a step came to. `already`: it was logged before (a second click, a second tab), so nothing was done again.
+ * A refusal always says why, so the button never just sits there.
+ */
+export type TaskResult = { ok: true; already?: boolean } | { ok: false; error: string };
+function refuse(error: string): TaskResult {
+  refreshToday();
+  return { ok: false, error };
+}
+
 /** Logs what happened on a task. A connected call needs a note and ends the rest of the sequence for that lead. */
-export async function completeTaskAction(form: FormData) {
+export async function completeTaskAction(form: FormData): Promise<TaskResult> {
   const user = await requireUser();
   const id = Number(str(form, 'id'));
   const outcome = str(form, 'outcome');
   const note = str(form, 'note').slice(0, 2000);
   const db = await getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-  if (!task || task.doneAt) return refreshToday();
+  if (!task) return refuse('This step no longer exists. The list has been refreshed.');
+  // Logged already (a repeated click, or another tab): nothing is done a second time.
+  if (task.doneAt) {
+    refreshToday();
+    return { ok: true, already: true };
+  }
   // Only the owner logs their own work, so the daily numbers are always theirs.
-  if (task.ownerId !== user.id) return refreshToday();
-  if (!OUTCOMES[task.kind].includes(outcome)) return refreshToday();
+  if (task.ownerId !== user.id) return refuse('Only the person this company belongs to can log this step.');
+  if (!OUTCOMES[task.kind].includes(outcome)) return refuse("That outcome doesn't fit this step.");
   // A CA firm's waiting step is only ever marked accepted; "accepted" fits nothing else.
-  if ((task.step === CA_WAITING_STEP) !== (outcome === 'accepted')) return refreshToday();
+  if ((task.step === CA_WAITING_STEP) !== (outcome === 'accepted')) return refuse(outcome === 'accepted' ? 'Request accepted only applies to the waiting step.' : 'This step is only marked once the LinkedIn request is accepted.');
   const feedback = str(form, 'feedback');
   // Demo scheduled means a Teams meeting was approved and created first (Approve and Schedule): never by this call alone.
-  if (task.kind === 'call' && outcome === 'connected' && feedback === 'Demo scheduled' && !(await hasScheduledMeeting(db, task.leadId))) return refreshToday();
-  if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return refreshToday();
+  if (task.kind === 'call' && outcome === 'connected' && feedback === 'Demo scheduled' && !(await hasScheduledMeeting(db, task.leadId))) return refuse('Schedule the Teams meeting first (Approve and Schedule): a call is saved as Demo scheduled only once it exists.');
+  if (task.kind === 'call' && outcome === 'connected' && (!note || !(CALL_FEEDBACK as readonly string[]).includes(feedback))) return refuse('Write what was discussed and choose the call outcome before saving the call.');
   if (task.kind === 'linkedin' && outcome === 'sent') {
-    if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return refreshToday();
+    if ((await dayCounts(db, task.ownerId)).linkedinSent >= DAILY_LINKEDIN_LIMIT) return refuse(`You have already sent today's limit of ${DAILY_LINKEDIN_LIMIT} LinkedIn requests. Try again tomorrow, or skip this one.`);
   }
 
   const now = new Date();
@@ -84,14 +99,21 @@ export async function completeTaskAction(form: FormData) {
   const [lead] = await db.select({ phone: leads.contactPhone, segment: leads.segment }).from(leads).where(eq(leads.id, task.leadId));
   const ca = isCaSegment(lead?.segment ?? '');
   // "Already sent a request" is only for a CA firm's first-day LinkedIn step.
-  if (outcome === 'already_sent' && (!ca || task.step === CA_WAITING_STEP)) return refreshToday();
+  if (outcome === 'already_sent' && (!ca || task.step === CA_WAITING_STEP)) return refuse("'Already sent a request' only applies to a CA firm's first LinkedIn step.");
   // With several numbers, the first is the one dialled: only that one goes; the next is tried after.
   const dropped = dropFirstPhone(lead?.phone ?? '');
   const wrong = task.kind === 'call' && outcome === 'wrong_number' && !!dropped.removed;
-  await db
+  // The claim: only the request that actually marks the step done goes on to do the rest, so two clicks (or two tabs) at
+  // once can never log the call twice, plan the follow-ups twice or write the activity twice.
+  const claimed = await db
     .update(tasks)
     .set({ doneAt: now, outcome, note: wrong ? `${WRONG_PREFIX}${dropped.removed}` : note || task.note })
-    .where(and(eq(tasks.id, id), isNull(tasks.doneAt)));
+    .where(and(eq(tasks.id, id), isNull(tasks.doneAt)))
+    .returning({ id: tasks.id });
+  if (!claimed.length) {
+    refreshToday();
+    return { ok: true, already: true };
+  }
   if (!task.priority) await catchUp(db, task, now);
   // Keep the tracker's outcome columns in step with what was logged.
   if (task.kind === 'call' && outcome === 'connected') {
@@ -224,6 +246,7 @@ export async function completeTaskAction(form: FormData) {
   revalidatePath('/pipeline');
   revalidatePath('/leads');
   revalidatePath(`/leads/${task.leadId}`);
+  return { ok: true };
 }
 
 /**

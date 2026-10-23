@@ -118,8 +118,10 @@ export const caRoundsOf = (t: { title: string }) => Number(/\bof (\d+)\b/.exec(t
  * next working days (the same one-working-day spacing, never a weekend or a holiday).
  */
 export function planCaFallback(today: string, fallbackDay: string, waiting: boolean, holidays: Holidays = NO_HOLIDAYS, rule: { rounds: number; spacingDays: number } = { rounds: CA_ROUNDS, spacingDays: 1 }): PlannedTask[] {
-  const plan: PlannedTask[] = waiting ? [{ kind: 'linkedin', step: CA_WAITING_STEP, title: 'Waiting for the LinkedIn request to be accepted', dueDate: today, slot: 'day' }] : [];
   const first = firstWorkingDay(fallbackDay, holidays);
+  // The wait is due on round 1's day (when "not accepted yet" is decided), not today: until then the firm has nothing to
+  // do, so it is out of the due lists. It stays open, and shows under Follow-up as waiting for LinkedIn.
+  const plan: PlannedTask[] = waiting ? [{ kind: 'linkedin', step: CA_WAITING_STEP, title: 'Waiting for the LinkedIn request to be accepted', dueDate: first, slot: 'day' }] : [];
   for (let round = 1; round <= rule.rounds; round++) {
     const dueDate = addWorkingDays(first, (round - 1) * rule.spacingDays, holidays);
     for (const [kind, label] of [['call', 'call'], ['whatsapp', 'WhatsApp'], ['email', 'email']] as const) {
@@ -192,6 +194,13 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
         eq(leads.contactName, ''),
         sql`NOT (${caFirmSql})`,
         notExists(db.select({ one: sql`1` }).from(tasks).where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt)))),
+        // "Skip for today" on this step means not today: it comes back tomorrow, not straight away.
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(tasks)
+            .where(and(eq(tasks.leadId, leads.id), eq(tasks.step, FIND_NEXT_STEP), eq(tasks.outcome, 'skipped'), gte(tasks.doneAt, istDayBounds(today).start))),
+        ),
       ),
     )
     .limit(500);

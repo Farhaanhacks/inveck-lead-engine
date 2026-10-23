@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { leads, people, tasks, users } from '@/lib/db/schema';
-import { addWorkingDays, CA_FALLBACK_STEP, CA_WAITING_STEP, companyProgress, dayCounts, ensureSequences, firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay } from '@/lib/tasks';
+import { activities, leads, people, tasks, users } from '@/lib/db/schema';
+import { addWorkingDays, CA_FALLBACK_STEP, CA_WAITING_STEP, companyProgress, dayCounts, ensureSequences, FIND_NEXT_STEP, firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay } from '@/lib/tasks';
 import { KnownBranches } from '@/lib/branches';
 import { importContactSheet, parseContactSheet } from '@/lib/contact-import';
 
@@ -58,7 +58,8 @@ describe('CA firms on Today', () => {
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
     let left = await open(l.id);
-    expect(left.find((t) => t.step === CA_WAITING_STEP)?.dueDate).toBe(today());
+    // The wait is due when round 1 is (the day "not accepted" is decided), so the firm is off Today until then.
+    expect(left.find((t) => t.step === CA_WAITING_STEP)?.dueDate).toBe(r1());
     // Exactly three rounds of call, WhatsApp and email: the first on the next working day, then one working day apart.
     const two = addWorkingDays(r1(), 1);
     const three = addWorkingDays(r1(), 2);
@@ -68,7 +69,7 @@ describe('CA firms on Today', () => {
     for (const t of rounds(left)) expect([0, 6]).not.toContain(new Date(`${t.dueDate}T00:00:00Z`).getUTCDay());
     // Sending the request is the day's work: the firm counts as done today, still waiting on LinkedIn.
     expect(await companyProgress(db, me.id, today())).toEqual({ done: 1, total: 1, backlog: 0 });
-    expect((await loadTodayTasks(db, me.id, today())).map((t) => t.task.step)).toEqual([CA_WAITING_STEP]);
+    expect((await loadTodayTasks(db, me.id, today())).map((t) => t.task.step)).toEqual([]);
 
     // "accepted" fits only the waiting step.
     await completeTaskAction(form({ id: left.find((t) => t.kind === 'call')!.id, outcome: 'accepted' }));
@@ -517,5 +518,41 @@ describe('a LinkedIn request in the follow-up rounds when none was sent', () => 
     const noLi = await caLead({ company: 'No Profile Co', segment: 'Manufacturing', status: 'Contacted', contactLinkedin: '' });
     await db.insert(tasks).values({ leadId: noLi.id, ownerId: me.id, kind: 'call', step: 'Follow-up 1', title: 'call', dueDate: today() });
     expect(await ensureLinkedinSteps(db, me.id, today())).toBe(0);
+  });
+});
+
+describe('Today step buttons never just sit there', () => {
+  it('a refused save says why, a repeated one is a no-op, and nothing is planned twice', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await caLead();
+    const first = await start(l.id);
+    // A call outcome on a LinkedIn step: refused, with the reason, and the step stays open.
+    const bad = await completeTaskAction(form({ id: first.id, outcome: 'connected' }));
+    expect(bad).toMatchObject({ ok: false });
+    expect(bad.ok === false && bad.error.length).toBeGreaterThan(10);
+    expect((await open(l.id)).some((t) => t.id === first.id)).toBe(true);
+    expect(await completeTaskAction(form({ id: 999999, outcome: 'sent' }))).toMatchObject({ ok: false });
+    // Two clicks at once: one logs it, the other finds it done.
+    const both = await Promise.all([completeTaskAction(form({ id: first.id, outcome: 'sent' })), completeTaskAction(form({ id: first.id, outcome: 'sent' }))]);
+    expect(both.every((r) => r.ok)).toBe(true);
+    expect(both.filter((r) => r.ok && r.already).length).toBe(1);
+    expect((await open(l.id)).filter((t) => t.caRound > 0).length).toBe(9);
+    expect((await open(l.id)).filter((t) => t.step === CA_WAITING_STEP).length).toBe(1);
+    const sentLogs = (await db.select().from(activities).where(eq(activities.leadId, l.id))).filter((a) => a.text.includes('LinkedIn connection request sent'));
+    expect(sentLogs.length).toBe(1);
+  });
+
+  it('Skip for today on "Find the next person" stays off today, and comes back later', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const [l] = await db.insert(leads).values({ company: 'Nobody Ltd', segment: 'Manufacturing', status: 'Approved', ownerId: me.id, contactName: '' }).returning();
+    const [t] = await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'call', step: FIND_NEXT_STEP, title: 'Find the person', dueDate: today(), slot: 'day' }).returning();
+    expect(await completeTaskAction(form({ id: t.id, outcome: 'skipped' }))).toEqual({ ok: true });
+    await ensureSequences(db, today());
+    expect(await open(l.id)).toEqual([]);
+    await db.update(tasks).set({ doneAt: new Date(Date.now() - 36 * 3600_000) }).where(eq(tasks.id, t.id));
+    await ensureSequences(db, today());
+    // Not on a later day it was skipped: the step to find someone is there again (or the lead was retired for having no one).
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect((await open(l.id)).some((x) => x.step === FIND_NEXT_STEP) || after.status === 'Deleted').toBe(true);
   });
 });

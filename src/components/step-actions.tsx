@@ -1,8 +1,12 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { createContext, useContext, useState, useTransition, type ButtonHTMLAttributes, type FormHTMLAttributes, type ReactNode } from 'react';
 import { completeTaskAction } from '@/app/team-actions';
 import { MeetingDialog, type MeetingInfo } from './meeting-dialog';
+
+/** Longer than this and the save is treated as failed (the step stays; it can be tried again). */
+const SAVE_TIMEOUT_MS = 45_000;
 
 type Ctx = { pending: boolean; run: (data: FormData) => void };
 const StepCtx = createContext<Ctx | null>(null);
@@ -16,13 +20,22 @@ const StepCtx = createContext<Ctx | null>(null);
 export function StepActions({ children, className }: { children: ReactNode; className?: string }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState('');
+  const router = useRouter();
   const run = (data: FormData) => {
     setError('');
     start(async () => {
       try {
-        await completeTaskAction(data);
+        // A request that never answers must not leave "Saving…" on the button for good.
+        const r = await Promise.race([
+          completeTaskAction(data),
+          new Promise<never>((_, no) => setTimeout(() => no(new Error('timeout')), SAVE_TIMEOUT_MS)),
+        ]);
+        // Refused (with the reason) or saved: the list is refreshed either way, so it matches what the server holds.
+        if (!r.ok) setError(r.error);
+        router.refresh();
       } catch {
-        setError("Couldn't save that. Check your connection and try again.");
+        setError("Couldn't save that. Check your connection and try again: the step is still there.");
+        router.refresh();
       }
     });
   };
@@ -48,7 +61,7 @@ export function TaskForm({ children, meeting, ...rest }: FormHTMLAttributes<HTML
     <>
       <form
         {...rest}
-        action={ctx ? undefined : completeTaskAction}
+        action={ctx ? undefined : async (f: FormData) => void (await completeTaskAction(f))}
         onSubmit={
           ctx
             ? (e) => {

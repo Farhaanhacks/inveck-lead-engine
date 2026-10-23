@@ -97,7 +97,7 @@ function CardView({ card, today, todayHref, canLog, owner, tier }: { card: Funne
       <div className="flex flex-wrap gap-1.5 pt-1">
         {card.stage === 'today' && <Link href={todayHref} className="btn-primary px-2 py-0.5 text-xs">Work it on Today</Link>}
         {card.stage === 'waiting' && card.waitingTask && canLog && (
-          <form action={completeTaskAction}>
+          <form action={async (f: FormData) => { 'use server'; await completeTaskAction(f); }}>
             <input type="hidden" name="id" value={card.waitingTask.id} />
             <button name="outcome" value="accepted" className="btn-primary px-2 py-0.5 text-xs">Request accepted</button>
           </form>

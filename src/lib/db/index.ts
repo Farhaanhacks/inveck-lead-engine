@@ -7,7 +7,7 @@ import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEm
 import { ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
 import { seedConfiguration } from '../config';
-import { retireWithoutContactOnce } from '../escalate';
+import { caWaitingDueOnce, retireWithoutContactOnce } from '../escalate';
 import { approveSheetLeadsOnce } from '../ca-sheet';
 import { retireRemovedStatuses } from '../retired-statuses';
 
@@ -69,6 +69,7 @@ async function connect(): Promise<Db> {
     await ensureMarketingUser(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);
+    await caWaitingDueOnce(db);
     await approveSheetLeadsOnce(db);
     await retireRemovedStatuses(db);
   } catch (e) {
