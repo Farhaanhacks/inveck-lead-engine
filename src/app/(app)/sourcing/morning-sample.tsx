@@ -11,7 +11,7 @@ import { TierBadge } from '@/components/tier-badge';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
-import { carryOnSampleAction, pushSampleAction, startMorningSampleAction, stopSampleAction } from '@/app/sourcing-actions';
+import { assignSampleAction, carryOnSampleAction, pushSampleAction, startMorningSampleAction, stopSampleAction } from '@/app/sourcing-actions';
 import { canCarryOn } from '@/lib/sourcing/test-run';
 import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, SAMPLE_RULES, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
@@ -207,6 +207,30 @@ function PersonDay({ r, hand, senderName, icps }: { r: MorningSampleReport; hand
 }
 
 /** Every associate's leads in one place: what each gets per segment, then every lead, person by person. */
+/** Puts the leads a finished sample dealt into the pipeline, given out as dealt; or what that did. */
+function AssignBar({ r, id }: { r: MorningSampleReport; id: number }) {
+  const dealt = r.hands.reduce((a, h) => a + h.cards.length, 0);
+  if (r.assigned) {
+    const a = r.assigned;
+    return (
+      <div className="card mb-4 p-4 text-sm">
+        <span className="font-medium">Added and assigned {formatDateTime(new Date(a.at))}</span>, for {dayName(a.day)}: {a.given.length ? a.given.map((g) => `${g.name} ${g.leads}`).join(', ') : 'none (each was already taken)'}.
+        {a.skipped.length > 0 && <span className="mt-1 block text-xs text-muted">Left as they were (someone already has them, or the company is already in the pipeline): {a.skipped.join(', ')}.</span>}
+      </div>
+    );
+  }
+  if (!dealt) return null;
+  return (
+    <form action={assignSampleAction} className="card mb-4 flex flex-wrap items-center gap-3 p-4">
+      <input type="hidden" name="id" value={id} />
+      <SubmitButton pendingText="Adding…">Add as approved leads and assign them</SubmitButton>
+      <span className="text-xs text-muted">
+        Puts the {dealt} leads dealt below into the pipeline as Approved, each given to the person shown, with their Day 1 steps on {dayName(r.day)} (or today, once that has passed). For a morning the 8 am draw doesn&apos;t run; a draw by hand then only fills what is still short.
+      </span>
+    </form>
+  );
+}
+
 function WhoGetsWhat({ r, icps }: { r: MorningSampleReport; icps: Icp[] }) {
   const rows = r.hands.map((h) => {
     const q = quotaFor(r, h.userId);
@@ -355,10 +379,10 @@ export function MorningSample({
       <div className="card mb-4 p-5">
         <h2 className="text-sm font-semibold">Morning Sample Run</h2>
         <p className="mt-1 text-sm text-ink-2">
-          The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead, nobody is given anything and no search is remembered: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
+          The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead and nobody is given anything unless you push or assign its leads, and the 6 am run&apos;s memory of its searches isn&apos;t touched: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
         </p>
         <p className="mt-2 text-sm text-ink-2">
-          <span className="font-medium">Rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): no LinkedIn page doesn&apos;t rule a company out; an industry LinkedIn doesn&apos;t show is read from the company&apos;s own website (no search credit); companies whose name shows they&apos;re outside the ICP (banks, IT and consulting firms, hospitals, hotels) aren&apos;t looked up; several companies are looked up in one search; companies found but not needed are kept for the next search; people searches of 10 results, giving up on a segment after 15 searches in a row find nobody new; 2 contacts a company; 10% extra companies; and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample. A sample carried on from where it stopped uses them too.
+          <span className="font-medium">Rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): no LinkedIn page doesn&apos;t rule a company out; an industry LinkedIn doesn&apos;t show is read from the company&apos;s own website (no search credit); companies whose name shows they&apos;re outside the ICP (banks, IT and consulting firms, hospitals, hotels) aren&apos;t looked up; several companies are looked up in one search; companies found but not needed are kept for the next search; people searches of 10 results, giving up on a segment after 15 searches in a row find nobody new; a people search that found no new company isn&apos;t made again for 30 days, an industry and town where searches twice found nobody isn&apos;t searched with other titles, and the industries and towns that found good companies go first; 2 contacts a company, always with a search for a plant-head-level (P1) contact when none is among them; no repeat look-ups of a person&apos;s profile within 14 days or a company&apos;s news within 7; the people research found count as checked on LinkedIn when pushed into the pipeline; 10% extra companies; and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample, a hard limit: a search that would go over it isn&apos;t made. A sample carried on from where it stopped uses them too.
         </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
@@ -411,7 +435,7 @@ export function MorningSample({
                 <div key={s} className="card p-4 text-sm">
                   <div className="font-medium">{s}</div>
                   <p className="mt-1 text-xs text-muted">
-                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}
+                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}{r.skipped?.[s] ? ` ${r.skipped[s].toLocaleString('en-IN')} people searches left out (in earlier samples they found nothing new, or nobody in that industry and town).` : ''}
                     {r.start[s].waiting ? ` ${r.start[s].waiting} companies already waiting for research would be researched first at 6 am (not shown here).` : ''}
                   </p>
                   <p className="mt-2">
@@ -424,6 +448,7 @@ export function MorningSample({
 
           {r && r.phase === 'done' && r.hands.length > 0 && hand && (
             <>
+              {test.status !== 'running' && <AssignBar r={r} id={test.id} />}
               <WhoGetsWhat r={r} icps={icps} />
               <h3 className="mb-2 text-sm font-semibold">Each person&apos;s Today</h3>
               <nav className="mb-4 flex flex-wrap gap-2" aria-label="Associates">

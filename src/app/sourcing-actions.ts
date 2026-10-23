@@ -2,13 +2,14 @@
 
 import { after } from 'next/server';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { getDb } from '@/lib/db';
 import { sourcingTests } from '@/lib/db/schema';
 import { requireAdmin } from '@/lib/access';
 import { requestOrigin } from '@/lib/run-driver';
 import { driveSourcingTest } from '@/lib/sourcing/drive';
 import { activeSourcingTest, reopenTest, SOURCING_LIMITS, validSegment } from '@/lib/sourcing/test-run';
-import { pushSampleCompanies, stopSample, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { assignSampleLeads, pushSampleCompanies, stopSample, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 
 /**
  * Starts a sourcing test (one at a time) and shows it. It runs after the response; a people-first test
@@ -71,6 +72,16 @@ export async function stopSampleAction(form: FormData) {
   await requireAdmin();
   const id = Number(form.get('id'));
   if (id) await stopSample(await getDb(), id);
+  redirect(`/sourcing?sample=${id}#morning`);
+}
+
+/** Puts every lead a finished sample dealt into the pipeline as Approved, given to the person it dealt each to (see assignSampleLeads). */
+export async function assignSampleAction(form: FormData) {
+  await requireAdmin();
+  const id = Number(form.get('id'));
+  if (id) await assignSampleLeads(await getDb(), id);
+  revalidatePath('/leads');
+  revalidatePath('/today');
   redirect(`/sourcing?sample=${id}#morning`);
 }
 

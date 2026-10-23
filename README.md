@@ -266,12 +266,19 @@ To see what tomorrow will look like first, the Sourcing page has a **Morning Sam
 (`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
 researches exactly as the run does, deals each active associate their quota from the pool and what it found,
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
-nobody is given anything and no search is remembered, so tomorrow's run starts fresh. CA firms aren't part of it.
-The sample is also where cheaper rules are tried before the 6 am run uses them (`SAMPLE_RULES` in
-`sample-run.ts`): people searches of 100 results, companies ruled out remembered for 90 days, two contacts a
-company (no hunt for a P1 when the search found people there), no repeat lookup of the company's LinkedIn page
-or of its officers in the news and filings, 10% extra companies, and 2,300 Google search credits at most for a
-new sample. A sample carried on from where it stopped uses them too.
+nobody is given anything and the 6 am run's own search memory isn't touched, so tomorrow's run starts fresh.
+CA firms aren't part of it. The sample is also where cheaper rules are tried before the 6 am run uses them
+(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, companies ruled out remembered for 90 days,
+companies outside the ICP by name not looked up and several looked up in one search, the sample's own memory of
+its people searches (`search-memory.ts`: a search that found no new company isn't made again within 30 days, an
+industry word and town where two searches found nobody isn't searched with other titles, and the pairs that
+found companies that passed go first), two contacts a company with the hunt for a P1 kept (the staff search
+stops once two with a P1 are in hand), no repeat lookup of the company's LinkedIn page or of its officers in the
+news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
+not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the
+pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 3,000 Google search
+credits at most for a new sample, a hard limit (a search that would go over it isn't made; a company whose
+research reaches it is left for the next day). A sample carried on from where it stopped uses them too.
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
 list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from

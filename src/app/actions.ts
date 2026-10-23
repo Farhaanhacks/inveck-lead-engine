@@ -37,6 +37,7 @@ import { OWN_LEAD_REASON } from '@/lib/pipeline/process-lead';
 import { canonicalSegment, normSegment } from '@/lib/icp-match';
 import { confirmFit, markNotFit, reassessLeads, recordAssessments } from '@/lib/reassess';
 import { cleanContact, contactFields, saveContactEdit } from '@/lib/contact-edit';
+import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -106,7 +107,11 @@ export async function startRunAction(form: FormData) {
   // Who gets what the search finds: the morning draw (''), the whole team now ('team') or one person (their id).
   const to = str(form, 'prospectsTo');
   const prospectsTo = to === 'team' || /^\d+$/.test(to) ? to : '';
-  const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual', prospectsTo });
+  // How many leads in each segment (none filled in: what the morning draw is short of).
+  const count = (name: string) => Math.min(200, Math.max(0, Math.floor(Number(str(form, name)) || 0)));
+  const asked = { [MANUFACTURING]: count('manufacturing'), [LOGISTICS]: count('logistics') };
+  const prospectsWanted = asked[MANUFACTURING] || asked[LOGISTICS] ? asked : null;
+  const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual', prospectsTo, prospectsWanted });
   if (created) {
     const h = await headers();
     const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;

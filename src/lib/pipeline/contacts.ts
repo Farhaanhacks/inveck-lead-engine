@@ -3,7 +3,7 @@ import { cleanTitle, companyWide, contactPriority, noDepartment, roleOnly, tierO
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
-import type { Services } from './services';
+import type { SerperResult, Services } from './services';
 import { googleSearch } from './services';
 import { brandOf, firmAliasesOf, firmSiteName, currentEmployer, isPlace, nameIsTheCompany, placeNamedIn, vagueLocation, sameFirm, snippetRoles, subtitleJob, basedAbroad, inCity, profileLocation, siteOf, type Employer } from './employer';
 import { fetchWebsiteText } from './site-reader';
@@ -313,8 +313,9 @@ export type SearchLog = (message: string) => unknown;
  * on the ICP's P1/P2/P3 lists, best first. `known` are people already found working here on LinkedIn (the
  * people-first search): checked like anyone the search finds, the acceptable ones count towards enough
  * contacts and a P1, so the search stops sooner; they aren't returned (the caller already has them).
- * `lean` is the Morning Sample Run's cheaper rules, tried there first: two contacts are enough, and with
- * people already found here a P1 isn't hunted for.
+ * `lean` is the Morning Sample Run's cheaper rules, tried there first: two contacts are enough (a P1 is
+ * still hunted for when none is among them), the staff search stops once that is in hand, and a person's
+ * own profile looked up in the last 14 days isn't searched again.
  */
 export async function searchLinkedIn(
   svc: Services,
@@ -432,9 +433,15 @@ export async function searchLinkedIn(
       await say(`${known.length} found here earlier by the people-first search, counted towards the ${wanted} contacts when they pass: ${known.map((p) => `${p.name} (${p.title})`).join('; ')}`);
       for (const p of known) await report(p);
     }
-    for (const q of staff) {
+    // Lean: two acceptable contacts with a P1 among them is all the search is for.
+    const leanDone = () => !!opts.lean && enough() && hasP1();
+    staffSearch: for (const q of staff) {
       if (failedInRow >= 2) break;
       for (const page of [1, 2]) {
+        if (leanDone()) {
+          await say(`staff search ${staffLeft === CONTACT_SEARCH_BUDGET.staff ? 'not needed' : 'stopped'}: ${wanted} acceptable contacts with a P1 among them`);
+          break staffSearch;
+        }
         if (staffLeft <= 0) break;
         staffLeft--;
         const got = await searchOnce(q, page === 1 ? undefined : page);
@@ -454,8 +461,7 @@ export async function searchLinkedIn(
     }
     designations: for (const [i, step] of plan.entries()) {
       if (failedInRow >= 2) break;
-      // Lean: with people the people-first search found here (on the ICP's P1/P2 lists), enough is enough.
-      if (enough() && (step.tier !== 'P1' || hasP1() || (opts.lean && known.length > 0))) break;
+      if (enough() && (step.tier !== 'P1' || hasP1())) break;
       for (const q of step.queries) {
         if (left <= 0) {
           await say(`search limit of ${CONTACT_SEARCH_BUDGET.designationQueries} designation searches reached; ${plan.length - i} designation${plan.length - i === 1 ? '' : 's'} not searched (from "${step.designation}")`);
@@ -494,7 +500,17 @@ export async function searchLinkedIn(
       const q = `site:linkedin.com/in "${p.name}" ${firm}`;
       await say(`checking ${p.name}'s own profile (current employer unclear): ${q}`);
       const before = found.length;
-      await run([q]);
+      if (!opts.lean) await run([q]);
+      else {
+        // Looked up in the last 14 days (by any research): those results again, no search.
+        try {
+          const results = await rememberedSearch(svc, q);
+          answered++;
+          found.push(...toLinkedInPeople(results, company));
+        } catch (e) {
+          failures.push(e);
+        }
+      }
       // Their own result shows one current job, here: settled.
       const own = found.slice(before).filter((r) => keyOf(r) === keyOf(p));
       if (own.some((r) => r.employer === 'here' && !r.conflict) && !own.some((r) => r.employer === 'elsewhere' || r.conflict)) settledHere.add(keyOf(p));
@@ -654,6 +670,22 @@ function roleWords(title: string): string {
     .join(' ');
 }
 
+/** A person's own profile looked up in the last this many days isn't searched again, where that's asked for (the Morning Sample Run). */
+export const PROFILE_MEMORY_DAYS = 14;
+
+/**
+ * A Google search for one person's profile, remembered for PROFILE_MEMORY_DAYS: the same search in that
+ * time gives the same results back with no search credit. A failed search isn't remembered.
+ */
+export async function rememberedSearch(svc: Services, q: string): Promise<SerperResult[]> {
+  const key = `profile-search:v1:${q.toLowerCase().replace(/\s+/g, ' ').trim()}`;
+  const was = (await svc.cache?.get(key).catch(() => null)) as { at?: string; results?: SerperResult[] } | null;
+  if (was?.at && Array.isArray(was.results) && Date.now() - new Date(was.at).getTime() < PROFILE_MEMORY_DAYS * 86_400_000) return was.results;
+  const results = await googleSearch(svc, q);
+  await svc.cache?.set(key, { at: new Date().toISOString(), results }).catch(() => {});
+  return results;
+}
+
 /**
  * The person's own LinkedIn profile, found through Google (LinkedIn itself can't be searched by
  * outside software). Tries the exact name and company first, then a shorter name, the company's
@@ -666,6 +698,8 @@ export async function findLinkedinProfile(
   person: string,
   company: string,
   hint: { title?: string; city?: string } = {},
+  /** `remember`: a search made in the last 14 days isn't made again (see rememberedSearch). */
+  opts: { remember?: boolean } = {},
 ): Promise<{ url: string; title: string; employer: Employer; abroad: boolean; location: string; jobLocation: string; responsibility: string; evidence: string } | null> {
   // As written (Google ignores case), without honorifics or initials' dots.
   const words = person.replace(HONORIFIC, '').replace(/[.,]/g, ' ').split(/\s+/).filter(Boolean);
@@ -711,7 +745,7 @@ export async function findLinkedinProfile(
     if (other) afterOther++;
     let results: FoundPerson[];
     try {
-      results = mergeSameProfile([...seenSoFar, ...toLinkedInPeople(await googleSearch(svc, q), company)]);
+      results = mergeSameProfile([...seenSoFar, ...toLinkedInPeople(await (opts.remember ? rememberedSearch(svc, q) : googleSearch(svc, q)), company)]);
     } catch (e) {
       failure = e;
       continue;

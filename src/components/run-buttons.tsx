@@ -15,6 +15,11 @@ export function RunButtons({ running, runId, team = [] }: { running: boolean; ru
   return (
     <form action={startRunAction} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="findProspects" value="yes" />
+      <span className="text-xs text-muted" title="Leave both empty to find what the morning draw is short of">Leads to find</span>
+      <label htmlFor="manufacturing" className="text-xs text-muted">Manufacturing</label>
+      <input id="manufacturing" name="manufacturing" type="number" min={0} max={200} placeholder="0" className="field h-9 w-20 py-1.5 text-sm" />
+      <label htmlFor="logistics" className="text-xs text-muted">3PL &amp; Logistics</label>
+      <input id="logistics" name="logistics" type="number" min={0} max={200} placeholder="0" className="field h-9 w-20 py-1.5 text-sm" />
       <label htmlFor="prospectsTo" className="text-xs text-muted">Found companies go to</label>
       <select id="prospectsTo" name="prospectsTo" defaultValue="" className="field h-9 w-auto py-1.5 text-sm">
         <option value="">The morning draw</option>

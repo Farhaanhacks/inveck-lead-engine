@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { activities, icps, leads, people, prospectSearches, settings, sourcingTests, tasks, users } from '@/lib/db/schema';
+import { activities, enrichmentCache, icps, leads, people, prospectSearches, settings, sourcingTests, tasks, users } from '@/lib/db/schema';
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
@@ -12,6 +12,8 @@ import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
 import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
+import { verifyContacts } from '@/lib/verify-contacts';
+import { normQuery } from '@/lib/pipeline/query-history';
 
 /**
  * The Morning Sample Run: tomorrow's 6 am run and 8 am draw on paper. The made-up Google (see
@@ -32,6 +34,17 @@ async function startSample(fresh = false): Promise<number> {
   const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh };
   const [t] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, report: start }).returning({ id: sourcingTests.id });
   return t.id;
+}
+
+/** The services, with every Google search (Serper) query written to `sink`. */
+function recording(base: ReturnType<typeof morningServices>, sink: string[]) {
+  return {
+    ...base,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('google.serper.dev')) sink.push(String(JSON.parse(String(init?.body ?? '{}')).q ?? ''));
+      return base.fetch(input, init);
+    }) as typeof fetch,
+  };
 }
 
 async function reportOf(id: number): Promise<MorningSampleReport> {
@@ -80,7 +93,7 @@ describe('the Morning Sample Run', () => {
     expect(row.status).toBe('done');
     const r = await reportOf(id);
 
-    // Nothing saved anywhere but the report: no lead, no person, no search remembered, nothing on a timeline or a Today.
+    // Nothing saved anywhere but the report: no lead, no person, nothing in the 6 am run's search memory, nothing on a timeline or a Today.
     expect(await counts()).toEqual(before);
     const [pooled] = await db.select().from(leads).where(eq(leads.company, 'Ready Pool Co'));
     expect(pooled.ownerId).toBeNull();
@@ -172,16 +185,18 @@ describe('the Morning Sample Run', () => {
     expect(log.calls.length).toBeGreaterThan(searchesBefore);
   });
 
-  it('tries the cheaper rules (the 6 am run does not): 10-result searches, rule-outs remembered, no repeat lookups, a 2,300 budget', async () => {
+  it('tries the cheaper rules (the 6 am run does not): 10-result searches, rule-outs remembered, no repeat lookups, a 3,000 budget', async () => {
     const store = new Map<string, unknown>();
     const cache = { get: async (k: string) => store.get(k) ?? null, set: async (k: string, v: unknown) => void store.set(k, JSON.parse(JSON.stringify(v))) };
     const sent: { q: string; num: number }[] = [];
+    const news: string[] = [];
     const watched = () => {
       const base = morningServices(log, [], { cache });
       return {
         ...base,
         fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
           if (String(input).includes('google.serper.dev/search')) sent.push(JSON.parse(String(init?.body)));
+          if (String(input).includes('google.serper.dev/news')) news.push(JSON.parse(String(init?.body)).q);
           return base.fetch(input, init);
         }) as typeof fetch,
       };
@@ -189,7 +204,7 @@ describe('the Morning Sample Run', () => {
     const first = await startSample(true);
     await runSourcingTest(db, watched(), first, Number.POSITIVE_INFINITY);
     const r = await reportOf(first);
-    expect(r.budget).toBe(2300);
+    expect(r.budget).toBe(3000);
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
     // People searches ask for ten results.
     const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
@@ -200,11 +215,17 @@ describe('the Morning Sample Run', () => {
     expect(sent.some((b) => b.q.includes('"company secretary"'))).toBe(false);
     // Tiny Tools was too small: the next sample doesn't check it again.
     expect(sent.some((b) => b.q.startsWith('site:linkedin.com/company') && b.q.includes('Tiny Tools'))).toBe(true);
+    expect(news.some((q) => q.includes('"Forgeline Components"'))).toBe(true);
     sent.length = 0;
+    news.length = 0;
     const second = await startSample(true);
     await runSourcingTest(db, watched(), second, Number.POSITIVE_INFINITY);
-    expect((await reportOf(second)).phase).toBe('done');
+    const again = await reportOf(second);
+    expect(again.phase).toBe('done');
     expect(sent.some((b) => b.q.startsWith('site:linkedin.com/company') && b.q.includes('Tiny Tools'))).toBe(false);
+    // Researched again in the next sample: its news, checked days ago at most, isn't checked again.
+    expect(again.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+    expect(news.some((q) => q.includes('"Forgeline Components"'))).toBe(false);
   });
 
   it('asks for ten results instead when Serper refuses a hundred, and still gets to the end', async () => {
@@ -332,6 +353,180 @@ describe('the Morning Sample Run', () => {
     expect(r.credits!).toBeLessThanOrEqual(150);
     // Its searches are real: they count in the day's total too.
     expect(await searchesUsed(db)).toBe(r.credits);
+  });
+
+  it('never spends more than its budget: 3,000 at most, a hard limit, and a company whose research reaches it waits for the next day', async () => {
+    // No daily limit set (the default): 3,000. A higher one: still 3,000. A lower one: that.
+    const plain = await startSample(true);
+    await runSourcingTest(db, morningServices(log), plain, Number.POSITIVE_INFINITY);
+    expect((await reportOf(plain)).budget).toBe(3000);
+    const high = await startSample(true);
+    await runSourcingTest(db, morningServices(log, [], { budget: 5000 }), high, Number.POSITIVE_INFINITY);
+    expect((await reportOf(high)).budget).toBe(3000);
+
+    // Every Serper request counted where it is sent, against budgets that stop the search at different points.
+    for (const budget of [110, 115, 150, 160, 200]) {
+      let sent = 0;
+      const base = morningServices(log, [], { budget });
+      const svc = {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).includes('google.serper.dev')) sent += JSON.parse(String(init?.body ?? '{}')).num > 10 ? 2 : 1;
+          return base.fetch(input, init);
+        }) as typeof fetch,
+      };
+      const id = await startSample(true);
+      await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      expect(r.phase).toBe('done');
+      expect(r.budget).toBe(budget);
+      expect(sent).toBeLessThanOrEqual(budget);
+      expect(r.credits).toBe(sent);
+      for (const c of r.companies) expect(c.outcome).toBeDefined();
+    }
+
+    // Research that needs more than is left: the searches over the limit aren't made, and the company waits
+    // for the next day rather than being kept half researched. (Forgeline with only people off the ICP's
+    // lists found there: research searches every designation.)
+    const done = await reportOf(plain);
+    const forgeline = done.companies.find((c) => c.page.name === 'Forgeline Components')!;
+    const offList = forgeline.contacts.map((p) => ({ ...p, title: 'HR Manager', tier: '' }));
+    const report: MorningSampleReport = {
+      ...done,
+      phase: 'research',
+      companies: [{ ...forgeline, contacts: offList, outcome: undefined, why: undefined, lead: undefined, people: undefined, researchedAt: undefined }],
+      hands: [],
+      credits: 3000 - 26,
+      budget: 3000,
+    };
+    const [row] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, report: JSON.parse(JSON.stringify(report)) }).returning({ id: sourcingTests.id });
+    let sent = 0;
+    const base = morningServices(log);
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('google.serper.dev')) sent++;
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    await runSourcingTest(db, svc, row.id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(row.id);
+    expect(r.phase).toBe('done');
+    expect(sent).toBe(26);
+    expect(r.credits).toBe(3000);
+    expect(r.companies[0]).toMatchObject({ outcome: 'waiting', why: 'Over the Google search budget: the run would research it the next day' });
+    expect([r.companies[0].lead, r.companies[0].people]).toEqual([undefined, undefined]);
+  });
+
+  it("remembers its own people searches (never the 6 am run's): the next sample leaves out those that found no new company, and finds the same", async () => {
+    const sent: string[] = [];
+    const svc = () => recording(morningServices(log), sent);
+    const first = await startSample(true);
+    await runSourcingTest(db, svc(), first, Number.POSITIVE_INFINITY);
+    const one = await reportOf(first);
+    // The 6 am run's memory is untouched; the sample's own is kept apart.
+    expect(await db.select().from(prospectSearches)).toEqual([]);
+    const memory = await db.select().from(enrichmentCache);
+    const remembered = memory.filter((m) => m.key.startsWith('sample-search:v1:'));
+    expect(remembered.length).toBeGreaterThan(0);
+    const dead = new Set(remembered.filter((m) => (m.value as { outcomes: { fresh: number }[] }).outcomes.at(-1)!.fresh === 0).map((m) => m.key.split(':').slice(3).join(':')));
+    expect(dead.size).toBeGreaterThan(0);
+    // Forgeline passed: counted on the search that found it.
+    expect(remembered.some((m) => (m.value as { outcomes: { kept: number }[] }).outcomes.some((o) => o.kept > 0))).toBe(true);
+
+    sent.length = 0;
+    const second = await startSample(true);
+    await runSourcingTest(db, svc(), second, Number.POSITIVE_INFINITY);
+    const two = await reportOf(second);
+    expect(two.phase).toBe('done');
+    expect(Object.values(two.skipped ?? {}).reduce((a, n) => a + n, 0)).toBeGreaterThan(0);
+    expect(sent.some((q) => dead.has(normQuery(q)))).toBe(false);
+    // The same leads, for fewer credits.
+    expect(two.companies.filter((c) => c.outcome === 'approved').map((c) => c.page.name).sort()).toEqual(one.companies.filter((c) => c.outcome === 'approved').map((c) => c.page.name).sort());
+    expect(two.credits!).toBeLessThan(one.credits!);
+  });
+
+  it("pushed, the people research found at a company count as checked on LinkedIn that day: the 8 am check doesn't look them up again", async () => {
+    const { pushSampleCompanies } = await import('@/lib/sourcing/sample-run');
+    const id = await startSample(true);
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    const forgeline = (await reportOf(id)).companies.find((c) => c.page.name === 'Forgeline Components')!;
+    expect(forgeline.researchedAt).toBeTruthy();
+    await pushSampleCompanies(db, id, [forgeline.key]);
+    const [lead] = await db.select().from(leads).where(eq(leads.company, 'Forgeline Components'));
+    const found = await db.select().from(people).where(eq(people.leadId, lead.id));
+    const others = found.filter((p) => !p.isPrimary && !p.passedAt);
+    expect(others.length).toBeGreaterThan(0);
+    for (const p of others) expect(p.checkedAt?.toISOString()).toBe(new Date(forgeline.researchedAt!).toISOString());
+
+    // The contact check finds nothing due here, so it searches nothing.
+    const searched: string[] = [];
+    await verifyContacts(db, recording(morningServices(log), searched));
+    expect(searched).toEqual([]);
+    // Someone added since, never checked: due, and looked up.
+    await db.insert(people).values({ leadId: lead.id, name: 'New Person', title: 'Plant Manager', source: 'LinkedIn' });
+    await verifyContacts(db, recording(morningServices(log), searched));
+    expect(searched.some((q) => q.includes('"New Person"'))).toBe(true);
+  });
+
+  it('adds the leads it dealt as approved leads, each given to the person it was dealt to, for a morning with no draw', async () => {
+    const { assignSampleLeads } = await import('@/lib/sourcing/sample-run');
+    const { handedOut } = await import('@/lib/draw');
+    const { istDay, firstWorkingDay } = await import('@/lib/tasks');
+    const id = await startSample();
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    const dealt = r.hands.flatMap((h) => h.cards.map((c) => ({ owner: h.userId, company: cardLead(r, c)!.lead.company })));
+    expect(dealt.length).toBe(3);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const page = () => renderToStaticMarkup(createElement(MorningSample, { test: row, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(page()).toContain('Add as approved leads and assign them');
+
+    const done = await assignSampleLeads(db, id);
+    const day = r.day > istDay() ? r.day : istDay();
+    expect(done).toMatchObject({ day, skipped: [] });
+    expect(done!.given.reduce((a, g) => a + g.leads, 0)).toBe(3);
+    for (const d of dealt) {
+      const [lead] = await db.select().from(leads).where(eq(leads.company, d.company));
+      // Approved, researched, with its contact and drafts, and given to the person the sample dealt it to.
+      expect(lead).toMatchObject({ status: 'Approved', ownerId: d.owner, drawnOn: day });
+      expect(lead.contactName).toBeTruthy();
+      // Its Day 1 steps on that morning, on that person's Today.
+      const steps = await db.select().from(tasks).where(eq(tasks.leadId, lead.id));
+      expect(steps.length).toBe(4);
+      expect(steps.every((t) => t.ownerId === d.owner && t.dueDate === firstWorkingDay(day, new Set()) && t.step === 'Day 1')).toBe(true);
+      expect((await db.select().from(activities).where(eq(activities.leadId, lead.id))).some((a) => a.text.startsWith(`Given to `) && a.text.includes(`Morning Sample Run ${id}`))).toBe(true);
+    }
+    // Counted as that morning's hand-out, so a draw by hand then only fills what is still short.
+    const hands = await handedOut(db, day);
+    for (const h of r.hands) expect(Object.values(hands[String(h.userId)] ?? {}).reduce((a, n) => a + n, 0)).toBe(h.cards.length);
+
+    // Pressed again: nothing changes.
+    const before = await counts();
+    expect(await assignSampleLeads(db, id)).toEqual(done);
+    expect(await counts()).toEqual(before);
+    const [after] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const html = renderToStaticMarkup(createElement(MorningSample, { test: after, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(html).toContain('Added and assigned');
+    expect(html).not.toContain('Add as approved leads and assign them');
+  });
+
+  it('leaves a lead someone already has as it is, and does nothing while the sample runs', async () => {
+    const { assignSampleLeads } = await import('@/lib/sourcing/sample-run');
+    const running = await startSample();
+    expect(await runSourcingTest(db, morningServices(log), running, 0)).toBe('continue');
+    expect(await assignSampleLeads(db, running)).toBeNull();
+    await db.delete(sourcingTests).where(eq(sourcingTests.id, running));
+
+    const id = await startSample();
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    // Given out by hand meanwhile.
+    const [someone] = await db.select().from(users).where(eq(users.name, 'Puja'));
+    await db.update(leads).set({ ownerId: someone.id }).where(eq(leads.company, 'Ready Pool Co'));
+    const done = await assignSampleLeads(db, id);
+    expect(done!.skipped).toEqual(['Ready Pool Co']);
+    expect(done!.given.reduce((a, g) => a + g.leads, 0)).toBe(2);
+    expect((await db.select().from(leads).where(eq(leads.company, 'Ready Pool Co')))[0].ownerId).toBe(someone.id);
   });
 
   it('fails with the reason when Google refuses every search, and saves nothing', async () => {
