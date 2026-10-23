@@ -54,11 +54,14 @@ async function reportOf(id: number): Promise<MorningSampleReport> {
   return t.report as MorningSampleReport;
 }
 
+import { legacyAllocation } from './legacy-allocation';
+
 beforeEach(async () => {
   process.env.DATABASE_URL = 'memory://';
   resetDbForTests();
   db = await getDb();
   log = { calls: [], verified: [], finder: [], apollo: [] };
+  await legacyAllocation(db);
   // Two associates (Puja, who also works CA firms, and Parimal), one lead a day in each segment.
   const team = await db.select().from(users).where(eq(users.role, 'bda')).orderBy(users.id);
   await db.update(users).set({ active: false }).where(inArray(users.id, team.filter((u) => !['Puja', 'Parimal'].includes(u.name)).map((u) => u.id)));

@@ -58,9 +58,22 @@ const companySchema = {
  * The planner's system prompt: the shared rules (and the {{PRODUCT_DESCRIPTION}} that askJson fills in),
  * plus the segment-specific section for each active ICP whose name is exactly that segment.
  */
-export function queryPlannerPrompt(segments: string[]): string {
-  const has = (name: string) => segments.some((s) => normSegment(s) === normSegment(name));
-  return [PROSPECT_QUERIES_BASE_PROMPT, has(MANUFACTURING) ? PROSPECT_QUERIES_MANUFACTURING : '', has(LOGISTICS) ? PROSPECT_QUERIES_LOGISTICS : ''].filter(Boolean).join('\n\n');
+export function queryPlannerPrompt(icps: { segment: string; searchInstructions?: string }[], base?: string): string {
+  // An ICP saved with its own search instructions uses them (blank: none). One without that field at all (older callers)
+  // keeps the sections Manufacturing and 3PL & Logistics have always had.
+  const builtIn = (segment: string) => (normSegment(segment) === normSegment(MANUFACTURING) ? PROSPECT_QUERIES_MANUFACTURING : normSegment(segment) === normSegment(LOGISTICS) ? PROSPECT_QUERIES_LOGISTICS : '');
+  return [base?.trim() || PROSPECT_QUERIES_BASE_PROMPT, ...icps.map((i) => (i.searchInstructions !== undefined ? i.searchInstructions : builtIn(i.segment)).trim())].filter(Boolean).join('\n\n');
+}
+
+/** What the planner is asked about: every ICP's targeting and the current clients (the "user" half of the planning request). */
+export function plannerInputs(icps: Pick<Icp, 'segment' | 'description' | 'industries' | 'companySize' | 'geography' | 'mustHaves' | 'dealBreakers'>[], clients: Pick<Client, 'company' | 'website' | 'industry' | 'whyBought'>[]): string {
+  return [
+    '## ICPs',
+    ...icps.map((i) => icpBlock(i)),
+    '',
+    '## Current clients',
+    clients.length ? clients.map((c) => `- ${c.company} (${c.website || 'no website'}): ${c.industry}. ${c.whyBought}`).join('\n') : '(none listed)',
+  ].join('\n');
 }
 
 /** Search rounds per run: when a round turns up too few companies not already on the list, plan new searches. */
@@ -140,18 +153,10 @@ export async function findProspects(
   known: { company: string; website: string; city?: string }[],
   log: (msg: string, level?: 'info' | 'warn' | 'error') => Promise<void>,
   history: ProspectHistory = NO_HISTORY,
+  /** `basePrompt`: the product's shared search-planning prompt ('' or absent: the built-in one). */
+  options: { basePrompt?: string } = {},
 ): Promise<Prospect[]> {
-  const planText = [
-    '## ICPs',
-    ...icps.map((i) =>
-      icpBlock(i),
-    ),
-    '',
-    '## Current clients',
-    clients.length
-      ? clients.map((c) => `- ${c.company} (${c.website || 'no website'}): ${c.industry}. ${c.whyBought}`).join('\n')
-      : '(none listed)',
-  ].join('\n');
+  const planText = plannerInputs(icps, clients);
 
   // Clients are known everywhere. Leads (and INVECK's own lead list) are known at their location: the
   // same company's plant elsewhere is a new lead, so results about it aren't hidden.
@@ -192,7 +197,7 @@ export async function findProspects(
     const text = (past.length
       ? `${planText}\n\n## Searches already run (do not repeat them or reword them; search elsewhere)\n${past.join('\n')}`
       : planText) + balance;
-    const plan = await askJson(svc, queryPlannerPrompt(segmentNames), text, querySchema);
+    const plan = await askJson(svc, queryPlannerPrompt(icps, options.basePrompt), text, querySchema);
     if (plan.error !== undefined) {
       lastError = 'Planning searches failed: ' + plan.error;
       await log(lastError, 'warn');

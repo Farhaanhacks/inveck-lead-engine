@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { leads, settings, users, type Lead, type LeadStatus } from './db/schema';
+import { allocationRules, icps, leads, products, settings, users, type Lead, type LeadStatus } from './db/schema';
 import { LOGISTICS, MANUFACTURING } from './db/seed';
 import { normSegment } from './icp-match';
 import { getSettings, type Settings } from './settings';
@@ -21,35 +21,76 @@ export const DRAWABLE: LeadStatus[] = ['Approved', 'Low Score'];
  * shortfall in these two.
  */
 export const DRAW_SEGMENTS = [MANUFACTURING, LOGISTICS] as const;
-export type DrawSegment = (typeof DRAW_SEGMENTS)[number];
-export type Quota = Record<DrawSegment, number>;
+/** A segment is an ICP's name: any ICP with an allocation count is drawn (Configuration → Allocation), not only these two. */
+export type DrawSegment = string;
+export type Quota = Record<string, number>;
 
 /** The daily quota per segment from Settings: for an associate without their own numbers. */
 export const quotaOf = (s: Pick<Settings, 'manufacturingPerAssociate' | 'logisticsPerAssociate'>): Quota => ({
   [MANUFACTURING]: s.manufacturingPerAssociate,
   [LOGISTICS]: s.logisticsPerAssociate,
 });
-export const quotaTotal = (q: Quota) => q[MANUFACTURING] + q[LOGISTICS];
+export const quotaTotal = (q: Quota) => Object.values(q).reduce((a, b) => a + b, 0);
 
 /** Every active associate's daily quota, by id: their own numbers (Team page), else the Settings ones. */
 export type Quotas = Map<number, Quota>;
 
+/** The ICPs that are drawn: active ICPs of active products with an allocation count (CA firms come from their sheet, not this draw). */
+export async function drawSegments(db: Db): Promise<string[]> {
+  const rows = await db
+    .select({ segment: icps.segment, count: allocationRules.dailyCount })
+    .from(allocationRules)
+    .innerJoin(icps, eq(allocationRules.icpId, icps.id))
+    .innerJoin(products, eq(allocationRules.productId, products.id))
+    .where(and(eq(icps.active, true), eq(products.active, true)))
+    .orderBy(icps.id);
+  const names = [...new Set(rows.filter((r) => r.count > 0 && normSegment(r.segment) !== normSegment('CA Firms')).map((r) => r.segment))];
+  return [...new Set([...DRAW_SEGMENTS, ...names])];
+}
+
+/**
+ * Every active associate's daily quota per ICP, from Configuration → Allocation (the exact counts per BDA, product and ICP).
+ * Before any allocation exists at all (a fresh database), the old numbers apply: each associate's own on the Team page, else Settings.
+ */
 export async function teamQuotas(db: Db, s?: Pick<Settings, 'manufacturingPerAssociate' | 'logisticsPerAssociate'>): Promise<Quotas> {
   const fallback = quotaOf(s ?? (await getSettings(db)));
+  const segs = await drawSegments(db);
   const rows = await db
     .select({ id: users.id, m: users.drawManufacturing, l: users.drawLogistics })
     .from(users)
     .where(and(eq(users.role, 'bda'), eq(users.active, true)))
     .orderBy(users.id);
-  return new Map(rows.map((r) => [r.id, { [MANUFACTURING]: r.m ?? fallback[MANUFACTURING], [LOGISTICS]: r.l ?? fallback[LOGISTICS] }]));
+  const rules = await db
+    .select({ userId: allocationRules.userId, segment: icps.segment, count: allocationRules.dailyCount })
+    .from(allocationRules)
+    .innerJoin(icps, eq(allocationRules.icpId, icps.id))
+    .innerJoin(products, eq(allocationRules.productId, products.id))
+    .where(and(eq(icps.active, true), eq(products.active, true)));
+  // Once any allocation is configured it is the whole truth: a BDA with none gets none (never the old numbers by accident).
+  const configured = (await db.select({ userId: allocationRules.userId }).from(allocationRules).limit(1)).length > 0;
+  return new Map(
+    rows.map((r) => {
+      const q: Quota = Object.fromEntries(segs.map((s2) => [s2, 0]));
+      if (configured) {
+        for (const x of rules) if (x.userId === r.id && normSegment(x.segment) !== normSegment('CA Firms')) q[segs.find((s2) => normSegment(s2) === normSegment(x.segment)) ?? x.segment] = (q[segs.find((s2) => normSegment(s2) === normSegment(x.segment)) ?? x.segment] ?? 0) + x.count;
+      } else {
+        q[MANUFACTURING] = r.m ?? fallback[MANUFACTURING];
+        q[LOGISTICS] = r.l ?? fallback[LOGISTICS];
+      }
+      return [r.id, q] as const;
+    }),
+  );
 }
 
 /** The whole team's quota, per segment. */
 export function teamTotal(quotas: Quotas): Quota {
-  const out = emptyHand();
-  for (const q of quotas.values()) for (const s of DRAW_SEGMENTS) out[s] += q[s];
+  const out = emptyHand(segmentsOf(quotas));
+  for (const q of quotas.values()) for (const s of Object.keys(out)) out[s] += q[s] ?? 0;
   return out;
 }
+
+/** The segments a set of quotas covers. */
+const segmentsOf = (quotas: Quotas): string[] => [...new Set([...DRAW_SEGMENTS, ...[...quotas.values()].flatMap((q) => Object.keys(q))])];
 
 const asRecord = (q: Quotas): Record<string, Quota> => Object.fromEntries([...q].map(([id, v]) => [String(id), v]));
 const fromRecord = (r: Record<string, Quota>): Quotas => new Map(Object.entries(r).map(([id, v]) => [Number(id), v]));
@@ -63,18 +104,18 @@ const segmentKey = sql`btrim(regexp_replace(replace(lower(${leads.segment}), '&'
  * whose contact isn't confirmed waits until it is.
  */
 const RELEASABLE = and(eq(leads.qualified, true), ne(leads.contactName, ''), isNotNull(leads.contactVerifiedAt));
-const inPool = (segment?: DrawSegment) =>
+const inPool = (segment?: DrawSegment, all: readonly string[] = DRAW_SEGMENTS) =>
   and(
     isNull(leads.ownerId),
     eq(leads.inbound, false),
     eq(leads.refetchPending, false),
     inArray(leads.status, DRAWABLE),
     RELEASABLE,
-    segment ? sql`${segmentKey} = ${normSegment(segment)}` : or(...DRAW_SEGMENTS.map((s) => sql`${segmentKey} = ${normSegment(s)}`)),
+    segment ? sql`${segmentKey} = ${normSegment(segment)}` : or(...all.map((s) => sql`${segmentKey} = ${normSegment(s)}`)),
   );
 
 /** Handed out per associate (by id) and segment on one day. */
-export type Hands = Record<string, Record<DrawSegment, number>>;
+export type Hands = Record<string, Record<string, number>>;
 
 export type DrawRecord = {
   day: string;
@@ -132,10 +173,10 @@ export function dealToDeficits<T>(items: T[], deficits: Map<number, number>, ran
   return hands;
 }
 
-const emptyHand = (): Record<DrawSegment, number> => ({ [MANUFACTURING]: 0, [LOGISTICS]: 0 });
+const emptyHand = (segments: readonly string[] = DRAW_SEGMENTS): Record<string, number> => Object.fromEntries(segments.map((s) => [s, 0]));
 
 /** What each associate has been handed on a day, by segment (counted from the leads themselves). */
-export async function handedOut(db: Db, day: string): Promise<Hands> {
+export async function handedOut(db: Db, day: string, segments: readonly string[] = DRAW_SEGMENTS): Promise<Hands> {
   const rows = await db
     .select({ owner: leads.ownerId, key: segmentKey, n: sql<number>`count(*)::int` })
     .from(leads)
@@ -143,27 +184,29 @@ export async function handedOut(db: Db, day: string): Promise<Hands> {
     .groupBy(leads.ownerId, segmentKey);
   const out: Hands = {};
   for (const r of rows) {
-    const seg = DRAW_SEGMENTS.find((s) => normSegment(s) === r.key);
+    const seg = segments.find((s) => normSegment(s) === r.key);
     if (!seg) continue;
-    (out[String(r.owner)] ??= emptyHand())[seg] += Number(r.n);
+    (out[String(r.owner)] ??= emptyHand(segments))[seg] += Number(r.n);
   }
   return out;
 }
 
 /** One associate's day: leads handed out in the draw, in total and by segment, for the Today counter. */
 export async function allocationFor(db: Db, ownerId: number, day = istDay()): Promise<{ total: number; bySegment: Record<DrawSegment, number> }> {
-  const hand = (await handedOut(db, day))[String(ownerId)] ?? emptyHand();
-  return { total: hand[MANUFACTURING] + hand[LOGISTICS], bySegment: hand };
+  const segs = await drawSegments(db);
+  const hand = (await handedOut(db, day, segs))[String(ownerId)] ?? emptyHand(segs);
+  return { total: Object.values(hand).reduce((a, b) => a + b, 0), bySegment: hand };
 }
 
 /** Researched leads nobody has been given yet that the draw can use, in total and by segment. */
 export async function drawPool(db: Db): Promise<{ total: number; withContact: number; bySegment: Record<DrawSegment, number> }> {
+  const segs = await drawSegments(db);
   const [row] = await db
     .select({ total: sql<number>`count(*)::int`, withContact: sql<number>`count(*) filter (where ${leads.contactName} <> '')::int` })
     .from(leads)
-    .where(inPool());
-  const bySegment = emptyHand();
-  for (const s of DRAW_SEGMENTS) {
+    .where(inPool(undefined, segs));
+  const bySegment = emptyHand(segs);
+  for (const s of segs) {
     const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(inPool(s));
     bySegment[s] = Number(r?.n ?? 0);
   }
@@ -197,18 +240,19 @@ export function drawDue(now = new Date()): boolean {
 /** What each associate is still short by, per segment, and in all. */
 export function shortfalls(quotas: Quotas, hands: Hands): { owner: number; segment: DrawSegment; short: number }[] {
   return [...quotas]
-    .flatMap(([owner, quota]) => DRAW_SEGMENTS.map((segment) => ({ owner, segment, short: Math.max(0, quota[segment] - (hands[String(owner)]?.[segment] ?? 0)) })))
+    .flatMap(([owner, quota]) => Object.keys(quota).map((segment) => ({ owner, segment, short: Math.max(0, quota[segment] - (hands[String(owner)]?.[segment] ?? 0)) })))
     .filter((s) => s.short > 0);
 }
 
 async function record(db: Db, quotas: Quotas, quota: Quota, base: Pick<DrawRecord, 'day' | 'at'>): Promise<DrawRecord> {
-  const hands = await handedOut(db, base.day);
+  const segs = segmentsOf(quotas);
+  const hands = await handedOut(db, base.day, segs);
   const perOwner: Record<string, number> = {};
   const perOwnerSegment: Hands = {};
   for (const o of quotas.keys()) {
-    const h = hands[String(o)] ?? emptyHand();
+    const h = hands[String(o)] ?? emptyHand(segs);
     perOwnerSegment[String(o)] = h;
-    perOwner[String(o)] = h[MANUFACTURING] + h[LOGISTICS];
+    perOwner[String(o)] = Object.values(h).reduce((a, b) => a + b, 0);
   }
   const drawn = Object.values(perOwner).reduce((a, b) => a + b, 0);
   return { ...base, wanted: quotaTotal(teamTotal(quotas)), drawn, perOwner, short: shortfalls(quotas, hands).length > 0, quota, quotas: asRecord(quotas), perOwnerSegment };
@@ -276,30 +320,49 @@ export async function activeTeam(db: Db): Promise<number[]> {
   return (await db.select({ id: users.id }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(users.id)).map((u) => u.id);
 }
 
+/** Where the last deal in a segment stopped: the next one starts with the next associate in line (kept, so it is fair over days). */
+const cursorKey = (segment: string) => `drawCursor:${normSegment(segment)}`;
+async function readCursor(db: Db, segment: string): Promise<number> {
+  const [row] = await db.select().from(settings).where(eq(settings.key, cursorKey(segment)));
+  return typeof row?.value === 'number' ? row.value : 0;
+}
+async function writeCursor(db: Db, segment: string, value: number) {
+  await db.insert(settings).values({ key: cursorKey(segment), value }).onConflictDoUpdate({ target: settings.key, set: { value } });
+}
+
 /**
- * For each segment: works out what each associate is still short by (quota minus what they already got
- * today), picks that many leads at random (those with a named decision-maker first), and deals them to
- * the associates who are short. Returns how many leads were handed out.
+ * For each segment: works out what each associate is still short by (their configured count minus what they already got
+ * today), takes that many leads in a fixed order (those with a named decision-maker first, then the oldest), and deals
+ * them to the associates who are short, one at a time, starting from where the last deal in that segment stopped.
+ * No randomness: the same pool and the same counts always give the same result, and over days the extra lead of a
+ * remainder passes round the team. Returns how many leads were handed out.
  */
-async function drawInto(db: Db, quotas: Quotas, day: string, now: Date, random: () => number): Promise<number> {
-  const hands = await handedOut(db, day);
+async function drawInto(db: Db, quotas: Quotas, day: string, now: Date, random?: () => number): Promise<number> {
+  void random; // kept for callers: nothing here is random any more
+  const segs = segmentsOf(quotas);
+  const hands = await handedOut(db, day, segs);
   let drawn = 0;
-  for (const segment of DRAW_SEGMENTS) {
-    const deficits = new Map([...quotas].map(([o, quota]) => [o, Math.max(0, quota[segment] - (hands[String(o)]?.[segment] ?? 0))] as const).filter(([, n]) => n > 0));
+  for (const segment of segs) {
+    const deficits = new Map([...quotas].map(([o, quota]) => [o, Math.max(0, (quota[segment] ?? 0) - (hands[String(o)]?.[segment] ?? 0))] as const).filter(([, n]) => n > 0));
     const need = [...deficits.values()].reduce((a, b) => a + b, 0);
     if (!need) continue;
     const picked = await db
       .select({ id: leads.id })
       .from(leads)
-      .where(inPool(segment))
-      .orderBy(sql`(${leads.contactName} = '')`, sql`random()`)
+      .where(inPool(segment, segs))
+      .orderBy(sql`(${leads.contactName} = '')`, leads.id)
       .limit(need);
-    for (const [owner, ids] of dealToDeficits(shuffle(picked.map((p) => p.id), random), deficits, random)) {
+    const cursor = await readCursor(db, segment);
+    const start = cursor % deficits.size;
+    let given = 0;
+    for (const [owner, ids] of dealToDeficits(picked.map((p) => p.id), deficits, () => (start + 0.5) / deficits.size)) {
       if (!ids.length) continue;
       // Only leads still without an owner: a lead added by hand meanwhile keeps its person.
-      const given = await db.update(leads).set({ ownerId: owner, drawnOn: day, updatedAt: now }).where(and(inArray(leads.id, ids), isNull(leads.ownerId))).returning({ id: leads.id });
-      drawn += given.length;
+      const got = await db.update(leads).set({ ownerId: owner, drawnOn: day, updatedAt: now }).where(and(inArray(leads.id, ids), isNull(leads.ownerId))).returning({ id: leads.id });
+      drawn += got.length;
+      given += got.length;
     }
+    if (given) await writeCursor(db, segment, cursor + given);
   }
   return drawn;
 }

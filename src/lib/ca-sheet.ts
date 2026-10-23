@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { clients, icps, leads, settings, sheetFirms, users } from './db/schema';
+import { allocationRules, clients, icps, leads, settings, sheetFirms, users } from './db/schema';
 import { logActivity } from './activity';
 import { KnownBranches } from './branches';
 import { importContactSheet, type ContactRow } from './contact-import';
@@ -106,6 +106,36 @@ export function toContactRow(f: CaFirm): ContactRow {
   };
 }
 
+/**
+ * Who is given CA firms each day and how many: the CA Firms ICP's counts in Configuration → Allocation (any BDA with a count).
+ * With none configured, the original arrangement: Anchal and Puja, 10 each. The source (the Google Sheet), the one-firm-once rule
+ * and the "already sent a request" handling are the same either way.
+ */
+export async function caTargets(db: Db): Promise<{ id: number; name: string; count: number; legacy: boolean }[]> {
+  const [ca] = await db.select({ id: icps.id }).from(icps).where(sql`btrim(regexp_replace(replace(lower(${icps.segment}), '&', ' and '), '[^a-z0-9]+', ' ', 'g')) = 'ca firms'`).limit(1);
+  const rules = ca ? await db.select().from(allocationRules).where(eq(allocationRules.icpId, ca.id)) : [];
+  if (!rules.length) return (await caAssociates(db)).map((t) => ({ ...t, count: CA_PER_ASSOCIATE, legacy: true }));
+  const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(users.id);
+  const canonical = (name: string) => {
+    const first = name.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+    return ['anchal', 'aanchal'].includes(first) ? 'Anchal' : first === 'puja' ? 'Puja' : name;
+  };
+  return team.flatMap((t) => {
+    const count = rules.find((r) => r.userId === t.id)?.dailyCount ?? 0;
+    return count > 0 ? [{ id: t.id, name: canonical(t.name), count, legacy: false }] : [];
+  });
+}
+
+/** BDAs with a CA firms count whose account is off or missing. */
+async function caMissing(db: Db, active: { id: number }[]): Promise<string[]> {
+  const [ca] = await db.select({ id: icps.id }).from(icps).where(sql`btrim(regexp_replace(replace(lower(${icps.segment}), '&', ' and '), '[^a-z0-9]+', ' ', 'g')) = 'ca firms'`).limit(1);
+  if (!ca) return [];
+  const rules = (await db.select().from(allocationRules).where(eq(allocationRules.icpId, ca.id))).filter((r) => r.dailyCount > 0 && !active.some((a) => a.id === r.userId));
+  if (!rules.length) return [];
+  const names = await db.select({ id: users.id, name: users.name }).from(users);
+  return rules.map((r) => names.find((n) => n.id === r.userId)?.name ?? '').filter(Boolean);
+}
+
 /** Anchal and Puja's user accounts, found by first name whatever the capitalisation or spelling ("Aanchal"). */
 export async function caAssociates(db: Db): Promise<{ name: string; id: number }[]> {
   const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(users.id);
@@ -171,9 +201,12 @@ export async function runCaDraw(
 
   const spreadsheetId = process.env.CA_SHEET_ID?.trim() || CA_SHEET_ID;
   const tab = process.env.CA_SHEET_TAB?.trim() || CA_SHEET_TAB;
-  const team = await caAssociates(db);
+  const team = await caTargets(db);
   const problems: string[] = [];
-  for (const name of ['Anchal', 'Puja']) if (!team.some((t) => t.name === name)) problems.push(`${name} has no active user account`);
+  // With no CA allocation configured, the original two (Anchal and Puja) are expected.
+  if (team.every((t) => t.legacy)) for (const name of ['Anchal', 'Puja']) if (!team.some((t) => t.name === name)) problems.push(`${name} has no active user account`);
+  // A BDA with a CA count who can't be given firms (turned off, or gone) is said so.
+  for (const name of await caMissing(db, team)) problems.push(`${name} has no active user account`);
 
   let parsed: ReturnType<typeof parseFirms>;
   try {
@@ -205,7 +238,8 @@ export async function runCaDraw(
     opts.random,
   );
   const given = await givenOn(db, day);
-  const deficits = new Map(team.map((t) => [t.id, Math.max(0, CA_PER_ASSOCIATE - (given.get(t.id) ?? 0))] as const).filter(([, n]) => n > 0));
+  const share = new Map(team.map((t) => [t.id, t.count]));
+  const deficits = new Map(team.map((t) => [t.id, Math.max(0, t.count - (given.get(t.id) ?? 0))] as const).filter(([, n]) => n > 0));
   const need = [...deficits.values()].reduce((a, b) => a + b, 0);
   let used = 0;
   for (const [owner, picks] of dealToDeficits(eligible.slice(0, need), deficits, opts.random)) {
@@ -218,7 +252,7 @@ export async function runCaDraw(
         .returning({ key: sheetFirms.sourceKey });
       if (!claimed.length) continue;
       // Two runs at once can't hand an associate more than their share: the later claim is withdrawn.
-      if (((await givenOn(db, day)).get(owner) ?? 0) > CA_PER_ASSOCIATE) {
+      if (((await givenOn(db, day)).get(owner) ?? 0) > (share.get(owner) ?? CA_PER_ASSOCIATE)) {
         await db.delete(sheetFirms).where(eq(sheetFirms.sourceKey, firm.key));
         continue;
       }
@@ -228,9 +262,9 @@ export async function runCaDraw(
   }
 
   const now2 = await givenOn(db, day);
-  const perAssociate = team.map((t) => ({ id: t.id, name: t.name, wanted: CA_PER_ASSOCIATE, drawn: now2.get(t.id) ?? 0 }));
+  const perAssociate = team.map((t) => ({ id: t.id, name: t.name, wanted: t.count, drawn: now2.get(t.id) ?? 0 }));
   const drawn = perAssociate.reduce((n, a) => n + a.drawn, 0);
-  const wanted = Math.max(team.length, 2) * CA_PER_ASSOCIATE;
+  const wanted = team.every((t) => t.legacy) ? Math.max(team.length, 2) * CA_PER_ASSOCIATE : team.reduce((a, t) => a + t.count, 0);
   return save(db, day, {
     day,
     at: previous?.at ?? now.toISOString(),
@@ -245,14 +279,14 @@ export async function runCaDraw(
   });
 }
 
-const empty = (day: string, now: Date, team: { name: string; id: number }[]): CaDrawRecord => ({
+const empty = (day: string, now: Date, team: { name: string; id: number; count: number; legacy: boolean }[]): CaDrawRecord => ({
   day,
   at: now.toISOString(),
   checkedAt: now.toISOString(),
-  wanted: Math.max(team.length, 2) * CA_PER_ASSOCIATE,
+  wanted: team.every((t) => t.legacy) ? Math.max(team.length, 2) * CA_PER_ASSOCIATE : team.reduce((a, t) => a + t.count, 0),
   drawn: 0,
   short: true,
-  perAssociate: team.map((t) => ({ id: t.id, name: t.name, wanted: CA_PER_ASSOCIATE, drawn: 0 })),
+  perAssociate: team.map((t) => ({ id: t.id, name: t.name, wanted: t.count, drawn: 0 })),
   remaining: null,
   added: 0,
   problem: '',

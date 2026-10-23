@@ -4,7 +4,11 @@ import { listKnownCompanies } from './known-companies';
 import { KnownBranches } from './branches';
 import { clients, icps, leads, prospectResults, prospectSearches, runEvents, runs, users, type Lead, type Run, type RunStats } from './db/schema';
 import { processLead } from './pipeline/process-lead';
-import type { ProspectHistory } from './pipeline/prospects';
+import { findProspects, queryPlannerPrompt, type ProspectHistory } from './pipeline/prospects';
+import { defaultProduct, listIcps } from './config';
+import { products, type Product } from './db/schema';
+import { normSegment } from './icp-match';
+import { isCaSegment } from './tasks';
 import { peopleFirstContacts, sourceProspects, wantsAnotherRound } from './sourcing/morning';
 import { RESEARCH_CREDITS, searchBudgetLeft } from './search-budget';
 import { normQuery } from './pipeline/query-history';
@@ -75,12 +79,15 @@ export async function markRunPaused(db: Db, runId: number) {
 }
 
 /** Starts a run, or returns the one already running (only one at a time). */
-export async function startRun(db: Db, opts: { findProspects: boolean; trigger: string; prospectsTo?: string; prospectsWanted?: Partial<Record<string, number>> | null }): Promise<{ run: Run; created: boolean }> {
+export async function startRun(db: Db, opts: { findProspects: boolean; trigger: string; prospectsTo?: string; prospectsWanted?: Partial<Record<string, number>> | null; productId?: number }): Promise<{ run: Run; created: boolean }> {
   const existing = await activeRun(db);
   if (existing) return { run: existing, created: false };
+  // Which product the run is for, the version of its configuration, and (for the AI planner) the exact prompt used.
+  const product = opts.productId ? ((await db.select().from(products).where(eq(products.id, opts.productId)))[0] ?? null) : await defaultProduct(db);
+  const planner = product && product.searchMode === 'ai_planner' ? queryPlannerPrompt((await listIcps(db, product.id)).filter((i) => i.active && !isCaSegment(i.segment)), product.searchPrompt) : '';
   const [run] = await db
     .insert(runs)
-    .values({ findProspects: opts.findProspects, trigger: opts.trigger, prospectsTo: opts.prospectsTo ?? '', prospectsWanted: opts.prospectsWanted ?? null, stats: EMPTY_STATS })
+    .values({ findProspects: opts.findProspects, trigger: opts.trigger, prospectsTo: opts.prospectsTo ?? '', prospectsWanted: opts.prospectsWanted ?? null, stats: EMPTY_STATS, productId: product?.id ?? null, configVersion: product?.configVersion ?? null, plannerPrompt: planner })
     .returning();
   return { run, created: true };
 }
@@ -126,6 +133,36 @@ export async function delegateProspects(db: Db, ids: number[], to: string): Prom
  * The prospect finder's memory, kept in the database across runs: recent searches (not to be
  * repeated), companies earlier searches turned up, and where this run records its own.
  */
+/** Records which product, ICP and configuration version the leads were found under (a label: nothing else on them changes). */
+export async function stampLeads(db: Db, ids: number[], product: Product, configVersion: number): Promise<void> {
+  if (!ids.length) return;
+  const productIcps = await listIcps(db, product.id);
+  await db.update(leads).set({ productId: product.id, configVersion }).where(inArray(leads.id, ids));
+  for (const icp of productIcps) {
+    const matching = (await db.select({ id: leads.id, segment: leads.segment }).from(leads).where(inArray(leads.id, ids))).filter((l) => normSegment(l.segment) === normSegment(icp.segment)).map((l) => l.id);
+    if (matching.length) await db.update(leads).set({ icpId: icp.id }).where(inArray(leads.id, matching));
+  }
+}
+
+/**
+ * The AI planner's search for a product: its shared prompt and its active ICPs' instructions go to DeepSeek, which
+ * plans the searches; those go to Serper and the companies found are added as leads (researched like any other).
+ */
+async function aiPlannerStep(db: Db, svc: Services, run: Run, product: Product, log: (m: string, l?: 'info' | 'warn' | 'error') => Promise<void>, onAdded: (ids: number[]) => Promise<void>) {
+  const active = (await listIcps(db, product.id)).filter((i) => i.active && !isCaSegment(i.segment));
+  if (!active.length) throw new Error(`${product.name} has no active ICP to search for. Turn one on under Configuration.`);
+  await log(`Finding new prospects for ${product.name} with the AI planner (${active.map((i) => i.segment).join(', ')}; configuration version ${run.configVersion ?? product.configVersion})`);
+  const clientList = await db.select().from(clients);
+  const known = [...(await db.select({ company: leads.company, website: leads.website, city: leads.city }).from(leads)), ...(await listKnownCompanies(db))];
+  const planner = product.description.trim() ? { ...svc, settings: { ...svc.settings, productDescription: product.description.trim() } } : svc;
+  const found = await findProspects(planner, active, clientList, known, log, await prospectHistory(db, run.id), { basePrompt: product.searchPrompt });
+  if (found.length) {
+    const rows = await db.insert(leads).values(found.map((p) => ({ ...p, status: 'New' as const }))).returning({ id: leads.id, source: leads.source });
+    for (const r of rows) await logActivity(db, r.id, 'added', `Found by the prospect search (${product.name}). ${r.source}`);
+    await onAdded(rows.map((r) => r.id));
+  } else await log('No new prospects found');
+}
+
 export async function prospectHistory(db: Db, runId: number | null): Promise<ProspectHistory> {
   const since = (days: number) => new Date(Date.now() - days * 86_400_000);
   const [searches, seen] = await Promise.all([
@@ -263,8 +300,12 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
       if (run.findProspects && !run.prospectsDone) {
         const added: number[] = [];
         let outcome: 'done' | 'continue' = 'done';
+        const product = run.productId ? ((await db.select().from(products).where(eq(products.id, run.productId)))[0] ?? null) : await defaultProduct(db);
         try {
-          outcome = await sourceProspects(db, svc, run, {
+          // A product on the AI planner: its configured prompt goes to DeepSeek for the searches, which go to Serper.
+          // (Inveck is on people-first search, which is what ran before: untouched.)
+          if (product && product.searchMode === 'ai_planner') await aiPlannerStep(db, svc, run, product, (m, l) => log(m, l), async (ids) => void added.push(...ids));
+          else outcome = await sourceProspects(db, svc, run, {
             started,
             budgetMs,
             log: (m, l) => log(m, l),
@@ -279,6 +320,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
           await save({ error });
         }
         if (added.length) {
+          if (product) await stampLeads(db, added, product, run.configVersion ?? product.configVersion);
           stats.prospectsAdded += added.length;
           const names = await db.select({ company: leads.company }).from(leads).where(inArray(leads.id, added));
           await log(`Added ${added.length} new prospect${added.length === 1 ? '' : 's'}: ${names.map((n) => n.company).join(', ')}`);

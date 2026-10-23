@@ -13,6 +13,7 @@ const LINKS = [
   { href: '/pipeline', label: 'Pipeline' },
   { href: '/contacts', label: 'Contacts' },
   { href: '/leads/new', label: 'Add companies' },
+  { href: '/configuration', label: 'Configuration', admin: true },
   { href: '/targets', label: 'ICPs & clients', admin: true },
   { href: '/settings', label: 'Settings', admin: true },
 ];

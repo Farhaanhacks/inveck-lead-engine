@@ -1,6 +1,8 @@
 import { normSegment } from './icp-match';
 import { splitPhones } from './phones';
 import { isCaSegment } from './tasks';
+import { DEFAULT_TEMPLATES, MISSING_TEXT, renderTemplate, varsFor } from './config-templates';
+import { templateKey, type TemplateSet } from './config';
 
 /**
  * The first WhatsApp a BDA sends a company, from their own WhatsApp (a wa.me click-to-chat link with the
@@ -47,50 +49,36 @@ export function whatsAppDigits(phone: string | null | undefined): string {
   return international && !d.startsWith('91') && !d.startsWith('0') && d.length >= 11 && d.length <= 15 ? d : '';
 }
 
-const FOOT_MANUFACTURING =
-  'A quick question — when physical inventory verification happens across your plants or warehouses, is your team still using count sheets, Excel, and manual consolidation?\n\n' +
-  'Inveck helps manufacturing teams digitize this workflow — physical verification → real-time data → variance reporting → reconciliation, reducing paperwork and manual consolidation.\n\n' +
-  "I’m sharing our product profile. Would be glad to understand how your team currently handles inventory verification.";
+export type WhatsAppOutreach = { ok: true; template: WhatsAppTemplate | null; text: string; number: string; url: string } | { ok: false; error: string };
 
-const FOOT_3PL =
-  'A quick question — when verifying inventory across your warehouses or client locations, does your team still rely on count sheets, Excel, and manual consolidation?\n\n' +
-  'Inveck helps 3PL and warehousing companies digitize physical inventory verification through mobile-based counting, real-time data capture, variance reporting, and reconciliation, reducing paperwork and manual effort.\n\n' +
-  "I’m sharing our product profile for your reference. Would be glad to understand how your team currently handles inventory verification across warehouses.";
-
-const CA_TEXT =
-  'Hi Sir/Ma’am, quick question\n\n' +
-  'During your stock audit / physical inventory verification assignments, does your team still have to manage count sheets, consolidate Excel files, follow up on variances and prepare the final data for review?\n\n' +
-  'That’s exactly the gap INVECK is solving for CA & Audit firms digitising physical verification from counting to reporting, while giving your team better visibility across the assignment.\n\n' +
-  'We’re already working with businesses across industries and CA & Advisory firms.\n\n' +
-  'Sharing a short overview if you handle stock audits or physical verification for your clients, this could be very relevant for your next assignment. 👇';
-
-export type WhatsAppOutreach = { ok: true; template: WhatsAppTemplate; text: string; number: string; url: string } | { ok: false; error: string };
+const builtInBody = (segment: string): string | null => {
+  const t = templateFor(segment);
+  const icp = t === 'manufacturing' ? 'Manufacturing' : t === '3pl' ? '3PL & Logistics' : t === 'ca' ? 'CA Firms' : '';
+  return DEFAULT_TEMPLATES.find((x) => x.channel === 'whatsapp' && x.icp === icp)?.body ?? null;
+};
 
 /**
- * The message and link for a company. The name is the main contact's, the BDA is the one who owns the company
- * (not whoever is logged in), and the number is the main contact's. Anything missing that the template needs is a
+ * The message and link for a company, from its ICP's WhatsApp template (Configuration → Templates; with no configured set
+ * given, the built-in Manufacturing, 3PL and CA ones). The name is the main contact's, the BDA is the one who owns the
+ * company (not whoever is logged in), and the number is the main contact's. Anything missing that the template needs is a
  * plain error, never a blank in the message.
  */
-export function buildWhatsApp(lead: { segment: string; company: string; contactName: string; contactPhone: string }, ownerName: string | null | undefined): WhatsAppOutreach {
+export function buildWhatsApp(
+  lead: { segment: string; company: string; contactName: string; contactPhone: string },
+  ownerName: string | null | undefined,
+  templates?: TemplateSet,
+): WhatsAppOutreach {
   const number = whatsAppDigits(lead.contactPhone);
   if (!number) return { ok: false, error: "A valid WhatsApp number is needed for the main contact. Add a mobile number under Edit point of contact first." };
-  const template = templateFor(lead.segment);
-  if (!template) return { ok: false, error: `There is no WhatsApp message for the segment "${lead.segment || 'not set'}". Messages exist for Manufacturing, 3PL & Logistics and CA Firms.` };
-  const bda = String(ownerName ?? '').trim();
-  const company = lead.company.trim();
-  let text: string;
-  if (template === 'ca') {
-    text = CA_TEXT;
-  } else {
-    if (!bda) return { ok: false, error: 'This company has no owner yet, so there is no BDA name for the message. Assign it to a BDA first.' };
-    const first = contactFirstName(lead.contactName);
-    const greeting = first ? `Hi ${first} Sir,` : 'Hi Sir/Ma’am,';
-    if (template === 'manufacturing') {
-      text = `${greeting} ${bda} this side from Inveck. I tried reaching you regarding the physical stock counting process at your organization.\n\n${FOOT_MANUFACTURING}`;
-    } else {
-      if (!company) return { ok: false, error: "This company's name is missing, so the message can't be filled in." };
-      text = `${greeting} ${bda} this side from Inveck. I tried reaching you regarding the inventory verification process at ${company}.\n\n${FOOT_3PL}`;
-    }
+  const body = templates ? (templates.get(templateKey(lead.segment, 'whatsapp'))?.body ?? null) : builtInBody(lead.segment);
+  if (!body) return { ok: false, error: `There is no WhatsApp message for the segment "${lead.segment || 'not set'}". Add a WhatsApp template for it under Configuration → Templates.` };
+  const vars = varsFor(lead, ownerName, contactFirstName, (n) => (contactFirstName(n) ? n.trim() : ''));
+  const r = renderTemplate(body, vars);
+  if (!r.ok) {
+    // The same plain messages as before for the two a BDA can fix.
+    if (r.missing.includes('bd_name')) return { ok: false, error: 'This company has no owner yet, so there is no BDA name for the message. Assign it to a BDA first.' };
+    if (r.missing.includes('company_name')) return { ok: false, error: "This company's name is missing, so the message can't be filled in." };
+    return { ok: false, error: `The message needs ${r.missing.map((m) => MISSING_TEXT[m]).join(' and ')}, which is missing in the CRM. Correct the record first.` };
   }
-  return { ok: true, template, text, number, url: `https://wa.me/${number}?text=${encodeURIComponent(text)}` };
+  return { ok: true, template: templateFor(lead.segment), text: r.text, number, url: `https://wa.me/${number}?text=${encodeURIComponent(r.text)}` };
 }

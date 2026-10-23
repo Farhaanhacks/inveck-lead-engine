@@ -2,7 +2,7 @@ import { and, asc, eq, gt, isNull, lte, notInArray } from 'drizzle-orm';
 import type { Db } from '../db';
 import { leads, tasks, type Lead } from '../db/schema';
 import { logActivity } from '../activity';
-import { FOLLOW_UP_ROUNDS, nextEmailRound } from '../follow-up-sequence';
+import { FOLLOW_UP_ROUNDS, nextEmailRound, ruleForLead } from '../follow-up-sequence';
 import { emailedAlready } from '../mail/plan';
 import { istDay } from '../tasks';
 import { askJson } from './ai';
@@ -23,7 +23,7 @@ const schema = {
 };
 
 /** The AI's follow-up draft for a round (1-5, default the next one); one retry when a field is missing. */
-export async function writeFollowUp(svc: Services, lead: Lead, round = lead.followUpStep + 1): Promise<{ subject?: string; body?: string; error?: string }> {
+export async function writeFollowUp(svc: Services, lead: Lead, round = lead.followUpStep + 1, totalRounds = FOLLOW_UP_ROUNDS): Promise<{ subject?: string; body?: string; error?: string }> {
   const s = svc.settings;
   const userText = [
     `## Company: ${lead.company}${lead.city ? ` (${lead.city})` : ''}`,
@@ -38,7 +38,7 @@ export async function writeFollowUp(svc: Services, lead: Lead, round = lead.foll
     `Subject: ${lead.emailSubject}`,
     lead.emailBody,
     '',
-    `## This is follow-up ${round} of ${FOLLOW_UP_ROUNDS}${round >= FOLLOW_UP_ROUNDS ? ': the last one' : ''}`,
+    `## This is follow-up ${round} of ${totalRounds}${round >= totalRounds ? ': the last one' : ''}`,
     '',
     '## Sender',
     `Name: ${s.senderName}`,
@@ -64,7 +64,7 @@ export async function writeFollowUp(svc: Services, lead: Lead, round = lead.foll
 /** Writes and stores the draft for a lead's next open follow-up email. It stays editable until someone marks it sent. */
 export async function draftFollowUp(db: Db, svc: Services, lead: Lead): Promise<{ ok: boolean; error?: string }> {
   const round = (await nextEmailRound(db, lead.id))?.followUpRound ?? lead.followUpStep + 1;
-  const out = await writeFollowUp(svc, lead, round);
+  const out = await writeFollowUp(svc, lead, round, (await ruleForLead(db, lead)).rounds);
   if (!out.body) return { ok: false, error: out.error };
   await db.update(leads).set({ followUpSubject: out.subject!, followUpBody: out.body, updatedAt: new Date() }).where(eq(leads.id, lead.id));
   await logActivity(db, lead.id, 'follow_up_drafted', `Follow-up ${round} drafted, waiting for approval`);

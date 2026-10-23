@@ -4,6 +4,7 @@ import { atMostEvery } from '@/lib/throttle';
 import { TierBadge } from '@/components/tier-badge';
 import { StepActions, TaskButton, TaskForm } from '@/components/step-actions';
 import { LinkedinTracker } from '@/components/linkedin-tracker';
+import { defaultProduct, loadTemplateSets, type TemplateSet } from '@/lib/config';
 import { loadLinkedinActivity, statusFromOutcome, type LinkedinView } from '@/lib/linkedin-activity';
 import type { MeetingInfo } from '@/components/meeting-dialog';
 import { defaultMeetingTitle, meetingsOn } from '@/lib/meetings';
@@ -38,7 +39,7 @@ import {
   DAILY_LINKEDIN_LIMIT,
   dayCounts,
   CA_FALLBACK_STEP,
-  CA_ROUNDS,
+  caRoundsOf,
   CA_WAITING_STEP,
   ensureLinkedinSteps,
   ensureSequences,
@@ -204,7 +205,7 @@ const laterRound = (a: Task, b: Task) => a.dueDate > b.dueDate || (a.dueDate ===
 function roundLabel(task: Task): string {
   if (task.priority) return 'Promised callback';
   if (task.step === CA_WAITING_STEP) return 'Waiting for LinkedIn';
-  if (task.step === CA_FALLBACK_STEP) return `Follow-up round ${task.caRound || 1} of ${CA_ROUNDS} (call, WhatsApp and email)`;
+  if (task.step === CA_FALLBACK_STEP) return `Follow-up round ${task.caRound || 1} of ${caRoundsOf(task)} (call, WhatsApp and email)`;
   if (task.step.startsWith('Day 1')) return 'First contact';
   return task.step;
 }
@@ -213,7 +214,7 @@ function roundLabel(task: Task): string {
 type WaContext = { to: string; agreed: boolean; optedOut: boolean; plan: WaPlan | null; outreach: WhatsAppOutreach };
 
 /** Sending from Outlook: the viewer's connected mailbox (if any) and what was already sent to this company. */
-type MailContext = { configured: boolean; from: string; senderName: string; ownerName: string; sent?: SentEmail[] };
+type MailContext = { configured: boolean; from: string; senderName: string; ownerName: string; sent?: SentEmail[]; templates?: TemplateSet };
 
 /** One line of a company's checklist: the step, what to say, and the buttons to log it. */
 function Step({
@@ -242,7 +243,7 @@ function Step({
   const outreach = task.kind === 'whatsapp' ? whatsapp?.outreach : undefined;
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
   const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
-  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda, owner: mail.ownerName }) : null;
+  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda, owner: mail.ownerName, templates: mail.templates }) : null;
   // This step's email already went from Outlook (and the step was undone since): only to be logged.
   const went = task.kind === 'email' ? mail?.sent?.find((e) => e.taskId === task.id) : undefined;
   return (
@@ -778,12 +779,15 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   const ownerIds = [...new Set(visible.map((g) => g.lead.ownerId).filter((o): o is number => o != null))];
   const ownerNames = new Map((ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : []).map((u) => [u.id, u.name]));
   const senderName = settings?.senderName ?? '';
-  const mailFor = (l: Lead): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, ownerName: l.ownerId != null ? ownerNames.get(l.ownerId) ?? '' : '', sent: sentMail.get(l.id) } : undefined);
+  // The message templates of these companies' products (Configuration → Templates).
+  const defaultId = (await defaultProduct(db))?.id ?? 0;
+  const tplSets = await loadTemplateSets(db, visible.map((g) => g.lead.productId));
+  const mailFor = (l: Lead): MailContext | undefined => (own ? { configured: mailReady, from: mailbox?.address ?? '', senderName, ownerName: l.ownerId != null ? ownerNames.get(l.ownerId) ?? '' : '', sent: sentMail.get(l.id), templates: tplSets.get(l.productId ?? defaultId) } : undefined);
   const waFor = (l: Lead): WaContext | undefined => {
     if (!own) return undefined;
     const to = waNumber(l.contactPhone);
     const c: WhatsappContact | undefined = waKnown.get(to);
-    return { to, agreed: canMessage(c), optedOut: !!c?.optedOutAt, plan: waReady && settings && to ? planWhatsApp(l, bda, settings, c) : null, outreach: buildWhatsApp(l, l.ownerId != null ? ownerNames.get(l.ownerId) : null) };
+    return { to, agreed: canMessage(c), optedOut: !!c?.optedOutAt, plan: waReady && settings && to ? planWhatsApp(l, bda, settings, c) : null, outreach: buildWhatsApp(l, l.ownerId != null ? ownerNames.get(l.ownerId) : null, tplSets.get(l.productId ?? defaultId)) };
   };
   // WhatsApp messages waiting for an answer: the list's own, and for administrators, ones from numbers not on any company.
   const { replies, strangers } = waReady ? await waitingReplies(db, viewId, me.role === 'admin') : { replies: [], strangers: [] };

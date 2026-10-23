@@ -26,6 +26,7 @@ import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
 import { KnownBranches } from '@/lib/branches';
 import { escalate, newContactNamed } from '@/lib/escalate';
+import { stampNewLead } from '@/lib/config';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { startRun } from '@/lib/runs';
 import { DEFAULT_MODELS, getSettings, saveSettings, settingsSchema } from '@/lib/settings';
@@ -182,6 +183,7 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     // P1, P2 or P3 when the team chose one; else worked out from the title.
     contactTier: chosenTier(str(form, 'contactTier')),
   }).returning({ id: leads.id });
+  await stampNewLead(db, row.id);
   await logActivity(db, row.id, 'added', inbound ? 'Inbound lead' : 'Added by hand');
   await assignUnowned(db);
   revalidatePath('/leads');

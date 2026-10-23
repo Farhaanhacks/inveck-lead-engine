@@ -10,7 +10,9 @@ import { requireUser } from '@/lib/users';
 import { disconnectMailbox, MailError, sendFromMailbox } from '@/lib/mail/outlook';
 import { loadProfilePdf } from '@/lib/mail/profile-pdf';
 import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
-import { draftFollowUp, FOLLOW_UP_ROUNDS } from '@/lib/pipeline/follow-ups';
+import { draftFollowUp } from '@/lib/pipeline/follow-ups';
+import { ruleForLead } from '@/lib/follow-up-sequence';
+import { defaultProduct, loadTemplateSets } from '@/lib/config';
 import { errorMessage } from '@/lib/pipeline/text';
 import { formatDateTime } from '@/lib/dates';
 import { liveServices } from '@/lib/run-driver';
@@ -62,7 +64,8 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   const prior = lastSentTo((await sentByLead(db, [lead.id])).get(lead.id), to);
   // The BDA named in the email is the company's owner, from the owner record.
   const [owner] = await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId));
-  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name, owner: owner?.name });
+  const templates = (await loadTemplateSets(db, [lead.productId])).get(lead.productId ?? (await defaultProduct(db))?.id ?? 0);
+  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name, owner: owner?.name, templates });
   if (plan.problem) return { error: plan.problem };
   const reviewed = form.has('body');
   const subject = (reviewed ? str(form, 'subject') : plan.subject).trim();
@@ -111,7 +114,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   if (!plan.followUp && !edited) {
     await db.update(leads).set({ emailSubject: subject, emailBody: body, updatedAt: now }).where(eq(leads.id, lead.id));
   } else {
-    const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, FOLLOW_UP_ROUNDS);
+    const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, (await ruleForLead(db, lead)).rounds);
     await db
       .update(leads)
       .set({ followUpSubject: '', followUpBody: '', followUpStep: step, updatedAt: now })

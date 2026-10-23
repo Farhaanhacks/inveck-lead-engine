@@ -2,7 +2,7 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import { INBOUND_SOURCE } from './inbound-source';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
-import { CA_FALLBACK_STEP, CA_ROUNDS, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
+import { CA_FALLBACK_STEP, CA_ROUNDS, caRoundsOf, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
 
 /**
  * The follow-up funnel: every lead in outreach, by where its follow-up stands. Built from the same
@@ -58,7 +58,7 @@ function roundOf(t: Task | null): string {
   if (!t) return '';
   if (t.priority) return 'Promised callback';
   if (t.step === CA_WAITING_STEP) return 'Waiting for LinkedIn';
-  if (t.step === CA_FALLBACK_STEP) return `Follow-up round ${t.caRound || 1} of ${CA_ROUNDS}`;
+  if (t.step === CA_FALLBACK_STEP) return `Follow-up round ${t.caRound || 1} of ${caRoundsOf(t)}`;
   if (t.step === 'Day 1') return 'First contact';
   return t.step || t.title;
 }

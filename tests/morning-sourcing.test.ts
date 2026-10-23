@@ -34,11 +34,14 @@ let log: FakeLog;
 
 const services = (searched: string[] = [], extra: Parameters<typeof morningServices>[2] = {}) => morningServices(log, searched, extra);
 
+import { legacyAllocation } from './legacy-allocation';
+
 beforeEach(async () => {
   process.env.DATABASE_URL = 'memory://';
   resetDbForTests();
   db = await getDb();
   log = { calls: [], verified: [], finder: [], apollo: [] };
+  await legacyAllocation(db);
   // One associate, one lead a day in each segment: the draw needs one of each.
   const team = await db.select().from(users).where(eq(users.role, 'bda')).orderBy(users.id);
   await db.update(users).set({ active: false }).where(inArray(users.id, team.slice(1).map((u) => u.id)));

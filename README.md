@@ -419,3 +419,24 @@ Vercel's free plan runs scheduled jobs once a day, so a free outside timer calls
 3. The job's history should show status 200 and a short JSON result (`read`, `created`, `meetings`...). A 403 means the secret doesn't match.
 
 This secret can only start the read-only sheet sync; it does not open anything else. Do not put it in the URL.
+
+## Configuration (administrators)
+
+**Configuration** in the admin sidebar manages, per product (Inveck today; more can be added later and nothing about Movek exists yet):
+
+| Section | What it holds | Notes |
+| --- | --- | --- |
+| Products | name, description, active, search mode | Deactivating stops new searches and allocation; nothing made is removed. |
+| ICPs & Search | each ICP's industries, locations, company size, exclusions, titles and **search instructions**; the shared search-planning prompt; a preview of the effective prompt and what it is asked about; a button to start a run for the product | A new ICP is usable in Allocation, Templates and Follow-up rules at once. ICP names are used once across products (a lead's segment is its ICP's name). |
+| Team Members | create/deactivate BDAs (BDA role only), assign each to several products | Login is the email; an existing email is refused. The random starting password is shown once and stored hashed. |
+| Allocation | each BDA's daily total and an exact count per ICP | Counts must add up to the total or it won't save. |
+| Templates | email subject/body and WhatsApp body per ICP, with `{{contact_name}}`, `{{first_name}}`, `{{greeting}}`, `{{company_name}}`, `{{bd_name}}` and a rendered preview | Editing a message while sending it never changes the template. |
+| Follow-up Rules | number of follow-ups, working days apart, call outcomes that start them, per ICP (or the product default), with a schedule preview | Weekends and holidays never count. |
+
+**Search mode.** *People first* is how Inveck searches today (LinkedIn job titles from the ICP) and is untouched. *AI planner* uses the shared prompt plus each active ICP's search instructions, sends them to DeepSeek to plan searches, and sends those to Serper. Inveck's built-in Manufacturing and 3PL & Logistics prompts are stored as the search instructions of those two ICPs (and the built-in shared prompt is used while the shared prompt is blank), so the AI planner builds exactly the prompt it always did. A product made later starts on the AI planner.
+
+**What was carried forward (first start after deploying).** Inveck's ICPs, every BDA on Inveck, each BDA's allocation (their Team page numbers, else the Settings ones, plus CA firms for the CA associates: 10 each), the email and WhatsApp texts that used to be fixed, and the follow-up rules (5 every other working day; CA 3, a day apart). Existing leads, assignments, activities and follow-up history are not rewritten; leads only get a product and ICP label. Changes apply to future prospecting, allocation, messages and follow-ups.
+
+**Allocation is not random.** Leads go out in a fixed order (those with a named decision-maker first, then oldest), dealt one at a time starting from where the last deal in that ICP stopped, so the extra lead of a remainder passes round the team. CA firms still come from their Google Sheet (the sheet's firms are picked as before; the per-BDA count is the CA Firms ICP's count in Allocation).
+
+**Versions.** Every change to a product's configuration raises its configuration version. Each run records the product, that version and (on the AI planner) the exact prompt; leads record their product, ICP and the version in force when they were found or imported.

@@ -109,19 +109,21 @@ export function planCaSequence(startDay: string): PlannedTask[] {
 
 /** A CA firm gets exactly this many follow-up rounds (call, WhatsApp and email each) after its LinkedIn request. */
 export const CA_ROUNDS = 3;
+/** How many rounds a CA firm's plan has: read from the step's own title ("Round 1 of 3: call"), so a changed rule shows right. */
+export const caRoundsOf = (t: { title: string }) => Number(/\bof (\d+)\b/.exec(t.title)?.[1]) || CA_ROUNDS;
 
 /**
  * After a CA firm's request: the waiting step (from today) and, if it isn't accepted, three follow-up
  * rounds, each a call, a WhatsApp and an email. Round 1 is on `fallbackDay`; rounds 2 and 3 follow on the
  * next working days (the same one-working-day spacing, never a weekend or a holiday).
  */
-export function planCaFallback(today: string, fallbackDay: string, waiting: boolean, holidays: Holidays = NO_HOLIDAYS): PlannedTask[] {
+export function planCaFallback(today: string, fallbackDay: string, waiting: boolean, holidays: Holidays = NO_HOLIDAYS, rule: { rounds: number; spacingDays: number } = { rounds: CA_ROUNDS, spacingDays: 1 }): PlannedTask[] {
   const plan: PlannedTask[] = waiting ? [{ kind: 'linkedin', step: CA_WAITING_STEP, title: 'Waiting for the LinkedIn request to be accepted', dueDate: today, slot: 'day' }] : [];
   const first = firstWorkingDay(fallbackDay, holidays);
-  for (let round = 1; round <= CA_ROUNDS; round++) {
-    const dueDate = addWorkingDays(first, round - 1, holidays);
+  for (let round = 1; round <= rule.rounds; round++) {
+    const dueDate = addWorkingDays(first, (round - 1) * rule.spacingDays, holidays);
     for (const [kind, label] of [['call', 'call'], ['whatsapp', 'WhatsApp'], ['email', 'email']] as const) {
-      plan.push({ kind, step: CA_FALLBACK_STEP, title: `Round ${round} of ${CA_ROUNDS}: ${label}`, dueDate, slot: 'day', caRound: round });
+      plan.push({ kind, step: CA_FALLBACK_STEP, title: `Round ${round} of ${rule.rounds}: ${label}`, dueDate, slot: 'day', caRound: round });
     }
   }
   return plan;

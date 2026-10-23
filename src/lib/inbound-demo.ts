@@ -6,6 +6,7 @@ import { logActivity } from './activity';
 import { googleCredentials, readTab } from './google-sheet';
 import { defaultMeetingTitle, scheduleMeeting } from './meetings';
 import { cleanPhone } from './tracker';
+import { stampNewLead } from './config';
 
 /**
  * Inbound demo requests from the website form's Google Sheet (read-only, with the same service account as the CA firms
@@ -274,6 +275,7 @@ async function makeLead(db: Db, c: Record<string, string>, owner: Bda, rowKey: s
     })
     .returning();
   await db.insert(people).values({ leadId: lead.id, name: lead.contactName, email: lead.contactEmail, phone, source: 'Website demo form', isPrimary: true, evidence: 'Filled in the demo form', checkedAt: now });
+  await stampNewLead(db, lead.id);
   await logActivity(db, lead.id, 'added', `Inbound demo request from the website form (${sourceLine(c) || 'no source given'}). Given to ${owner.name}, place ${(slot % ROTATION.length) + 1} in the rotation (${rowKey.slice(0, 8)})`);
   return lead;
 }

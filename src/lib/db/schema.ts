@@ -92,6 +92,10 @@ export const leads = pgTable('leads', {
   linkedinOutcome: text('linkedin_outcome').notNull().default(''),
   /** Came in from ads, the website or a campaign: shared equally between the team and must never sit untouched. */
   inbound: boolean('inbound').notNull().default(false),
+  /** The product, ICP and configuration version the lead was found or imported under (null on leads from before: the default product). */
+  productId: integer('product_id'),
+  icpId: integer('icp_id'),
+  configVersion: integer('config_version'),
   /** The India day (YYYY-MM-DD) this lead was handed out in the morning draw; empty when it came another way. */
   drawnOn: text('drawn_on').notNull().default(''),
   /** Point of contact tier (P1, P2, P3) set by hand on the tracker; empty means worked out from the designation. */
@@ -167,6 +171,10 @@ export const icps = pgTable('icps', {
   /** Functions never to target first (HR, admin, quality). */
   avoidTitles: text('avoid_titles').notNull().default(''),
   pitchAngle: text('pitch_angle').notNull().default(''),
+  /** The product this ICP belongs to (a products row); null on rows from before products: the default product. */
+  productId: integer('product_id'),
+  /** Instructions for generating search queries for this ICP, added to the planner prompt while the ICP is active. */
+  searchInstructions: text('search_instructions').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Icp = typeof icps.$inferSelect;
@@ -224,6 +232,11 @@ export const runs = pgTable('runs', {
   error: text('error').notNull().default(''),
   cancelRequested: boolean('cancel_requested').notNull().default(false),
   prospectsDone: boolean('prospects_done').notNull().default(false),
+  /** The product searched for and the version of its configuration (ICPs, prompts) the run used. */
+  productId: integer('product_id'),
+  configVersion: integer('config_version'),
+  /** The prompt the planner was given for this run (what was effective at the time). */
+  plannerPrompt: text('planner_prompt').notNull().default(''),
   /** The people-first prospect search's progress (see sourcing/morning.ts); null on runs that didn't search. */
   sourcing: jsonb('sourcing'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
@@ -730,3 +743,68 @@ export const inboundDemoRows = pgTable('inbound_demo_rows', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type InboundDemoRow = typeof inboundDemoRows.$inferSelect;
+
+// ─── Configuration ───
+
+/**
+ * A product the lead engine sells (Inveck today). ICPs, team assignments, allocation, templates and follow-up rules
+ * all belong to one. `searchPrompt` is the shared search-planning prompt ('' = the built-in one); `description` ''
+ * means the product description in Settings. `configVersion` goes up with every change to the product's configuration.
+ */
+export const products = pgTable('products', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull().default(''),
+  searchPrompt: text('search_prompt').notNull().default(''),
+  /** How runs find prospects for this product: 'people_first' (LinkedIn titles, the way Inveck runs) or 'ai_planner' (the configured prompt, DeepSeek, then Serper). */
+  searchMode: text('search_mode').$type<'people_first' | 'ai_planner'>().notNull().default('ai_planner'),
+  active: boolean('active').notNull().default(true),
+  configVersion: integer('config_version').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type Product = typeof products.$inferSelect;
+
+/** Which products a BDA works on (a BDA can have several). */
+export const userProducts = pgTable('user_products', { userId: integer('user_id').notNull(), productId: integer('product_id').notNull() }, (t) => [uniqueIndex('user_products_idx').on(t.userId, t.productId)]);
+
+/** A BDA's daily lead total for a product: what the per-ICP allocation counts must add up to. */
+export const allocationTargets = pgTable('allocation_targets', { userId: integer('user_id').notNull(), productId: integer('product_id').notNull(), dailyTotal: integer('daily_total').notNull().default(0) }, (t) => [uniqueIndex('allocation_targets_idx').on(t.userId, t.productId)]);
+
+/** The exact number of leads a BDA is given each working day for one product and ICP. */
+export const allocationRules = pgTable(
+  'allocation_rules',
+  { userId: integer('user_id').notNull(), productId: integer('product_id').notNull(), icpId: integer('icp_id').notNull(), dailyCount: integer('daily_count').notNull().default(0) },
+  (t) => [uniqueIndex('allocation_rules_idx').on(t.userId, t.productId, t.icpId)],
+);
+
+/** An email or WhatsApp template for a product and ICP: variables like {{contact_name}}, {{company_name}}, {{bd_name}}. */
+export const messageTemplates = pgTable(
+  'message_templates',
+  {
+    id: serial('id').primaryKey(),
+    productId: integer('product_id').notNull(),
+    icpId: integer('icp_id').notNull(),
+    channel: text('channel').$type<'email' | 'whatsapp'>().notNull(),
+    subject: text('subject').notNull().default(''),
+    body: text('body').notNull().default(''),
+    active: boolean('active').notNull().default(true),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('message_templates_idx').on(t.productId, t.icpId, t.channel)],
+);
+
+/** How many follow-up rounds, how far apart (in working days) and which call outcomes start them, per product and ICP (icpId 0: the product's default). */
+export const followupRules = pgTable(
+  'followup_rules',
+  {
+    id: serial('id').primaryKey(),
+    productId: integer('product_id').notNull(),
+    icpId: integer('icp_id').notNull().default(0),
+    rounds: integer('rounds').notNull().default(5),
+    spacingDays: integer('spacing_days').notNull().default(2),
+    outcomes: text('outcomes').notNull().default('no_answer,busy,wrong_number'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('followup_rules_idx').on(t.productId, t.icpId)],
+);
+export type MessageTemplate = typeof messageTemplates.$inferSelect;

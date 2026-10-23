@@ -3,6 +3,7 @@ import type { Db } from '../db';
 import { sentEmails, type Lead, type SentEmail } from '../db/schema';
 import { formatDateTime } from '../dates';
 import { firstEmailFor } from './first-email';
+import type { TemplateSet } from '../config';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -46,7 +47,7 @@ export type EmailPlan = {
  * emailed, a follow-up (the follow-up draft, with the last email quoted below it). Drafts are signed
  * with the sender name in Settings; sent from someone's own mailbox, they are signed with theirs.
  */
-export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string; owner?: string | null }): EmailPlan {
+export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string; owner?: string | null; templates?: TemplateSet }): EmailPlan {
   // Emailed from the app before, or by hand on any earlier step (marked sent): never the first email twice.
   const followUp = !!prior || emailedAlready(lead);
   const from = sign.from.trim();
@@ -58,7 +59,7 @@ export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from
   };
   if (!followUp) {
     // Manufacturing and 3PL: the fixed first email, with the contact's name and the owner's. Others keep the draft.
-    const first = firstEmailFor(lead, sign.owner);
+    const first = firstEmailFor(lead, sign.owner, sign.templates);
     if (first) return { followUp, subject: first.subject, body: first.body, quote: '', template: first.template, problem: first.problem };
     return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '', problem: '' };
   }

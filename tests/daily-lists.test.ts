@@ -33,10 +33,13 @@ async function byName() {
   return Object.fromEntries(rows.map((u) => [u.name, u]));
 }
 
+import { legacyAllocation } from './legacy-allocation';
+
 beforeEach(async () => {
   resetDbForTests();
   process.env.DATABASE_URL = 'memory://';
   db = await getDb();
+  await legacyAllocation(db);
   // As on the live database: the team existed before the lists were set.
   await db.delete(settings).where(eq(settings.key, 'drawQuotasV1'));
   await setListsOnce();

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { escalate, type Escalation } from '@/lib/escalate';
 import { hasScheduledMeeting } from '@/lib/meetings';
+import { setTeamQuota } from '@/lib/config';
 import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
@@ -12,7 +13,7 @@ import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
 import { emailedAlready } from '@/lib/mail/plan';
 import { getHolidays } from '@/lib/holidays';
-import { cancelFollowUpSequence, FOLLOW_UP_ROUNDS, isQualifyingOutcome, JUNK_REASON, junkIfComplete, restoreLead, startFollowUpSequence } from '@/lib/follow-up-sequence';
+import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence } from '@/lib/follow-up-sequence';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
@@ -213,7 +214,7 @@ export async function completeTaskAction(form: FormData) {
   // The follow-up sequence: a call saved as no answer, busy or wrong number starts it right away; a
   // connected call stops it (and it never starts for a lead that has had one).
   if (task.kind === 'call' && outcome === 'connected') await cancelFollowUpSequence(db, task.leadId, 'a call connected', { now });
-  else if (task.kind === 'call' && isQualifyingOutcome(outcome) && !escalated?.switched && !escalated?.deleted) await startFollowUpSequence(db, task.leadId, now);
+  else if (task.kind === 'call' && isQualifyingOutcome(outcome, (await ruleForLeadId(db, task.leadId)).outcomes) && !escalated?.switched && !escalated?.deleted) await startFollowUpSequence(db, task.leadId, now);
   // The last round done (every step done or skipped): the lead goes to Deleted as junk.
   if (task.followUpRound > 0) await junkIfComplete(db, task.leadId, now);
   await markCompanyDay(db, task.leadId, task.ownerId);
@@ -236,7 +237,7 @@ async function followUpSentByHand(db: Awaited<ReturnType<typeof getDb>>, task: T
   // Sent from Outlook: that already moved the follow-ups on.
   const [fromOutlook] = await db.select({ id: sentEmails.id }).from(sentEmails).where(and(eq(sentEmails.taskId, task.id), eq(sentEmails.status, 'sent')));
   if (fromOutlook) return;
-  const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, FOLLOW_UP_ROUNDS);
+  const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, (await ruleForLeadId(db, lead.id)).rounds);
   const was = { subject: lead.followUpSubject, body: lead.followUpBody, step: lead.followUpStep };
   await db.update(tasks).set({ followUpFrom: JSON.stringify(was) }).where(eq(tasks.id, task.id));
   await db
@@ -308,7 +309,7 @@ async function caNextSteps(db: Awaited<ReturnType<typeof getDb>>, task: typeof t
     await db.delete(tasks).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), inArray(tasks.step, [CA_WAITING_STEP, CA_FALLBACK_STEP])));
     const holidays = await getHolidays(db);
     // Sent now: round 1 on the next working day. Sent earlier, or no LinkedIn: round 1 today.
-    const plan = planCaFallback(today, outcome === 'sent' ? nextWorkingDay(today, holidays) : today, outcome !== 'skipped', holidays);
+    const plan = planCaFallback(today, outcome === 'sent' ? nextWorkingDay(today, holidays) : today, outcome !== 'skipped', holidays, await ruleForLeadId(db, task.leadId));
     await db.insert(tasks).values(plan.map((t) => ({ ...t, leadId: task.leadId, ownerId: task.ownerId, note: `${CA_AFTER_NOTE}${task.id}` })));
     return;
   }
@@ -471,7 +472,7 @@ export async function undoTaskAction(form: FormData) {
   // Undoing the step that moved the lead to Deleted (the last follow-up round) brings the lead back.
   if (task.followUpRound > 0) {
     const [l] = await db.select({ status: leads.status, reason: leads.deletedReason }).from(leads).where(eq(leads.id, task.leadId));
-    if (l?.status === 'Deleted' && l.reason === JUNK_REASON) await restoreLead(db, task.leadId, user.name);
+    if (l?.status === 'Deleted' && isJunkReason(l.reason)) await restoreLead(db, task.leadId, user.name);
   }
   // A CA firm's request (or skipping it) set up a wait and a call, WhatsApp and email: they go with it.
   if (task.kind === 'linkedin' && (task.outcome === 'sent' || task.outcome === 'skipped' || task.outcome === 'already_sent')) {
@@ -600,6 +601,8 @@ export async function saveDrawQuotaAction(form: FormData) {
   if (!id || manufacturing === null || logistics === null) return;
   const db = await getDb();
   await db.update(users).set({ drawManufacturing: manufacturing, drawLogistics: logistics }).where(and(eq(users.id, id), eq(users.role, 'bda')));
+  // Allocation (Configuration) is what the draw reads: keep it in step.
+  await setTeamQuota(db, id, { manufacturing, logistics });
   for (const p of ['/team', '/today', '/']) revalidatePath(p);
 }
 

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests } from '@/lib/db';
+import { legacyAllocation } from './legacy-allocation';
 import { leads, tasks, users, attendance, activities } from '@/lib/db/schema';
 import { checkPassword, hashPassword, normaliseUsername } from '@/lib/passwords';
 import { verifyLogin } from '@/lib/users';
@@ -18,10 +19,12 @@ beforeAll(() => {
 });
 afterAll(() => vi.useRealTimers());
 
-beforeEach(() => {
+beforeEach(async () => {
   resetDbForTests();
   process.env.DATABASE_URL = 'memory://';
   process.env.APP_PASSWORD = 'test-secret';
+  // The tests below were written against the numbers before Allocation was configurable (see legacy-allocation.ts).
+  await legacyAllocation(await getDb());
 });
 
 // A researched, qualified lead whose main contact has been confirmed; tests about unconfirmed contacts say so.
@@ -322,9 +325,10 @@ describe('morning draw', () => {
       expect(mine.filter((l) => l.segment === M)).toHaveLength(hand[M]);
       expect(mine.filter((l) => l.segment === P)).toHaveLength(hand[P]);
     }
-    // Shuffled: the Manufacturing leads by id don't simply go to the team in order.
-    const ids = all.filter((l) => l.drawnOn && l.segment === M).map((l) => l.id).sort((a, b) => a - b);
-    expect(ids).not.toEqual(Array.from({ length: ids.length }, (_, i) => ids[0] + i));
+    // Not random any more: the oldest Manufacturing and 3PL leads go out first, in a fixed order (the newest ones are what is left).
+    const mfg = all.filter((l) => l.segment === M && l.status === 'Approved').sort((a, b) => a.id - b.id);
+    expect(mfg.slice(0, 48).every((l) => l.drawnOn === '2026-09-28')).toBe(true);
+    expect(mfg.slice(48).every((l) => l.ownerId === null)).toBe(true);
   });
 
   it('a shortage in one segment is shown per associate and segment, never filled from the other segment or CA firms, and topped up later', async () => {

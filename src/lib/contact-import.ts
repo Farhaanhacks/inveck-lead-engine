@@ -4,6 +4,7 @@ import { logActivity } from './activity';
 import type { KnownBranches } from './branches';
 import { domainOf } from './pipeline/text';
 import { cleanPhone } from './tracker';
+import { stampNewLead } from './config';
 
 /** Where an imported company came from: research checks its fit against the ICP chosen on import. */
 export const IMPORTED_SOURCE = 'Imported list (researched by the team)';
@@ -131,6 +132,7 @@ export async function importContactSheet(
       ...row.emails.slice(1).map((email) => ({ name: 'Other email', title: '', linkedin: '', phone: '', email, source: 'Added by the team', isPrimary: false })),
     ];
     if (contacts.length) await db.insert(people).values(contacts.map((c) => ({ ...c, leadId: lead.id, evidence: 'On the team\'s researched list' })));
+    await stampNewLead(db, lead.id);
     await logActivity(db, lead.id, 'added', `Imported by ${opts.by} with ${row.people.length} ${row.people.length === 1 ? 'person' : 'people'} to contact`);
     // The team chose this person: never replaced automatically by someone research finds.
     if (main.name) await logActivity(db, lead.id, 'contact', `Point of contact updated: ${main.name}${main.title ? `, ${main.title}` : ''} (from the imported list)`);

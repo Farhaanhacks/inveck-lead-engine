@@ -5,6 +5,9 @@ import { logActivity } from './activity';
 import { formatDate } from './dates';
 import { getHolidays } from './holidays';
 import { addWorkingDays, firstWorkingDay, isCaSegment, istDay, type Holidays } from './tasks';
+import { defaultProduct, followupRuleFor, listIcps } from './config';
+import { DEFAULT_FOLLOWUP, scheduleFor, type FollowupRule } from './config-rules';
+import { normSegment } from './icp-match';
 
 /**
  * The follow-up sequence: the one source of truth for who is in it, where they are in it and when the
@@ -18,11 +21,30 @@ import { addWorkingDays, firstWorkingDay, isCaSegment, istDay, type Holidays } f
  * - A connected call stops it for good. Completing all five rounds (every task done or skipped, not
  *   ticked off in bulk) moves the lead to Deleted, as junk, with its history kept.
  */
-export const FOLLOW_UP_ROUNDS = 5;
+// These are the defaults (Inveck's starting configuration): how many rounds, how far apart and which outcomes start them
+// are Configuration → Follow-up rules, per product and ICP (see config.ts); these values are what applies until it says otherwise.
+export const FOLLOW_UP_ROUNDS = DEFAULT_FOLLOWUP.rounds;
 export const FOLLOW_UP_OFFSETS = [2, 4, 6, 8, 10] as const;
 export const QUALIFYING_OUTCOMES = ['no_answer', 'busy', 'wrong_number'] as const;
-export const isQualifyingOutcome = (outcome: string) => (QUALIFYING_OUTCOMES as readonly string[]).includes(outcome);
-export const JUNK_REASON = 'Junk/Waste: completed five unanswered follow-up rounds.';
+export const isQualifyingOutcome = (outcome: string, outcomes: readonly string[] = QUALIFYING_OUTCOMES) => outcomes.includes(outcome);
+const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+/** Why a lead whose follow-ups all went unanswered is moved to Deleted ("five" for the default five rounds). */
+export const junkReason = (rounds: number) => `Junk/Waste: completed ${WORDS[rounds] ?? rounds} unanswered follow-up rounds.`;
+export const JUNK_REASON = junkReason(FOLLOW_UP_ROUNDS);
+export const isJunkReason = (reason: string | null | undefined) => /^Junk\/Waste: completed \w+ unanswered follow-up rounds\.$/.test(reason ?? '');
+
+/** The follow-up rule that applies to a lead: its ICP's, else its product's, else the defaults. */
+export async function ruleForLead(db: Db, lead: Pick<Lead, 'productId' | 'icpId' | 'segment'>): Promise<FollowupRule> {
+  const productId = lead.productId ?? (await defaultProduct(db))?.id;
+  if (!productId) return DEFAULT_FOLLOWUP;
+  let icpId = lead.icpId ?? 0;
+  if (!icpId) icpId = (await listIcps(db, productId)).find((i) => normSegment(i.segment) === normSegment(lead.segment))?.id ?? 0;
+  return (await followupRuleFor(db, productId, icpId)).rule;
+}
+export async function ruleForLeadId(db: Db, leadId: number): Promise<FollowupRule> {
+  const [lead] = await db.select({ productId: leads.productId, icpId: leads.icpId, segment: leads.segment }).from(leads).where(eq(leads.id, leadId));
+  return lead ? ruleForLead(db, lead) : DEFAULT_FOLLOWUP;
+}
 
 /** Where a lead can be and still be enrolled: being worked, not in a conversation or ruled out. */
 const ENROLLABLE: LeadStatus[] = ['Approved', 'Contacted'];
@@ -30,13 +52,13 @@ const ROUND_KINDS = ['call', 'whatsapp', 'email'] as const;
 const KIND_LABEL = { call: 'call', whatsapp: 'WhatsApp', email: 'email' } as const;
 
 /** The five due dates for a sequence whose Day 1 is `day1`. */
-export function followUpDates(day1: string, holidays?: Holidays): string[] {
-  return FOLLOW_UP_OFFSETS.map((n) => addWorkingDays(day1, n, holidays));
+export function followUpDates(day1: string, holidays?: Holidays, rule: Pick<FollowupRule, 'rounds' | 'spacingDays'> = DEFAULT_FOLLOWUP): string[] {
+  return scheduleFor(rule, day1, holidays);
 }
 
 /** The tasks of the rounds from `fromRound` on. */
-export function followUpPlan(day1: string, holidays?: Holidays, fromRound = 1) {
-  const dates = followUpDates(day1, holidays);
+export function followUpPlan(day1: string, holidays?: Holidays, fromRound = 1, rule: Pick<FollowupRule, 'rounds' | 'spacingDays'> = DEFAULT_FOLLOWUP) {
+  const dates = followUpDates(day1, holidays, rule);
   return dates.flatMap((dueDate, i) =>
     i + 1 < fromRound
       ? []
@@ -66,10 +88,11 @@ export async function startFollowUpSequence(db: Db, leadId: number, now = new Da
   if (!ENROLLABLE.includes(lead.status) || (await hasConnectedCall(db, lead))) return null;
   const day1 = istDay(now);
   const holidays = await getHolidays(db);
-  await db.insert(tasks).values(followUpPlan(day1, holidays).map((t) => ({ ...t, leadId, ownerId: lead.ownerId! })));
+  const rule = await ruleForLead(db, lead);
+  await db.insert(tasks).values(followUpPlan(day1, holidays, 1, rule).map((t) => ({ ...t, leadId, ownerId: lead.ownerId! })));
   await db.update(leads).set({ followUpStartedOn: day1, updatedAt: now }).where(eq(leads.id, leadId));
-  const dates = followUpDates(day1, holidays);
-  await logActivity(db, leadId, 'note', `Follow-up sequence started: Follow-up 1 to 5 on ${dates.join(', ')}`);
+  const dates = followUpDates(day1, holidays, rule);
+  await logActivity(db, leadId, 'note', `Follow-up sequence started: Follow-up 1 to ${rule.rounds} on ${dates.join(', ')}`);
   return dates;
 }
 
@@ -95,11 +118,11 @@ export async function cancelFollowUpSequence(db: Db, leadId: number, why: string
   return closed.length;
 }
 
-/** All five rounds are planned and every step in them was done or skipped by a person. */
-export async function sequenceComplete(db: Db, leadId: number): Promise<boolean> {
+/** All the rounds are planned and every step in them was done or skipped by a person. */
+export async function sequenceComplete(db: Db, leadId: number, totalRounds = FOLLOW_UP_ROUNDS): Promise<boolean> {
   const rows = await db.select({ round: tasks.followUpRound, doneAt: tasks.doneAt, outcome: tasks.outcome }).from(tasks).where(and(eq(tasks.leadId, leadId), gt(tasks.followUpRound, 0)));
   const rounds = new Set(rows.map((r) => r.round));
-  return Array.from({ length: FOLLOW_UP_ROUNDS }, (_, i) => i + 1).every((n) => rounds.has(n)) && rows.every((r) => r.doneAt && r.outcome !== 'closed');
+  return Array.from({ length: totalRounds }, (_, i) => i + 1).every((n) => rounds.has(n)) && rows.every((r) => r.doneAt && r.outcome !== 'closed');
 }
 
 /** Moves the lead to Deleted (a soft delete: nothing is removed) and takes it out of the open work. */
@@ -128,8 +151,10 @@ export async function restoreLead(db: Db, leadId: number, by: string, now = new 
 /** After a round's step is logged: the lead goes to Deleted once all five rounds are complete. */
 export async function junkIfComplete(db: Db, leadId: number, now = new Date()): Promise<boolean> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
-  if (!lead || lead.status === 'Deleted' || !(await sequenceComplete(db, leadId)) || (await hasConnectedCall(db, lead))) return false;
-  return softDeleteLead(db, leadId, JUNK_REASON, now);
+  if (!lead || lead.status === 'Deleted') return false;
+  const rule = await ruleForLead(db, lead);
+  if (!(await sequenceComplete(db, leadId, rule.rounds)) || (await hasConnectedCall(db, lead))) return false;
+  return softDeleteLead(db, leadId, junkReason(rule.rounds), now);
 }
 
 /** The lowest follow-up round whose email is still open: the one the lead's draft is for. */
@@ -188,14 +213,16 @@ export async function followUpsDue(db: Db, today = istDay(), limit = 8): Promise
 export async function rescheduleFollowUps(db: Db): Promise<number> {
   const holidays = await getHolidays(db);
   const open = await db
-    .select({ id: tasks.id, leadId: tasks.leadId, round: tasks.followUpRound, dueDate: tasks.dueDate, started: leads.followUpStartedOn })
+    .select({ id: tasks.id, leadId: tasks.leadId, round: tasks.followUpRound, dueDate: tasks.dueDate, started: leads.followUpStartedOn, productId: leads.productId, icpId: leads.icpId, segment: leads.segment })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
     .where(and(gt(tasks.followUpRound, 0), isNull(tasks.doneAt)));
   let moved = 0;
+  const rules = new Map<number, FollowupRule>();
   for (const t of open) {
     if (!t.started) continue;
-    const due = followUpDates(t.started, holidays)[t.round - 1];
+    if (!rules.has(t.leadId)) rules.set(t.leadId, await ruleForLead(db, t));
+    const due = followUpDates(t.started, holidays, rules.get(t.leadId))[t.round - 1];
     if (due && due !== t.dueDate) {
       await db.update(tasks).set({ dueDate: due }).where(eq(tasks.id, t.id));
       moved++;
