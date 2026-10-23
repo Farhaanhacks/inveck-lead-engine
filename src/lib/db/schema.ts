@@ -408,6 +408,9 @@ export const users = pgTable('users', {
   /** Their own daily list for the morning draw, per segment (null: the Settings numbers). */
   drawManufacturing: integer('draw_manufacturing'),
   drawLogistics: integer('draw_logistics'),
+  /** Their full name and number as the email signature shows them (blank: the name above, no number). */
+  signatureName: text('signature_name').notNull().default(''),
+  phone: text('phone').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type User = typeof users.$inferSelect;

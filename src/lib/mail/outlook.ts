@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db';
 import { mailboxes, type Mailbox } from '../db/schema';
+import { hasSignature, LOGO_CID, loadEmailLogo, signatureHtml, signerOf, textToHtml, withoutSignOff } from './signature';
 
 /**
  * Sending email from each team member's own Outlook mailbox (Microsoft 365), through Microsoft's
@@ -190,6 +191,8 @@ export type TeamsMeetingRequest = {
   /** Graph uses it to return the same event if this exact request is sent again (a retry), never a second one. */
   transactionId: string;
 };
+/** Invited to every Teams meeting the CRM creates, beside the prospect, so they get the calendar invitation too. */
+export const MEETING_COPY_TO = ['karan@akfinserv.com', 'anand@akfinserv.com'];
 export type TeamsMeeting = { organizer: string; eventId: string; joinUrl: string };
 
 const RECONNECT_CALENDAR = 'Calendar access is needed to schedule Teams meetings: connect Outlook again on the Account page and allow it.';
@@ -217,7 +220,10 @@ export async function createTeamsMeeting(db: Db, userId: number, req: TeamsMeeti
           subject: req.subject,
           start: { dateTime: req.startLocal, timeZone: 'India Standard Time' },
           end: { dateTime: req.endLocal, timeZone: 'India Standard Time' },
-          attendees: [{ emailAddress: { address: req.attendeeEmail, name: req.attendeeName || req.attendeeEmail }, type: 'required' }],
+          attendees: [
+            { emailAddress: { address: req.attendeeEmail, name: req.attendeeName || req.attendeeEmail }, type: 'required' },
+            ...MEETING_COPY_TO.filter((a) => a.toLowerCase() !== req.attendeeEmail.trim().toLowerCase()).map((address) => ({ emailAddress: { address }, type: 'required' })),
+          ],
           isOnlineMeeting: true,
           onlineMeetingProvider: 'teamsForBusiness',
           transactionId: req.transactionId,
@@ -243,8 +249,10 @@ export async function createTeamsMeeting(db: Db, userId: number, req: TeamsMeeti
 export type OutgoingMail = {
   to: string;
   subject: string;
-  /** Plain text, sent as written. */
+  /** Plain text, sent as written (made HTML only to carry the signature). */
   body: string;
+  /** The earlier email a follow-up quotes: goes under the signature. */
+  quote?: string;
   /** Files sent with it (the product profile). */
   attachments?: { name: string; contentType: string; bytes: Buffer }[];
 };
@@ -263,15 +271,23 @@ export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail
   const box = await getMailbox(db, userId);
   if (!box) throw new MailError('Connect your Outlook on the Account page first: emails only go from the mailbox of the person the company belongs to.', true);
   const t = await freshAccess(db, c, box);
+  // Every email carries the sender's own signature, once (not again when the text already has one).
+  const logo = await loadEmailLogo();
+  const signed = hasSignature(mail.body);
+  const who = signed ? null : await signerOf(db, userId);
+  const text = who ? withoutSignOff(mail.body, [who.name, who.name.split(' ')[0]]) : mail.body;
+  const html = [textToHtml(text), who ? signatureHtml(who, !!logo) : '', mail.quote ? `<div style="margin-top:18px;">${textToHtml(mail.quote)}</div>` : ''].join('');
+  const files = [
+    ...(mail.attachments ?? []).map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.bytes.toString('base64') })),
+    ...(logo && !signed ? [{ '@odata.type': '#microsoft.graph.fileAttachment', name: logo.name, contentType: logo.contentType, contentBytes: logo.bytes.toString('base64'), contentId: LOGO_CID, isInline: true }] : []),
+  ];
   try {
     const r = await graph(t.accessToken, 'POST', '/me/sendMail', {
       message: {
         subject: mail.subject,
-        body: { contentType: 'Text', content: mail.body },
+        body: { contentType: 'HTML', content: html },
         toRecipients: [{ emailAddress: { address: mail.to } }],
-        ...(mail.attachments?.length
-          ? { attachments: mail.attachments.map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.bytes.toString('base64') })) }
-          : {}),
+        ...(files.length ? { attachments: files } : {}),
       },
       saveToSentItems: true,
     });

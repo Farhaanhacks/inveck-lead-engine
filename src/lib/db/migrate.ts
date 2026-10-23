@@ -708,6 +708,8 @@ export const SCHEMA_STATEMENTS = [
   // Each associate's own daily list for the morning draw (empty: the Settings numbers).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS draw_manufacturing INTEGER`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS draw_logistics INTEGER`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_name TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT ''`,
   // INVECK's daily lists (20 Oct 2026), set once: Anchal and Puja 40 Manufacturing each (their CA firms come
   // apart); Parimal and Anuradha 40 each in the 12:8 ratio, 24 Manufacturing and 16 3PL. Editable on the Team page.
   `UPDATE users SET draw_manufacturing = 40, draw_logistics = 0

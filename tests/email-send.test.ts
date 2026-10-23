@@ -152,6 +152,10 @@ describe('connecting Outlook', () => {
   });
 });
 
+/** The email as text: tags gone, line breaks kept. `written` is only what the person wrote, before the signature. */
+const plain = (html: string) => html.replace(/<br>/g, '\n').replace(/<\/p>/g, '\n').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+const written = (html: string) => plain(html.split('Thanks &amp; Regards,')[0]).trim();
+
 describe('Send mail on Today', () => {
   it('sends the first email from the person\'s own Outlook, signed by them, and logs the step as sent', async () => {
     await connect();
@@ -170,7 +174,10 @@ describe('Send mail on Today', () => {
     expect(saveToSentItems).toBe(true);
     expect(message.subject).toBe('Stock checks at Hosur Gears');
     expect(message.toRecipients).toEqual([{ emailAddress: { address: 'ravi@hosurgears.in' } }]);
-    expect(message.body.content).toContain('Regards,\nPuja');
+    // The draft's own closing gives way to the signature, which carries the sender's full name.
+    expect(message.body.contentType).toBe('HTML');
+    expect(written(message.body.content)).not.toContain('Regards');
+    expect(plain(message.body.content)).toContain(' | Inveck India\nBusiness Development');
     expect(message.body.content).not.toContain('INVECK Sales Team');
 
     const [task] = await db.select().from(tasks).where(eq(tasks.id, t.id));
@@ -200,7 +207,7 @@ describe('Send mail on Today', () => {
     const message = JSON.parse(graphCalls()[0].body).message;
     expect(message.toRecipients[0].emailAddress.address).toBe('purchase@hosurgears.in');
     expect(message.subject).toBe('Stock audits at your Hosur plant');
-    expect(message.body.content).toBe('Hi team,\n\nEdited text.');
+    expect(written(message.body.content)).toBe('Hi team,\n\nEdited text.');
     // An edit is for this email only: the lead's saved draft stays as it was (the edited text is on the sent record).
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailSubject).toBe('Stock checks at Hosur Gears');
     expect((await db.select().from(sentEmails).where(eq(sentEmails.taskId, t.id)))[0].subject).toBe('Stock audits at your Hosur plant');
@@ -218,7 +225,10 @@ describe('Send mail on Today', () => {
     const { message } = JSON.parse(graphCalls()[0].body);
     expect(message.subject).toBe('Re: Stock checks at Hosur Gears');
     expect(message.toRecipients).toEqual([{ emailAddress: { address: 'ravi@hosurgears.in' } }]);
-    expect(message.body.content).toMatch(/^Hi Ravi,\n\nJust following up\.\n\nRegards,\nPuja\n\n-----Original message-----\nFrom: puja@inveck\.com/);
+    expect(written(message.body.content)).toBe('Hi Ravi,\n\nJust following up.');
+    // The earlier email stays quoted, under the signature.
+    expect(message.body.content.indexOf('Original message')).toBeGreaterThan(message.body.content.indexOf('Inveck India'));
+    expect(plain(message.body.content)).toContain('From: puja@inveck.com');
     expect(message.body.content).toContain('Subject: Stock checks at Hosur Gears');
     const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
     expect(after.followUpBody).toBe('');
@@ -476,9 +486,10 @@ describe('first emails for Manufacturing and 3PL', () => {
     expect((await send({ id: t.id })).error).toBe('');
     const m = sentMessage();
     expect(m.subject).toBe('Inventory verification and reconciliation application');
-    expect(m.body.content.startsWith('Hello Mr. Ravi Kumar,\n\nI hope you\'re doing well.\n\nI am Parimal, leading Business Development at Inveck.')).toBe(true);
+    expect(written(m.body.content).startsWith('Hello Mr. Ravi Kumar,\n\nI hope you\'re doing well.\n\nI am Parimal, leading Business Development at Inveck.')).toBe(true);
     expect(m.body.content).toContain('* Achieve an ROI of 30–40% by automating key verification steps');
-    expect(m.body.content.endsWith('Looking forward to hearing from you.')).toBe(true);
+    expect(written(m.body.content).endsWith('Looking forward to hearing from you.')).toBe(true);
+    expect(plain(m.body.content)).toMatch(/\| Inveck India/);
     expect(m.body.content).not.toMatch(/\{\{|INVECK Sales Team/);
     expect(Buffer.from(m.attachments[0].contentBytes, 'base64').toString()).toContain('manufacturing');
     expect(m.toRecipients[0].emailAddress.address).toBe('ravi@hosurgears.in');
@@ -492,8 +503,8 @@ describe('first emails for Manufacturing and 3PL', () => {
     expect((await send({ id: t.id })).error).toBe('');
     const m = sentMessage();
     expect(m.subject).toBe('Inveck - Digitalizing Physical Inventory Verification for 3PL Operations');
-    expect(m.body.content.startsWith('Dear Mr. Asha Rao,\n\nThank you for connecting with us on LinkedIn.\n\nI’m Parimal, leading Business Development.')).toBe(true);
-    expect(m.body.content.endsWith('Looking forward to connecting.')).toBe(true);
+    expect(written(m.body.content).startsWith('Dear Mr. Asha Rao,\n\nThank you for connecting with us on LinkedIn.\n\nI’m Parimal, leading Business Development.')).toBe(true);
+    expect(written(m.body.content).endsWith('Looking forward to connecting.')).toBe(true);
     expect(Buffer.from(m.attachments[0].contentBytes, 'base64').toString()).toContain('3pl');
   });
 
@@ -505,7 +516,8 @@ describe('first emails for Manufacturing and 3PL', () => {
     expect((await send({ id: t.id })).error).toBe('');
     const m = sentMessage();
     expect(m.subject).toBe('Stock checks at Hosur Gears');
-    expect(m.attachments).toBeUndefined();
+    // No profile PDF: the only attachment is the signature's inline logo.
+    expect((m.attachments ?? []).filter((a: { isInline?: boolean }) => !a.isInline)).toEqual([]);
   });
 
   it('a missing contact name or owner stops the send with a clear message, even from the review form', async () => {
@@ -572,5 +584,77 @@ describe('editing the email before it is sent', () => {
     const log = (await db.select().from(activities).where(eq(activities.leadId, l.id))).map((a) => a.text);
     expect(log.some((x) => x.includes('text edited before sending'))).toBe(false);
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailBody).toMatch(/Regards,\r?\nPuja/);
+  });
+});
+
+describe('the email signature', () => {
+  const sentMessage = () => JSON.parse(graphCalls().find((c) => c.url.endsWith('/me/sendMail'))!.body).message;
+  const count = (s: string, part: string) => s.split(part).length - 1;
+
+  it("is the sender's own, with the logo inline, after the body, in HTML", async () => {
+    await connect();
+    const l = await lead();
+    const t = await emailTask(l.id);
+    calls = [];
+    expect((await send({ id: t.id })).error).toBe('');
+    const m = sentMessage();
+    const html: string = m.body.content;
+    expect(m.body.contentType).toBe('HTML');
+    // The sender (the first team member here) with their own name and number.
+    expect(html).toContain('Parimal Dhake | Inveck India');
+    expect(html).toContain('Contact No: +91-8149991842');
+    for (const other of ['Puja Mehta', 'Anchal Parekh', 'Anuradha Pohare', '+91-8149123078', '+91-7774042851', '+91-7522988834']) expect(html).not.toContain(other);
+    expect(html).toContain('Thanks &amp; Regards,');
+    expect(html).toContain('Corporate Office:');
+    expect(html).toContain('Red Building, Boat Club Road, DP Road,');
+    expect(html).toContain('Pune – 411001');
+    expect(html).toContain('<a href="https://inveck.com/"');
+    expect(html).toContain('privileged and confidential material of AK Finserv');
+    // After what was written, and once.
+    expect(html.indexOf('A quick note about your stock counts.')).toBeLessThan(html.indexOf('Thanks &amp; Regards,'));
+    expect(count(html, 'Business Development')).toBe(1);
+    // The logo travels with the email (inline, by Content-ID), as a PNG: no file path or link to the CRM.
+    const logo = m.attachments.find((a: { isInline?: boolean }) => a.isInline);
+    expect(logo).toMatchObject({ contentType: 'image/png', isInline: true, contentId: 'inveck-email-logo' });
+    expect(html).toContain('src="cid:inveck-email-logo"');
+    expect(Buffer.from(logo.contentBytes, 'base64').subarray(0, 4).toString('hex')).toBe('89504e47');
+    expect(html).not.toMatch(/src="(?!cid:)|assets\//);
+  });
+
+  it('names and numbers come from each account, not one person', async () => {
+    const { signerOf } = await import('@/lib/mail/signature');
+    const bdas = await db.select().from(users).where(eq(users.role, 'bda'));
+    const seen = new Map(await Promise.all(bdas.map(async (u) => [u.name, await signerOf(db, u.id)] as const)));
+    expect(seen.get('Parimal')).toEqual({ name: 'Parimal Dhake', phone: '+91-8149991842' });
+    expect(seen.get('Puja')).toEqual({ name: 'Puja Mehta', phone: '+91-8149123078' });
+    expect(seen.get('Anchal')).toEqual({ name: 'Anchal Parekh', phone: '+91-7774042851' });
+    expect(seen.get('Anuradha')).toEqual({ name: 'Anuradha Pohare', phone: '+91-7522988834' });
+    // A person without a number: no contact line, never someone else's.
+    const { signatureHtml } = await import('@/lib/mail/signature');
+    expect(signatureHtml({ name: 'New Person', phone: '' }, false)).not.toContain('Contact No');
+  });
+
+  it('is not added twice when the text already carries it', async () => {
+    const { sendFromMailbox } = await import('@/lib/mail/outlook');
+    const { signatureHtml } = await import('@/lib/mail/signature');
+    await connect();
+    const typed = 'Hi team,\n\nBody.\n\nThanks & Regards,\nPuja Mehta | Inveck India\nBusiness Development';
+    calls = [];
+    await sendFromMailbox(db, me.id, { to: 'a@b.in', subject: 's', body: typed });
+    const html: string = sentMessage().body.content;
+    expect(count(html, 'Inveck India')).toBe(1);
+    expect(html).not.toContain('AK Finserv');
+    expect(sentMessage().attachments).toBeUndefined();
+    // Nothing else looks like a signature: a plain mention is still signed.
+    calls = [];
+    await sendFromMailbox(db, me.id, { to: 'a@b.in', subject: 's', body: 'We are Inveck India fans' });
+    expect(count(sentMessage().body.content, 'Business Development')).toBe(1);
+    expect(signatureHtml({ name: 'X', phone: '1' }, true)).toContain('cid:inveck-email-logo');
+  });
+
+  it('stays out of WhatsApp messages', async () => {
+    const { buildWhatsApp } = await import('@/lib/whatsapp-outreach');
+    const r = buildWhatsApp({ segment: 'Manufacturing', company: 'Acme', contactName: 'Ravi Shah', contactPhone: '9876543210' }, 'Puja');
+    expect(r.ok && /AK Finserv|Boat Club|Inveck India|<br>/.test(r.text)).toBe(false);
   });
 });

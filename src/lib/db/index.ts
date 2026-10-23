@@ -7,6 +7,7 @@ import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEm
 import { ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
 import { seedConfiguration } from '../config';
+import { backfillSignatureDetails } from '../mail/signature';
 import { retireWithoutContactOnce } from '../escalate';
 import { approveSheetLeadsOnce } from '../ca-sheet';
 import { retireRemovedStatuses } from '../retired-statuses';
@@ -65,6 +66,7 @@ async function connect(): Promise<Db> {
     await upgradeManufacturingHeavyV4(db);
     await upgradeManufacturingDealBreakersV5(db);
     await seedUsers(db);
+    await backfillSignatureDetails(db);
     await seedConfiguration(db);
     await ensureMarketingUser(db);
     await reconcileFollowUpsOnce(db);

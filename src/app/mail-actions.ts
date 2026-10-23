@@ -91,7 +91,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
     profile = await loadProfilePdf(lead.segment);
     // The Manufacturing and 3PL emails say the profile is attached: never send them without it.
     if (plan.template && !profile) throw new MailError(`The ${plan.template === '3pl' ? '3PL' : 'Manufacturing'} profile PDF isn't on the server (assets/), so this email can't be sent.`);
-    sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body: plan.quote ? `${body}\n\n${plan.quote}` : body, attachments: profile ? [profile] : undefined });
+    sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body, quote: plan.quote || undefined, attachments: profile ? [profile] : undefined });
   } catch (e) {
     if (e instanceof MailError && e.unconfirmed) {
       // Kept, so a second click can't send it twice while nobody knows whether the first went.

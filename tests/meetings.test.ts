@@ -95,7 +95,12 @@ describe('scheduling a Teams meeting', () => {
       subject: 'Demo for Hosur Gears - Inveck',
       start: { dateTime: '2026-10-21T15:00:00', timeZone: 'India Standard Time' },
       end: { dateTime: '2026-10-21T15:30:00', timeZone: 'India Standard Time' },
-      attendees: [{ emailAddress: { address: 'ravi@hosurgears.in', name: 'Ravi Kumar' }, type: 'required' }],
+      // The prospect, and the two people copied on every meeting, all as required attendees.
+      attendees: [
+        { emailAddress: { address: 'ravi@hosurgears.in', name: 'Ravi Kumar' }, type: 'required' },
+        { emailAddress: { address: 'karan@akfinserv.com' }, type: 'required' },
+        { emailAddress: { address: 'anand@akfinserv.com' }, type: 'required' },
+      ],
       isOnlineMeeting: true,
       onlineMeetingProvider: 'teamsForBusiness',
     });
