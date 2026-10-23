@@ -533,17 +533,6 @@ function CompanyCard({
             {lead.contactName ? <TierBadge tier={tier} /> : null}
           </div>
           <Reach lead={lead} emails={emails} />
-          {/* The main contact's own LinkedIn status and remarks (until set here, what the lead's tracker already says). */}
-          {(lead.contactName || primaryId > 0) && (
-            <LinkedinTracker
-              key={`li-${lead.id}-${primaryId}`}
-              leadId={lead.id}
-              personId={primaryId}
-              initialStatus={linkedin.get(primaryId)?.status ?? statusFromOutcome(lead.linkedinOutcome)}
-              initialRemarks={linkedin.get(primaryId)?.remarks ?? ''}
-              readOnly={readOnly}
-            />
-          )}
           {!readOnly && <EditContact lead={lead} others={others} />}
           {others.filter((p) => !p.passedAt).length > 0 && (
             <div className="mt-2 rounded-md border border-line bg-surface-2 px-3 py-2">
@@ -561,11 +550,6 @@ function CompanyCard({
                       {p.email && <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>}
                       {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a>}
                       {!p.linkedin && !p.phone && !p.email && <span className="text-muted">no details yet</span>}
-                      {p.name !== 'Other number' && p.name !== 'Other email' && (
-                        <span className="basis-full">
-                          <LinkedinTracker key={`li-${lead.id}-${p.id}`} leadId={lead.id} personId={p.id} initialStatus={linkedin.get(p.id)?.status ?? 'not_started'} initialRemarks={linkedin.get(p.id)?.remarks ?? ''} readOnly={readOnly} label="LinkedIn" />
-                        </span>
-                      )}
                       {!readOnly && p.name !== 'Other number' && p.name !== 'Other email' && (
                         <form action={makePrimaryAction}>
                           <input type="hidden" name="id" value={lead.id} />
@@ -581,13 +565,26 @@ function CompanyCard({
         </div>
       </div>
       <ul className="mt-2 divide-y divide-line border-t border-line">
-        {rows.map((r) =>
+        {rows.map((r) => [
           r.open ? (
             <Step key={r.open.task.id} item={r.open} bda={bda} readOnly={readOnly} linkedinFull={linkedinFull} askPhone={r.kind === phoneRow} emails={sendTo} mail={mail} whatsapp={whatsapp} />
           ) : (
             <DoneStep key={r.done!.id} task={r.done!} readOnly={readOnly} />
           ),
-        )}
+          // The main contact's LinkedIn status, right under the LinkedIn to-do (until set here, what the lead's tracker already says).
+          r.kind === 'linkedin' && (lead.contactName || primaryId > 0) && (
+            <li key={`li-${lead.id}-${r.open?.task.id ?? r.done?.id}`} className="py-2 pl-[11rem]">
+              <LinkedinTracker
+                key={`li-${lead.id}-${primaryId}`}
+                leadId={lead.id}
+                personId={primaryId}
+                initialStatus={linkedin.get(primaryId)?.status ?? statusFromOutcome(lead.linkedinOutcome)}
+                initialRemarks={linkedin.get(primaryId)?.remarks ?? ''}
+                readOnly={readOnly}
+              />
+            </li>
+          ),
+        ])}
       </ul>
     </li>
   );
