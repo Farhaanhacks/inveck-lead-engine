@@ -8,17 +8,15 @@ import { CA_FALLBACK_STEP, CA_ROUNDS, caRoundsOf, CA_WAITING_STEP, FIND_NEXT_STE
  * The follow-up funnel: every lead in outreach, by where its follow-up stands. Built from the same
  * steps Today works from, so the two always agree.
  * - today: a step is due today or overdue (it's on Today);
- * - waiting: a CA firm whose LinkedIn request is out, waiting to be accepted;
  * - upcoming: the next step is due on a later day;
  * - finished: every planned step is done, nobody has replied and no follow-up sequence is running;
  * - conversation: they replied or a meeting is booked.
  */
-export const FUNNEL_STAGES = ['today', 'waiting', 'upcoming', 'finished', 'conversation'] as const;
+export const FUNNEL_STAGES = ['today', 'upcoming', 'finished', 'conversation'] as const;
 export type FunnelStage = (typeof FUNNEL_STAGES)[number];
 
 export const FUNNEL_LABEL: Record<FunnelStage, string> = {
   today: 'Due today',
-  waiting: 'Waiting for LinkedIn',
   upcoming: 'Coming up',
   finished: 'No reply yet',
   conversation: 'In conversation',
@@ -26,7 +24,6 @@ export const FUNNEL_LABEL: Record<FunnelStage, string> = {
 
 export const FUNNEL_HELP: Record<FunnelStage, string> = {
   today: 'A step is due today or overdue. Work it on Today.',
-  waiting: 'CA firms whose LinkedIn request is out. Not accepted by the next working day, a call, WhatsApp and email follow.',
   upcoming: 'The next step is planned for a later day. It appears on Today that morning.',
   finished: 'Every planned step is done and nobody has replied. Follow-ups start when a call is saved as no answer, busy or wrong number; or mark it lost.',
   conversation: 'They replied or a meeting is booked. Move it on as the conversation goes.',
@@ -83,11 +80,13 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
     const done = list.filter((t) => t.doneAt && t.outcome !== 'closed').sort((a, b) => b.doneAt!.getTime() - a.doneAt!.getTime());
     const real = done.filter((t) => t.outcome !== 'skipped' && t.outcome !== 'no_contact');
     const next = steps[0] ?? null;
+    // A CA firm whose LinkedIn request is out is not in follow-up yet: that starts with its first call, WhatsApp and
+    // email round. Until that round is due it only waits (Today carries the "Request accepted" option).
+    if (waitingTask && !TALKING.includes(lead.status) && !(next && next.dueDate <= today)) continue;
     let stage: FunnelStage;
     if (TALKING.includes(lead.status)) stage = 'conversation';
     // On Today now (a 5 pm call-back only from 5 pm, like Today shows it).
     else if (next && next.dueDate <= today && !notYet(next, today, now)) stage = 'today';
-    else if (waitingTask) stage = 'waiting';
     else if (next) stage = 'upcoming';
     else if (done.length) stage = 'finished';
     else continue;
@@ -99,7 +98,7 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
       last: real[0] ?? done[0] ?? null,
       logged: done.length,
       attempts: real.filter((t) => t.kind !== 'call' || isCallAttempt(t.outcome)).length,
-      round: next ? roundOf(next) : waitingTask ? roundOf(waitingTask) : reached.length ? (isCaSegment(lead.segment) ? `${new Set(done.filter((t) => t.caRound > 0).map((t) => t.caRound)).size} of ${CA_ROUNDS} follow-up rounds done` : `${reached.length} of ${ROUNDS.length} rounds done`) : roundOf(done[0] ?? null),
+      round: next ? roundOf(next) : reached.length ? (isCaSegment(lead.segment) ? `${new Set(done.filter((t) => t.caRound > 0).map((t) => t.caRound)).size} of ${CA_ROUNDS} follow-up rounds done` : `${reached.length} of ${ROUNDS.length} rounds done`) : roundOf(done[0] ?? null),
       waitingTask,
     });
   }

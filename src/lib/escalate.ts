@@ -5,7 +5,7 @@ import { logActivity } from './activity';
 import { makePrimary } from './people';
 import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
 import { personSite, rankCandidates } from './pipeline/contacts';
-import { CA_FALLBACK_STEP, CA_WAITING_STEP, FIND_NEXT_STEP, isCaSegment, istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
+import { FIND_NEXT_STEP, isCaSegment, istDay, MAX_CALL_ATTEMPTS, planSequence } from './tasks';
 import { cancelFollowUpSequence, softDeleteLead } from './follow-up-sequence';
 import { getHolidays } from './holidays';
 export { FIND_NEXT_STEP };
@@ -203,24 +203,4 @@ export async function retireWithoutContactOnce(db: Db): Promise<void> {
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
   const gone = await retireWithoutContact(db);
   await db.insert(settings).values({ key, value: { at: new Date().toISOString(), deleted: gone } }).onConflictDoNothing();
-}
-
-/**
- * Once: a CA firm's "Request accepted?" step that was planned as due the day the request went out (so the firm sat on
- * Today with nothing to do) moves to the day its first follow-up round is due. Only open steps whose firm has one.
- */
-export async function caWaitingDueOnce(db: Db): Promise<void> {
-  const key = 'caWaitingDueV1';
-  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
-  const open = await db.select().from(tasks).where(and(eq(tasks.step, CA_WAITING_STEP), isNull(tasks.doneAt)));
-  let moved = 0;
-  for (const w of open) {
-    const rounds = await db.select({ dueDate: tasks.dueDate }).from(tasks).where(and(eq(tasks.leadId, w.leadId), eq(tasks.step, CA_FALLBACK_STEP), isNull(tasks.doneAt)));
-    const first = rounds.map((r) => r.dueDate).sort()[0];
-    if (first && first > w.dueDate) {
-      await db.update(tasks).set({ dueDate: first }).where(eq(tasks.id, w.id));
-      moved++;
-    }
-  }
-  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), moved } }).onConflictDoNothing();
 }

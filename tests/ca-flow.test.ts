@@ -58,8 +58,7 @@ describe('CA firms on Today', () => {
     const first = await start(l.id);
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
     let left = await open(l.id);
-    // The wait is due when round 1 is (the day "not accepted" is decided), so the firm is off Today until then.
-    expect(left.find((t) => t.step === CA_WAITING_STEP)?.dueDate).toBe(r1());
+    expect(left.find((t) => t.step === CA_WAITING_STEP)?.dueDate).toBe(today());
     // Exactly three rounds of call, WhatsApp and email: the first on the next working day, then one working day apart.
     const two = addWorkingDays(r1(), 1);
     const three = addWorkingDays(r1(), 2);
@@ -69,7 +68,7 @@ describe('CA firms on Today', () => {
     for (const t of rounds(left)) expect([0, 6]).not.toContain(new Date(`${t.dueDate}T00:00:00Z`).getUTCDay());
     // Sending the request is the day's work: the firm counts as done today, still waiting on LinkedIn.
     expect(await companyProgress(db, me.id, today())).toEqual({ done: 1, total: 1, backlog: 0 });
-    expect((await loadTodayTasks(db, me.id, today())).map((t) => t.task.step)).toEqual([]);
+    expect((await loadTodayTasks(db, me.id, today())).map((t) => t.task.step)).toEqual([CA_WAITING_STEP]);
 
     // "accepted" fits only the waiting step.
     await completeTaskAction(form({ id: left.find((t) => t.kind === 'call')!.id, outcome: 'accepted' }));
@@ -457,12 +456,12 @@ describe('the follow-up funnel', () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const stageOf = async (id: number) => (await loadFunnel(db, me.id, today())).find((c) => c.lead.id === id)?.stage;
 
-    // A CA firm: due today, then waiting for LinkedIn once the request is sent.
+    // A CA firm: due today; once the request is sent it is not in follow-up until its first call round is due.
     const ca = await caLead();
     const first = await start(ca.id);
     expect(await stageOf(ca.id)).toBe('today');
     await completeTaskAction(form({ id: first.id, outcome: 'sent' }));
-    expect(await stageOf(ca.id)).toBe('waiting');
+    expect(await stageOf(ca.id)).toBeUndefined();
 
     // A company whose steps are all done with no reply: no reply yet.
     const quiet = await caLead({ company: 'Quiet Works', segment: 'Manufacturing', status: 'Contacted' });

@@ -13,7 +13,6 @@ import { icpFor, tierOf, type Tier } from '@/lib/tiers';
 import { ensureSequences, istDay } from '@/lib/tasks';
 import { bestEffort } from '@/lib/best-effort';
 import { FUNNEL_HELP, FUNNEL_LABEL, FUNNEL_STAGES, loadFunnel, type FunnelCard, type FunnelStage } from '@/lib/followups';
-import { completeTaskAction } from '../../team-actions';
 import { moveFromFunnelAction } from '../../followup-actions';
 
 export const maxDuration = 300;
@@ -22,7 +21,6 @@ const SMALL = 'btn-secondary px-2 py-0.5 text-xs';
 
 const STAGE_TONE: Record<FunnelStage, string> = {
   today: 'border-accent/50',
-  waiting: 'border-line',
   upcoming: 'border-line',
   finished: 'border-warning-ink/40',
   conversation: 'border-good-ink/40',
@@ -58,7 +56,7 @@ function Move({ id, stage, label, primary }: { id: number; stage: string; label:
   );
 }
 
-function CardView({ card, today, todayHref, canLog, owner, tier }: { card: FunnelCard; today: string; todayHref: string; canLog: boolean; owner: string; tier: Tier }) {
+function CardView({ card, today, todayHref, owner, tier }: { card: FunnelCard; today: string; todayHref: string; owner: string; tier: Tier }) {
   const { lead, next, last } = card;
   return (
     <li className="space-y-1.5 px-4 py-3">
@@ -96,12 +94,6 @@ function CardView({ card, today, todayHref, canLog, owner, tier }: { card: Funne
       )}
       <div className="flex flex-wrap gap-1.5 pt-1">
         {card.stage === 'today' && <Link href={todayHref} className="btn-primary px-2 py-0.5 text-xs">Work it on Today</Link>}
-        {card.stage === 'waiting' && card.waitingTask && canLog && (
-          <form action={async (f: FormData) => { 'use server'; await completeTaskAction(f); }}>
-            <input type="hidden" name="id" value={card.waitingTask.id} />
-            <button name="outcome" value="accepted" className="btn-primary px-2 py-0.5 text-xs">Request accepted</button>
-          </form>
-        )}
         {card.stage === 'finished' && (
           <>
             <Move id={lead.id} stage="Replied" label="Got a reply" />
@@ -115,7 +107,7 @@ function CardView({ card, today, todayHref, canLog, owner, tier }: { card: Funne
             <Move id={lead.id} stage="Lost" label="Lost" />
           </>
         )}
-        {(card.stage === 'upcoming' || card.stage === 'waiting') && <Move id={lead.id} stage="Replied" label="Got a reply" />}
+        {card.stage === 'upcoming' && <Move id={lead.id} stage="Replied" label="Got a reply" />}
         <Link href={`/leads/${lead.id}`} className={SMALL}>Open lead</Link>
       </div>
     </li>
@@ -228,7 +220,6 @@ export default async function FollowUpsPage({ searchParams }: PageProps<'/follow
                       card={c}
                       today={today}
                       todayHref={todayHref(c)}
-                      canLog={c.lead.ownerId === me.id}
                       owner={me.role === 'admin' && c.lead.ownerId ? (names.get(c.lead.ownerId) ?? '') : ''}
                       tier={tierFor(c)}
                     />

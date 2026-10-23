@@ -899,7 +899,6 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
           <span className="font-medium">Follow-ups</span>
           {(
             [
-              ['waiting', 'waiting on LinkedIn'],
               ['upcoming', 'coming up'],
               ['finished', 'no reply yet'],
               ['conversation', 'in conversation'],
