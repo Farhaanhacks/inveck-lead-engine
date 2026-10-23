@@ -220,7 +220,7 @@ describe('the content rules', () => {
     await add({ status: 'pending_approval' });
     await add({ status: 'waiting_dependency', dependencyNote: 'x' });
     await add({ status: 'approved' });
-    expect(await contentCounts(db)).toEqual({ posted: 3, instagramPosted: 2, linkedinPosted: 1, scheduled: 1, draft: 1, pendingApproval: 1, waiting: 1 });
+    expect(await contentCounts(db)).toEqual({ posted: 3, instagramPosted: 2, linkedinPosted: 1, youtubePosted: 0, scheduled: 1, draft: 1, pendingApproval: 1, waiting: 1 });
   });
 
   it('lays out months and weeks (Sunday first)', () => {
@@ -327,5 +327,22 @@ describe('the Both platform choice', () => {
     expect((await createPostsForBothAction({ title: 'Hello', format: 'post', status: 'draft' })).ok).toBe(true);
     who.current = { ...who.current, role: 'bda', id: 7 };
     await expect(createPostsForBothAction({ title: 'Nope', format: 'post', status: 'draft' })).rejects.toThrow('Marketing only');
+  });
+});
+
+describe('YouTube', () => {
+  it('is a platform with its own formats; Both stays Instagram and LinkedIn', async () => {
+    const { CONTENT_PLATFORMS, FORMATS, BOTH_PLATFORMS, PLATFORM_LABEL } = await import('@/lib/content-meta');
+    expect(CONTENT_PLATFORMS).toEqual(['instagram', 'linkedin', 'youtube']);
+    expect(PLATFORM_LABEL.youtube).toBe('YouTube');
+    expect(FORMATS.youtube).toEqual(['video', 'short', 'live', 'post']);
+    expect(BOTH_PLATFORMS).toEqual(['instagram', 'linkedin']);
+    const { createPostForBoth, createPost, contentCounts, checkPost } = await import('@/lib/content-calendar');
+    const both = await createPostForBoth(db, { title: 'Greeting', format: 'video', status: 'draft' });
+    expect(both.ok && both.posts.map((p) => p.platform).sort()).toEqual(['instagram', 'linkedin']);
+    expect(checkPost({ title: 'Tour', platform: 'youtube', format: 'carousel', status: 'draft' }).ok).toBe(false);
+    const yt = await createPost(db, { title: 'Plant audit walkthrough', platform: 'youtube', format: 'short', status: 'posted', scheduledOn: '2026-10-20' });
+    expect(yt.ok && yt.post.platform).toBe('youtube');
+    expect((await contentCounts(db)).youtubePosted).toBe(1);
   });
 });

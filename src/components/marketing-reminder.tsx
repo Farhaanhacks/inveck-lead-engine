@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useState, useSyncExternalStore } from 'react';
 import { PlatformLogo } from './platform-logo';
-import type { ContentPlatform } from '@/lib/content-meta';
+import { PLATFORM_LABEL, type ContentPlatform } from '@/lib/content-meta';
 
 export type DuePost = { id: number; title: string; platform: ContentPlatform; scheduledOn: string };
 
@@ -57,7 +57,7 @@ export function MarketingReminder({ posts }: { posts: DuePost[] }) {
         {due.map((p) => (
           <li key={p.id} className="flex items-center gap-2 text-sm">
             <PlatformLogo platform={p.platform} size={18} />
-            <span className="min-w-0 flex-1 truncate"><span className="font-medium">{p.title}</span> <span className="text-muted">on {p.platform === 'instagram' ? 'Instagram' : 'LinkedIn'}</span></span>
+            <span className="min-w-0 flex-1 truncate"><span className="font-medium">{p.title}</span> <span className="text-muted">on {PLATFORM_LABEL[p.platform]}</span></span>
             <Link href="/marketing/content-bank" className="text-xs text-accent hover:underline">Open</Link>
             <button type="button" onClick={() => dismiss(p.id)} className="text-xs text-muted hover:text-ink" aria-label={`Dismiss the reminder for ${p.title}`}>Dismiss</button>
           </li>

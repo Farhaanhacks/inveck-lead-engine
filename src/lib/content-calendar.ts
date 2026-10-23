@@ -1,7 +1,7 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { contentPeople, contentPosts, contentTodos, type ContentPerson, type ContentPost, type ContentTodo } from './db/schema';
-import { CONTENT_PLATFORMS, CONTENT_STATUSES, FORMATS, PLATFORM_LABEL, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from './content-meta';
+import { BOTH_PLATFORMS, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMATS, PLATFORM_LABEL, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from './content-meta';
 
 export * from './content-meta';
 import { validDay } from './holidays';
@@ -61,7 +61,7 @@ export function checkPost(raw: Partial<Record<keyof PostInput, unknown>>, existi
   if (!title) return { ok: false, error: 'Give it a title.' };
   if (title.length > 160) return { ok: false, error: 'The title is too long (160 characters at most).' };
   const platform = s(raw.platform) as ContentPlatform;
-  if (!CONTENT_PLATFORMS.includes(platform)) return { ok: false, error: 'Choose Instagram or LinkedIn.' };
+  if (!CONTENT_PLATFORMS.includes(platform)) return { ok: false, error: 'Choose Instagram, LinkedIn or YouTube.' };
   const format = s(raw.format) || 'post';
   if (!FORMATS[platform].includes(format)) return { ok: false, error: `${PLATFORM_LABEL[platform]} has no "${format}" format.` };
   const caption = typeof raw.caption === 'string' ? raw.caption.trim() : '';
@@ -86,7 +86,7 @@ export function checkPost(raw: Partial<Record<keyof PostInput, unknown>>, existi
  * posted on its own). Both are checked first, so either both are made or neither is.
  */
 export async function createPostForBoth(db: Db, raw: Partial<Record<keyof PostInput, unknown>>, now = new Date()): Promise<{ ok: true; posts: ContentPost[] } | { ok: false; error: string }> {
-  const checks = CONTENT_PLATFORMS.map((platform) => checkPost({ ...raw, platform }, null, istDay(now)));
+  const checks = BOTH_PLATFORMS.map((platform) => checkPost({ ...raw, platform }, null, istDay(now)));
   const bad = checks.find((c) => !c.ok);
   if (bad && !bad.ok) return bad;
   if (!(await assigneeExists(db, checks[0].ok ? checks[0].value.assigneeId : null))) return { ok: false, error: 'That person is no longer on the People list.' };
@@ -151,7 +151,7 @@ export async function deletePost(db: Db, id: number): Promise<void> {
   await db.delete(contentPosts).where(eq(contentPosts.id, id));
 }
 
-export type ContentCounts = { posted: number; instagramPosted: number; linkedinPosted: number; scheduled: number; draft: number; pendingApproval: number; waiting: number };
+export type ContentCounts = { posted: number; instagramPosted: number; linkedinPosted: number; youtubePosted: number; scheduled: number; draft: number; pendingApproval: number; waiting: number };
 
 /** The Overview's numbers, counted from the posts' statuses (a post is counted once, by its status). */
 export async function contentCounts(db: Db): Promise<ContentCounts> {
@@ -161,6 +161,7 @@ export async function contentCounts(db: Db): Promise<ContentCounts> {
     posted: n((r) => r.status === 'posted'),
     instagramPosted: n((r) => r.status === 'posted' && r.platform === 'instagram'),
     linkedinPosted: n((r) => r.status === 'posted' && r.platform === 'linkedin'),
+    youtubePosted: n((r) => r.status === 'posted' && r.platform === 'youtube'),
     scheduled: n((r) => r.status === 'scheduled'),
     draft: n((r) => r.status === 'draft'),
     pendingApproval: n((r) => r.status === 'pending_approval'),

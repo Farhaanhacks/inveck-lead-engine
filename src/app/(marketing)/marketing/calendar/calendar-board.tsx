@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { addTodoAction, completeTodoAction, createPostAction, createPostsForBothAction, deletePostAction, deleteTodoAction, movePostAction, moveTodoAction, updatePostAction } from '@/app/marketing-actions';
 import { PlatformLogo } from '@/components/platform-logo';
-import { addDays, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMAT_LABEL, FORMATS, SHARED_FORMATS, monthWeeks, PLATFORM_LABEL, STATUS_LABEL, weekOf, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from '@/lib/content-meta';
+import { addDays, BOTH_PLATFORMS, CONTENT_PLATFORMS, CONTENT_STATUSES, FORMAT_LABEL, FORMATS, SHARED_FORMATS, monthWeeks, PLATFORM_LABEL, STATUS_LABEL, weekOf, type ContentPlatform, type ContentStatus, type PersonView, type PostView, type TodoView } from '@/lib/content-meta';
 
 const STATUS_TONE: Record<ContentStatus, string> = {
   draft: 'bg-neutral-soft text-ink-2',
@@ -14,7 +14,7 @@ const STATUS_TONE: Record<ContentStatus, string> = {
 };
 const STATUS_DOT: Record<ContentStatus, string> = { draft: 'bg-muted', pending_approval: 'bg-warning-ink', approved: 'bg-teal', scheduled: 'bg-violet', waiting_dependency: 'bg-critical-ink', posted: 'bg-good-ink' };
 /** Each card is tinted by its platform, with a coloured edge. */
-const CARD_TONE: Record<ContentPlatform, string> = { instagram: 'border-l-rose bg-rose-soft/75', linkedin: 'border-l-accent bg-accent-soft/75' };
+const CARD_TONE: Record<ContentPlatform, string> = { instagram: 'border-l-rose bg-rose-soft/75', linkedin: 'border-l-accent bg-accent-soft/75', youtube: 'border-l-critical-ink bg-critical-soft/75' };
 
 const fmt = (day: string, opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', ...opts }).format(new Date(`${day}T12:00:00Z`));
 const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -148,7 +148,7 @@ export function CalendarBoard({ initialPosts, people, initialTodos, today }: { i
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Content Calendar</h1>
-            <p className="mt-1 text-sm text-ink-2">Plan, approve and post across Instagram and LinkedIn.</p>
+            <p className="mt-1 text-sm text-ink-2">Plan, approve and post across Instagram, LinkedIn and YouTube.</p>
             <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium">
               {CONTENT_PLATFORMS.map((p) => (
                 <span key={p} className="glass-tint inline-flex items-center gap-1.5 rounded-full bg-surface/60 px-2.5 py-1"><PlatformLogo platform={p} size={14} />{PLATFORM_LABEL[p]}</span>
@@ -406,7 +406,7 @@ function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; 
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label htmlFor="c-platform" className="label flex items-center gap-1.5">Platform {both ? CONTENT_PLATFORMS.map((p) => <PlatformLogo key={p} platform={p} size={14} />) : <PlatformLogo platform={f.platform} size={14} />}</label>
+            <label htmlFor="c-platform" className="label flex items-center gap-1.5">Platform {both ? BOTH_PLATFORMS.map((p) => <PlatformLogo key={p} platform={p} size={14} />) : <PlatformLogo platform={f.platform} size={14} />}</label>
             <select
               id="c-platform"
               value={both ? 'both' : f.platform}
@@ -418,7 +418,7 @@ function Editor({ draft, people, onClose, onSaved, onDeleted }: { draft: Draft; 
                 }
                 setBoth(false);
                 const platform = e.target.value as ContentPlatform;
-                setF((x) => ({ ...x, platform, format: FORMATS[platform].includes(x.format) ? x.format : 'post' }));
+                setF((x) => ({ ...x, platform, format: FORMATS[platform].includes(x.format) ? x.format : FORMATS[platform][0] }));
               }}
               className="field"
             >

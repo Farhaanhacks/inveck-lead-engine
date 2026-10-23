@@ -29,10 +29,11 @@ export default async function MarketingOverview() {
         <Link href="/marketing/calendar" className="btn-primary">Back to the Content Calendar</Link>
       </PageHeader>
       <h2 className="mb-2 text-sm font-semibold">Posted</h2>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="Total posted" value={c.posted} />
         <Tile label="Posted on Instagram" value={c.instagramPosted} platform="instagram" />
         <Tile label="Posted on LinkedIn" value={c.linkedinPosted} platform="linkedin" />
+        <Tile label="Posted on YouTube" value={c.youtubePosted} platform="youtube" />
       </div>
       <h2 className="mt-8 mb-2 text-sm font-semibold">In progress</h2>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

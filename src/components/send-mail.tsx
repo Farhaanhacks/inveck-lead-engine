@@ -104,10 +104,11 @@ export function SendMail({
           disabled={pending}
           aria-expanded={open}
           aria-controls={reviewId}
-          aria-label="Review the email before sending"
-          title="Review the email before sending"
-          className="btn-primary rounded-l-none border-l border-white/30 px-1.5 py-1 text-xs"
+          aria-label="Edit the email before sending"
+          title="Edit the email before sending"
+          className="btn-primary inline-flex items-center gap-1 rounded-l-none border-l border-white/30 px-2 py-1 text-xs"
         >
+          Edit
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden className={open ? 'rotate-180' : ''}>
             <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -118,6 +119,8 @@ export function SendMail({
           {/* A new draft (written for them) replaces the fields. */}
           <form action={outlook ? send : undefined} onSubmit={outlook ? undefined : toMailApp} key={`${subject}\n${body}`} className="space-y-2">
             <input type="hidden" name="id" value={taskId} />
+            <h3 className="text-sm font-semibold">Edit email</h3>
+            <p className="text-xs text-muted">Changes apply to this email only. The saved draft and future emails are not changed.</p>
             {outlook ? (
               <p className="text-xs text-muted">
                 {from ? `From ${from}` : 'From your Outlook (not connected yet)'}

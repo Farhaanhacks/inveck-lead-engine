@@ -1,12 +1,12 @@
 // The parts of the content calendar the browser needs too: names, labels, formats and calendar dates.
 // Nothing here touches the database, so the calendar screen can import it.
 
-export const CONTENT_PLATFORMS = ['instagram', 'linkedin'] as const;
+export const CONTENT_PLATFORMS = ['instagram', 'linkedin', 'youtube'] as const;
 export type ContentPlatform = (typeof CONTENT_PLATFORMS)[number];
 export const CONTENT_STATUSES = ['draft', 'pending_approval', 'approved', 'scheduled', 'waiting_dependency', 'posted'] as const;
 export type ContentStatus = (typeof CONTENT_STATUSES)[number];
 
-export const PLATFORM_LABEL: Record<ContentPlatform, string> = { instagram: 'Instagram', linkedin: 'LinkedIn' };
+export const PLATFORM_LABEL: Record<ContentPlatform, string> = { instagram: 'Instagram', linkedin: 'LinkedIn', youtube: 'YouTube' };
 export const STATUS_LABEL: Record<ContentStatus, string> = {
   draft: 'Draft',
   pending_approval: 'Pending approval',
@@ -19,7 +19,10 @@ export const STATUS_LABEL: Record<ContentStatus, string> = {
 export const FORMATS: Record<ContentPlatform, readonly string[]> = {
   instagram: ['post', 'carousel', 'reel', 'story', 'video'],
   linkedin: ['post', 'carousel', 'video', 'article'],
+  youtube: ['video', 'short', 'live', 'post'],
 };
+/** What the "Both" choice makes a piece for: Instagram and LinkedIn, as before (YouTube is chosen on its own). */
+export const BOTH_PLATFORMS = ['instagram', 'linkedin'] as const satisfies readonly ContentPlatform[];
 /** The formats both platforms have: what "Both" offers (a new piece made once for Instagram and for LinkedIn). */
 export const SHARED_FORMATS = FORMATS.instagram.filter((f) => FORMATS.linkedin.includes(f));
 export const FORMAT_LABEL = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);

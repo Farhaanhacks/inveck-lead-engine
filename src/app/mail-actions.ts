@@ -67,6 +67,10 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   const reviewed = form.has('body');
   const subject = (reviewed ? str(form, 'subject') : plan.subject).trim();
   const body = (reviewed ? String(form.get('body') ?? '') : plan.body).trim();
+  // Edited by hand before this send (the text or the subject differs from the draft).
+  // (A browser sends line breaks as CRLF: they are not an edit.)
+  const lf = (t: string) => t.replace(/\r\n/g, '\n').trim();
+  const edited = reviewed && (lf(subject) !== lf(plan.subject) || lf(body) !== lf(plan.body));
   if (!body) return { error: plan.followUp ? 'No follow-up written yet: write it, or use Write it for me.' : 'There is no email draft yet: write it first.' };
   if (!subject) return { error: 'Add a subject.' };
   if (/\{\{.*?\}\}/.test(`${subject}\n${body}`)) return { error: 'The email still has a {{placeholder}} in it: fill it in before sending.' };
@@ -102,8 +106,9 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
     .set({ status: 'sent', sentAt: now, fromAddress: sent.from, graphId: sent.requestId })
     .where(eq(sentEmails.id, claim.id));
 
-  // What went out is what the lead shows: the first email as sent; a follow-up is used up.
-  if (!plan.followUp) {
+  // What went out is what the lead shows: the first email as sent; a follow-up is used up. Text edited by hand for this one
+  // send is recorded with the sent email only: it never replaces the lead's saved draft or any later draft.
+  if (!plan.followUp && !edited) {
     await db.update(leads).set({ emailSubject: subject, emailBody: body, updatedAt: now }).where(eq(leads.id, lead.id));
   } else {
     const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, FOLLOW_UP_ROUNDS);
@@ -112,7 +117,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
       .set({ followUpSubject: '', followUpBody: '', followUpStep: step, updatedAt: now })
       .where(eq(leads.id, lead.id));
   }
-  await logActivity(db, lead.id, 'note', `${plan.followUp ? 'Follow-up' : 'Email'} sent from Outlook (${sent.from}) to ${to}: “${subject}” at ${formatDateTime(now)}. Graph accepted it (HTTP ${sent.status}${sent.requestId ? `, request ${sent.requestId}` : ''})${profile ? ', with the product profile attached' : ''}.`);
+  await logActivity(db, lead.id, 'note', `${plan.followUp ? 'Follow-up' : 'Email'} sent from Outlook (${sent.from}) to ${to}: “${subject}” at ${formatDateTime(now)}${edited ? ' (text edited before sending)' : ''}. Graph accepted it (HTTP ${sent.status}${sent.requestId ? `, request ${sent.requestId}` : ''})${profile ? ', with the product profile attached' : ''}.`);
 
   // The step is done, logged as "Mark sent" logs it (the counters, the stage, the next steps).
   const done = new FormData();

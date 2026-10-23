@@ -201,8 +201,9 @@ describe('Send mail on Today', () => {
     expect(message.toRecipients[0].emailAddress.address).toBe('purchase@hosurgears.in');
     expect(message.subject).toBe('Stock audits at your Hosur plant');
     expect(message.body.content).toBe('Hi team,\n\nEdited text.');
-    // The lead's draft is what went out.
-    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailSubject).toBe('Stock audits at your Hosur plant');
+    // An edit is for this email only: the lead's saved draft stays as it was (the edited text is on the sent record).
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailSubject).toBe('Stock checks at Hosur Gears');
+    expect((await db.select().from(sentEmails).where(eq(sentEmails.taskId, t.id)))[0].subject).toBe('Stock audits at your Hosur plant');
   });
 
   it('a follow-up goes as a new "Re:" email with the earlier one quoted, and uses up the follow-up draft', async () => {
@@ -536,5 +537,40 @@ describe('first emails for Manufacturing and 3PL', () => {
     expect((await send({ id: t.id })).error).toMatch(/Manufacturing profile PDF isn't on the server/);
     expect(graphCalls()).toEqual([]);
     expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].doneAt).toBeNull();
+  });
+});
+
+describe('editing the email before it is sent', () => {
+  it("an edit changes only that email: recipient, subject and attachment as before, and the saved draft is untouched", async () => {
+    await connect();
+    const l = await lead();
+    const t = await emailTask(l.id);
+    calls = [];
+    const r = await send({ id: t.id, to: 'ravi@hosurgears.in', subject: 'Stock checks at Hosur Gears', body: 'Hi Ravi,\r\n\r\nA reworded note, edited by hand.' });
+    expect(r.error).toBe('');
+    const message = JSON.parse(graphCalls().find((c) => c.url.endsWith('/me/sendMail'))!.body).message;
+    expect(message.body.content).toContain('A reworded note, edited by hand.');
+    expect(message.toRecipients[0].emailAddress.address).toBe('ravi@hosurgears.in');
+    expect(message.subject).toBe('Stock checks at Hosur Gears');
+    // The lead's saved draft is not replaced by the edited text.
+    const [after] = await db.select().from(leads).where(eq(leads.id, l.id));
+    expect(after.emailBody).toContain('A quick note about your stock counts.');
+    expect(after.emailBody).not.toContain('reworded');
+    const [sent] = await db.select().from(sentEmails).where(eq(sentEmails.taskId, t.id));
+    expect(sent.body).toContain('reworded');
+    const log = (await db.select().from(activities).where(eq(activities.leadId, l.id))).map((a) => a.text);
+    expect(log.some((x) => x.includes('text edited before sending'))).toBe(true);
+  });
+
+  it('sending the review form without changing anything is not an edit (line breaks from the browser do not count)', async () => {
+    await connect();
+    const l = await lead();
+    const t = await emailTask(l.id);
+    const { planEmail } = await import('@/lib/mail/plan');
+    const plan = planEmail(l, undefined, { from: 'INVECK Sales Team', as: 'Puja', owner: 'Puja' });
+    expect((await send({ id: t.id, subject: plan.subject, body: plan.body.replace(/\n/g, '\r\n') })).error).toBe('');
+    const log = (await db.select().from(activities).where(eq(activities.leadId, l.id))).map((a) => a.text);
+    expect(log.some((x) => x.includes('text edited before sending'))).toBe(false);
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailBody).toMatch(/Regards,\r?\nPuja/);
   });
 });
