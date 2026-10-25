@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { runs, sourcingTests } from '@/lib/db/schema';
 import { activeRun, claimStalledRun, markRunPaused, startRun } from '@/lib/runs';
-import { canCarryOn, claimStalledTests, markTestPaused, reopenTest } from '@/lib/sourcing/test-run';
+import { activeSourcingTest, canCarryOn, claimStalledTests, markTestPaused, reopenTest } from '@/lib/sourcing/test-run';
 import { RESUME_AFTER_MS } from '@/lib/invocations';
 
 /**
@@ -73,6 +73,20 @@ describe('a sourcing test or sample whose chain of invocations stopped', () => {
     expect(row.progress).toMatch(/carries on by itself while this page is open/);
     expect((await claimStalledTests(db)).map((x) => x.id)).toEqual([t.id]);
     expect(await claimStalledTests(db)).toEqual([]);
+  });
+
+  it('is never given up on while anything can still wake it: two hours later it is picked up, not closed', async () => {
+    const twoHours = new Date(Date.now() - 2 * 3600_000);
+    const t = await insert({ startedAt: twoHours, updatedAt: twoHours });
+    expect(await activeSourcingTest(db, 'morning')).toMatchObject({ id: t.id, status: 'running' });
+    expect((await claimStalledTests(db)).map((x) => x.id)).toEqual([t.id]);
+    // Only after six hours with nothing waking it is it closed as stopped (and it can still carry on from there).
+    const sevenHours = new Date(Date.now() - 7 * 3600_000);
+    await db.update(sourcingTests).set({ updatedAt: sevenHours }).where(eq(sourcingTests.id, t.id));
+    expect(await activeSourcingTest(db, 'morning')).toBeNull();
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, t.id));
+    expect(row.status).toBe('failed');
+    expect(canCarryOn(row)).toBe(true);
   });
 
   it('one stopped for the server\'s time can carry on from where it got to; one that failed on its own cannot', async () => {

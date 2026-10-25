@@ -3,7 +3,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { ensureResearch, requestOrigin } from '@/lib/run-driver';
-import { driveSourcingTest } from '@/lib/sourcing/drive';
+import { driveSourcingTest, resumeStalledTests } from '@/lib/sourcing/drive';
 import { startScheduledSample } from '@/lib/sourcing/sample-run';
 import { leads, opportunities } from '@/lib/db/schema';
 import { RadarCard } from '@/components/radar-card';
@@ -59,12 +59,13 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   await adminPage();
   const wanted = Number((await searchParams).run) || 0;
   await ensureResearch(await requestOrigin());
-  // A scheduled Morning Sample that is due starts from here too, in case the scheduled checks are late.
+  // A scheduled Morning Sample that is due starts from here too, in case the scheduled checks are late; one that stalled carries on.
   const scheduled = await startScheduledSample(await getDb()).catch(() => null);
   if (scheduled) {
     const origin = await requestOrigin();
     after(() => driveSourcingTest(scheduled, origin));
   }
+  await resumeStalledTests(await requestOrigin());
   const db = await getDb();
   const team = await listBdas(db);
   const [byStatus, analytics, [totals], topLeads, runList, running, fresh, added, [{ waiting }]] = await Promise.all([

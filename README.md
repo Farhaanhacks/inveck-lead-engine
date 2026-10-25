@@ -238,7 +238,10 @@ after a few hand-offs (`508 INFINITE_LOOP_DETECTED`), so the run then pauses, wi
 and the next fresh request picks it up again: a page opened (Dashboard, Leads, Today, Team, or the Sourcing
 page while a test runs), the 8 am draw, or the checks every 10 minutes from 06:10 to 07:50 IST
 (`/api/cron/resume` in `vercel.json`). A Morning Sample Run stopped that way before this existed can be carried
-on from where it got to ("Carry on from here").
+on from where it got to ("Carry on from here"). A paused Sourcing test or Morning Sample Run is picked up again
+however long it waited (the 6 am job, the 8 am draw, the checks, the outside five-minute timer calling
+`/api/cron/inbound-demos`, or the Dashboard or Sourcing page opened); only after 6 hours with nothing waking it
+is it closed as stopped, and it can still carry on from there.
 
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
 working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
@@ -261,6 +264,14 @@ people the morning search found there are checked like anyone the search finds, 
 towards those 4, so it stops sooner; all of them are kept as candidates. CA firms are
 never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
 segment has ready for the draw, and warns when the searches are running thin.
+
+From Monday 26 October 2026 that 6 am run no longer starts (`OLD_RUN_UNTIL` in `sample-run.ts`): Monday has no
+run, and from Tuesday 27 October a **daily Morning Sample** (`DAILY_SAMPLE`) starts at 06:00 IST instead, on the
+same days the morning search would run (a working day, not a holiday or a paused day, the search on in
+Settings), started once by the first wake-up between 06:00 and 14:00. It is for that day's lists (what anyone
+already has for the day left out), uses the sample's rules below (3,000 credits at most), and gives its leads out
+itself when it finishes, never more than anyone's list for the day (a lead over it stays in the pool for the
+next draw). The 8 am draw then fills only what is still missing.
 
 To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
 (`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and

@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, is, isNull, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, leads, people, settings, sourcingTests, tasks, users, type Lead, type SourcingTest } from '../db/schema';
-import { dealCapped, DRAW_HOUR_IST, DRAW_SEGMENTS, DRAWABLE, drawPool, isTopContact, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, topAllowance, type DrawSegment, type Quota } from '../draw';
+import { dealCapped, DRAW_HOUR_IST, DRAW_SEGMENTS, DRAWABLE, drawPool, handedOut, isTopContact, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, topAllowance, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
@@ -17,7 +17,9 @@ import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, planSequence, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { MANUFACTURING } from '../db/seed';
-import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchRound, startRound, type MorningSourcing } from './morning';
+import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchesThisMorning, searchRound, startRound, type MorningSourcing } from './morning';
+import { pausedToday } from '../pause';
+import { getSettings } from '../settings';
 import { planFromMemory, rememberKept, rememberSearch, searchMemory } from './search-memory';
 import { CHECKS_RESERVE } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
@@ -109,7 +111,15 @@ export type SampleHand = {
 };
 
 /** A sample run as started, before it has looked at anything. */
-export type MorningSampleStart = { mode: 'morning'; phase: 'init'; fresh: boolean; /** Started on its own (see SCHEDULED_SAMPLES): its leads are added and given out when it finishes. */ assign?: boolean };
+export type MorningSampleStart = {
+  mode: 'morning';
+  phase: 'init';
+  fresh: boolean;
+  /** Started on its own (see SCHEDULED_SAMPLES): its leads are added and given out when it finishes. */
+  assign?: boolean;
+  /** The morning it is for (the daily run: that same day), instead of the next draw's. */
+  day?: string;
+};
 
 export type MorningSampleReport = {
   mode: 'morning';
@@ -142,8 +152,8 @@ export type MorningSampleReport = {
   autoAssign?: boolean;
   /** People searches left out of the plan, per segment, because earlier samples' same searches found nothing (see search-memory.ts). */
   skipped?: Partial<Record<SourcingSegment, number>>;
-  /** Its dealt leads were put into the pipeline and given out as dealt (see assignSampleLeads): when, for which morning, to whom. */
-  assigned?: { at: string; day: string; given: { userId: number; name: string; leads: number }[]; skipped: string[] };
+  /** Its dealt leads were put into the pipeline and given out as dealt (see assignSampleLeads): when, for which morning, to whom; `pooled`, leads left in the pool because that person's list for the day was already full. */
+  assigned?: { at: string; day: string; given: { userId: number; name: string; leads: number }[]; skipped: string[]; pooled?: number };
 };
 
 export const isMorningSample = (r: unknown): r is MorningSampleReport => (r as MorningSampleReport | null)?.mode === 'morning' && (r as MorningSampleReport).phase !== ('init' as string);
@@ -220,7 +230,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
     if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set: the sample searches Google through Serper.');
     if (!report) {
       const start = test.report as MorningSampleStart | null;
-      report = await begin(db, svc, start?.fresh ?? false);
+      report = await begin(db, svc, start?.fresh ?? false, start?.day);
       if (start?.assign) report.autoAssign = true;
     }
     const r = report;
@@ -358,12 +368,28 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
  */
 export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z'];
 
+/**
+ * The daily run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, on every morning the search runs (a working
+ * day, not a holiday or a paused day, the search on in Settings), a Morning Sample for that day's lists starts at 6 am
+ * India time in place of the older 6 am run, and gives its leads out itself (the 8 am draw then fills only what is still
+ * missing). Started once by the first check from 6 am (/api/cron and the other scheduled checks, the outside timer, the
+ * Dashboard or Sourcing page), not from 2 pm.
+ */
+export const DAILY_SAMPLE = { from: '2026-10-27', startIst: 6, lastIst: 14 } as const;
+/** From this day the older 6 am run doesn't start (Monday 26 October: no run; from Tuesday: the daily sample instead). */
+export const OLD_RUN_UNTIL = '2026-10-26';
+
 /** Starts a scheduled sample that is due and hasn't started (once, whoever calls); its id, or null. */
 export async function startScheduledSample(db: Db, now = new Date()): Promise<number | null> {
-  for (const at of SCHEDULED_SAMPLES) {
-    const t = Date.parse(at);
-    if (now.getTime() < t || now.getTime() - t > 3 * 3600_000) continue;
-    const key = `scheduledSample:${at}`;
+  const today = istDay(now);
+  const hourIst = new Date(now.getTime() + 5.5 * 3600 * 1000).getUTCHours();
+  const daily =
+    today >= DAILY_SAMPLE.from && hourIst >= DAILY_SAMPLE.startIst && hourIst < DAILY_SAMPLE.lastIst && !(await pausedToday(db, now)) && (await searchesThisMorning(db, await getSettings(db), now));
+  const due = [
+    ...SCHEDULED_SAMPLES.filter((at) => now.getTime() >= Date.parse(at) && now.getTime() - Date.parse(at) <= 3 * 3600_000).map((at) => ({ key: `scheduledSample:${at}`, day: undefined as string | undefined })),
+    ...(daily ? [{ key: `scheduledSample:daily:${today}`, day: today }] : []),
+  ];
+  for (const { key, day } of due) {
     // A claim that never got as far as starting the sample (the request died) is let go after two minutes.
     const [was] = await db.select().from(settings).where(eq(settings.key, key));
     const held = was?.value as { claimedAt?: string; testId?: number } | undefined;
@@ -371,7 +397,7 @@ export async function startScheduledSample(db: Db, now = new Date()): Promise<nu
     const claimed = await db.insert(settings).values({ key, value: { claimedAt: now.toISOString() } }).onConflictDoNothing().returning({ key: settings.key });
     if (!claimed.length) continue;
     try {
-      const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: false, assign: true };
+      const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: false, assign: true, ...(day ? { day } : {}) };
       const [test] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, progress: 'Starting (scheduled)…', report: start }).returning({ id: sourcingTests.id });
       await db.update(settings).set({ value: { claimedAt: now.toISOString(), testId: test.id } }).where(eq(settings.key, key));
       return test.id;
@@ -487,7 +513,8 @@ export async function pushSampleCompanies(db: Db, testId: number, keys: number[]
  * left them (Approved, with their contact and drafts; see pushSampleCompanies); a pool lead it dealt is given out
  * if nobody has it yet. Each counts as handed out on the sample's morning (today, once that has passed), and its
  * Day 1 steps are due then. A lead someone already has, or one already in the pipeline as another lead, is left
- * as it is (`skipped`). Giving out again changes nothing.
+ * as it is (`skipped`). Nobody gets more than their list for that day: a lead over it stays in the pool, nobody's, for
+ * the next draw (`pooled`). Giving out again changes nothing.
  */
 export async function assignSampleLeads(db: Db, testId: number, now = new Date()): Promise<NonNullable<MorningSampleReport['assigned']> | null> {
   const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, testId));
@@ -502,16 +529,28 @@ export async function assignSampleLeads(db: Db, testId: number, now = new Date()
   const day = r.day > today ? r.day : today;
   const holidays = await getHolidays(db);
   const active = new Set((await db.select({ id: users.id }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true)))).map((u) => u.id));
+  // Never more than anyone's list for the day: what they were already given for it (the 8 am draw, another sample) counts.
+  const quotas = await teamQuotas(db);
+  const handed = await handedOut(db, day);
+  const room = (owner: number, segment: DrawSegment) => (quotas.get(owner)?.[segment] ?? 0) - (handed[String(owner)]?.[segment] ?? 0);
   const given: NonNullable<MorningSampleReport['assigned']>['given'] = [];
   const skipped = [...pushed.skipped];
+  let pooled = 0;
   for (const h of r.hands) {
     let n = 0;
     for (const card of h.cards) {
       const company = card.from === 'sample' ? r.companies.find((c) => c.key === card.key) : undefined;
-      const name = company ? (company.page.nameCut ? company.employer : company.page.name) : (r.pool.find((p) => p.lead.id === card.key)?.lead.company ?? `Lead ${card.key}`);
+      const poolLead = card.from === 'pool' ? r.pool.find((p) => p.lead.id === card.key)?.lead : undefined;
+      const name = company ? (company.page.nameCut ? company.employer : company.page.name) : (poolLead?.company ?? `Lead ${card.key}`);
+      const segment = DRAW_SEGMENTS.find((s) => normSegment(s) === normSegment(company?.segment ?? poolLead?.segment ?? ''));
       const leadId = card.from === 'sample' ? company?.pushed : card.key;
       if (!leadId || !active.has(h.userId)) {
         if (leadId) skipped.push(name);
+        continue;
+      }
+      // Their list for the day is full already: the lead stays in the pool (approved, nobody's) for the next draw.
+      if (!segment || room(h.userId, segment) <= 0) {
+        pooled++;
         continue;
       }
       // Only a lead nobody has yet, still ready to be worked.
@@ -527,11 +566,13 @@ export async function assignSampleLeads(db: Db, testId: number, now = new Date()
       const open = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, lead.id), isNull(tasks.doneAt))).limit(1);
       if (!open.length) await db.insert(tasks).values(planSequence(day, holidays).map((t) => ({ ...t, leadId: lead.id, ownerId: h.userId })));
       await logActivity(db, lead.id, 'note', `Given to ${h.name} from Morning Sample Run ${testId}, for ${day} (as the sample dealt it)`);
+      const hand = (handed[String(h.userId)] ??= {});
+      hand[segment] = (hand[segment] ?? 0) + 1;
       n++;
     }
     if (n) given.push({ userId: h.userId, name: h.name, leads: n });
   }
-  const assigned = { at: now.toISOString(), day, given, skipped: [...new Set(skipped)] };
+  const assigned = { at: now.toISOString(), day, given, skipped: [...new Set(skipped)], ...(pooled ? { pooled } : {}) };
   await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify({ ...r, assigned })) }).where(eq(sourcingTests.id, testId));
   return assigned;
 }
@@ -554,16 +595,19 @@ export function sampleMorning(now: Date, holidays: Holidays): string {
 }
 
 /** The morning it shows, the team and quotas, and what the search is asked for: the draw's shortfall, plus a quarter. */
-async function begin(db: Db, svc: Services, fresh: boolean): Promise<MorningSampleReport> {
+async function begin(db: Db, svc: Services, fresh: boolean, forDay?: string): Promise<MorningSampleReport> {
   const holidays = await getHolidays(db);
   // Not before the day the morning search and draw start (the live database: 22 Oct 2026).
   const startsOn = await morningStartsOn(db);
-  const next = sampleMorning(new Date(), holidays);
+  const next = forDay ?? sampleMorning(new Date(), holidays);
   const day = startsOn && next < startsOn ? firstWorkingDay(startsOn, holidays) : next;
   const team = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, 'bda'), eq(users.active, true))).orderBy(asc(users.id));
   const quota = quotaOf(svc.settings);
   const own = await teamQuotas(db, svc.settings);
-  const quotas = Object.fromEntries(team.map((t) => [String(t.id), own.get(t.id) ?? quota]));
+  // The daily run (for that same day): what each person was already given for it (the 8 am draw, when it starts later) is left out.
+  const given = forDay ? await handedOut(db, day) : {};
+  const left = (q: Quota, g?: Quota): Quota => (g ? (Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, Math.max(0, q[s] - (g[s] ?? 0))])) as Quota) : q);
+  const quotas = Object.fromEntries(team.map((t) => [String(t.id), left(own.get(t.id) ?? quota, given[String(t.id)])]));
   const pool = await drawPool(db);
   // Companies already waiting for research: the run researches them first; the sample can't show them.
   const waitingRows = await db.select({ segment: leads.segment }).from(leads).where(inArray(leads.status, ['New', 'Processing']));

@@ -12,7 +12,7 @@ export const maxDuration = 300;
  * Scheduled checks between the 6 am run and the 8 am draw (see vercel.json): Vercel ends a long chain of
  * invocations each calling the next, so a run that stalled is picked up again from here, a fresh request.
  * Does nothing when nothing has stalled. Also starts a scheduled Morning Sample Run once it is due (see
- * SCHEDULED_SAMPLES). Vercel sends CRON_SECRET as a bearer token.
+ * SCHEDULED_SAMPLES and DAILY_SAMPLE). Vercel sends CRON_SECRET as a bearer token.
  */
 export async function GET(request: Request) {
   if (request.headers.get('authorization') !== `Bearer ${await runSecret()}`) {

@@ -216,6 +216,7 @@ function AssignBar({ r, id }: { r: MorningSampleReport; id: number }) {
       <div className="card mb-4 p-4 text-sm">
         <span className="font-medium">Added and assigned {formatDateTime(new Date(a.at))}</span>, for {dayName(a.day)}: {a.given.length ? a.given.map((g) => `${g.name} ${g.leads}`).join(', ') : 'none (each was already taken)'}.
         {a.skipped.length > 0 && <span className="mt-1 block text-xs text-muted">Left as they were (someone already has them, or the company is already in the pipeline): {a.skipped.join(', ')}.</span>}
+        {!!a.pooled && <span className="mt-1 block text-xs text-muted">{a.pooled} left in the pool, approved, for the next draw: that person already had their full list for the day.</span>}
       </div>
     );
   }
