@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, is, isNull, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
 import { clients, icps, leads, people, sourcingTests, tasks, users, type Lead, type SourcingTest } from '../db/schema';
-import { dealToDeficits, DRAW_HOUR_IST, DRAW_SEGMENTS, DRAWABLE, drawPool, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, type DrawSegment, type Quota } from '../draw';
+import { dealCapped, DRAW_HOUR_IST, DRAW_SEGMENTS, DRAWABLE, drawPool, isTopContact, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, topAllowance, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
 import { listKnownCompanies } from '../known-companies';
@@ -86,13 +86,15 @@ export type SampleCompany = {
   pushed?: number;
   /** When research finished with it (ISO): the day its people were seen on LinkedIn. */
   researchedAt?: string;
+  /** Its main contact is the head of the company (MD, CEO, owner): one of the at most 10% of each list (see TOP_CONTACT_SHARE). */
+  topContact?: boolean;
 };
 
 /** Companies earlier searches found but didn't check, carried into this sample (checked first), per segment. */
 export type Carried = Partial<Record<SourcingSegment, number>>;
 
 /** One card on a person's day: a lead waiting in the pool now, or a company the sample found. */
-export type SampleCard = { from: 'pool' | 'sample'; key: number };
+export type SampleCard = { from: 'pool' | 'sample'; key: number; /** The head of the company (MD, CEO, owner) is its main contact. */ top?: boolean };
 
 export type SampleHand = {
   userId: number;
@@ -171,8 +173,13 @@ const releasable = (c: SampleCompany) => c.outcome === 'approved' && !!c.lead?.q
 /** What's still short per segment: the draw's need, less the pool and what the sample has ready (and is still researching). */
 function stillShort(r: MorningSampleReport): Record<DrawSegment, number> {
   const out = {} as Record<DrawSegment, number>;
+  // Leads with the head of the company as the main contact count only up to the team's share of them.
+  let topRoom = r.team.reduce((a, t) => a + topAllowance(quotaFor(r, t.id)), 0);
   for (const s of DRAW_SEGMENTS) {
-    const mine = r.companies.filter((c) => c.segment === s && (releasable(c) || !c.outcome)).length;
+    const ready = r.companies.filter((c) => c.segment === s && releasable(c));
+    const tops = Math.min(ready.filter((c) => c.topContact).length, topRoom);
+    topRoom -= tops;
+    const mine = ready.filter((c) => !c.topContact).length + tops + r.companies.filter((c) => c.segment === s && !c.outcome).length;
     out[s] = Math.max(0, r.start[s].need - (r.fresh ? 0 : r.start[s].pool) - mine);
   }
   return out;
@@ -601,6 +608,7 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       c.outcome = s === 'Approved' ? 'approved' : s === 'Deleted' ? 'no_contact' : s === 'Error' ? 'error' : 'ruled_out';
       c.why = s === 'Approved' ? update.fitReason ?? '' : update.deletedReason || update.fitDecision || update.fitReason || update.lastError || s || '';
       if (c.outcome === 'approved' && !releasable(c)) c.why = `Approved, but the contact isn't confirmed on LinkedIn yet, so the draw would hold it back`;
+      c.topContact = !!c.lead.contactName && isTopContact(c.lead, allIcps);
       c.researchedAt = new Date().toISOString();
     } catch (e) {
       c.outcome = 'error';
@@ -618,18 +626,26 @@ async function deal(db: Db, r: MorningSampleReport) {
   const team = r.team.map((t) => t.id);
   const hands = new Map(r.team.map((t) => [t.id, { userId: t.id, name: t.name, ca: worksCaFirms(t.name), cards: [] as SampleCard[], short: { ...Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, 0])) } as Record<DrawSegment, number>, carried: [] as SampleHand['carried'] }]));
   const poolUsed: Lead[] = [];
+  // As the draw: at most 10% of each person's list with the head of the company as the main contact.
+  const icpList = await db.select().from(icps);
+  const topLeft = new Map(team.map((t) => [t, topAllowance(quotaFor(r, t))] as const));
   for (const s of DRAW_SEGMENTS) {
     const need = team.reduce((a, t) => a + quotaFor(r, t)[s], 0);
     if (!need) continue;
-    const pool = r.fresh ? [] : await poolLeads(db, s, need);
+    // A few more from the pool than needed, for those passed over at the cap.
+    const pool = r.fresh ? [] : await poolLeads(db, s, need + 20);
     const mine = r.companies.filter((c) => c.segment === s && releasable(c));
-    const cards: SampleCard[] = shuffle([...pool.map((l) => ({ from: 'pool' as const, key: l.id })), ...mine.map((c) => ({ from: 'sample' as const, key: c.key }))]).slice(0, need);
-    poolUsed.push(...pool.filter((l) => cards.some((c) => c.from === 'pool' && c.key === l.id)));
+    const cards: SampleCard[] = shuffle([
+      ...pool.map((l) => ({ from: 'pool' as const, key: l.id, top: isTopContact(l, icpList) })),
+      ...mine.map((c) => ({ from: 'sample' as const, key: c.key, top: !!c.topContact })),
+    ]);
     const deficits = new Map(team.map((t) => [t, quotaFor(r, t)[s]] as const).filter(([, n]) => n > 0));
-    for (const [owner, dealt] of dealToDeficits(cards, deficits)) {
+    for (const [owner, dealt] of dealCapped(cards.map((c) => ({ item: c, top: !!c.top })), deficits, topLeft, Math.floor(Math.random() * Math.max(1, deficits.size)))) {
       const h = hands.get(owner)!;
       h.cards.push(...dealt);
       h.short[s] = quotaFor(r, owner)[s] - dealt.length;
+      topLeft.set(owner, (topLeft.get(owner) ?? 0) - dealt.filter((c) => c.top).length);
+      poolUsed.push(...pool.filter((l) => dealt.some((c) => c.from === 'pool' && c.key === l.id)));
     }
   }
   const ids = poolUsed.map((l) => l.id);
@@ -673,7 +689,10 @@ export function summaryOf(r: MorningSampleReport): string {
   const dealt = r.hands.reduce((a, h) => a + h.cards.length, 0);
   const wanted = r.team.reduce((a, t) => a + DRAW_SEGMENTS.reduce((b, s) => b + quotaFor(r, t.id)[s], 0), 0);
   const waiting = r.companies.filter((c) => c.outcome === 'waiting').length;
-  return `${r.companies.length} companies found, ${approved} approved with a confirmed contact${waiting ? `, ${waiting} left for the next day (over the search budget)` : ''}; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates. ${credits(r)}.`;
+  const tops = r.hands.reduce((a, h) => a + h.cards.filter((c) => c.top).length, 0);
+  const heldBack = r.companies.filter((c) => releasable(c) && c.topContact).length - r.hands.reduce((a, h) => a + h.cards.filter((c) => c.from === 'sample' && c.top).length, 0);
+  const top = tops || heldBack ? ` ${tops} of them with the MD, CEO or owner as the contact (at most 10% of each list)${heldBack > 0 ? `; ${heldBack} more like that kept back by the cap` : ''}.` : '';
+  return `${r.companies.length} companies found, ${approved} approved with a confirmed contact${waiting ? `, ${waiting} left for the next day (over the search budget)` : ''}; ${dealt} of ${wanted} leads dealt to ${r.team.length} associates.${top} ${credits(r)}.`;
 }
 
 /** The Google search credits a sample spent, against its budget when there is one. */
