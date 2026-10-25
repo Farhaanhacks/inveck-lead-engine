@@ -11,7 +11,7 @@ import { CHECKS_RESERVE, RESEARCH_CREDITS, searchBudgetLeft, searchesUsed } from
 import { normQuery } from '../pipeline/query-history';
 import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services } from '../pipeline/services';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
-import { contactPriority } from '../tiers';
+import { contactPriority, titlePhrase } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
 import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
 import { websiteWords } from './website-words';
@@ -105,7 +105,7 @@ export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof sea
   for (let j = 0; j < pairs.length; j++) {
     titles.forEach((title, t) => {
       const [keyword, place] = pairs[(j + t * 7) % pairs.length];
-      out.push({ q: ['site:linkedin.com/in', `"${title.replace(/"/g, '')}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
+      out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
     });
   }
   return out;

@@ -1,5 +1,5 @@
 import type { Icp } from '../db/schema';
-import { cleanTitle, companyWide, contactPriority, noDepartment, roleOnly, tierOf } from '../tiers';
+import { cleanTitle, companyWide, contactPriority, noDepartment, roleOnly, tierOf, titlePhrase } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
@@ -74,7 +74,7 @@ export function staffSearches(company: string, city: string): string[] {
 export function designationQuery(firm: string, designation: string, town = ''): string {
   // A quote typed into a name or designation would end the quoted phrase early.
   const phrase = (s: string) => `"${s.replace(/"/g, '').trim()}"`;
-  return ['site:linkedin.com/in', phrase(firm), phrase(designation), town.replace(/"/g, '')].filter(Boolean).join(' ');
+  return ['site:linkedin.com/in', phrase(firm), `"${titlePhrase(designation)}"`, town.replace(/"/g, '')].filter(Boolean).join(' ');
 }
 
 /**

@@ -756,4 +756,15 @@ export const SCHEMA_STATEMENTS = [
    WHERE key = 'pausedDays' AND jsonb_typeof(value) = 'array' AND NOT value @> '["2026-10-23"]'::jsonb
    AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'pauseFriday23V1')`,
   `INSERT INTO settings (key, value) SELECT 'pauseFriday23V1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM settings WHERE key = 'pausedDays') ON CONFLICT (key) DO NOTHING`,
+  // P1 only (INVECK's decision, 25 Oct 2026): their P1 designations for Manufacturing and 3PL & Logistics, and no P2
+  // or P3. Set once on the live database (raising the product's configuration version, as saving the ICP does); the
+  // Configuration page can change them afterwards.
+  `UPDATE icps SET target_titles = 'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Head of Procurement & Supply Chain', p2_titles = '', p3_titles = ''
+   WHERE lower(segment) = 'manufacturing' AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpP1OnlyV1')`,
+  `UPDATE icps SET target_titles = 'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Warehouse Operations, Warehouse Manager, Head of Procurement & Supply Chain', p2_titles = '', p3_titles = ''
+   WHERE lower(segment) = '3pl & logistics' AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpP1OnlyV1')`,
+  `UPDATE products SET config_version = config_version + 1
+   WHERE id IN (SELECT product_id FROM icps WHERE lower(segment) IN ('manufacturing', '3pl & logistics'))
+   AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpP1OnlyV1')`,
+  `INSERT INTO settings (key, value) SELECT 'icpP1OnlyV1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
 ];

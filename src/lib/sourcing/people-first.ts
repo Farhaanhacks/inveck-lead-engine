@@ -4,7 +4,7 @@ import { toLinkedInPeople } from '../pipeline/contacts';
 import { isPlace, snippetRoles, subtitleJob } from '../pipeline/employer';
 import type { SerperResult } from '../pipeline/services';
 import { normCompany, searchName } from '../pipeline/text';
-import { contactPriority, noDepartment, tierOf } from '../tiers';
+import { contactPriority, noDepartment, tierOf, titlePhrase } from '../tiers';
 import { readCompanyPage, SEGMENT_SEARCH, shuffled, type CompanyPage, type SourcingSegment } from './linkedin-pages';
 
 /**
@@ -58,7 +58,7 @@ export function planPeopleQueries(segment: SourcingSegment, icp: TitleIcp, count
     const title = titles[i % titles.length];
     const keyword = ks[i % ks.length];
     const place = ps[(i + Math.floor(i / ps.length)) % ps.length];
-    const q = ['site:linkedin.com/in', `"${title.replace(/"/g, '')}"`, `"${keyword}"`, place].join(' ');
+    const q = ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' ');
     if (!out.some((o) => o.q === q)) out.push({ q, form: 'industry', title, keyword, place });
   }
   return out;
