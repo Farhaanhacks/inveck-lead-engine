@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { icps, leads, people, prospectSearches, runs, type Lead, type Run } from '../db/schema';
 import { DEFAULT_ICPS } from '../db/seed';
-import { drawPool, morningStartsOn, quotaTotal, teamQuotas, teamTotal } from '../draw';
+import { drawPool, handedOut, morningStartsOn, quotaTotal, teamQuotas, teamTotal } from '../draw';
 import { getHolidays } from '../holidays';
 import { normSegment } from '../icp-match';
 import { logActivity } from '../activity';
@@ -135,7 +135,11 @@ export function beforeLastRound(now = new Date()): boolean {
  * the researched leads waiting to be drawn and the companies still waiting for research.
  */
 export async function drawShortfall(db: Db, settings: Services['settings']): Promise<Record<SourcingSegment, { need: number; pool: number; waiting: number; short: number }>> {
-  const team = teamTotal(await teamQuotas(db, settings));
+  // Each associate's list, less what they have already been given for today (a sample's leads given out the evening before).
+  const quotas = await teamQuotas(db, settings);
+  const given = await handedOut(db, istDay());
+  const team = teamTotal(quotas);
+  for (const s of SOURCING_SEGMENTS) team[s] = [...quotas].reduce((a, [o, q]) => a + Math.max(0, (q[s] ?? 0) - (given[String(o)]?.[s] ?? 0)), 0);
   const pool = await drawPool(db);
   const waitingRows = await db
     .select({ segment: leads.segment, n: sql<number>`count(*)::int` })

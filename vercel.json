@@ -59,6 +59,50 @@
     {
       "path": "/api/cron/resume",
       "schedule": "20 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "10 14 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "20 14 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "30 14 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "40 14 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "50 14 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "0 15 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "10 15 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "20 15 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "30 15 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "40 15 25 10 *"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "50 15 25 10 *"
     }
   ]
 }

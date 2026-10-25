@@ -1,6 +1,6 @@
 import { and, asc, eq, getTableColumns, inArray, is, isNull, SQL } from 'drizzle-orm';
 import type { Db } from '../db';
-import { clients, icps, leads, people, sourcingTests, tasks, users, type Lead, type SourcingTest } from '../db/schema';
+import { clients, icps, leads, people, settings, sourcingTests, tasks, users, type Lead, type SourcingTest } from '../db/schema';
 import { dealCapped, DRAW_HOUR_IST, DRAW_SEGMENTS, DRAWABLE, drawPool, isTopContact, morningStartsOn, poolLeads, quotaOf, shuffle, teamQuotas, topAllowance, type DrawSegment, type Quota } from '../draw';
 import { getHolidays } from '../holidays';
 import { KnownBranches } from '../branches';
@@ -109,7 +109,7 @@ export type SampleHand = {
 };
 
 /** A sample run as started, before it has looked at anything. */
-export type MorningSampleStart = { mode: 'morning'; phase: 'init'; fresh: boolean };
+export type MorningSampleStart = { mode: 'morning'; phase: 'init'; fresh: boolean; /** Started on its own (see SCHEDULED_SAMPLES): its leads are added and given out when it finishes. */ assign?: boolean };
 
 export type MorningSampleReport = {
   mode: 'morning';
@@ -138,6 +138,8 @@ export type MorningSampleReport = {
   carried?: Carried;
   /** Its own leftovers (found, not checked) were kept for the next search. */
   leftKept?: boolean;
+  /** Started on its own (see SCHEDULED_SAMPLES): its dealt leads are added as approved and given out as soon as it finishes. */
+  autoAssign?: boolean;
   /** People searches left out of the plan, per segment, because earlier samples' same searches found nothing (see search-memory.ts). */
   skipped?: Partial<Record<SourcingSegment, number>>;
   /** Its dealt leads were put into the pipeline and given out as dealt (see assignSampleLeads): when, for which morning, to whom. */
@@ -216,7 +218,11 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
   };
   try {
     if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set: the sample searches Google through Serper.');
-    if (!report) report = await begin(db, svc, (test.report as MorningSampleStart | null)?.fresh ?? false);
+    if (!report) {
+      const start = test.report as MorningSampleStart | null;
+      report = await begin(db, svc, start?.fresh ?? false);
+      if (start?.assign) report.autoAssign = true;
+    }
     const r = report;
     const budgetLeft = () => (r.budget ?? Number.POSITIVE_INFINITY) - (r.credits ?? 0);
     // Stopped by the admin: it ends where it is (nothing more searched or researched).
@@ -328,11 +334,44 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
       await saving;
       return 'continue';
     }
+    // Started on its own: the leads it dealt are added as approved and given out now, as the button would.
+    if (r.autoAssign && !r.assigned) {
+      await saving;
+      try {
+        await assignSampleLeads(db, test.id);
+      } catch (e) {
+        await db.update(sourcingTests).set({ error: `Giving out the leads failed: ${errorMessage(e)}. "Add as approved leads and assign them" on the report tries again.` }).where(eq(sourcingTests.id, test.id));
+      }
+    }
   } catch (e) {
     await save({ status: 'failed', finishedAt: new Date(), error: errorMessage(e), progress: report ? progressOf(report) : '' });
   }
   await saving;
   return 'done';
+}
+
+/**
+ * Morning Sample Runs started on their own at these times (INVECK's evening run on Sunday 25 October 2026, about 8 pm
+ * India time): the leads waiting in the pool first, then the search, research and deal as any sample, and its dealt
+ * leads added as approved and given out when it finishes. Started once, by the first scheduled check after the time
+ * (see /api/cron/resume), and not more than three hours late.
+ */
+export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z'];
+
+/** Starts a scheduled sample that is due and hasn't started (once, whoever calls); its id, or null. */
+export async function startScheduledSample(db: Db, now = new Date()): Promise<number | null> {
+  for (const at of SCHEDULED_SAMPLES) {
+    const t = Date.parse(at);
+    if (now.getTime() < t || now.getTime() - t > 3 * 3600_000) continue;
+    const key = `scheduledSample:${at}`;
+    const claimed = await db.insert(settings).values({ key, value: { claimedAt: now.toISOString() } }).onConflictDoNothing().returning({ key: settings.key });
+    if (!claimed.length) continue;
+    const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: false, assign: true };
+    const [test] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, progress: 'Starting (scheduled)…', report: start }).returning({ id: sourcingTests.id });
+    await db.update(settings).set({ value: { claimedAt: now.toISOString(), testId: test.id } }).where(eq(settings.key, key));
+    return test.id;
+  }
+  return null;
 }
 
 /** The admin stops a running sample: it ends where it is, and what it found can still be pushed into the pipeline. */
