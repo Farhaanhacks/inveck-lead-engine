@@ -40,6 +40,15 @@ describe('the scheduled evening run', () => {
     expect(row).toMatchObject({ mode: 'morning', status: 'running', report: { fresh: false, assign: true } });
   });
 
+  it('a claim that never started the sample (the request died) is let go after two minutes', async () => {
+    const key = `scheduledSample:${SCHEDULED_SAMPLES[0]}`;
+    await db.insert(settings).values({ key, value: { claimedAt: new Date(at.getTime() + 60_000).toISOString() } });
+    expect(await startScheduledSample(db, new Date(at.getTime() + 90_000))).toBeNull();
+    const id = await startScheduledSample(db, new Date(at.getTime() + 5 * 60_000));
+    expect(id).toBeGreaterThan(0);
+    expect(await startScheduledSample(db, new Date(at.getTime() + 10 * 60_000))).toBeNull();
+  });
+
   it('runs as a sample and, when it finishes, its leads are approved and given out with no button pressed', async () => {
     const id = (await startScheduledSample(db, new Date(at.getTime() + 60_000)))!;
     await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);

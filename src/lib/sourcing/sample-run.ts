@@ -364,12 +364,21 @@ export async function startScheduledSample(db: Db, now = new Date()): Promise<nu
     const t = Date.parse(at);
     if (now.getTime() < t || now.getTime() - t > 3 * 3600_000) continue;
     const key = `scheduledSample:${at}`;
+    // A claim that never got as far as starting the sample (the request died) is let go after two minutes.
+    const [was] = await db.select().from(settings).where(eq(settings.key, key));
+    const held = was?.value as { claimedAt?: string; testId?: number } | undefined;
+    if (held && !held.testId && now.getTime() - Date.parse(held.claimedAt ?? '') > 120_000) await db.delete(settings).where(eq(settings.key, key));
     const claimed = await db.insert(settings).values({ key, value: { claimedAt: now.toISOString() } }).onConflictDoNothing().returning({ key: settings.key });
     if (!claimed.length) continue;
-    const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: false, assign: true };
-    const [test] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, progress: 'Starting (scheduled)…', report: start }).returning({ id: sourcingTests.id });
-    await db.update(settings).set({ value: { claimedAt: now.toISOString(), testId: test.id } }).where(eq(settings.key, key));
-    return test.id;
+    try {
+      const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: false, assign: true };
+      const [test] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, progress: 'Starting (scheduled)…', report: start }).returning({ id: sourcingTests.id });
+      await db.update(settings).set({ value: { claimedAt: now.toISOString(), testId: test.id } }).where(eq(settings.key, key));
+      return test.id;
+    } catch (e) {
+      await db.delete(settings).where(eq(settings.key, key));
+      throw e;
+    }
   }
   return null;
 }

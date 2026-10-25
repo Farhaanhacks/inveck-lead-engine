@@ -8,7 +8,9 @@ import { formatDateTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
-import { resumeStalledTests } from '@/lib/sourcing/drive';
+import { after } from 'next/server';
+import { driveSourcingTest, resumeStalledTests } from '@/lib/sourcing/drive';
+import { startScheduledSample } from '@/lib/sourcing/sample-run';
 import { requestOrigin } from '@/lib/run-driver';
 import { startSourcingTestAction } from '@/app/sourcing-actions';
 import { SOURCING_SEGMENTS } from '@/lib/sourcing/linkedin-pages';
@@ -66,7 +68,11 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
   const db = await getDb();
   const sp = await searchParams;
   // A test or sample whose chain of invocations stopped carries on from this request.
-  await resumeStalledTests(await requestOrigin());
+  const origin = await requestOrigin();
+  await resumeStalledTests(origin);
+  // A scheduled sample that is due starts from here too, in case the scheduled checks are late.
+  const scheduled = await startScheduledSample(db).catch(() => null);
+  if (scheduled) after(() => driveSourcingTest(scheduled, origin));
   const running = await activeSourcingTest(db);
   const sampleRunning = await activeSourcingTest(db, 'morning');
   const listed = { id: sourcingTests.id, segment: sourcingTests.segment, mode: sourcingTests.mode, status: sourcingTests.status, startedAt: sourcingTests.startedAt };
