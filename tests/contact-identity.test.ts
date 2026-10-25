@@ -792,6 +792,23 @@ describe('the Morning Sample Run\'s lean research (the 6 am run keeps four conta
     expect(linkedinSearches().slice(0, staff.length)).toEqual(staff);
   });
 
+  it('a Store Incharge is not the P1 it stops at: the search goes on to the COO on the list, who comes first', async () => {
+    const p1Only = {
+      ...mfg,
+      targetTitles: 'Plant Head, Head of Operations, Chief Operating Officer (COO)',
+      p2Titles: '',
+      p3Titles: '',
+      avoidTitles: `${mfg.avoidTitles}, Store Incharge`,
+    };
+    const coo = { title: 'Ramesh I - Chief Operating Officer - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Chief Operating Officer · Hosur Gears', link: 'https://in.linkedin.com/in/ramesh-i', snippet: '' };
+    const storeIncharge = { title: 'Kajal H - Store Incharge - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Store Incharge · Hosur Gears', link: 'https://in.linkedin.com/in/kajal-h', snippet: '' };
+    const svc = services(seen, (q) => (q.includes('"Chief Operating Officer"') ? [coo] : q === staffSearches(company, 'Hosur')[0] ? [storeIncharge] : []));
+    await knowPlaces(svc, ['Hosur']);
+    const result = await searchLinkedIn(svc, '', company, 'Hosur', p1Only, undefined, { known: [person('Kajal H', 'Store Incharge')], lean: true });
+    expect(linkedinSearches().some((q) => q.includes('"Chief Operating Officer"'))).toBe(true);
+    expect(result.accepted.map((p) => p.name)).toEqual(['Ramesh I']);
+  });
+
   it('with one person found, it looks for one more, designation by designation', async () => {
     const svc = services(seen, (q) => (q.includes('"Plant Manager"') ? [{ title: 'Bina B - Plant Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Manager · Hosur Gears', link: 'https://in.linkedin.com/in/bina-b', snippet: '' }] : []));
     await knowPlaces(svc, ['Hosur']);

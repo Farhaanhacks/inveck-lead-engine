@@ -18,6 +18,11 @@ const LOG_P1 =
 const mfg = { ...DEFAULT_ICPS[0], targetTitles: MFG_P1, p2Titles: '', p3Titles: '' };
 const log = { ...DEFAULT_ICPS[1], targetTitles: LOG_P1, p2Titles: '', p3Titles: '' };
 const ca = DEFAULT_ICPS[2];
+// 26 Oct 2026: Finance Head and Finance Controller added to Manufacturing; Store Incharge never a contact.
+const MFG_P1_26 =
+  'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Finance Head, Finance Controller, Head of Procurement & Supply Chain';
+const mfg26 = { ...mfg, targetTitles: MFG_P1_26, avoidTitles: `${mfg.avoidTitles}, Store Incharge` };
+const log26 = { ...log, avoidTitles: `${log.avoidTitles}, Store Incharge` };
 
 describe('P1 only', () => {
   it('their designations, however LinkedIn writes them, are P1', () => {
@@ -83,6 +88,32 @@ describe('P1 only', () => {
   });
 });
 
+describe('Finance Head and Finance Controller on the Manufacturing list; a Store Incharge never a contact (26 Oct)', () => {
+  it('a Store Incharge, however written, is not a contact, so never the P1 a search stops at', () => {
+    for (const icp of [mfg26, log26]) {
+      for (const t of ['Store Incharge', 'Stores Incharge', 'Incharge - Stores', 'Store & Dispatch Incharge']) {
+        expect([t, tierOf(t, icp)]).toEqual([t, 'Avoid']);
+        expect(contactPriority(t, icp)).toBe(99);
+      }
+      expect(tierOf('Store In-charge', icp)).not.toBe('P1');
+      expect(contactPriority('Store In-charge', icp)).toBe(99);
+    }
+    // Before (the function rule read "store" as supply chain and "incharge" as head level).
+    expect(tierOf('Store Incharge', mfg)).toBe('P1');
+  });
+
+  it('finance heads and controllers are P1 for Manufacturing (not 3PL), searched after the operations and supply chain heads', () => {
+    for (const t of ['Finance Head', 'Finance Controller', 'Head - Finance', 'Head of Finance']) {
+      expect([t, tierOf(t, mfg26)]).toEqual([t, 'P1']);
+      expect([t, tierOf(t, log26)]).toEqual([t, '']);
+    }
+    const plan = contactSearchPlan('Acme Forgings', 'Pune', mfg26).map((s) => s.designation);
+    expect(plan).toEqual(expect.arrayContaining(['Finance Head', 'Finance Controller', 'Chief Operating Officer (COO)']));
+    expect(plan.indexOf('Finance Head')).toBeGreaterThan(plan.indexOf('Plant Head'));
+    expect(plan.indexOf('Finance Head')).toBeGreaterThan(plan.indexOf('Head of Operations'));
+  });
+});
+
 describe('set once on the live database', () => {
   let db: Db;
   beforeEach(async () => {
@@ -104,6 +135,27 @@ describe('set once on the live database', () => {
     const [l] = await db.select().from(icps).where(eq(icps.segment, LOGISTICS));
     expect(m).toMatchObject({ targetTitles: MFG_P1, p2Titles: '', p3Titles: '' });
     expect(l).toMatchObject({ targetTitles: LOG_P1, p2Titles: '', p3Titles: '' });
+    expect((await db.select().from(icps).where(eq(icps.segment, 'CA Firms')))[0]).toEqual(caBefore);
+    expect(await version()).toBe(before + 1);
+  });
+
+  it('26 Oct: Finance Head and Finance Controller go on the Manufacturing list and Store Incharge on both avoid lists, once; CA firms untouched', async () => {
+    const step = SCHEMA_STATEMENTS.filter((s) => s.includes('icpFinanceStoreV1'));
+    expect(step).toHaveLength(4);
+    const version = async () => (await db.select({ v: products.configVersion }).from(products))[0]?.v ?? 0;
+    const caBefore = (await db.select().from(icps).where(eq(icps.segment, 'CA Firms')))[0];
+    const [logBefore] = await db.select().from(icps).where(eq(icps.segment, LOGISTICS));
+    await db.delete(settings).where(eq(settings.key, 'icpFinanceStoreV1'));
+    const before = await version();
+    for (let i = 0; i < 2; i++) for (const s of step) await db.execute(sql.raw(s));
+    const [m] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const [l] = await db.select().from(icps).where(eq(icps.segment, LOGISTICS));
+    expect(m.targetTitles).toBe(MFG_P1_26);
+    expect(m.avoidTitles.match(/Store Incharge/g)).toHaveLength(1);
+    expect(l.avoidTitles.match(/Store Incharge/g)).toHaveLength(1);
+    expect(l.targetTitles).toBe(logBefore.targetTitles);
+    expect(tierOf('Store Incharge', m)).toBe('Avoid');
+    expect(tierOf('Finance Controller', m)).toBe('P1');
     expect((await db.select().from(icps).where(eq(icps.segment, 'CA Firms')))[0]).toEqual(caBefore);
     expect(await version()).toBe(before + 1);
   });
