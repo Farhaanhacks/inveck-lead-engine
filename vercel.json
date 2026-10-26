@@ -59,6 +59,78 @@
     {
       "path": "/api/cron/resume",
       "schedule": "20 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "40 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "50 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "0 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "10 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "20 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "30 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "40 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "50 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "0 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "10 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "20 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "30 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "40 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "50 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "0 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "10 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "20 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/resume",
+      "schedule": "30 5 * * 1-5"
     }
   ]
 }

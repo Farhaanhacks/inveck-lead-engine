@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
@@ -11,6 +12,7 @@ import { MANUFACTURING } from '@/lib/db/seed';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
 import { legacyAllocation } from './legacy-allocation';
+import { noteWake, wakeUps } from '@/lib/sourcing/wake';
 
 /** INVECK's daily run from Tuesday 27 October 2026: a Morning Sample for that day's lists at 6 am, given out on its own. */
 
@@ -123,9 +125,75 @@ describe('the 6 am job', () => {
       expect(await res.json()).toMatchObject({ started: null, resumed: { tests: false } });
       expect(await db.select().from(runs)).toHaveLength(0);
       expect(await db.select().from(sourcingTests)).toHaveLength(0);
+      expect((await wakeUps(db)).vercel).toMatchObject({ by: 'the 6 am job', at: ist('2026-10-26', '06:00').toISOString() });
     } finally {
       vi.useRealTimers();
       delete process.env.CRON_SECRET;
     }
+  });
+});
+
+describe('what wakes the daily run (26 Oct)', () => {
+  it('keeps the latest wake-up of each kind, for the Sourcing page', async () => {
+    expect(await wakeUps(db)).toEqual({});
+    await noteWake(db, 'vercel', 'the 6 am job', ist('2026-10-27', '06:00'));
+    await noteWake(db, 'timer', 'the outside timer', ist('2026-10-27', '06:05'));
+    await noteWake(db, 'vercel', 'a 10-minute check', ist('2026-10-27', '06:10'));
+    expect(await wakeUps(db)).toEqual({
+      vercel: { by: 'a 10-minute check', at: ist('2026-10-27', '06:10').toISOString() },
+      timer: { by: 'the outside timer', at: ist('2026-10-27', '06:05').toISOString() },
+    });
+  });
+
+  it('the outside timer is noted as the timer, and on Tuesday from 6 am it starts the day\'s run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(ist('2026-10-27', '06:04'));
+    process.env.CRON_SECRET = 'vercel-cron-secret-value';
+    process.env.INBOUND_SYNC_SECRET = 'outside-timer-secret-0123456789';
+    delete process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    delete process.env.GOOGLE_SERVICE_ACCOUNT_FILE;
+    try {
+      const { GET } = await import('@/app/api/cron/inbound-demos/route');
+      const call = (auth: string) => GET(new Request('https://x/api/cron/inbound-demos', { headers: { authorization: auth } }));
+      const vercel = await call('Bearer vercel-cron-secret-value');
+      expect(vercel.status).toBe(200);
+      expect((await wakeUps(db)).vercel?.by).toBe('the daily inbound sync');
+      // Vercel's call started it (in a test there's no request to drive it from; a later wake-up carries it on); the
+      // timer's call doesn't start a second one.
+      expect(await db.select().from(sourcingTests)).toHaveLength(1);
+      const timer = await call('Bearer outside-timer-secret-0123456789');
+      expect(timer.status).toBe(200);
+      expect((await wakeUps(db)).timer).toMatchObject({ by: 'the outside timer', at: ist('2026-10-27', '06:04').toISOString() });
+      expect(await db.select().from(sourcingTests)).toHaveLength(1);
+      expect((await db.select().from(sourcingTests))[0].report).toMatchObject({ day: '2026-10-27', assign: true });
+      expect((await call('Bearer wrong')).status).toBe(403);
+    } finally {
+      vi.useRealTimers();
+      delete process.env.CRON_SECRET;
+      delete process.env.INBOUND_SYNC_SECRET;
+    }
+  });
+
+  it("Vercel's checks run every 10 minutes from 6:10 to 11:00 am India time on weekdays, each once a day", () => {
+    const crons = (JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] }).crons;
+    const checks = crons.filter((c) => c.path === '/api/cron/resume').map((c) => c.schedule);
+    // Hobby plans run each job at most once a day: minute and hour are fixed numbers.
+    expect(checks.every((c) => /^\d+ \d+ \* \* 1-5$/.test(c))).toBe(true);
+    const ist = checks.map((c) => {
+      const [m, h] = c.split(' ').map(Number);
+      const t = h * 60 + m + 330;
+      return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    });
+    const want: string[] = [];
+    for (let t = 6 * 60 + 10; t <= 11 * 60; t += 10) if (t !== 8 * 60) want.push(`${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`);
+    expect(ist).toEqual(want);
+    // 8:00 is the draw, which wakes it too.
+    expect(crons.find((c) => c.path === '/api/cron/draw')?.schedule).toBe('30 2 * * 1-5');
+  });
+
+  it('opening Today wakes it, as it starts the CA draw', () => {
+    const today = readFileSync('src/app/(app)/today/page.tsx', 'utf8');
+    expect(today).toContain("await noteWake(db, 'page', 'Today');");
+    expect(today).toContain('await wakeDailyRun(db, await requestOrigin());');
   });
 });

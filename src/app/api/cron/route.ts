@@ -7,8 +7,8 @@ import { getSettings } from '@/lib/settings';
 import { searchesThisMorning } from '@/lib/sourcing/morning';
 import { pausedToday } from '@/lib/pause';
 import { istDay } from '@/lib/tasks';
-import { driveSourcingTest, resumeStalledTests } from '@/lib/sourcing/drive';
-import { OLD_RUN_UNTIL, startScheduledSample } from '@/lib/sourcing/sample-run';
+import { OLD_RUN_UNTIL } from '@/lib/sourcing/sample-run';
+import { noteWake, wakeDailyRun } from '@/lib/sourcing/wake';
 
 export const maxDuration = 300;
 
@@ -26,14 +26,13 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
   const db = await getDb();
+  await noteWake(db, 'vercel', 'the 6 am job').catch(() => {});
   // Paused today (Settings key pausedDays): no run at all.
   if (await pausedToday(db)) return Response.json({ paused: true });
   const origin = new URL(request.url).origin;
   if (istDay() >= OLD_RUN_UNTIL) {
     const run = await resumeStalledRun(origin);
-    const started = await startScheduledSample(db);
-    if (started) after(() => driveSourcingTest(started, origin));
-    const tests = await resumeStalledTests(origin);
+    const { started, resumed: tests } = await wakeDailyRun(db, origin);
     return Response.json({ started, resumed: { run, tests } });
   }
   // A run that stalled (its chain of invocations ended) carries on instead of a new one starting.
