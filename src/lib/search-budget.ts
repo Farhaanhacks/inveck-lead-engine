@@ -39,6 +39,33 @@ export async function searchBudgetLeft(db: Db, s: Pick<Services['settings'], 'da
 }
 
 /**
+ * Research outside the daily run (leads added by hand or imported, contacts searched again): on the daily run's own
+ * rules (see processLead's lean) and, like the run, at most this many credits a day (INVECK's decision, 26 Oct 2026).
+ * What is left waits for the next day.
+ */
+export const RESEARCH_DAY_CREDITS = 3000;
+const researchKey = (day: string) => `research-searches:${day}`;
+
+/** Counts a research run's searches into the day's total and into its research total. */
+export function researchMeter(db: Db, meter?: SearchMeter): SearchMeter {
+  return {
+    async spend(credits) {
+      await meter?.spend(credits);
+      await db
+        .insert(settings)
+        .values({ key: researchKey(istDay()), value: credits })
+        .onConflictDoUpdate({ target: settings.key, set: { value: sql`to_jsonb(coalesce((${settings.value} #>> '{}')::int, 0) + ${credits}::int)` } });
+    },
+  };
+}
+
+/** What research runs may still spend today. */
+export async function researchCreditsLeft(db: Db, day = istDay()): Promise<number> {
+  const [row] = await db.select().from(settings).where(eq(settings.key, researchKey(day)));
+  return RESEARCH_DAY_CREDITS - (Number(row?.value ?? 0) || 0);
+}
+
+/**
  * What researching one company costs, roughly: the full search for its people on LinkedIn (one designation
  * at a time) and its LinkedIn page, evidence and news. The same for a company found people first.
  */

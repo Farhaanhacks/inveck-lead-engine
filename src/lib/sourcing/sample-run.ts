@@ -12,7 +12,8 @@ import { mapLimit, type Services } from '../pipeline/services';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { logActivity } from '../activity';
 import { saveBacklog, takeBacklog } from './backlog';
-import { knownToInveck } from './test-run';
+import { activeSourcingTest, knownToInveck } from './test-run';
+import { delegateProspects } from '../runs';
 import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, planSequence, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
@@ -139,7 +140,17 @@ export type MorningSampleStart = {
   assign?: boolean;
   /** The morning it is for (the daily run: that same day), instead of the next draw's. */
   day?: string;
+  /** A prospect search on this engine (see ProspectSearch), in place of a morning's lists. */
+  find?: ProspectSearch;
 };
+
+/**
+ * A prospect search (Find new prospects on the Dashboard, the Configuration page's run) on the sample's engine, its rules
+ * and its credit limit (INVECK's decision, 26 Oct 2026: one capped engine wherever leads are found): the leads asked for
+ * per segment (none: what the morning draw is short of) and who gets them: the morning draw (''), the whole team now
+ * ('team') or one associate (their id). Nothing is dealt; its approved companies go into the pipeline when it finishes.
+ */
+export type ProspectSearch = { wanted: Partial<Record<DrawSegment, number>> | null; to: string };
 
 export type MorningSampleReport = {
   mode: 'morning';
@@ -172,6 +183,9 @@ export type MorningSampleReport = {
   autoAssign?: boolean;
   /** People searches left out of the plan, per segment, because earlier samples' same searches found nothing (see search-memory.ts). */
   skipped?: Partial<Record<SourcingSegment, number>>;
+  /** A prospect search (see ProspectSearch), and what it added to the pipeline when it finished (see addFoundLeads). */
+  find?: ProspectSearch;
+  added?: { at: string; leads: number; given: string; skipped: string[] };
   /** Its dealt leads were put into the pipeline and given out as dealt (see assignSampleLeads): when, for which morning, to whom; `pooled`, leads left in the pool because that person's list for the day was already full. */
   assigned?: { at: string; day: string; given: { userId: number; name: string; leads: number }[]; skipped: string[]; pooled?: number };
 };
@@ -250,8 +264,10 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
     if (!svc.keys.serper) throw new Error('SERPER_API_KEY is not set: the sample searches Google through Serper.');
     if (!report) {
       const start = test.report as MorningSampleStart | null;
-      report = await begin(db, svc, start?.fresh ?? false, start?.day);
+      // A search for a number of leads looks for new companies only (the pool isn't counted against it).
+      report = await begin(db, svc, start?.find?.wanted ? true : (start?.fresh ?? false), start?.day, start?.find);
       if (start?.assign) report.autoAssign = true;
+      if (start?.find) report.find = start.find;
     }
     const r = report;
     const budgetLeft = () => (r.budget ?? Number.POSITIVE_INFINITY) - (r.credits ?? 0);
@@ -354,7 +370,9 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
       }
 
       if (r.phase === 'deal') {
-        await deal(db, r);
+        // A prospect search deals nothing: what it found goes into the pipeline when it finishes.
+        if (r.find) r.hands = [];
+        else await deal(db, r);
         r.phase = 'done';
         await save({ status: 'done', finishedAt: new Date(), progress: summaryOf(r) });
       }
@@ -364,6 +382,15 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
       await save({ progress: progressOf(r) });
       await saving;
       return 'continue';
+    }
+    // A prospect search: its approved companies go into the pipeline, to whoever it was for.
+    if (r.find && !r.added) {
+      await saving;
+      try {
+        await addFoundLeads(db, test.id);
+      } catch (e) {
+        await db.update(sourcingTests).set({ error: `Adding what it found to the pipeline failed: ${errorMessage(e)}. "Push into the pipeline" on the report can add them.` }).where(eq(sourcingTests.id, test.id));
+      }
     }
     // Started on its own: the leads it dealt are added as approved and given out now, as the button would.
     if (r.autoAssign && !r.assigned) {
@@ -530,6 +557,38 @@ export async function pushSampleCompanies(db: Db, testId: number, keys: number[]
 }
 
 /**
+ * A finished prospect search's approved companies into the pipeline as research left them (see pushSampleCompanies),
+ * then given to whoever it was for (the morning draw: nobody yet, it deals them). Once; again, it changes nothing.
+ */
+export async function addFoundLeads(db: Db, testId: number, now = new Date()): Promise<NonNullable<MorningSampleReport['added']> | null> {
+  const [test] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, testId));
+  if (!test || test.status === 'running' || !isMorningSample(test.report) || !test.report.find || test.report.phase !== 'done') return null;
+  if (test.report.added) return test.report.added;
+  const keys = test.report.companies.filter((c) => c.outcome === 'approved').map((c) => c.key);
+  const pushed = await pushSampleCompanies(db, testId, keys);
+  const [after] = await db.select({ report: sourcingTests.report }).from(sourcingTests).where(eq(sourcingTests.id, testId));
+  const r = after.report as MorningSampleReport;
+  const ids = r.companies.filter((c) => keys.includes(c.key) && c.pushed).map((c) => c.pushed!);
+  const given = await delegateProspects(db, ids, r.find!.to);
+  const added = { at: now.toISOString(), leads: ids.length, given, skipped: pushed.skipped };
+  const done = { ...r, added };
+  await db.update(sourcingTests).set({ report: JSON.parse(JSON.stringify(done)), progress: summaryOf(done) }).where(eq(sourcingTests.id, testId));
+  return added;
+}
+
+/** Starts a prospect search (one sample at a time: one already running is shown instead); its id. */
+export async function startProspectSearch(db: Db, find: ProspectSearch, startedBy?: number): Promise<{ id: number; created: boolean }> {
+  const running = await activeSourcingTest(db, 'morning');
+  if (running) return { id: running.id, created: false };
+  const start: MorningSampleStart = { mode: 'morning', phase: 'init', fresh: !!find.wanted, find };
+  const [test] = await db
+    .insert(sourcingTests)
+    .values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, ...(startedBy ? { startedBy } : {}), progress: 'Starting the prospect search…', report: start })
+    .returning({ id: sourcingTests.id });
+  return { id: test.id, created: true };
+}
+
+/**
  * For a morning the 8 am draw doesn't run: puts every lead a finished sample dealt into the pipeline and gives it
  * to the associate the sample dealt it to, as the draw would have. The sample's own companies go in as research
  * left them (Approved, with their contact and drafts; see pushSampleCompanies); a pool lead it dealt is given out
@@ -617,7 +676,7 @@ export function sampleMorning(now: Date, holidays: Holidays): string {
 }
 
 /** The morning it shows, the team and quotas, and what the search is asked for: the draw's shortfall, plus a quarter. */
-async function begin(db: Db, svc: Services, fresh: boolean, forDay?: string): Promise<MorningSampleReport> {
+async function begin(db: Db, svc: Services, fresh: boolean, forDay?: string, find?: ProspectSearch): Promise<MorningSampleReport> {
   const holidays = await getHolidays(db);
   // Not before the day the morning search and draw start (the live database: 22 Oct 2026).
   const startsOn = await morningStartsOn(db);
@@ -636,7 +695,7 @@ async function begin(db: Db, svc: Services, fresh: boolean, forDay?: string): Pr
   const start = {} as MorningSampleReport['start'];
   const wanted = {} as Record<SourcingSegment, number>;
   for (const s of DRAW_SEGMENTS) {
-    const need = Object.values(quotas).reduce((a, q) => a + q[s], 0);
+    const need = find?.wanted ? (find.wanted[s] ?? 0) : Object.values(quotas).reduce((a, q) => a + q[s], 0);
     const short = Math.max(0, need - (fresh ? 0 : pool.bySegment[s]));
     wanted[s] = Math.ceil(short * headroomFor(s));
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
@@ -794,12 +853,17 @@ export function progressOf(r: MorningSampleReport): string {
     return `Round ${r.search!.round}: searching LinkedIn for people (${wanted}; ${credits(r)})…`;
   }
   if (r.phase === 'research') return `Researching what the search found: ${r.researched} of ${found} done (the ICP check, contacts and drafts, as the run does; ${credits(r)})…`;
-  if (r.phase === 'deal') return 'Dealing the leads to the team as the 8 am draw would…';
+  if (r.phase === 'deal') return r.find ? 'Adding what it found to the pipeline…' : 'Dealing the leads to the team as the 8 am draw would…';
   return summaryOf(r);
 }
 
 export function summaryOf(r: MorningSampleReport): string {
   const approved = r.companies.filter(releasable).length;
+  if (r.find) {
+    const waitingFor = r.companies.filter((c) => c.outcome === 'waiting').length;
+    const added = r.added ? `; ${r.added.leads} added to the pipeline as approved leads${r.added.given ? ` (${r.added.given.replace(/^New prospects handed out: /, 'given to ')})` : ', for the morning draw'}` : '';
+    return `${r.companies.length} companies found, ${r.companies.filter((c) => c.outcome === 'approved').length} approved${waitingFor ? `, ${waitingFor} left for the next day (over the search budget)` : ''}${added}. ${credits(r)}.`;
+  }
   const dealt = r.hands.reduce((a, h) => a + h.cards.length, 0);
   const wanted = r.team.reduce((a, t) => a + DRAW_SEGMENTS.reduce((b, s) => b + quotaFor(r, t.id)[s], 0), 0);
   const waiting = r.companies.filter((c) => c.outcome === 'waiting').length;

@@ -297,6 +297,14 @@ new, asks for 25% extra, takes up to five rounds (each only while its last one f
 with no LinkedIn page or an unclear industry isn't passed to research. A sample carried on from where it stopped
 uses them too.
 
+**One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on
+the Dashboard (leads per segment, and who gets them) and the Configuration page's run start a prospect search on the
+daily run's engine (`startProspectSearch` in `sample-run.ts`): its rules and its 3,000-credit limit, watched on the
+Sourcing page. It deals nothing; when it finishes, its approved companies go into the pipeline as Approved, given to
+the person or team chosen, or left for the morning draw. Research of any other lead (added by hand, imported, contacts
+searched again) uses the same research rules (two contacts a company, no repeat look-ups; CA firms keep theirs) and
+at most 3,000 credits a day (`RESEARCH_DAY_CREDITS` in `search-budget.ts`); what is left waits for the next day.
+
 A 3PL whose website doesn't confirm a must-have ("multiple locations", "B2B") is approved, with what wasn't
 confirmed noted on the lead; only evidence against a must-have, or a deal-breaker, rules a 3PL out (INVECK's
 decision, 26 Oct 2026; the team's imported lists are treated the same way).

@@ -7,7 +7,7 @@ import { activities, enrichmentCache, icps, leads, people, prospectSearches, set
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, sampleMorning, segmentsToSearchAgain, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, sampleMorning, segmentsToSearchAgain, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
@@ -418,6 +418,44 @@ describe('the Morning Sample Run', () => {
       expect(r2.search!.history.find((h) => h.segment === MANUFACTURING)).toMatchObject({ stopped: 'dry', added: 0 });
       expect(mfgSearches.length).toBeGreaterThanOrEqual(15);
       expect(mfgSearches.length).toBeLessThan(15 + 8 * 2);
+    });
+  });
+
+  describe('Find new prospects on the one capped engine (26 Oct)', () => {
+    it('finds the leads asked for within the credit limit, deals nothing, and adds the approved ones for the person chosen', async () => {
+      const [parimal] = await db.select().from(users).where(eq(users.name, 'Parimal'));
+      const search = await startProspectSearch(db, { wanted: { [MANUFACTURING]: 1 }, to: String(parimal.id) });
+      expect(search.created).toBe(true);
+      await runSourcingTest(db, morningServices(log, [], { meter: dbSearchMeter(db) }), search.id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(search.id);
+      expect(r).toMatchObject({ phase: 'done', fresh: true, find: { to: String(parimal.id) }, hands: [] });
+      expect(r.start[MANUFACTURING].need).toBe(1);
+      expect(r.start[LOGISTICS]).toMatchObject({ need: 0, wanted: 0 });
+      expect(r.budget).toBeLessThanOrEqual(SAMPLE_RULES.credits);
+      expect(r.credits).toBeLessThanOrEqual(r.budget!);
+      const approved = r.companies.filter((c) => c.outcome === 'approved');
+      expect(approved.length).toBeGreaterThan(0);
+      expect(r.added?.leads).toBe(approved.length);
+      const added = await db.select().from(leads).where(inArray(leads.id, approved.map((c) => c.pushed!)));
+      expect(added).toHaveLength(approved.length);
+      expect(added.every((l) => l.status === 'Approved' && l.ownerId === parimal.id)).toBe(true);
+      const html = renderToStaticMarkup(createElement(MorningSample, { test: (await db.select().from(sourcingTests).where(eq(sourcingTests.id, search.id)))[0], running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+      expect(html).toContain(`Prospect search ${search.id}`);
+      expect(html).toContain('approved leads into the pipeline, given to Parimal');
+      expect(html).not.toContain('No active associates to deal leads to');
+    });
+
+    it('with nothing asked for, finds what the morning draw is short of; its leads go to the draw (nobody yet); one at a time', async () => {
+      const search = await startProspectSearch(db, { wanted: null, to: '' });
+      expect(await startProspectSearch(db, { wanted: { [LOGISTICS]: 3 }, to: 'team' })).toEqual({ id: search.id, created: false });
+      await runSourcingTest(db, morningServices(log), search.id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(search.id);
+      expect(r.fresh).toBe(false);
+      expect(r.start[MANUFACTURING].need).toBe(2);
+      expect(r.added?.given).toBe('');
+      const added = await db.select().from(leads).where(inArray(leads.id, r.companies.filter((c) => c.pushed).map((c) => c.pushed!)));
+      expect(added.length).toBeGreaterThan(0);
+      expect(added.every((l) => l.status === 'Approved' && l.ownerId === null)).toBe(true);
     });
   });
 

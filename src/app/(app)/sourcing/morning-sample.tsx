@@ -405,7 +405,7 @@ export function MorningSample({
         <div className="mb-4">
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-semibold">
-              Sample {test.id}{r ? `: ${dayName(r.day)}` : ''}
+              {r?.find ? 'Prospect search' : 'Sample'} {test.id}{r && !r.find ? `: ${dayName(r.day)}` : ''}
               <span className="ml-2 font-normal text-muted">started {formatDateTime(test.startedAt)}{r?.seconds ? `, ${Math.round(r.seconds / 60)} min` : ''}{r?.fresh ? ', from the search alone' : ''}</span>
             </h2>
             <span className={`inline-flex h-5 items-center rounded px-1.5 text-[11px] font-medium ${test.status === 'done' ? 'bg-good-soft text-good-ink' : test.status === 'failed' ? 'bg-critical-soft text-critical-ink' : 'bg-accent-soft text-accent'}`}>
@@ -436,7 +436,7 @@ export function MorningSample({
                 <div key={s} className="card p-4 text-sm">
                   <div className="font-medium">{s}</div>
                   <p className="mt-1 text-xs text-muted">
-                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}{r.skipped?.[s] ? ` ${r.skipped[s].toLocaleString('en-IN')} people searches left out (in earlier samples they found nothing new, or nobody in that industry and town).` : ''}
+                    {r.find?.wanted ? `Asked for ${r.start[s].need} new leads; the search was asked for ${r.start[s].wanted} companies (a few extra for those research rules out).` : `The draw needs ${r.start[s].need} (${r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). ${r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for ${r.start[s].wanted}.`}{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}{r.skipped?.[s] ? ` ${r.skipped[s].toLocaleString('en-IN')} people searches left out (in earlier samples they found nothing new, or nobody in that industry and town).` : ''}
                     {r.start[s].waiting ? ` ${r.start[s].waiting} companies already waiting for research would be researched first at 6 am (not shown here).` : ''}
                   </p>
                   <p className="mt-2">
@@ -467,7 +467,15 @@ export function MorningSample({
               <PersonDay r={r} hand={hand} senderName={senderName} icps={icps} />
             </>
           )}
-          {r && r.phase === 'done' && !r.hands.length && <p className="card p-5 text-sm text-muted">No active associates to deal leads to.</p>}
+          {r && r.phase === 'done' && r.find && (
+            <p className="card mb-4 p-4 text-sm">
+              {r.added
+                ? `Added ${formatDateTime(new Date(r.added.at))}: ${r.added.leads} approved leads into the pipeline, ${r.added.given ? r.added.given.replace(/^New prospects handed out: /, 'given to ') : 'for the morning draw to deal'}.`
+                : 'Adding what it found to the pipeline…'}
+              {r.added && r.added.skipped.length > 0 && <span className="mt-1 block text-xs text-muted">Already in the pipeline, left as they were: {r.added.skipped.join(', ')}.</span>}
+            </p>
+          )}
+          {r && r.phase === 'done' && !r.find && !r.hands.length && <p className="card p-5 text-sm text-muted">No active associates to deal leads to.</p>}
 
           {r && r.companies.length > 0 && (
             <details className="card mt-4 overflow-x-auto">
