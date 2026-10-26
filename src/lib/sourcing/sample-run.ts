@@ -411,11 +411,12 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 /**
  * Morning Sample Runs started on their own at these times (INVECK's evening runs: Sunday 25 October 2026, about 8 pm
  * India time, for Monday; Monday 26 October at 8 pm, for Tuesday, the first one started and woken by the outside
- * timer alone): the leads waiting in the pool first, then the search, research and deal as any sample, and its dealt
- * leads added as approved and given out when it finishes. Started once, by the first wake-up after the time (see
- * wake.ts), and not more than three hours late.
+ * timer alone; Tuesday 27 October at 9 pm, for Wednesday): the leads waiting in the pool first, then the search,
+ * research and deal as any sample, and its dealt leads added as approved and given out when it finishes. Started once,
+ * by the first wake-up after the time (see wake.ts), and not more than three hours late. The next morning's daily run
+ * then fills only what is still missing.
  */
-export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z'];
+export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z', '2026-10-27T15:30:00Z'];
 
 /**
  * The daily run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, on every morning the search runs (a working
@@ -424,7 +425,13 @@ export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z'
  * missing). Started once by the first check from 6 am (/api/cron and the other scheduled checks, the outside timer, the
  * Dashboard or Sourcing page), not from 2 pm.
  */
-export const DAILY_SAMPLE = { from: '2026-10-27', startIst: 6, lastIst: 14 } as const;
+export const DAILY_SAMPLE = {
+  from: '2026-10-27',
+  startIst: 6,
+  lastIst: 14,
+  /** Days with no daily run (INVECK's decision, 26 Oct 2026, night: Tuesday 27 October's lists were filled the evening before). */
+  skip: ['2026-10-27'] as readonly string[],
+} as const;
 /** From this day the older 6 am run doesn't start (Monday 26 October: no run; from Tuesday: the daily sample instead). */
 export const OLD_RUN_UNTIL = '2026-10-26';
 
@@ -433,7 +440,7 @@ export async function startScheduledSample(db: Db, now = new Date()): Promise<nu
   const today = istDay(now);
   const hourIst = new Date(now.getTime() + 5.5 * 3600 * 1000).getUTCHours();
   const daily =
-    today >= DAILY_SAMPLE.from && hourIst >= DAILY_SAMPLE.startIst && hourIst < DAILY_SAMPLE.lastIst && !(await pausedToday(db, now)) && (await searchesThisMorning(db, await getSettings(db), now));
+    today >= DAILY_SAMPLE.from && !DAILY_SAMPLE.skip.includes(today) && hourIst >= DAILY_SAMPLE.startIst && hourIst < DAILY_SAMPLE.lastIst && !(await pausedToday(db, now)) && (await searchesThisMorning(db, await getSettings(db), now));
   const due = [
     ...SCHEDULED_SAMPLES.filter((at) => now.getTime() >= Date.parse(at) && now.getTime() - Date.parse(at) <= 3 * 3600_000).map((at) => ({ key: `scheduledSample:${at}`, day: undefined as string | undefined })),
     ...(daily ? [{ key: `scheduledSample:daily:${today}`, day: today }] : []),
