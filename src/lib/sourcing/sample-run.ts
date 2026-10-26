@@ -411,12 +411,20 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 /**
  * Morning Sample Runs started on their own at these times (INVECK's evening runs: Sunday 25 October 2026, about 8 pm
  * India time, for Monday; Monday 26 October at 8 pm, for Tuesday, the first one started and woken by the outside
- * timer alone; Tuesday 27 October at 9 pm, for Wednesday): the leads waiting in the pool first, then the search,
- * research and deal as any sample, and its dealt leads added as approved and given out when it finishes. Started once,
- * by the first wake-up after the time (see wake.ts), and not more than three hours late. The next morning's daily run
- * then fills only what is still missing.
+ * timer alone): the leads waiting in the pool first, then the search, research and deal as any sample, and its dealt
+ * leads added as approved and given out when it finishes. Started once, by the first wake-up after the time (see
+ * wake.ts), and not more than three hours late. From Tuesday 27 October, EVENING_SAMPLE does this every evening.
  */
-export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z', '2026-10-27T15:30:00Z'];
+export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z'];
+
+/**
+ * The evening run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, each working day's run happens the evening
+ * before, from 9 pm India time: a Morning Sample for the next day's lists (its leads given out when it finishes), on
+ * the evening just before a working day the morning search runs (Sunday's for Monday; none on Friday or Saturday
+ * evenings, or before a holiday or a paused day). Started once by the first wake-up from 9 pm (in the evening, the
+ * outside timer). That morning's daily run (DAILY_SAMPLE) then fills only what is still missing.
+ */
+export const EVENING_SAMPLE = { from: '2026-10-27', startIst: 21 } as const;
 
 /**
  * The daily run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, on every morning the search runs (a working
@@ -441,9 +449,15 @@ export async function startScheduledSample(db: Db, now = new Date()): Promise<nu
   const hourIst = new Date(now.getTime() + 5.5 * 3600 * 1000).getUTCHours();
   const daily =
     today >= DAILY_SAMPLE.from && !DAILY_SAMPLE.skip.includes(today) && hourIst >= DAILY_SAMPLE.startIst && hourIst < DAILY_SAMPLE.lastIst && !(await pausedToday(db, now)) && (await searchesThisMorning(db, await getSettings(db), now));
+  // The evening run is for tomorrow: a day the morning search runs, and neither today nor tomorrow paused.
+  const tomorrowAt = new Date(now.getTime() + 86_400_000);
+  const tomorrow = istDay(tomorrowAt);
+  const evening =
+    today >= EVENING_SAMPLE.from && hourIst >= EVENING_SAMPLE.startIst && !(await pausedToday(db, now)) && !(await pausedToday(db, tomorrowAt)) && (await searchesThisMorning(db, await getSettings(db), tomorrowAt));
   const due = [
     ...SCHEDULED_SAMPLES.filter((at) => now.getTime() >= Date.parse(at) && now.getTime() - Date.parse(at) <= 3 * 3600_000).map((at) => ({ key: `scheduledSample:${at}`, day: undefined as string | undefined })),
     ...(daily ? [{ key: `scheduledSample:daily:${today}`, day: today }] : []),
+    ...(evening ? [{ key: `scheduledSample:evening:${tomorrow}`, day: tomorrow }] : []),
   ];
   for (const { key, day } of due) {
     // A claim that never got as far as starting the sample (the request died) is let go after two minutes.

@@ -214,16 +214,15 @@ describe("Monday's evening run (26 Oct, 8 pm)", () => {
   });
 });
 
-describe("Tuesday's evening run (27 Oct, 9 pm)", () => {
-  it("starts on its own from 9 pm India time, once, for Wednesday's lists, given out when it finishes; Wednesday's 6 am run then fills only what is still missing", async () => {
+describe('the evening run (from Tuesday 27 Oct, 9 pm)', () => {
+  it("starts on its own from 9 pm India time, once, for the next day's lists, given out when it finishes; that morning's 6 am run then fills only what is still missing", async () => {
     expect(await startScheduledSample(db, ist('2026-10-27', '20:59'))).toBeNull();
     const id = await startScheduledSample(db, ist('2026-10-27', '21:04'));
     expect(id).toBeGreaterThan(0);
     expect(await startScheduledSample(db, ist('2026-10-27', '21:09'))).toBeNull();
+    expect(await startScheduledSample(db, ist('2026-10-27', '23:55'))).toBeNull();
     const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id!));
-    expect(row).toMatchObject({ mode: 'morning', status: 'running', report: { fresh: false, assign: true } });
-    // For the next morning's lists (no day given: Wednesday, once 8 am Tuesday has passed).
-    expect((row.report as MorningSampleStart).day).toBeUndefined();
+    expect(row).toMatchObject({ mode: 'morning', status: 'running', report: { fresh: false, assign: true, day: '2026-10-28' } });
     // Wednesday's Manufacturing lists filled that night: the 6 am run is for that same day and leaves out what everyone has.
     const puja = await person('Puja');
     const parimal = await person('Parimal');
@@ -236,5 +235,31 @@ describe("Tuesday's evening run (27 Oct, 9 pm)", () => {
     const r = await reportOf(morning);
     expect(r.day).toBe('2026-10-28');
     expect(r.start[MANUFACTURING]).toMatchObject({ need: 0, wanted: 0 });
+  });
+
+  it('every evening before a working day: Wednesday and Thursday; Sunday for Monday, none on Friday or Saturday; not on Monday 26', async () => {
+    const dayOf = async (id: number | null) => ((await db.select().from(sourcingTests).where(eq(sourcingTests.id, id!)))[0].report as MorningSampleStart).day;
+    // Monday 26's 8 pm run is its own (SCHEDULED_SAMPLES); no evening run besides it.
+    expect(await startScheduledSample(db, ist('2026-10-26', '23:30'))).toBeNull();
+    expect(await dayOf(await startScheduledSample(db, ist('2026-10-28', '21:00')))).toBe('2026-10-29');
+    expect(await dayOf(await startScheduledSample(db, ist('2026-10-29', '21:00')))).toBe('2026-10-30');
+    expect(await startScheduledSample(db, ist('2026-10-30', '21:00'))).toBeNull();
+    expect(await startScheduledSample(db, ist('2026-10-31', '21:00'))).toBeNull();
+    expect(await dayOf(await startScheduledSample(db, ist('2026-11-01', '21:00')))).toBe('2026-11-02');
+  });
+
+  it('not before a holiday or a paused day, nor on a paused evening, nor with the morning search off', async () => {
+    await saveHolidays(db, ['2026-10-28']);
+    expect(await startScheduledSample(db, ist('2026-10-27', '21:00'))).toBeNull();
+    await db.delete(settings).where(eq(settings.key, 'pausedDays'));
+    await db.insert(settings).values({ key: 'pausedDays', value: ['2026-10-29'] });
+    expect(await startScheduledSample(db, ist('2026-10-28', '21:00'))).toBeNull();
+    await db.update(settings).set({ value: ['2026-11-01'] }).where(eq(settings.key, 'pausedDays'));
+    expect(await startScheduledSample(db, ist('2026-11-01', '21:00'))).toBeNull();
+    await saveSettings(db, settingsSchema.parse({ ...quota, morningSearch: false }));
+    expect(await startScheduledSample(db, ist('2026-11-02', '21:00'))).toBeNull();
+    await saveSettings(db, settingsSchema.parse(quota));
+    expect(await startScheduledSample(db, ist('2026-11-02', '21:00'))).toBeGreaterThan(0);
+    expect(await db.select().from(sourcingTests)).toHaveLength(1);
   });
 });

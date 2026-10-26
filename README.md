@@ -275,6 +275,12 @@ already has for the day left out), uses the sample's rules below (3,000 credits 
 itself when it finishes, never more than anyone's list for the day (a lead over it stays in the pool for the
 next draw). The 8 am draw then fills only what is still missing.
 
+From Tuesday 27 October each working day's run happens **the evening before, from 9 pm IST** (`EVENING_SAMPLE`): a
+Morning Sample for the next day's lists, its leads approved and given out when it finishes, on the evening just before
+a working day the morning search runs (Sunday's for Monday; none on Friday or Saturday evenings, before a holiday or a
+paused day). In the evening the outside timer starts and wakes it. The 6 am daily run then fills only what is still
+missing (nothing when the lists are full). There is no 6 am run on Tuesday 27 October (`DAILY_SAMPLE.skip`).
+
 To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
 (`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
 researches exactly as the run does, deals each active associate their quota from the pool and what it found,
