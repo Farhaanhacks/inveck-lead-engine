@@ -382,12 +382,13 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 }
 
 /**
- * Morning Sample Runs started on their own at these times (INVECK's evening run on Sunday 25 October 2026, about 8 pm
- * India time): the leads waiting in the pool first, then the search, research and deal as any sample, and its dealt
- * leads added as approved and given out when it finishes. Started once, by the first scheduled check after the time
- * (see /api/cron/resume), and not more than three hours late.
+ * Morning Sample Runs started on their own at these times (INVECK's evening runs: Sunday 25 October 2026, about 8 pm
+ * India time, for Monday; Monday 26 October at 8 pm, for Tuesday, the first one started and woken by the outside
+ * timer alone): the leads waiting in the pool first, then the search, research and deal as any sample, and its dealt
+ * leads added as approved and given out when it finishes. Started once, by the first wake-up after the time (see
+ * wake.ts), and not more than three hours late.
  */
-export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z'];
+export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z'];
 
 /**
  * The daily run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, on every morning the search runs (a working

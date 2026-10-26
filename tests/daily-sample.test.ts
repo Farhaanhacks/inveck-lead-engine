@@ -197,3 +197,27 @@ describe('what wakes the daily run (26 Oct)', () => {
     expect(today).toContain('await wakeDailyRun(db, await requestOrigin());');
   });
 });
+
+describe("Monday's evening run (26 Oct, 8 pm)", () => {
+  it("starts on its own from 8 pm India time, once, for Tuesday's lists, given out when it finishes; Tuesday's 6 am run then fills only what is still missing", async () => {
+    expect(await startScheduledSample(db, ist('2026-10-26', '19:59'))).toBeNull();
+    const id = await startScheduledSample(db, ist('2026-10-26', '20:03'));
+    expect(id).toBeGreaterThan(0);
+    expect(await startScheduledSample(db, ist('2026-10-26', '20:08'))).toBeNull();
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id!));
+    expect(row).toMatchObject({ mode: 'morning', status: 'running', report: { fresh: false, assign: true } });
+    expect((row.report as MorningSampleStart).day).toBeUndefined();
+    // Tuesday's lists already filled tonight: the 6 am run is for that same day and leaves out what everyone has.
+    const puja = await person('Puja');
+    const parimal = await person('Parimal');
+    await db.insert(leads).values([
+      { company: 'Tonight Mfg A', segment: MANUFACTURING, status: 'Approved', ownerId: puja.id, drawnOn: '2026-10-27' },
+      { company: 'Tonight Mfg B', segment: MANUFACTURING, status: 'Approved', ownerId: parimal.id, drawnOn: '2026-10-27' },
+    ]);
+    const morning = (await startScheduledSample(db, ist('2026-10-27', '06:02')))!;
+    await runSourcingTest(db, morningServices(log), morning, Number.POSITIVE_INFINITY);
+    const r = await reportOf(morning);
+    expect(r.day).toBe('2026-10-27');
+    expect(r.start[MANUFACTURING]).toMatchObject({ need: 0, wanted: 0 });
+  });
+});
