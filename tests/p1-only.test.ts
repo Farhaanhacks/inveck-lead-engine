@@ -112,6 +112,16 @@ describe('Finance Head and Finance Controller on the Manufacturing list; a Store
     expect(plan.indexOf('Finance Head')).toBeGreaterThan(plan.indexOf('Plant Head'));
     expect(plan.indexOf('Finance Head')).toBeGreaterThan(plan.indexOf('Head of Operations'));
   });
+
+  it('the COO comes before finance: as the main contact, and in the order designations are searched', () => {
+    for (const t of ['Finance Head', 'Finance Controller', 'Head - Finance']) expect(contactPriority('Chief Operating Officer', mfg26)).toBeLessThan(contactPriority(t, mfg26));
+    expect(contactPriority('COO', mfg26)).toBeLessThan(contactPriority('Finance Controller', mfg26));
+    const plan = contactSearchPlan('Acme Forgings', 'Pune', mfg26).map((s) => s.designation);
+    expect(plan.indexOf('Chief Operating Officer (COO)')).toBeLessThan(plan.indexOf('Finance Head'));
+    expect(plan.indexOf('Chief Operating Officer (COO)')).toBeLessThan(plan.indexOf('Finance Controller'));
+    // Finance is still a P1 contact, ahead of the head of the company.
+    expect(contactPriority('Finance Controller', mfg26)).toBeLessThan(contactPriority('Managing Director', mfg26));
+  });
 });
 
 describe('set once on the live database', () => {

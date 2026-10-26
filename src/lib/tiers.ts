@@ -205,7 +205,7 @@ const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logi
  * of the company doesn't. So within the ICP's lists: plant heads and supply chain managers first,
  * then regional / national / warehouse heads, then other hands-on heads
  * (operations, manufacturing, supply chain, warehouse, logistics, national / regional heads), then
- * P2 process owners, then VPs and CXOs, then P3, and the MD / CEO / founder last. HR, admin, quality
+ * P2 process owners, then VPs and CXOs (the COO), then finance, then P3, and the MD / CEO / founder last. HR, admin, quality
  * and titles on no list aren't wanted (99).
  */
 export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): number {
@@ -227,9 +227,9 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
   if (tier === 'P1') {
     // Then the people who run a region or a warehouse (logistics: national, regional and warehouse
-    // heads). Finance comes after the process owners.
+    // heads). Finance comes after the process owners and the CXOs on the list (INVECK: the COO before finance).
     if (/\b(regional|national|zonal|cluster|warehouse)\b.*\bhead\b|\bhead\b.*\b(regional|national|zonal|warehouse)\b/.test(t)) return 7;
-    if (/\b(finance|accounts|controller|cfo)\b/.test(t)) return 22;
+    if (/\b(finance|accounts|controller|cfo)\b/.test(t)) return 26;
     return vpOrCxo ? 25 : 10;
   }
   if (tier === 'P2') return 20;

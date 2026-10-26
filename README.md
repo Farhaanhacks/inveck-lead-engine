@@ -429,7 +429,9 @@ Vercel's free plan runs scheduled jobs once a day, so a free outside timer calls
 2. On cron-job.org (free), create a job: URL `https://inveck-lead-engine.vercel.app/api/cron/inbound-demos`, method GET, schedule every 5 minutes, and under Advanced add the header `Authorization` with the value `Bearer <your INBOUND_SYNC_SECRET>`.
 3. The job's history should show status 200 and a short JSON result (`read`, `created`, `meetings`...). A 403 means the secret doesn't match.
 
-This secret can only start the read-only sheet sync; it does not open anything else. Do not put it in the URL.
+This secret can only start the read-only sheet sync and wake the daily Morning Sample (start it when it is due, carry on
+one that paused); it does not open anything else. Do not put it in the URL. With this timer live, the daily run needs
+neither Vercel's scheduled jobs nor anyone opening a page.
 
 ## Configuration (administrators)
 
