@@ -16,7 +16,7 @@ import { knownToInveck } from './test-run';
 import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, planSequence, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
-import { MANUFACTURING } from '../db/seed';
+import { LOGISTICS, MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchesThisMorning, searchRound, startRound, type MorningSourcing } from './morning';
 import { pausedToday } from '../pause';
 import { getSettings } from '../settings';
@@ -60,6 +60,26 @@ const CONCURRENCY = 5;
  * A sample carried on from where it stopped uses them too.
  */
 export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.1, credits: 3000, researchCredits: 25 } as const;
+
+/**
+ * 3PL & Logistics (INVECK's decision, 26 Oct 2026): fewer companies to find, and research rules more of them out, so
+ * the cheaper rules above left its lists short. Its search goes on until 50 searches in a row found nobody new, asks
+ * for a quarter more than it is short of, and takes up to five rounds; and its company check is strict, as the run's:
+ * a company with no LinkedIn page, or whose page doesn't show a 3PL industry, isn't passed to research. Still within
+ * the sample's credits. Manufacturing keeps the rules above.
+ */
+export const SAMPLE_3PL_RULES = { quietSearches: 50, headroom: 1.25, rounds: 5, lenientScreen: false } as const;
+const headroomFor = (s: string) => (s === LOGISTICS ? SAMPLE_3PL_RULES.headroom : SAMPLE_RULES.headroom);
+
+/**
+ * The segments still short that a sample searches again after research, `round` rounds in: the run's three rounds, and
+ * for 3PL & Logistics up to five, each only while its own last round found companies (one that found nobody in 50
+ * searches isn't searched again).
+ */
+export function segmentsToSearchAgain(short: Record<DrawSegment, number>, last: { segment: string; added: number }[], round: number): DrawSegment[] {
+  const foundLast = (s: string) => last.some((h) => h.segment === s && h.added > 0) || !last.some((h) => h.segment === s);
+  return DRAW_SEGMENTS.filter((s) => short[s] > 0 && (s === LOGISTICS ? round < SAMPLE_3PL_RULES.rounds && foundLast(s) : round < MORNING_LIMITS.rounds));
+}
 
 /** Why a search the sample's budget has no room for isn't made. */
 export class OverBudget extends Error {}
@@ -259,6 +279,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           quietSearches: SAMPLE_RULES.quietSearches,
           rememberRuledOut: true,
           lenientScreen: true,
+          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen } },
           cheaperChecks: true,
           recent: await recentSearches(db, null),
           // What earlier samples' searches found (before this one started, so the plan stays the same).
@@ -314,14 +335,14 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
         // stopped for the budget goes on too when research cost less than was kept back for it.
         const short = stillShort(r);
         const last = r.search!.history.filter((h) => h.round === r.search!.round);
+        const searchAgain = segmentsToSearchAgain(short, last, r.search!.round);
         const again =
-          r.search!.round < MORNING_LIMITS.rounds &&
-          DRAW_SEGMENTS.some((s) => short[s] > 0) &&
+          searchAgain.length > 0 &&
           last.some((h) => h.added > 0) &&
           !last.some((h) => h.stopped === 'failed') &&
           budgetLeft() > CHECKS_RESERVE + 50;
         if (again) {
-          const wanted = Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, Math.ceil(short[s] * SAMPLE_RULES.headroom)])) as Record<SourcingSegment, number>;
+          const wanted = Object.fromEntries(DRAW_SEGMENTS.map((s) => [s, searchAgain.includes(s) ? Math.ceil(short[s] * headroomFor(s)) : 0])) as Record<SourcingSegment, number>;
           r.search = startRound(r.search, wanted);
           r.phase = 'search';
         } else {
@@ -616,7 +637,7 @@ async function begin(db: Db, svc: Services, fresh: boolean, forDay?: string): Pr
   for (const s of DRAW_SEGMENTS) {
     const need = Object.values(quotas).reduce((a, q) => a + q[s], 0);
     const short = Math.max(0, need - (fresh ? 0 : pool.bySegment[s]));
-    wanted[s] = Math.ceil(short * SAMPLE_RULES.headroom);
+    wanted[s] = Math.ceil(short * headroomFor(s));
     start[s] = { need, pool: pool.bySegment[s], waiting: waitingRows.filter((w) => normSegment(w.segment) === normSegment(s)).length, wanted: wanted[s] };
   }
   // Companies earlier searches found but didn't check go first: no people search is paid for them again.

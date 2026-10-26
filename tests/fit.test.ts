@@ -646,6 +646,21 @@ describe('contacts: the review of the contact pipeline', () => {
     expect((await run(found, { research: unsure, google: () => [] })).status).toBe('Disqualified');
   });
 
+  it("3PL: a must-have the website doesn't confirm doesn't hold a company back; evidence against it still does; a manufacturer still goes to review (26 Oct)", async () => {
+    const unsure = (user: string) => kltAnswer(user, { risks: [], qualified: true, fit_score: 6 }, { M1: ['unknown', 'Not stated on the website', ''] });
+    const tpl = await klt({ company: 'RSAG Logistics', segment: '3PL & Logistics', source: 'Found by prospect search' });
+    const r = await run(tpl, { research: unsure, google: () => [] });
+    expect(r).toMatchObject({ fitStatus: 'qualified', qualified: true });
+    expect(r.fitDecision).toMatch(/^No must-have shown missing and no deal-breaker found; not confirmed from the website: couldn't confirm must-have “/);
+    // A must-have shown missing, with its quote: ruled out as before.
+    const against = await klt({ company: 'KSH Transport', segment: '3PL & Logistics', source: 'Found by prospect search' });
+    const notMet = (user: string) => kltAnswer(user, { risks: [], qualified: false, fit_score: 2 }, { M1: ['not_met', ...cite(user, 'KLT is the leading authority when it comes to chassis manufacturing for several OEMs in India as well as overseas')] });
+    expect(await run(against, { research: notMet, google: () => [] })).toMatchObject({ status: 'Disqualified', fitStatus: 'not_fit' });
+    // Manufacturing is unchanged: an unconfirmed must-have still goes to review.
+    const mfg = await klt({ company: 'Delta Found Forgings', source: 'Found by prospect search' });
+    expect(await run(mfg, { research: unsure, google: () => [] })).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
+  });
+
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {
     const lead = await klt({ company: 'Hosur Gears', city: 'Hosur' });
     const results = [

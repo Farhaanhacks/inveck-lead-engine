@@ -289,7 +289,15 @@ news and filings, a person's profile looked up in the last 14 days or the compan
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the
 pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 3,000 Google search
 credits at most for a new sample, a hard limit (a search that would go over it isn't made; a company whose
-research reaches it is left for the next day). A sample carried on from where it stopped uses them too.
+research reaches it is left for the next day). 3PL & Logistics, with fewer companies to find and more ruled out,
+searches longer and screens strictly (`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find nobody
+new, asks for 25% extra, takes up to five rounds (each only while its last one found companies), and a 3PL company
+with no LinkedIn page or an unclear industry isn't passed to research. A sample carried on from where it stopped
+uses them too.
+
+A 3PL whose website doesn't confirm a must-have ("multiple locations", "B2B") is approved, with what wasn't
+confirmed noted on the lead; only evidence against a must-have, or a deal-breaker, rules a 3PL out (INVECK's
+decision, 26 Oct 2026; the team's imported lists are treated the same way).
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
 list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from

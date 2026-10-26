@@ -308,6 +308,11 @@ export type RoundOptions = {
    * its own after.
    */
   cheaperChecks?: boolean;
+  /**
+   * Per segment, in place of `quietSearches`, and of `lenientScreen` for passing a company with no LinkedIn page or an
+   * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics).
+   */
+  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean }>>;
   /** Reorders or shortens a segment's plan (a sample run's memory of its searches); the same answer on every invocation. */
   plan?: (segment: SourcingSegment, plan: PeopleQuery[]) => Promise<PeopleQuery[]>;
   sink: RoundSink;
@@ -343,7 +348,6 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
   const peopleResults = o.peopleResults ?? PEOPLE_RESULTS;
-  const quietLimit = o.quietSearches ?? MORNING_LIMITS.quietSearches;
   // The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks.
   const stepCredits = 8 * searchCredits(peopleResults);
 
@@ -356,6 +360,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       continue;
     }
     const icp = await icpFor(db, seg.segment);
+    const own = o.segmentRules?.[seg.segment];
+    const quietLimit = own?.quietSearches ?? o.quietSearches ?? MORNING_LIMITS.quietSearches;
+    const lenientScreen = own?.lenientScreen ?? o.lenientScreen;
     const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
     const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
@@ -401,6 +408,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         seg.ruledOut++;
         return;
       }
+      // An employer that is only an industry word isn't looked up (the sample's rule, for every segment).
       if (o.lenientScreen && noCompanyName(c.employer)) {
         seg.noPage++;
         return;
@@ -408,7 +416,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       const fromPre = pre ? matchingPage(pre, c.employer) : null;
       const got = fromPre ? { results: pre!, error: undefined } : await search(companyQuery(c.employer));
       let page: CompanyPage | null = fromPre ?? (got.error ? null : matchingPage(got.results, c.employer));
-      if (!page && !got.error && o.lenientScreen) page = pagelessCompany(c.employer);
+      if (!page && !got.error && lenientScreen) page = pagelessCompany(c.employer);
       if (!page) {
         seg.noPage++;
         if (!got.error) await rememberRuledOut(c.employer, 'no LinkedIn page');
@@ -418,7 +426,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       // Its people work in India, so it has a site here whatever its headquarters.
       const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
       let s = screenPage(seenAs, seg.segment, icp.companySize, known);
-      if (o.lenientScreen && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+      if (lenientScreen && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
         const words = await websiteWords(svc, page.website);
         s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
         if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };

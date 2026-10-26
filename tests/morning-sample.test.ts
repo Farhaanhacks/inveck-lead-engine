@@ -7,13 +7,14 @@ import { activities, enrichmentCache, icps, leads, people, prospectSearches, set
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, sampleMorning, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, sampleMorning, segmentsToSearchAgain, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
 import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
 import { verifyContacts } from '@/lib/verify-contacts';
 import { normQuery } from '@/lib/pipeline/query-history';
+import { normCompany } from '@/lib/pipeline/text';
 
 /**
  * The Morning Sample Run: tomorrow's 6 am run and 8 am draw on paper. The made-up Google (see
@@ -338,6 +339,86 @@ describe('the Morning Sample Run', () => {
     // "Foundry" has no name to look up: never searched for, never kept.
     expect(asked.some((q) => q === 'site:linkedin.com/company "Foundry"')).toBe(false);
     expect(r.companies.some((c) => c.employer === 'Foundry')).toBe(false);
+  });
+
+  describe('3PL & Logistics searches longer and screens strictly (26 Oct)', () => {
+    const TPL = /^site:linkedin\.com\/in .*"(3PL|warehousing|contract logistics|third party logistics|supply chain solutions|cold chain)"/;
+    const MFG_PEOPLE = /^site:linkedin\.com\/in /;
+    /** The world, with `extra` people added to the people searches `match` picks, or none at all there with `empty`. */
+    const withPeople = (asked: string[], match: RegExp, extra: unknown[], empty = false) => {
+      const base = morningServices(log);
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const body = String(input).includes('google.serper.dev/search') ? JSON.parse(String(init?.body)) : null;
+          if (body) asked.push(body.q);
+          const res = await base.fetch(input, init);
+          if (body && match.test(body.q)) {
+            const data = await res.json();
+            return new Response(JSON.stringify({ ...data, organic: empty ? [] : [...(data.organic ?? []), ...extra] }), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+          return res;
+        }) as typeof fetch,
+      };
+    };
+
+    it('a 3PL company with no LinkedIn page is not passed to research, and an employer that is only an industry word still is not looked up', async () => {
+      const extra = [
+        { title: 'Asha K - Head of Logistics - Pageless Warehousing Co | LinkedIn', link: 'https://in.linkedin.com/in/asha-k', subtitle: 'Pune, Maharashtra, India · Head of Logistics · Pageless Warehousing Co', snippet: '' },
+        { title: 'Vivek M - Head of Logistics - Logistics | LinkedIn', link: 'https://in.linkedin.com/in/vivek-m', subtitle: 'Pune, Maharashtra, India · Head of Logistics · Logistics', snippet: '' },
+      ];
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, withPeople(asked, TPL, extra), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      expect(r.phase).toBe('done');
+      expect(r.companies.some((c) => c.employer === 'Pageless Warehousing Co')).toBe(false);
+      // The search did see her: the company was checked and not kept.
+      expect(r.search!.segments.find((x) => x.segment === LOGISTICS)!.checked).toContain(normCompany('Pageless Warehousing Co'));
+      // An employer that is only an industry word is still not looked up (no credit spent on it).
+      expect(asked.some((q) => q === 'site:linkedin.com/company "Logistics"')).toBe(false);
+    });
+
+    it('asks for a quarter more 3PL companies than it is short of (Manufacturing 10%), and gives up on 3PL only after 50 searches find nobody new', async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, withPeople(asked, TPL, [], true), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      expect(r.phase).toBe('done');
+      const short = (s: typeof LOGISTICS | typeof MANUFACTURING) => r.start[s].need - (r.fresh ? 0 : r.start[s].pool);
+      expect(r.start[LOGISTICS].wanted).toBe(Math.ceil(short(LOGISTICS) * 1.25));
+      expect(r.start[MANUFACTURING].wanted).toBe(Math.ceil(short(MANUFACTURING) * 1.1));
+      const tplSearches = asked.filter((q) => TPL.test(q));
+      expect(tplSearches.length).toBeGreaterThanOrEqual(50);
+      expect(tplSearches.length).toBeLessThan(50 + 8 * 2);
+      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'dry', added: 0 });
+    });
+
+    it('3PL gets up to five rounds, each only while its last round found companies; Manufacturing keeps three', async () => {
+      const short = { [MANUFACTURING]: 2, [LOGISTICS]: 3 } as Record<typeof MANUFACTURING | typeof LOGISTICS, number>;
+      const found = [{ segment: MANUFACTURING, added: 1 }, { segment: LOGISTICS, added: 2 }];
+      expect(segmentsToSearchAgain(short, found, 1)).toEqual([MANUFACTURING, LOGISTICS]);
+      expect(segmentsToSearchAgain(short, found, 3)).toEqual([LOGISTICS]);
+      expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 1 }], 4)).toEqual([LOGISTICS]);
+      expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 1 }], 5)).toEqual([]);
+      // 3PL found nobody last round: not searched again, whatever Manufacturing found.
+      expect(segmentsToSearchAgain(short, [{ segment: MANUFACTURING, added: 1 }, { segment: LOGISTICS, added: 0 }], 1)).toEqual([MANUFACTURING]);
+      // Not searched last round (it wasn't short then): searched now.
+      expect(segmentsToSearchAgain(short, [{ segment: MANUFACTURING, added: 1 }], 1)).toEqual([MANUFACTURING, LOGISTICS]);
+      // Nothing short: nothing searched.
+      expect(segmentsToSearchAgain({ [MANUFACTURING]: 0, [LOGISTICS]: 0 } as typeof short, found, 1)).toEqual([]);
+    });
+
+    it('Manufacturing with nobody to find still gives up after 15', async () => {
+      const asked2: string[] = [];
+      const id2 = await startSample(true);
+      await runSourcingTest(db, withPeople(asked2, MFG_PEOPLE, [], true), id2, Number.POSITIVE_INFINITY);
+      const r2 = await reportOf(id2);
+      const mfgSearches = asked2.filter((q) => MFG_PEOPLE.test(q) && !TPL.test(q));
+      expect(r2.search!.history.find((h) => h.segment === MANUFACTURING)).toMatchObject({ stopped: 'dry', added: 0 });
+      expect(mfgSearches.length).toBeGreaterThanOrEqual(15);
+      expect(mfgSearches.length).toBeLessThan(15 + 8 * 2);
+    });
   });
 
   it("shows the first morning the draw runs, when that's later than the next one", async () => {

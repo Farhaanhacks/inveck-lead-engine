@@ -8,7 +8,8 @@ import { scoreLead } from './scoring';
 import { NO_CONTACT_FOUND, unconfirmedFit } from '../retired-statuses';
 import { isCaSegment } from '../tasks';
 import { contactPriority, icpFor } from '../tiers';
-import { resolveIcp } from '../icp-match';
+import { normSegment, resolveIcp } from '../icp-match';
+import { LOGISTICS } from '../db/seed';
 import { IMPORTED_SOURCE } from '../contact-import';
 import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
@@ -241,6 +242,11 @@ export async function processLead(
     /^Needs review: /.test(reason) && !/contradicts|failed the checks/.test(reason) && reason.replace(/^Needs review: /, '').split('; ').every((part) => part.startsWith("couldn't confirm must-have"));
   if (a?.status === 'review' && lead.source === IMPORTED_SOURCE && onlyUnconfirmed(a.reason)) {
     a = { ...a, status: 'qualified', reason: `On the team's researched list; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
+  }
+  // 3PL & Logistics the same way (INVECK's decision, 26 Oct 2026): a must-have its website doesn't confirm ("multiple
+  // locations", "B2B") doesn't hold a 3PL back; only evidence against it, or a deal-breaker, rules it out.
+  if (a?.status === 'review' && normSegment(icp.segment) === normSegment(LOGISTICS) && onlyUnconfirmed(a.reason)) {
+    a = { ...a, status: 'qualified', reason: `No must-have shown missing and no deal-breaker found; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
   }
   // Clearly too small (its own LinkedIn page at half the ICP's size or less): ruled out with that
   // reason, rather than a review for a person or a contact search with nobody to find. Never a firm
