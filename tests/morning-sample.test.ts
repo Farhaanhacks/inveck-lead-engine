@@ -7,7 +7,7 @@ import { activities, enrichmentCache, icps, leads, people, prospectSearches, set
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, sampleMorning, segmentsToSearchAgain, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
@@ -189,7 +189,7 @@ describe('the Morning Sample Run', () => {
     expect(log.calls.length).toBeGreaterThan(searchesBefore);
   });
 
-  it('tries the cheaper rules (the 6 am run does not): 10-result searches, rule-outs remembered, no repeat lookups, a 3,000 budget', async () => {
+  it('tries the cheaper rules (the 6 am run does not): 10-result searches, rule-outs remembered, no repeat lookups, a 4,000 budget', async () => {
     const store = new Map<string, unknown>();
     const cache = { get: async (k: string) => store.get(k) ?? null, set: async (k: string, v: unknown) => void store.set(k, JSON.parse(JSON.stringify(v))) };
     const sent: { q: string; num: number }[] = [];
@@ -208,7 +208,8 @@ describe('the Morning Sample Run', () => {
     const first = await startSample(true);
     await runSourcingTest(db, watched(), first, Number.POSITIVE_INFINITY);
     const r = await reportOf(first);
-    expect(r.budget).toBe(3000);
+    expect(r.budget).toBe(SAMPLE_RULES.credits);
+    expect(SAMPLE_RULES.credits).toBe(4000);
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
     // People searches ask for ten results.
     const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
@@ -306,7 +307,7 @@ describe('the Morning Sample Run', () => {
     expect((await peopleFirstContacts(db, fresh)).map((p) => p.name)).toEqual(swift.contacts.map((p) => p.name));
   });
 
-  it('keeps a company with no LinkedIn page, and skips an employer that is only an industry word', async () => {
+  it('a company with no LinkedIn page is not researched (from 27 Oct; it was before), and an employer that is only an industry word is not looked up', async () => {
     // Two more people in the forging search: a plant head at a company with no LinkedIn page, and one whose employer is just "Foundry".
     const extra = [
       { title: 'Kiran Rao - Plant Head - Pageless Forge Works | LinkedIn', link: 'https://in.linkedin.com/in/kiran-rao', subtitle: 'Pune, Maharashtra, India · Plant Head · Pageless Forge Works', snippet: '' },
@@ -332,10 +333,9 @@ describe('the Morning Sample Run', () => {
     const id = await startSample(true);
     await runSourcingTest(db, svc(), id, Number.POSITIVE_INFINITY);
     const r = await reportOf(id);
-    const pageless = r.companies.find((c) => c.page.name === 'Pageless Forge Works');
-    expect(pageless).toBeDefined();
-    expect(pageless!.page.url).toBe('');
-    expect(pageless!.note).toMatch(/^no LinkedIn company page found/);
+    // Checked, not kept: it would be researched (and paid for) only to be ruled out.
+    expect(r.companies.some((c) => c.page.name === 'Pageless Forge Works' || c.employer === 'Pageless Forge Works')).toBe(false);
+    expect(r.search!.segments.find((x) => x.segment === MANUFACTURING)!.checked).toContain(normCompany('Pageless Forge Works'));
     // "Foundry" has no name to look up: never searched for, never kept.
     expect(asked.some((q) => q === 'site:linkedin.com/company "Foundry"')).toBe(false);
     expect(r.companies.some((c) => c.employer === 'Foundry')).toBe(false);
@@ -421,6 +421,28 @@ describe('the Morning Sample Run', () => {
     });
   });
 
+  it('tallies why the companies it checked were not approved, per segment, on the report (27 Oct)', async () => {
+    expect(rejectionReason({ outcome: 'approved', why: 'Fits' })).toBeNull();
+    expect(rejectionReason({ outcome: undefined, why: '' })).toBeNull();
+    expect(rejectionReason({ outcome: 'approved', why: "Approved, but the contact isn't confirmed on LinkedIn yet, so the draw would hold it back" })).toBe("Approved, but the contact isn't confirmed on LinkedIn");
+    expect(rejectionReason({ outcome: 'no_contact', why: 'No contact found' })).toBe('No acceptable contact found');
+    expect(rejectionReason({ outcome: 'waiting', why: 'Over the Google search budget' })).toBe('Not researched: over the credit limit');
+    expect(rejectionReason({ outcome: 'ruled_out', why: "Not a fit: too small for the ICP's size target (200+ employees)" })).toBe('Too small');
+    expect(rejectionReason({ outcome: 'ruled_out', why: 'Not a fit: deal-breaker “pharma” applies: “makes tablets”' })).toBe('A deal-breaker applies');
+    expect(rejectionReason({ outcome: 'ruled_out', why: 'Not a fit: fails must-have “heavy manufacturing”: “a trading house”' })).toBe('Shown to fail a must-have');
+    expect(rejectionReason({ outcome: 'ruled_out', why: "Needs review: couldn't confirm must-have “holds inventory”" })).toBe('A must-have not confirmed');
+    // On the report, with the counts per segment.
+    const id = await startSample(true);
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const extra = { ...r.companies[0], key: 9001, outcome: 'ruled_out' as const, why: 'Not a fit: too small for the ICP size target' };
+    const withRejects = { ...row, report: JSON.parse(JSON.stringify({ ...r, companies: [...r.companies, extra, { ...extra, key: 9002 }] })) };
+    const html = renderToStaticMarkup(createElement(MorningSample, { test: withRejects, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(html).toContain('Why companies weren&#x27;t approved');
+    expect(html).toMatch(/2<\/span> Too small/);
+  });
+
   describe('Find new prospects on the one capped engine (26 Oct)', () => {
     it('finds the leads asked for within the credit limit, deals nothing, and adds the approved ones for the person chosen', async () => {
       const [parimal] = await db.select().from(users).where(eq(users.name, 'Parimal'));
@@ -477,14 +499,14 @@ describe('the Morning Sample Run', () => {
     expect(await searchesUsed(db)).toBe(r.credits);
   });
 
-  it('never spends more than its budget: 3,000 at most, a hard limit, and a company whose research reaches it waits for the next day', async () => {
-    // No daily limit set (the default): 3,000. A higher one: still 3,000. A lower one: that.
+  it('never spends more than its budget: 4,000 at most, a hard limit, and a company whose research reaches it waits for the next day', async () => {
+    // No daily limit set (the default): 4,000. A higher one: still 4,000. A lower one: that.
     const plain = await startSample(true);
     await runSourcingTest(db, morningServices(log), plain, Number.POSITIVE_INFINITY);
-    expect((await reportOf(plain)).budget).toBe(3000);
+    expect((await reportOf(plain)).budget).toBe(4000);
     const high = await startSample(true);
     await runSourcingTest(db, morningServices(log, [], { budget: 5000 }), high, Number.POSITIVE_INFINITY);
-    expect((await reportOf(high)).budget).toBe(3000);
+    expect((await reportOf(high)).budget).toBe(4000);
 
     // Every Serper request counted where it is sent, against budgets that stop the search at different points.
     for (const budget of [110, 115, 150, 160, 200]) {
@@ -518,8 +540,8 @@ describe('the Morning Sample Run', () => {
       phase: 'research',
       companies: [{ ...forgeline, contacts: offList, outcome: undefined, why: undefined, lead: undefined, people: undefined, researchedAt: undefined }],
       hands: [],
-      credits: 3000 - 26,
-      budget: 3000,
+      credits: 4000 - 26,
+      budget: 4000,
     };
     const [row] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, report: JSON.parse(JSON.stringify(report)) }).returning({ id: sourcingTests.id });
     let sent = 0;
@@ -535,7 +557,7 @@ describe('the Morning Sample Run', () => {
     const r = await reportOf(row.id);
     expect(r.phase).toBe('done');
     expect(sent).toBe(26);
-    expect(r.credits).toBe(3000);
+    expect(r.credits).toBe(4000);
     expect(r.companies[0]).toMatchObject({ outcome: 'waiting', why: 'Over the Google search budget: the run would research it the next day' });
     expect([r.companies[0].lead, r.companies[0].people]).toEqual([undefined, undefined]);
   });

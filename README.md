@@ -271,7 +271,7 @@ From Monday 26 October 2026 that 6 am run no longer starts (`OLD_RUN_UNTIL` in `
 run, and from Tuesday 27 October a **daily Morning Sample** (`DAILY_SAMPLE`) starts at 06:00 IST instead, on the
 same days the morning search would run (a working day, not a holiday or a paused day, the search on in
 Settings), started once by the first wake-up between 06:00 and 14:00. It is for that day's lists (what anyone
-already has for the day left out), uses the sample's rules below (3,000 credits at most), and gives its leads out
+already has for the day left out), uses the sample's rules below (4,000 credits at most), and gives its leads out
 itself when it finishes, never more than anyone's list for the day (a lead over it stays in the pool for the
 next draw). The 8 am draw then fills only what is still missing.
 
@@ -295,25 +295,27 @@ found companies that passed go first), two contacts a company with the hunt for 
 stops once two with a P1 are in hand), no repeat lookup of the company's LinkedIn page or of its officers in the
 news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the
-pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 3,000 Google search
-credits at most for a new sample, a hard limit (a search that would go over it isn't made; a company whose
-research reaches it is left for the next day). 3PL & Logistics, with fewer companies to find and more ruled out,
-searches longer and screens strictly (`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find nobody
-new, asks for 25% extra, takes up to five rounds (each only while its last one found companies), and a 3PL company
-with no LinkedIn page or an unclear industry isn't passed to research. A sample carried on from where it stopped
-uses them too.
+pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 4,000 Google search
+credits at most for a new sample (3,000 until 27 Oct 2026), a hard limit (a search that would go over it isn't made;
+a company whose research reaches it is left for the next day). A company with no LinkedIn page, or whose page
+doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
+would only be ruled out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
+(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find nobody new, asks for 25% extra and takes up
+to five rounds (each only while its last one found companies). The report tallies why the companies it checked
+weren't approved, per segment. A sample carried on from where it stopped uses them too.
 
 **One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on
 the Dashboard (leads per segment, and who gets them) and the Configuration page's run start a prospect search on the
-daily run's engine (`startProspectSearch` in `sample-run.ts`): its rules and its 3,000-credit limit, watched on the
+daily run's engine (`startProspectSearch` in `sample-run.ts`): its rules and its 4,000-credit limit, watched on the
 Sourcing page. It deals nothing; when it finishes, its approved companies go into the pipeline as Approved, given to
 the person or team chosen, or left for the morning draw. Research of any other lead (added by hand, imported, contacts
 searched again) uses the same research rules (two contacts a company, no repeat look-ups; CA firms keep theirs) and
-at most 3,000 credits a day (`RESEARCH_DAY_CREDITS` in `search-budget.ts`); what is left waits for the next day.
+at most 4,000 credits a day (`RESEARCH_DAY_CREDITS` in `search-budget.ts`); what is left waits for the next day.
 
-A 3PL whose website doesn't confirm a must-have ("multiple locations", "B2B") is approved, with what wasn't
-confirmed noted on the lead; only evidence against a must-have, or a deal-breaker, rules a 3PL out (INVECK's
-decision, 26 Oct 2026; the team's imported lists are treated the same way).
+A Manufacturing or 3PL company whose website doesn't confirm a must-have ("holds physical inventory", "multiple
+locations", "B2B") is approved, with what wasn't confirmed noted on the lead; only evidence against a must-have, or a
+deal-breaker, rules it out, and no extra search is paid to settle one (`unconfirmedGoesAhead` in `fit.ts`; INVECK's
+decisions, 3PL on 26 Oct 2026, Manufacturing on 27 Oct; the team's imported lists are treated the same way).
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
 list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from

@@ -338,7 +338,7 @@ describe("the day's Google search budget", () => {
     expect(await searchBudgetLeft(db, settingsSchema.parse({}))).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it('research outside the daily run keeps to its own limit of 3,000 credits a day: what is left waits for the next day', async () => {
+  it('research outside the daily run keeps to its own limit of 4,000 credits a day: what is left waits for the next day', async () => {
     await db.insert(leads).values(Array.from({ length: 4 }, (_, i) => ({ company: `Waiting Co ${i}`, website: `waiting${i}.in`, segment: MANUFACTURING })));
     await researchMeter(db).spend(RESEARCH_DAY_CREDITS - 10);
     const { run } = await startRun(db, { findProspects: false, trigger: 'auto' });
@@ -346,7 +346,7 @@ describe("the day's Google search budget", () => {
     const rows = await db.select().from(leads).where(eq(leads.segment, MANUFACTURING));
     expect(rows.filter((l) => l.company.startsWith('Waiting Co')).every((l) => l.status === 'New')).toBe(true);
     const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
-    expect(events.some((e) => /research limit \(3,000 Google search credits\) is used: 4 companies wait/.test(e.message))).toBe(true);
+    expect(events.some((e) => /research limit \(4,000 Google search credits\) is used: 4 companies wait/.test(e.message))).toBe(true);
   });
 
   it("research outside the daily run uses the daily run's rules (two contacts a company) and counts into the research total", async () => {

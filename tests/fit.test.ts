@@ -368,14 +368,31 @@ describe('AI answers that are malformed or contradict themselves', () => {
     expect(r.fitEvidence?.find((x) => x.id === 'M1')).toMatchObject({ status: 'met', verified: true, url: 'https://directory.example/rathi' });
   });
 
-  it('a must-have still unconfirmed after searching further goes to review', async () => {
+  it('a must-have still unconfirmed after searching further goes to review (a segment where an unconfirmed must-have still blocks)', async () => {
+    const mfg = (await allIcps()).find((i) => i.segment === 'Manufacturing')!;
+    const other = { ...mfg, id: 999, segment: 'Engineering Exports' };
+    const r = await run(
+      await addLead({ company: 'Rathi Forge', website: 'rathiforge.example', segment: 'Engineering Exports' }),
+      {
+        google: (q) => (q.startsWith('site:') ? [] : [{ title: 'Rathi Forge', link: 'https://news.example/r', snippet: 'Rathi Forge celebrates 25 years.' }]),
+        research: (user) => fitAnswer(user, {}, { M1: ['unknown', 'Nothing says what it makes', ''] }),
+      },
+      [...(await allIcps()), other],
+    );
+    expect(seen.research).toHaveLength(2);
+    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
+    expect(r.fitDecision).toContain('couldn\'t confirm must-have');
+  });
+
+  it('Manufacturing (27 Oct): a must-have its website does not confirm goes ahead, noted, and no search is paid to settle it', async () => {
     const r = await run(await addLead({ company: 'Rathi Forge', website: 'rathiforge.example' }), {
       google: (q) => (q.startsWith('site:') ? [] : [{ title: 'Rathi Forge', link: 'https://news.example/r', snippet: 'Rathi Forge celebrates 25 years.' }]),
       research: (user) => fitAnswer(user, {}, { M1: ['unknown', 'Nothing says what it makes', ''] }),
     });
-    expect(seen.research).toHaveLength(2);
-    expect(r).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
-    expect(r.fitDecision).toContain('couldn\'t confirm must-have');
+    expect(seen.research).toHaveLength(1);
+    expect(seen.google.some((q) => q.includes('company profile products'))).toBe(false);
+    expect(r).toMatchObject({ fitStatus: 'qualified', qualified: true });
+    expect(r.fitDecision).toMatch(/^No must-have shown missing and no deal-breaker found; not confirmed from the website: couldn't confirm must-have/);
   });
 });
 
@@ -646,7 +663,7 @@ describe('contacts: the review of the contact pipeline', () => {
     expect((await run(found, { research: unsure, google: () => [] })).status).toBe('Disqualified');
   });
 
-  it("3PL: a must-have the website doesn't confirm doesn't hold a company back; evidence against it still does; a manufacturer still goes to review (26 Oct)", async () => {
+  it("3PL (26 Oct) and Manufacturing (27 Oct): a must-have the website doesn't confirm doesn't hold a company back; evidence against it still does", async () => {
     const unsure = (user: string) => kltAnswer(user, { risks: [], qualified: true, fit_score: 6 }, { M1: ['unknown', 'Not stated on the website', ''] });
     const tpl = await klt({ company: 'RSAG Logistics', segment: '3PL & Logistics', source: 'Found by prospect search' });
     const r = await run(tpl, { research: unsure, google: () => [] });
@@ -656,9 +673,9 @@ describe('contacts: the review of the contact pipeline', () => {
     const against = await klt({ company: 'KSH Transport', segment: '3PL & Logistics', source: 'Found by prospect search' });
     const notMet = (user: string) => kltAnswer(user, { risks: [], qualified: false, fit_score: 2 }, { M1: ['not_met', ...cite(user, 'KLT is the leading authority when it comes to chassis manufacturing for several OEMs in India as well as overseas')] });
     expect(await run(against, { research: notMet, google: () => [] })).toMatchObject({ status: 'Disqualified', fitStatus: 'not_fit' });
-    // Manufacturing is unchanged: an unconfirmed must-have still goes to review.
+    // Manufacturing the same way since 27 Oct.
     const mfg = await klt({ company: 'Delta Found Forgings', source: 'Found by prospect search' });
-    expect(await run(mfg, { research: unsure, google: () => [] })).toMatchObject({ status: 'Disqualified', fitStatus: 'review' });
+    expect(await run(mfg, { research: unsure, google: () => [] })).toMatchObject({ fitStatus: 'qualified', qualified: true });
   });
 
   it('the AI being down never bypasses the checks: role, employer and site still decide', async () => {

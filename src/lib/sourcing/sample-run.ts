@@ -41,8 +41,8 @@ const CONCURRENCY = 5;
 
 /**
  * Rules tried in the Morning Sample Run first (the 6 am run doesn't use them yet):
- * - no LinkedIn page doesn't rule a company out, and an industry LinkedIn doesn't show is read from the
- *   company's own website (no search credit), else left to research (see lenientScreen);
+ * - a company with no LinkedIn page, or whose page doesn't show an ICP industry, isn't researched (from 27 Oct 2026;
+ *   before, it was passed to research: see lenientScreen);
  * - cheaper company checks with the same companies kept: names that show a company is outside the ICP
  *   aren't looked up, likely misfits are checked last, and several companies are looked up in one search
  *   (see cheaperChecks); companies ruled out are remembered and not checked again;
@@ -56,11 +56,11 @@ const CONCURRENCY = 5;
  *   checked in the last 7, isn't searched again;
  * - the people research found at a company count as checked on LinkedIn that day when it is pushed into
  *   the pipeline, so the 8 am contact check doesn't look them up again;
- * - 10% extra companies, 25 credits kept back for researching each company found, and 3,000 Google search
- *   credits at most for a new sample: a search that would go over it isn't made.
+ * - 10% extra companies, 25 credits kept back for researching each company found, and 4,000 Google search
+ *   credits at most for a new sample (3,000 until 27 Oct 2026): a search that would go over it isn't made.
  * A sample carried on from where it stopped uses them too.
  */
-export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.1, credits: 3000, researchCredits: 25 } as const;
+export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.1, credits: 4000, researchCredits: 25 } as const;
 
 /**
  * 3PL & Logistics (INVECK's decision, 26 Oct 2026): fewer companies to find, and research rules more of them out, so
@@ -213,6 +213,29 @@ const asPerson = (p: { name: string; title?: string | null; tier?: string | null
   whyNot: p.whyNot ?? '',
 });
 
+/**
+ * Why a company the run checked wasn't approved, in a few words (null: approved, or not done yet): the report's tally of
+ * where its credits went for nothing.
+ */
+export function rejectionReason(c: Pick<SampleCompany, 'outcome' | 'why'>): string | null {
+  const why = c.why ?? '';
+  if (!c.outcome) return null;
+  if (c.outcome === 'approved') return /^Approved, but the contact isn't confirmed/.test(why) ? "Approved, but the contact isn't confirmed on LinkedIn" : null;
+  if (c.outcome === 'waiting') return 'Not researched: over the credit limit';
+  if (c.outcome === 'no_contact') return 'No acceptable contact found';
+  if (c.outcome === 'error') return 'Research failed (an error)';
+  if (/too small/i.test(why)) return 'Too small';
+  if (/deal-breaker/i.test(why)) return 'A deal-breaker applies';
+  if (/fails must-have/i.test(why)) return 'Shown to fail a must-have';
+  if (/couldn't confirm must-have|not shown to be missing|marked not met without/i.test(why)) return 'A must-have not confirmed';
+  if (/target not met/i.test(why)) return 'Size, place or industry target not met';
+  if (/contradicts|failed the checks/i.test(why)) return "The AI's answer couldn't be used";
+  if (/company name isn't confirmed/i.test(why)) return 'Company name not confirmed';
+  if (/own list|own lead list/i.test(why)) return "Already on INVECK's own list";
+  if (/matches no ICP/i.test(why)) return 'Matches no ICP';
+  return why.replace(/^(Not a fit|Needs review|ICP fit not confirmed): /, '').slice(0, 80) || 'Other';
+}
+
 /** Can be dealt: qualified, with a named contact confirmed on LinkedIn (the draw's own rule). */
 const releasable = (c: SampleCompany) => c.outcome === 'approved' && !!c.lead?.qualified && !!c.lead.contactName && !!c.lead.contactVerifiedAt;
 
@@ -295,7 +318,9 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           quietSearches: SAMPLE_RULES.quietSearches,
           rememberRuledOut: true,
           lenientScreen: true,
-          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen } },
+          // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
+          // whose page doesn't show an ICP industry, isn't researched (and paid for) only to be ruled out.
+          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen }, [MANUFACTURING]: { lenientScreen: false } },
           cheaperChecks: true,
           recent: await recentSearches(db, null),
           // What earlier samples' searches found (before this one started, so the plan stays the same).

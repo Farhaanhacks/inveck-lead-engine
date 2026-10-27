@@ -3,13 +3,12 @@ import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
 import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, canBeMain, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
-import { buildSources, tooSmall } from './fit';
+import { buildSources, onlyUnconfirmed, tooSmall, unconfirmedGoesAhead } from './fit';
 import { scoreLead } from './scoring';
 import { NO_CONTACT_FOUND, unconfirmedFit } from '../retired-statuses';
 import { isCaSegment } from '../tasks';
 import { contactPriority, icpFor } from '../tiers';
-import { normSegment, resolveIcp } from '../icp-match';
-import { LOGISTICS } from '../db/seed';
+import { resolveIcp } from '../icp-match';
 import { IMPORTED_SOURCE } from '../contact-import';
 import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
@@ -238,14 +237,13 @@ export async function processLead(
   // A list the team researched themselves: what the website doesn't show isn't held against a firm.
   // Only evidence against it (a must-have shown missing, a deal-breaker) stops it; anything that only
   // couldn't be confirmed goes ahead, with the same score and the reason kept.
-  const onlyUnconfirmed = (reason: string) =>
-    /^Needs review: /.test(reason) && !/contradicts|failed the checks/.test(reason) && reason.replace(/^Needs review: /, '').split('; ').every((part) => part.startsWith("couldn't confirm must-have"));
   if (a?.status === 'review' && lead.source === IMPORTED_SOURCE && onlyUnconfirmed(a.reason)) {
     a = { ...a, status: 'qualified', reason: `On the team's researched list; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
   }
-  // 3PL & Logistics the same way (INVECK's decision, 26 Oct 2026): a must-have its website doesn't confirm ("multiple
-  // locations", "B2B") doesn't hold a 3PL back; only evidence against it, or a deal-breaker, rules it out.
-  if (a?.status === 'review' && normSegment(icp.segment) === normSegment(LOGISTICS) && onlyUnconfirmed(a.reason)) {
+  // Manufacturing and 3PL & Logistics the same way (INVECK's decisions, 26 and 27 Oct 2026): a must-have the website
+  // doesn't confirm ("multiple locations", "holds physical inventory") doesn't hold a company back; only evidence
+  // against it, or a deal-breaker, rules it out.
+  if (a?.status === 'review' && unconfirmedGoesAhead(icp.segment) && onlyUnconfirmed(a.reason)) {
     a = { ...a, status: 'qualified', reason: `No must-have shown missing and no deal-breaker found; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
   }
   // Clearly too small (its own LinkedIn page at half the ICP's size or less): ruled out with that

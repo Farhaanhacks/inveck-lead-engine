@@ -43,7 +43,7 @@ export async function searchBudgetLeft(db: Db, s: Pick<Services['settings'], 'da
  * rules (see processLead's lean) and, like the run, at most this many credits a day (INVECK's decision, 26 Oct 2026).
  * What is left waits for the next day.
  */
-export const RESEARCH_DAY_CREDITS = 3000;
+export const RESEARCH_DAY_CREDITS = 4000;
 const researchKey = (day: string) => `research-searches:${day}`;
 
 /** Counts a research run's searches into the day's total and into its research total. */
