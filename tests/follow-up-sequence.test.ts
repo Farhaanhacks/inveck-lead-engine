@@ -97,6 +97,27 @@ describe('what starts the sequence', () => {
     expect((await openTasks(l2.id)).every((t) => t.followUpRound === 0)).toBe(true);
   });
 
+  it('no contact found during the sequence ends it for the company: every open round is ticked off, the company stays, and Undo brings them back (27 Oct)', async () => {
+    const { completeTaskAction, undoTaskAction } = await import('@/app/team-actions');
+    const l = await mk();
+    await completeTaskAction(form({ id: (await dayOne(l.id, 'call')).id, outcome: 'no_answer' }));
+    expect(await rounds(l.id)).toHaveLength(15);
+    const r1 = (await rounds(l.id)).find((t) => t.followUpRound === 1 && t.kind === 'call')!;
+    await db.update(tasks).set({ dueDate: today() }).where(eq(tasks.id, r1.id));
+    await completeTaskAction(form({ id: r1.id, outcome: 'no_contact' }));
+    expect((await rounds(l.id)).filter((t) => !t.doneAt)).toHaveLength(0);
+    expect((await rounds(l.id)).filter((t) => t.id !== r1.id).every((t) => t.outcome === 'closed')).toBe(true);
+    expect((await leadOf(l.id)).status).not.toBe('Deleted');
+    // Nothing starts them again: another unanswered call later doesn't.
+    const [later] = await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'call', step: 'Call again', title: 'later', dueDate: today() }).returning();
+    await completeTaskAction(form({ id: later.id, outcome: 'no_answer' }));
+    expect((await rounds(l.id)).filter((t) => !t.doneAt)).toHaveLength(0);
+    await undoTaskAction(form({ id: later.id }));
+    // Undo of the no-contact call brings every round back.
+    await undoTaskAction(form({ id: r1.id }));
+    expect((await rounds(l.id)).filter((t) => !t.doneAt)).toHaveLength(15);
+  });
+
   it('another qualifying outcome during the sequence does not duplicate or reset it', async () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const l = await mk();
