@@ -302,7 +302,9 @@ doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segment
 would only be ruled out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
 (`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find nobody new, asks for 25% extra and takes up
 to five rounds (each only while its last one found companies). The report tallies why the companies it checked
-weren't approved, per segment. A sample carried on from where it stopped uses them too.
+weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
+contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company.
+A sample carried on from where it stopped uses them too.
 
 **One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on
 the Dashboard (leads per segment, and who gets them) and the Configuration page's run start a prospect search on the

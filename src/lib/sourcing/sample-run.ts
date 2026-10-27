@@ -183,6 +183,8 @@ export type MorningSampleReport = {
   autoAssign?: boolean;
   /** People searches left out of the plan, per segment, because earlier samples' same searches found nothing (see search-memory.ts). */
   skipped?: Partial<Record<SourcingSegment, number>>;
+  /** What its Google search credits were spent on, per step (see spendStep); absent on samples from before 27 Oct 2026. */
+  spend?: Record<string, number>;
   /** A prospect search (see ProspectSearch), and what it added to the pipeline when it finished (see addFoundLeads). */
   find?: ProspectSearch;
   added?: { at: string; leads: number; given: string; skipped: string[] };
@@ -212,6 +214,36 @@ const asPerson = (p: { name: string; title?: string | null; tier?: string | null
   setAside: !!p.passedAt,
   whyNot: p.whyNot ?? '',
 });
+
+/**
+ * What one Google search of a sample was for, read from the search itself: finding companies (the people searches, the
+ * look-ups of their LinkedIn pages), then for each company researched its website, its LinkedIn page, the search for
+ * its people, the look-ups of each person's own profile, its news, and searches to settle a must-have.
+ */
+export function spendStep(r: Pick<MorningSampleReport, 'phase' | 'companies'>, input: RequestInfo | URL, init?: RequestInit): string {
+  const url = String(input instanceof Request ? input.url : input);
+  let q = '';
+  try {
+    q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+  } catch {}
+  if (r.phase === 'search') {
+    if (q.startsWith('site:linkedin.com/in')) return 'Finding companies: people searches';
+    if (q.startsWith('site:linkedin.com/company')) return 'Finding companies: their LinkedIn pages';
+    return 'Finding companies: other';
+  }
+  if (url.includes('/news')) return 'Research: news';
+  if (url.includes('/maps')) return 'Research: towns on the map';
+  if (q.startsWith('site:linkedin.com/company')) return 'Research: company LinkedIn page';
+  if (q.startsWith('site:linkedin.com/in')) {
+    // The search for a company's people names the company first; a look-up of one person's profile names the person.
+    const first = normCompany(/"([^"]+)"/.exec(q)?.[1] ?? '');
+    const firm = !!first && r.companies.some((c) => [c.employer, c.page?.name ?? '', c.lead?.company ?? ''].some((n) => n && normCompany(n) === first));
+    return firm ? 'Research: contact search' : 'Research: contact checks (profile look-ups)';
+  }
+  if (q.startsWith('site:') || /official website/i.test(q)) return 'Research: website';
+  if (q) return 'Research: must-have checks';
+  return 'Research: other';
+}
 
 /**
  * Why a company the run checked wasn't approved, in a few words (null: approved, or not done yet): the report's tally of
@@ -279,6 +311,9 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
         const spent = report.credits ?? 0;
         if (report.budget && spent + credits > report.budget) throw new OverBudget(`The sample's ${report.budget.toLocaleString('en-IN')} Google search credits are used up`);
         report.credits = spent + credits;
+        // And what it was for, for the report's "Where the credits went".
+        const step = spendStep(report, input, init);
+        (report.spend ??= {})[step] = (report.spend[step] ?? 0) + credits;
       }
       return svc.fetch(input, init);
     }) as typeof fetch,

@@ -7,7 +7,7 @@ import { activities, enrichmentCache, icps, leads, people, prospectSearches, set
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, spendStep, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
@@ -419,6 +419,33 @@ describe('the Morning Sample Run', () => {
       expect(mfgSearches.length).toBeGreaterThanOrEqual(15);
       expect(mfgSearches.length).toBeLessThan(15 + 8 * 2);
     });
+  });
+
+  it('counts what every credit was spent on, step by step, and shows it on the report (27 Oct)', async () => {
+    const at = (phase: 'search' | 'research', q: string, path = 'search') =>
+      spendStep({ phase, companies: [{ employer: 'Forgeline Components Pvt Ltd', page: { name: 'Forgeline Components' } } as never] }, `https://google.serper.dev/${path}`, { body: JSON.stringify({ q }) });
+    expect(at('search', 'site:linkedin.com/in "Plant Head" "forging" Pune')).toBe('Finding companies: people searches');
+    expect(at('search', 'site:linkedin.com/company ("A" OR "B")')).toBe('Finding companies: their LinkedIn pages');
+    expect(at('research', 'site:linkedin.com/in "Forgeline Components" "Plant Head" Pune')).toBe('Research: contact search');
+    expect(at('research', 'site:linkedin.com/in "Forgeline Components" Pune')).toBe('Research: contact search');
+    expect(at('research', 'site:linkedin.com/in "Ravi Kumar" Forgeline Components')).toBe('Research: contact checks (profile look-ups)');
+    expect(at('research', '"Forgeline" (plant OR expansion)', 'news')).toBe('Research: news');
+    expect(at('research', 'Pune, India', 'maps')).toBe('Research: towns on the map');
+    expect(at('research', 'site:linkedin.com/company "forgeline.in"')).toBe('Research: company LinkedIn page');
+    expect(at('research', 'site:forgeline.in')).toBe('Research: website');
+    expect(at('research', 'Forgeline Components Pune official website')).toBe('Research: website');
+    expect(at('research', '"Forgeline Components" Pune company profile products')).toBe('Research: must-have checks');
+    // A whole run: every credit counted under a step, and the report shows them.
+    const id = await startSample(true);
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    expect(Object.values(r.spend ?? {}).reduce((a, n) => a + n, 0)).toBe(r.credits);
+    expect(r.spend?.['Finding companies: people searches']).toBeGreaterThan(0);
+    expect(Object.keys(r.spend ?? {}).some((k) => k.startsWith('Research: '))).toBe(true);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const html = renderToStaticMarkup(createElement(MorningSample, { test: row, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(html).toContain('Where the credits went');
+    expect(html).toContain('per company researched');
   });
 
   it('tallies why the companies it checked were not approved, per segment, on the report (27 Oct)', async () => {

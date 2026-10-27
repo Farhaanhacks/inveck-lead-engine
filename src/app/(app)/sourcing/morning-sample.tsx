@@ -206,6 +206,33 @@ function PersonDay({ r, hand, senderName, icps }: { r: MorningSampleReport; hand
   );
 }
 
+/** Where a run's Google search credits went, step by step, and what that came to per company researched and per approved one. */
+function SpendCard({ r }: { r: MorningSampleReport }) {
+  const steps = Object.entries(r.spend ?? {}).sort((a, b) => b[1] - a[1]);
+  if (!steps.length) return null;
+  const total = r.credits ?? 0;
+  const counted = steps.reduce((a, [, n]) => a + n, 0);
+  const researched = r.companies.filter((c) => c.outcome && c.outcome !== 'waiting').length;
+  const approved = r.companies.filter((c) => c.outcome === 'approved').length;
+  const pct = (n: number) => (total ? `${Math.round((n / total) * 100)}%` : '');
+  return (
+    <div className="card mb-4 p-4 text-sm">
+      <p className="font-medium">Where the credits went</p>
+      <ul className="mt-1 space-y-0.5 text-ink-2">
+        {steps.map(([step, n]) => (
+          <li key={step}>
+            <span className="tabular-nums font-medium">{n.toLocaleString('en-IN')}</span> {step} <span className="text-xs text-muted">{pct(n)}</span>
+          </li>
+        ))}
+        {counted < total && <li className="text-xs text-muted">{(total - counted).toLocaleString('en-IN')} spent before this was counted</li>}
+      </ul>
+      <p className="mt-2 text-xs text-muted">
+        {total.toLocaleString('en-IN')} credits in all{researched ? `: ${Math.round(total / researched)} per company researched` : ''}{approved ? `, ${Math.round(total / approved)} per approved company` : ''}.
+      </p>
+    </div>
+  );
+}
+
 /** Why the companies a run checked weren't approved, most common first, per segment: where its credits went for nothing. */
 function RejectionTally({ r }: { r: MorningSampleReport }) {
   const rows = DRAW_SEGMENTS.map((s) => {
@@ -480,6 +507,7 @@ export function MorningSample({
             </div>
           )}
 
+          {r && <SpendCard r={r} />}
           {r && <RejectionTally r={r} />}
 
           {r && r.phase === 'done' && r.hands.length > 0 && hand && (
