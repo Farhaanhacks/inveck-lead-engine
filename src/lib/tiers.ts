@@ -199,16 +199,30 @@ const TOP_EXEC = /\b(md|ceo|coo|cfo|cto|cio|chief executive|chief \w+ officer|ch
 /** Senior but a step away from the floor: VPs, CXOs, functional directors. */
 const SENIOR = /\b(vp|avp|coo|cfo|cto|director|chief)\b/;
 const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logistics|warehous\w*|procurement|purchase|inventory|stores?|finance|works)\b/;
+/** The plant head (plant, factory and works managers and site heads read as one, see ALIASES). */
+const PLANT_HEAD = /\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/;
+
+/**
+ * Each segment's most wanted contact, ahead of everyone else on its lists (INVECK, 28 Oct 2026): the plant head for
+ * Manufacturing, the warehouse manager for 3PL & Logistics. Not an assistant or a deputy one.
+ */
+function segmentsFirst(t: string, segment = ''): boolean {
+  if (/\b(assistant|asst|deputy|dy|junior|jr|trainee|intern)\b/.test(t)) return false;
+  if (/manufactur/i.test(segment)) return PLANT_HEAD.test(t);
+  if (/\b3pl\b|logistic/i.test(segment)) return /\bwarehouse\b.*\bmanager\b|\bmanager\b.*\bwarehouse\b/.test(t);
+  return false;
+}
 
 /**
  * Who to approach first; lower is better. INVECK's rule: people who run the floor answer, the top
- * of the company doesn't. So within the ICP's lists: plant heads and supply chain managers first,
+ * of the company doesn't. So within the ICP's lists: the segment's most wanted contact first (the plant head for
+ * Manufacturing, the warehouse manager for 3PL & Logistics), then plant heads and supply chain managers,
  * then regional / national / warehouse heads, then other hands-on heads
  * (operations, manufacturing, supply chain, warehouse, logistics, national / regional heads), then
  * P2 process owners, then VPs and CXOs (the COO), then finance, then P3, and the MD / CEO / founder last. HR, admin, quality
  * and titles on no list aren't wanted (99).
  */
-export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): number {
+export function contactPriority(title: string, icp: (Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> & Partial<Pick<Icp, 'segment'>>) | undefined): number {
   const tier = tierOf(title, icp);
   if (tier === 'Avoid' || tier === '') return 99;
   // The head of the company: the last resort, never ahead of anyone on the lists.
@@ -223,8 +237,9 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   // partners itself (CA firms), its lists decide.
   if (/\bpartner\b/.test(t) && TOP_ONLY.test(t) && icp && !onLists(title, icp)) return 50;
   if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
-  // Plant heads and supply chain managers / heads answer and own the stock: they come first.
-  if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
+  if ((tier === 'P1' || tier === 'P2') && segmentsFirst(t, icp?.segment)) return 3;
+  // Plant heads and supply chain managers / heads answer and own the stock: they come next.
+  if ((tier === 'P1' || tier === 'P2') && (PLANT_HEAD.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
   if (tier === 'P1') {
     // Then the people who run a region or a warehouse (logistics: national, regional and warehouse
     // heads). Finance comes after the process owners and the CXOs on the list (INVECK: the COO before finance).

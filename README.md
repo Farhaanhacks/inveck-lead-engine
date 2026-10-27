@@ -39,6 +39,12 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
   Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no
   role isn't picked automatically (the team can add them by hand).
 
+Among the candidates, each segment's most wanted contact comes first (from 28 Oct 2026, `contactPriority` in
+`tiers.ts`): the plant head for Manufacturing (plant, factory and works managers count as plant heads), the warehouse
+manager for 3PL & Logistics (not an assistant or deputy one); then plant heads and supply chain heads and managers,
+regional, national and warehouse heads, the other heads, the COO and finance. A lead nobody has started on gets that
+contact as its main contact when they are on file at the site and the current one ranks well below.
+
 ### Emails and phone numbers
 
 Neither is looked up. The app finds the right person and their LinkedIn profile; an email or phone
@@ -295,7 +301,8 @@ found companies that passed go first), two contacts a company with the hunt for 
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
-then the top three P1 designations one at a time when the contacts are still short: at most 12 designation searches
+then three P1 designations one at a time when the contacts are still short (Plant Head, Plant Manager and Head of
+Supply Chain for Manufacturing; Warehouse Manager, Head of Warehouse Operations and Head of Supply Chain for 3PL): at most 12 designation searches
 a company instead of 28 for Manufacturing, plus any second pages), no repeat lookup of the company's LinkedIn page or of its officers in the
 news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the

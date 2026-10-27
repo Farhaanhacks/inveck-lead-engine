@@ -114,6 +114,11 @@ const QUERY_WORDS = 32;
 export const DESIGNATIONS_PER_SEARCH = 5;
 /** The top P1 designations searched one at a time too, when the grouped searches leave the contacts short. */
 export const ONE_AT_A_TIME = 3;
+/** Which those are, where the ICP lists them (INVECK, 28 Oct 2026); otherwise the first in the contact priority. */
+const ONE_AT_A_TIME_FIRST: [RegExp, string[]][] = [
+  [/manufactur/i, ['Plant Head', 'Plant Manager', 'Head of Supply Chain']],
+  [/\b3pl\b|logistic/i, ['Warehouse Manager', 'Head of Warehouse Operations', 'Head of Supply Chain']],
+];
 const wordCount = (s: string) => s.split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
 
 /** `site:linkedin.com/in "Company" ("Plant Head" OR "Plant Manager" OR …) Town`: several designations in one search. */
@@ -126,8 +131,9 @@ export function groupedDesignationQuery(firm: string, designations: string[], to
  * The lean contact search's plan (Morning Sample Runs and research runs; INVECK's decision, 28 Oct 2026, to spend fewer
  * credits): each tier's designations in grouped searches, up to DESIGNATIONS_PER_SEARCH a search in INVECK's contact
  * priority, every designation still searched; each group's queries tried as a designation's are (the company's name with
- * the town, each verified alias with the town, the name without the town). After the P1 groups, the top ONE_AT_A_TIME P1
- * designations one at a time, as contactSearchPlan searches them: for when the grouped searches leave it short.
+ * the town, each verified alias with the town, the name without the town). After the P1 groups, ONE_AT_A_TIME P1
+ * designations one at a time, as contactSearchPlan searches them (the segment's own, see ONE_AT_A_TIME_FIRST, or the
+ * first in the contact priority): for when the grouped searches leave it short.
  */
 export function groupedSearchPlan(company: string, city: string, icp: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>): DesignationStep[] {
   const single = contactSearchPlan(company, city, icp);
@@ -148,7 +154,13 @@ export function groupedSearchPlan(company: string, city: string, icp: RankIcp & 
       const queries = [...names.map((n) => groupedDesignationQuery(n, group, town)), ...(town ? [groupedDesignationQuery(names[0], group)] : [])];
       plan.push({ tier, designation: group.join(' / '), queries: [...new Set(queries)], grouped: true });
     }
-    if (tier === 'P1') plan.push(...single.filter((s) => s.tier === 'P1').slice(0, ONE_AT_A_TIME).map((s) => ({ ...s, net: true })));
+    if (tier === 'P1') {
+      const p1 = single.filter((s) => s.tier === 'P1');
+      const key = (d: string) => d.toLowerCase().replace(/\s+/g, ' ');
+      const first = (ONE_AT_A_TIME_FIRST.find(([re]) => re.test(icp.segment ?? ''))?.[1] ?? []).flatMap((d) => p1.filter((s) => key(s.designation) === key(d)));
+      const net = [...new Set([...first, ...p1])].slice(0, ONE_AT_A_TIME);
+      plan.push(...net.map((s) => ({ ...s, net: true })));
+    }
   }
   return plan;
 }

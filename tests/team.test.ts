@@ -731,6 +731,58 @@ describe('who to contact first', () => {
     expect(rankCandidates(people, DEFAULT_ICPS[0], 'Moga')[0].name).toBe('B');
   });
 
+  // INVECK's live P1 lists (25-27 Oct 2026).
+  const MFG_P1 = 'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Finance Head, Finance Controller, Head of Procurement & Supply Chain';
+  const TPL_P1 = 'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Warehouse Operations, Warehouse Manager, Head of Procurement & Supply Chain';
+
+  it("each segment's most wanted contact comes first (28 Oct): the plant head in Manufacturing, the warehouse manager in 3PL & Logistics", async () => {
+    const { contactPriority } = await import('@/lib/tiers');
+    const { rankCandidates } = await import('@/lib/pipeline/contacts');
+    const { DEFAULT_ICPS } = await import('@/lib/db/seed');
+    const mfg = { ...DEFAULT_ICPS[0], segment: 'Manufacturing', targetTitles: MFG_P1, p2Titles: '', p3Titles: '' };
+    const tpl = { ...DEFAULT_ICPS[1], segment: '3PL & Logistics', targetTitles: TPL_P1, p2Titles: '', p3Titles: '' };
+    for (const t of ['Plant Head', 'Plant Manager', 'Factory Manager']) {
+      for (const other of ['Head of Supply Chain', 'Supply Chain Manager', 'Head of Operations', 'Chief Operating Officer']) expect(contactPriority(t, mfg)).toBeLessThan(contactPriority(other, mfg));
+    }
+    for (const t of ['Warehouse Manager', 'Sr. Warehouse Manager', 'Manager - Warehouse']) {
+      for (const other of ['Head of Supply Chain', 'Head of Warehouse Operations', 'National Head – Operations', 'Head of Operations', 'Chief Operating Officer']) expect(contactPriority(t, tpl)).toBeLessThan(contactPriority(other, tpl));
+    }
+    // Not an assistant one.
+    expect(contactPriority('Assistant Warehouse Manager', tpl)).toBeGreaterThan(contactPriority('Head of Supply Chain', tpl));
+    expect(contactPriority('Assistant Plant Manager', mfg)).toBe(contactPriority('Head of Supply Chain', mfg));
+    // Another segment, or none: as before (the plant head level with the supply chain head).
+    expect(contactPriority('Plant Head', { ...mfg, segment: 'Engineering Exports' })).toBe(contactPriority('Head of Supply Chain', { ...mfg, segment: 'Engineering Exports' }));
+    const noSegment = { ...tpl, segment: undefined };
+    expect(contactPriority('Warehouse Manager', noSegment)).toBeGreaterThan(contactPriority('Head of Supply Chain', noSegment));
+    // The main contact: both at the site, the segment's own first.
+    const at = (name: string, title: string) => ({ name, title, snippet: 'Pune, Maharashtra, India' });
+    expect(rankCandidates([at('Anita Rao', 'Head of Supply Chain'), at('Ravi Kumar', 'Plant Head')], mfg, 'Pune')[0].name).toBe('Ravi Kumar');
+    expect(rankCandidates([at('Anita Rao', 'Head of Supply Chain'), at('Imran S', 'Head of Warehouse Operations'), at('Vikas Jain', 'Warehouse Manager')], tpl, 'Pune')[0].name).toBe('Vikas Jain');
+  });
+
+  it('a 3PL lead nobody has started on gets the warehouse manager on file as its main contact, over a hands-on head; not over a supply chain head', async () => {
+    const db = await getDb();
+    const { promoteBetterContacts } = await import('@/lib/verify-contacts');
+    const { people: peopleTable, icps } = await import('@/lib/db/schema');
+    await db.update(icps).set({ targetTitles: TPL_P1, p2Titles: '', p3Titles: '' }).where(eq(icps.segment, '3PL & Logistics'));
+    const [ops, sc] = await db
+      .insert(leads)
+      .values([
+        lead('Swift Warehousing', { segment: '3PL & Logistics', city: 'Pune', contactName: 'Asha Rao', contactTitle: 'Head of Operations' }),
+        lead('Rapid Logistics', { segment: '3PL & Logistics', city: 'Pune', contactName: 'Anil Shah', contactTitle: 'Head of Supply Chain' }),
+      ])
+      .returning();
+    for (const l of [ops, sc]) {
+      await db.insert(peopleTable).values([
+        { leadId: l.id, name: l.contactName, title: l.contactTitle, source: 'LinkedIn', location: 'Pune, Maharashtra, India', isPrimary: true },
+        { leadId: l.id, name: `Warehouse ${l.id}`, title: 'Warehouse Manager', source: 'LinkedIn', location: 'Pune, Maharashtra, India' },
+      ]);
+    }
+    expect(await promoteBetterContacts(db)).toEqual([ops.id]);
+    const rows = await db.select().from(leads).orderBy(leads.id);
+    expect(rows.filter((l) => [ops.id, sc.id].includes(l.id)).map((l) => l.contactName)).toEqual([`Warehouse ${ops.id}`, 'Anil Shah']);
+  });
+
   it('switches an MD main contact to the plant head on file, until outreach has started', async () => {
     const db = await getDb();
     const { promoteBetterContacts } = await import('@/lib/verify-contacts');
@@ -965,7 +1017,8 @@ describe('real search results (checked live on five companies)', () => {
     const { contactPriority, tierOf } = await import('@/lib/tiers');
     const { DEFAULT_ICPS } = await import('@/lib/db/seed');
     const [mfg, tpl] = DEFAULT_ICPS;
-    expect(contactPriority('Group Plant Head', mfg)).toBe(contactPriority('Head of Supply Chain', mfg));
+    // The plant head is Manufacturing's most wanted contact (28 Oct): ahead of the supply chain head.
+    expect(contactPriority('Group Plant Head', mfg)).toBeLessThan(contactPriority('Head of Supply Chain', mfg));
     expect(contactPriority('Head Plant engineering', mfg)).toBe(99);
     expect(contactPriority('General Manager Commercial', mfg)).toBe(99);
     expect(contactPriority('Regional Head - West', tpl)).toBeLessThan(contactPriority('Finance Controller', tpl));
@@ -1089,7 +1142,7 @@ describe('Rheinmetall Pune: people based abroad are not contacts', () => {
     const svc = { fetch, keys: { serper: 'k' } as never, settings: settingsSchema.parse({}) };
     const { people } = await searchLinkedIn(svc, 'site:linkedin.com/in "Rheinmetall"', 'Rheinmetall');
     expect(people.map((p) => p.name)).toEqual(['Abhay Musale']);
-    expect(contactPriority('Plant Operations Head', DEFAULT_ICPS[0])).toBe(5);
+    expect(contactPriority('Plant Operations Head', DEFAULT_ICPS[0])).toBe(contactPriority('Plant Head', DEFAULT_ICPS[0]));
     expect(inCity('Pimpri Chinchwad, Maharashtra, India', 'Pune')).toBe(true);
     expect(inCity('Gurugram, Haryana, India', 'Delhi')).toBe(true);
     expect(basedAbroad('Mumbai Metropolitan Region')).toBe(false);

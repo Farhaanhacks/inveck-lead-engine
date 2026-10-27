@@ -846,6 +846,19 @@ describe('the Morning Sample Run\'s lean research (the 6 am run keeps four conta
     expect(single.flatMap((s) => s.queries).length).toBe(28);
   });
 
+  it("the ones searched one at a time are the segment's own (28 Oct): the plant head first for Manufacturing, the warehouse manager first for 3PL", () => {
+    const tpl = { ...mfg, segment: '3PL & Logistics', targetTitles: 'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Warehouse Operations, Warehouse Manager, Head of Procurement & Supply Chain', p2Titles: '', p3Titles: '' };
+    const manufacturing = { ...mfg, segment: 'Manufacturing', targetTitles: 'Plant Head, Head of Operations, Supply Chain Manager, Head of Supply Chain, Chief Operating Officer (COO)', p2Titles: '', p3Titles: '' };
+    const net = (icp: typeof mfg) => groupedSearchPlan('Swift Warehousing', 'Pune', icp).filter((s) => s.net).map((s) => s.designation);
+    expect(net(tpl)).toEqual(['Warehouse Manager', 'Head of Warehouse Operations', 'Head of Supply Chain']);
+    expect(net(manufacturing)).toEqual(['Plant Head', 'Plant Manager', 'Head of Supply Chain']);
+    // The warehouse manager leads 3PL's first grouped search.
+    expect(groupedSearchPlan('Swift Warehousing', 'Pune', tpl)[0].designation.startsWith('Warehouse Manager / ')).toBe(true);
+    // An ICP that doesn't list them: the first in its contact priority.
+    const other = { ...tpl, targetTitles: 'Head of Logistics, Head of Operations, General Manager – Logistics, Chief Operating Officer (COO)' };
+    expect(net(other)).toEqual(contactSearchPlan('Swift Warehousing', 'Pune', other).slice(0, ONE_AT_A_TIME).map((s) => s.designation));
+  });
+
   it('a grouped search with a full page of ten looks at its second page while still short; one at a time does not', async () => {
     const pages: [string, number][] = [];
     const elsewhere = Array.from({ length: 10 }, (_, i) => ({ title: `Person ${i} - Plant Head - Other Gears`, subtitle: 'Chennai, Tamil Nadu, India · Plant Head · Other Gears', link: `https://in.linkedin.com/in/p${i}`, snippet: '' }));
