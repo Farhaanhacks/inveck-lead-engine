@@ -94,19 +94,20 @@ describe('giving out a sample', () => {
     await runSourcingTest(db, morningServices(log), test.id, Number.POSITIVE_INFINITY);
     const r = await reportOf(test.id);
     expect(r.phase).toBe('done');
-    const puja = await person('Puja');
-    const hand = r.hands.find((h) => h.userId === puja.id)!;
-    const pujaMfg = hand.cards.filter((c) => cardLead(r, c)?.lead.segment === MANUFACTURING);
-    expect(pujaMfg.length).toBe(1);
-    // The draw gave Puja her one Manufacturing lead for that morning before the sample's were given out.
+    // Whoever was dealt a Manufacturing lead (the made-up world has too few for everyone since both segments' screens
+    // are strict, so who gets it varies).
+    const hand = r.hands.find((h) => h.cards.some((c) => cardLead(r, c)?.lead.segment === MANUFACTURING))!;
+    const handMfg = hand.cards.filter((c) => cardLead(r, c)?.lead.segment === MANUFACTURING);
+    expect(handMfg.length).toBe(1);
+    // The draw gave them their one Manufacturing lead for that morning before the sample's were given out.
     const day = r.day > istDay() ? r.day : istDay();
-    await db.insert(leads).values({ company: 'Drawn Co', segment: MANUFACTURING, status: 'Approved', ownerId: puja.id, drawnOn: day });
+    await db.insert(leads).values({ company: 'Drawn Co', segment: MANUFACTURING, status: 'Approved', ownerId: hand.userId, drawnOn: day });
     const assigned = (await assignSampleLeads(db, test.id))!;
     expect(assigned.pooled).toBe(1);
-    const mine = await db.select().from(leads).where(and(eq(leads.ownerId, puja.id), eq(leads.drawnOn, day)));
+    const mine = await db.select().from(leads).where(and(eq(leads.ownerId, hand.userId), eq(leads.drawnOn, day)));
     expect(mine.filter((l) => l.segment === MANUFACTURING).map((l) => l.company)).toEqual(['Drawn Co']);
-    // Her sample lead is in the pipeline, approved and nobody's, for the next draw.
-    const card = pujaMfg[0];
+    // Their sample lead is in the pipeline, approved and nobody's, for the next draw.
+    const card = handMfg[0];
     const leadId = card.from === 'sample' ? (await reportOf(test.id)).companies.find((c) => c.key === card.key)?.pushed : card.key;
     const [waiting] = await db.select().from(leads).where(eq(leads.id, leadId!));
     expect(waiting).toMatchObject({ status: 'Approved', ownerId: null });
