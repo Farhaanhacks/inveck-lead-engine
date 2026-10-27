@@ -778,4 +778,20 @@ export const SCHEMA_STATEMENTS = [
    WHERE id IN (SELECT product_id FROM icps WHERE lower(segment) IN ('manufacturing', '3pl & logistics'))
    AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpFinanceStoreV1')`,
   `INSERT INTO settings (key, value) SELECT 'icpFinanceStoreV1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
+  // "No contact found" ends a company's follow-ups (INVECK's decision, 27 Oct 2026; see completeTaskAction). Once, for
+  // companies where it was logged during their follow-ups before that: their open rounds are ticked off, with a note.
+  // CA firms keep their own flow.
+  `INSERT INTO activities (lead_id, kind, text)
+   SELECT DISTINCT t.lead_id, 'note', 'Follow-ups stopped: "No contact found" was logged during them (tidied up on 27 Oct 2026; open follow-up rounds ticked off)'
+   FROM tasks t WHERE t.follow_up_round > 0 AND t.done_at IS NULL
+     AND EXISTS (SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.status <> 'Deleted' AND l.segment !~* '\\m(ca|chartered|audit|accountant)')
+     AND EXISTS (SELECT 1 FROM tasks c WHERE c.lead_id = t.lead_id AND c.kind = 'call' AND c.outcome = 'no_contact' AND c.done_at IS NOT NULL
+       AND c.done_at >= (SELECT min(r.created_at) FROM tasks r WHERE r.lead_id = t.lead_id AND r.follow_up_round > 0))
+     AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'noContactFollowUpsV1')`,
+  `UPDATE tasks t SET done_at = now(), outcome = 'closed' WHERE t.follow_up_round > 0 AND t.done_at IS NULL
+     AND EXISTS (SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.status <> 'Deleted' AND l.segment !~* '\\m(ca|chartered|audit|accountant)')
+     AND EXISTS (SELECT 1 FROM tasks c WHERE c.lead_id = t.lead_id AND c.kind = 'call' AND c.outcome = 'no_contact' AND c.done_at IS NOT NULL
+       AND c.done_at >= (SELECT min(r.created_at) FROM tasks r WHERE r.lead_id = t.lead_id AND r.follow_up_round > 0))
+     AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'noContactFollowUpsV1')`,
+  `INSERT INTO settings (key, value) SELECT 'noContactFollowUpsV1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
 ];
