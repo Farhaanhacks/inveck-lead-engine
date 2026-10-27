@@ -292,7 +292,11 @@ companies outside the ICP by name not looked up and several looked up in one sea
 its people searches (`search-memory.ts`: a search that found no new company isn't made again within 30 days, an
 industry word and town where two searches found nobody isn't searched with other titles, and the pairs that
 found companies that passed go first), two contacts a company with the hunt for a P1 kept (the staff search
-stops once two with a P1 are in hand), no repeat lookup of the company's LinkedIn page or of its officers in the
+stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
+credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
+...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
+then the top three P1 designations one at a time when the contacts are still short: at most 12 designation searches
+a company instead of 28 for Manufacturing, plus any second pages), no repeat lookup of the company's LinkedIn page or of its officers in the
 news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the
 pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 4,000 Google search

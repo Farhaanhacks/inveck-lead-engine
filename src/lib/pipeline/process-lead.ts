@@ -295,7 +295,7 @@ export async function processLead(
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
   const [searched, leaders, news] = await Promise.all([
-    // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
+    // The ICP's designations, P1 first: one at a time (see contactSearchPlan), or lean in groups (see groupedSearchPlan); each search and
     // each person's verdict goes on the run's log. People the people-first search found here count
     // towards the contacts it looks for, so it stops sooner.
     searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`), { known: opts.found, lean: opts.lean }),

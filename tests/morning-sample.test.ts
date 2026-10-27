@@ -558,7 +558,8 @@ describe('the Morning Sample Run', () => {
 
     // Research that needs more than is left: the searches over the limit aren't made, and the company waits
     // for the next day rather than being kept half researched. (Forgeline with only people off the ICP's
-    // lists found there: research searches every designation.)
+    // lists found there, and the grouped designation searches full of people at other companies: research searches
+    // every designation and each grouped search's second page.)
     const done = await reportOf(plain);
     const forgeline = done.companies.find((c) => c.page.name === 'Forgeline Components')!;
     const offList = forgeline.contacts.map((p) => ({ ...p, title: 'HR Manager', tier: '' }));
@@ -573,10 +574,13 @@ describe('the Morning Sample Run', () => {
     const [row] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, report: JSON.parse(JSON.stringify(report)) }).returning({ id: sourcingTests.id });
     let sent = 0;
     const base = morningServices(log);
+    const elsewhere = Array.from({ length: 10 }, (_, i) => ({ title: `Person ${i} - Plant Head - Other Gears`, subtitle: 'Chennai, Tamil Nadu, India · Plant Head · Other Gears', link: `https://in.linkedin.com/in/other-${i}`, snippet: '' }));
     const svc = {
       ...base,
       fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input).includes('google.serper.dev')) sent++;
+        const q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+        if (q.startsWith('site:linkedin.com/in') && q.includes(' OR ')) return new Response(JSON.stringify({ organic: elsewhere }), { status: 200, headers: { 'content-type': 'application/json' } });
         return base.fetch(input, init);
       }) as typeof fetch,
     };
