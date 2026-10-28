@@ -51,47 +51,68 @@ export async function searchMemory(db: Db, segment: SourcingSegment, before: Dat
   return out;
 }
 
-/** The plan with dead searches left out and the productive pairs first (see SEARCH_MEMORY); `skipped` is how many were left out. */
-export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMemoryEntry>, at = new Date()): { plan: PeopleQuery[]; skipped: number } {
-  // Per industry word and town: searches whose last outcome showed nobody on the lists, those that showed someone, companies kept.
-  const pairs = new Map<string, { empty: number; listed: number; kept: number }>();
-  for (const e of memory.values()) {
-    const t = pairs.get(pairOf(e)) ?? { empty: 0, listed: 0, kept: 0 };
-    if (e.outcomes[e.outcomes.length - 1].listed > 0) t.listed++;
-    else t.empty++;
-    t.kept += e.outcomes.reduce((a, o) => a + o.kept, 0);
-    pairs.set(pairOf(e), t);
+/**
+ * Where searches found nobody on the lists: an industry word and town pair `deadAfter` times, a town with
+ * `deadTownWords` words, a word in `deadWordTowns` towns, none of them ever showing anyone (see SEARCH_MEMORY). Built
+ * from the memory, and kept up to date during a run (`note`), so a run stops searching ground it has just found empty
+ * (28 Oct 2026; before, only the next run did).
+ */
+export class DeadGround {
+  private pairs = new Map<string, { empty: number; listed: number }>();
+  private towns = new Map<string, { empty: Set<string>; listed: boolean }>();
+  private words = new Map<string, { empty: Set<string>; listed: boolean }>();
+
+  constructor(memory: Map<string, SearchMemoryEntry> = new Map()) {
+    for (const e of memory.values()) this.add(e, e.outcomes[e.outcomes.length - 1].listed > 0, e.outcomes.some((o) => o.listed > 0));
   }
-  // Per town: the industry words whose searches there showed nobody, and whether any search there showed someone; per word, the same by town.
-  const towns = new Map<string, { empty: Set<string>; listed: boolean }>();
-  const words = new Map<string, { empty: Set<string>; listed: boolean }>();
-  for (const e of memory.values()) {
-    const [town, word] = [e.place.toLowerCase(), e.keyword.toLowerCase()];
-    const listed = e.outcomes.some((o) => o.listed > 0);
-    const t = towns.get(town) ?? { empty: new Set<string>(), listed: false };
-    const w = words.get(word) ?? { empty: new Set<string>(), listed: false };
-    if (listed) t.listed = w.listed = true;
+
+  /** A search made now: whether it showed anyone on the lists. */
+  note(q: { keyword: string; place: string }, listed: boolean) {
+    this.add(q, listed, listed);
+  }
+
+  dead(q: { keyword: string; place: string }): boolean {
+    const t = this.towns.get(q.place.toLowerCase());
+    if (t && !t.listed && t.empty.size >= SEARCH_MEMORY.deadTownWords) return true;
+    const w = this.words.get(q.keyword.toLowerCase());
+    if (w && !w.listed && w.empty.size >= SEARCH_MEMORY.deadWordTowns) return true;
+    const p = this.pairs.get(pairOf(q));
+    return !!p && p.empty >= SEARCH_MEMORY.deadAfter && p.listed === 0;
+  }
+
+  /** One search: its pair counted empty or not; its town and word marked as having shown someone, or not here. */
+  private add(q: { keyword: string; place: string }, lastListed: boolean, everListed: boolean) {
+    const p = this.pairs.get(pairOf(q)) ?? { empty: 0, listed: 0 };
+    if (lastListed) p.listed++;
+    else p.empty++;
+    this.pairs.set(pairOf(q), p);
+    const [town, word] = [q.place.toLowerCase(), q.keyword.toLowerCase()];
+    const t = this.towns.get(town) ?? { empty: new Set<string>(), listed: false };
+    const w = this.words.get(word) ?? { empty: new Set<string>(), listed: false };
+    if (everListed) t.listed = w.listed = true;
     else {
       t.empty.add(word);
       w.empty.add(town);
     }
-    towns.set(town, t);
-    words.set(word, w);
+    this.towns.set(town, t);
+    this.words.set(word, w);
   }
-  const deadTown = (pq: PeopleQuery) => {
-    const t = towns.get(pq.place.toLowerCase());
-    return !!t && !t.listed && t.empty.size >= SEARCH_MEMORY.deadTownWords;
-  };
-  const deadWord = (pq: PeopleQuery) => {
-    const w = words.get(pq.keyword.toLowerCase());
-    return !!w && !w.listed && w.empty.size >= SEARCH_MEMORY.deadWordTowns;
-  };
+}
+
+/** The plan with dead searches left out and the productive pairs first (see SEARCH_MEMORY); `skipped` is how many were left out. */
+export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMemoryEntry>, at = new Date()): { plan: PeopleQuery[]; skipped: number } {
+  // Per industry word and town: the companies its searches found that passed.
+  const pairs = new Map<string, { kept: number }>();
+  for (const e of memory.values()) {
+    const t = pairs.get(pairOf(e)) ?? { kept: 0 };
+    t.kept += e.outcomes.reduce((a, o) => a + o.kept, 0);
+    pairs.set(pairOf(e), t);
+  }
+  const ground = new DeadGround(memory);
   const dead = (pq: PeopleQuery) => {
     const own = memory.get(normQuery(pq.q));
     if (own && own.outcomes[own.outcomes.length - 1].fresh === 0) return true;
-    if (deadTown(pq) || deadWord(pq)) return true;
-    const t = pairs.get(pairOf(pq));
-    return !!t && t.empty >= SEARCH_MEMORY.deadAfter && t.listed === 0;
+    return ground.dead(pq);
   };
   const kept = (pq: PeopleQuery) => pairs.get(pairOf(pq))?.kept ?? 0;
   // Made in the last few days (before `at`, when the sample started): its next page, or nothing when there is none (a

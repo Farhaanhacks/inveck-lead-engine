@@ -3,7 +3,7 @@ import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { enrichmentCache } from '@/lib/db/schema';
 import { MANUFACTURING, LOGISTICS } from '@/lib/db/seed';
 import { normQuery } from '@/lib/pipeline/query-history';
-import { planFromMemory, rememberKept, rememberSearch, SEARCH_MEMORY, searchMemory, type SearchMemoryEntry } from '@/lib/sourcing/search-memory';
+import { DeadGround, planFromMemory, rememberKept, rememberSearch, SEARCH_MEMORY, searchMemory, type SearchMemoryEntry } from '@/lib/sourcing/search-memory';
 import type { PeopleQuery } from '@/lib/sourcing/people-first';
 
 /** The Morning Sample Run's memory of its people searches: dead ones left out, productive industries and towns first. */
@@ -87,6 +87,22 @@ describe('the sample plan from what earlier searches found', () => {
     const five = new Map(towns.slice(0, 5).map((t) => empty('Plant Head', 'tractor components', t)));
     expect(planFromMemory(wordPlan, five).plan.map((q) => q.keyword)).toEqual(['forging']);
     expect(planFromMemory(wordPlan, new Map(towns.slice(0, 4).map((t) => empty('Plant Head', 'tractor components', t)))).plan).toHaveLength(2);
+  });
+
+  it('keeps up during a run: a town is dead once three words there have just found nobody (28 Oct)', () => {
+    const ground = new DeadGround();
+    const at = (keyword: string) => query('Plant Head', keyword, 'Karur');
+    expect(ground.dead(at('gears'))).toBe(false);
+    ground.note(at('gears'), false);
+    ground.note(at('pumps'), false);
+    expect(ground.dead(at('valves'))).toBe(false);
+    ground.note(at('valves'), false);
+    expect(ground.dead(at('fasteners'))).toBe(true);
+    // Someone found there once: never dead.
+    const lively = new DeadGround();
+    lively.note(query('Plant Head', 'gears', 'Pune'), true);
+    for (const k of ['pumps', 'valves', 'fasteners']) lively.note(query('Plant Head', k, 'Pune'), false);
+    expect(lively.dead(query('Plant Manager', 'castings', 'Pune'))).toBe(false);
   });
 
   it(`leaves out an industry word and town once ${SEARCH_MEMORY.deadAfter} searches there found nobody on the lists, and none found anyone`, () => {

@@ -17,6 +17,7 @@ import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noComp
 import { websiteWords } from './website-words';
 import { companiesQuery, companyQuery, hintRank, lookupBatch, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
+import type { DeadGround } from './search-memory';
 
 /**
  * The scheduled run's prospect search, people first: LinkedIn profiles with the ICP's P1 and P2
@@ -110,21 +111,20 @@ async function icpFor(db: Db, segment: SourcingSegment) {
 }
 
 /**
- * Every search for one segment: each P1 and P2 title with every industry word and town, titles taken
- * in turn so every title is searched early, and the words and towns in an order that changes each run.
+ * Every search for one segment: each P1 and P2 title with every industry word and town, the words and towns in an
+ * order that changes each run. The most wanted titles first (28 Oct 2026; before, titles in turn): every word and town
+ * with the plant head (the warehouse manager for 3PL) before any with the next title, so new ground is tried with the
+ * titles most likely to find someone, and the others only where it isn't dead by then (see DeadGround).
  */
 export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof searchTitles>[0], seed: number): PeopleQuery[] {
-  const titles = searchTitles(icp);
+  const titles = [...searchTitles(icp)].sort((a, b) => contactPriority(a, icp) - contactPriority(b, icp));
   const pairs = shuffled(
     PEOPLE_KEYWORDS[segment].flatMap((k) => SEGMENT_SEARCH[segment].places.map((p) => [k, p] as const)),
     seed,
   );
   const out: PeopleQuery[] = [];
-  for (let j = 0; j < pairs.length; j++) {
-    titles.forEach((title, t) => {
-      const [keyword, place] = pairs[(j + t * 7) % pairs.length];
-      out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
-    });
+  for (const title of titles) {
+    for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
   }
   return out;
 }
@@ -314,6 +314,8 @@ export type RoundOptions = {
   quietSearches?: number;
   /** A first page of ten that was full and found new companies is read on at once: its first hundred, 2 credits. */
   deepReads?: boolean;
+  /** Where searches have found nobody (see DeadGround), kept up to date as the run searches: that ground isn't searched. */
+  deadGround?: (segment: SourcingSegment) => Promise<DeadGround>;
   /** Companies ruled out (too small, the wrong industry, no LinkedIn page) are remembered and not checked again. */
   rememberRuledOut?: boolean;
   /**
@@ -387,6 +389,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     // A page that shows no industry either way (no label, or a catch-all one): its website, then research, decides.
     const unclearIndustry = own?.unclearIndustry ?? lenientScreen;
     const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
+    const ground = o.deadGround ? await o.deadGround(seg.segment) : null;
     const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
       ...svc,
@@ -531,12 +534,16 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         seg.stopped = 'dry';
         return 'stop';
       }
-      const batch = plan.slice(seg.cursor, seg.cursor + 8);
+      // The next eight searches, past any on ground this run has found empty.
+      const batch: PeopleQuery[] = [];
+      while (batch.length < 8 && seg.cursor < plan.length) {
+        const pq = plan[seg.cursor++];
+        if (!ground?.dead(pq)) batch.push(pq);
+      }
       if (!batch.length) {
         seg.stopped = 'exhausted';
         return 'stop';
       }
-      seg.cursor += batch.length;
       const got = await mapLimit(batch, 4, (pq) => search(pq.q, pq.num ?? peopleResults, pq.page ?? 1, pq.fallbackPage));
       // Every search refused (out of credits, a wrong key): the run ends as failed, with the reason.
       if (got.every((g) => g.error)) {
@@ -586,6 +593,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       };
       const record = async (pq: PeopleQuery, g: (typeof got)[number]) => {
         const { listed, newCompanies } = await absorb(pq, g.results);
+        if (!g.error) ground?.note(pq, listed > 0);
         // A new company is what counts (28 Oct 2026): people at companies already known or checked can't become new leads.
         seg.quiet = newCompanies ? 0 : seg.quiet + 1;
         await o.sink.searched?.(seg.segment, pq, { results: g.results.length, newCompanies, listed, error: g.error, page: g.page, num: g.num });

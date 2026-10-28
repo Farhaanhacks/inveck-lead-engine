@@ -311,8 +311,10 @@ read on at once, its first hundred results for 2 credits: a search that found no
 days that found companies is read further down rather than again: its first hundred results in one search (2
 credits; its next ten if Serper refuses a hundred), then the next hundred, to 300, an industry word and
 town where two searches found nobody isn't searched with other titles, a town where three industry words found nobody
-and a word that found nobody in five towns aren't searched again (from 28 Oct 2026), and the pairs that found
-companies that passed go first), two contacts a company with the hunt for a P1 kept (the staff search
+and a word that found nobody in five towns aren't searched again (from 28 Oct 2026; and from 29 Oct during the run
+itself, not only from the next one), and the pairs that found companies that passed go first; and the most wanted
+title first, every word and town with the plant head (the warehouse manager for 3PL) before the next title, so new
+ground is tried with the titles likeliest to find someone), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,

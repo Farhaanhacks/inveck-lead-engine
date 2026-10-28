@@ -22,7 +22,7 @@ import { LOGISTICS, MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchesThisMorning, searchRound, startRound, type MorningSourcing } from './morning';
 import { pausedToday } from '../pause';
 import { getSettings } from '../settings';
-import { planFromMemory, rememberKept, rememberSearch, searchMemory } from './search-memory';
+import { DeadGround, planFromMemory, rememberKept, rememberSearch, searchMemory } from './search-memory';
 import { CHECKS_RESERVE } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
 import type { FoundContact } from './people-first';
@@ -370,6 +370,8 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           peopleResults: SAMPLE_RULES.peopleResults,
           quietSearches: SAMPLE_RULES.quietSearches,
           deepReads: true,
+          // Ground the searches have found empty, this run's included: not searched (28 Oct 2026).
+          deadGround: async (segment) => new DeadGround(await searchMemory(db, segment, new Date())),
           rememberRuledOut: true,
           lenientScreen: true,
           // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
