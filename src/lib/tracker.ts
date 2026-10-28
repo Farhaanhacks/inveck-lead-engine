@@ -53,6 +53,28 @@ export function cleanPhone(value: string): string | null {
   return phone;
 }
 
+/** The dates the tracker can be filtered by: when the lead was added (the Date column), or when it was last called (Call Date). */
+export const DATE_FILTERS = [
+  { value: 'added', label: 'Date added' },
+  { value: 'call', label: 'Call date' },
+] as const;
+export type DateFilterBy = (typeof DATE_FILTERS)[number]['value'];
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** A day typed in the filter (yyyy-mm-dd, a real calendar day), else ''. */
+export const cleanDay = (v: unknown) => (typeof v === 'string' && DAY.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? v : '');
+
+/**
+ * Whether an instant falls on a day in the range, in Indian time. One date: from = to. Only a start: that day on; only an end: up to
+ * that day. A row with no such date (never called) is out whenever a range is set. A start after the end is a mistake, never a filter.
+ */
+export function inDayRange(at: Date | null, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  if (!at) return false;
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(at);
+  return (!from || day >= from) && (!to || day <= to);
+}
+
 export function validTrackerValue(field: TrackerField, value: string): boolean {
   if (field === 'remark' || field === 'callRemark') return value.length <= 1000;
   return value === '' || (TRACKER_FIELDS[field] as readonly string[]).includes(value);
@@ -135,7 +157,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
   });
 }
 
-/** The sheet's columns, in the team's order, with the mail and LinkedIn outcomes added (no email address: emails aren't kept). */
+/** The sheet's columns, in the team's order, with the mail and LinkedIn outcomes added. */
 export const TRACKER_HEADERS = [
   'Company Name',
   'Company Location',

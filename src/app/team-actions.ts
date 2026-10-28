@@ -5,7 +5,7 @@ import { after } from 'next/server';
 import { escalate, type Escalation } from '@/lib/escalate';
 import { hasScheduledMeeting } from '@/lib/meetings';
 import { setTeamQuota } from '@/lib/config';
-import { contactFields, saveContactEdit, teamEmail } from '@/lib/contact-edit';
+import { contactFields, saveContactEdit, saveContactEmail, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
@@ -573,6 +573,18 @@ export async function updateTrackerPhoneAction(id: number, value: string): Promi
   revalidatePath('/followups');
   revalidatePath(`/leads/${id}`);
   return { ok: true, value: phone };
+}
+
+/** The Email cell on the tracker: the main contact's email only (see saveContactEmail). Empty clears it. */
+export async function updateTrackerEmailAction(id: number, value: string): Promise<{ ok: boolean; value?: string }> {
+  if (!(await mayActOn(id))) return { ok: false };
+  const saved = await saveContactEmail(await getDb(), id, value);
+  if (saved === null) return { ok: false };
+  revalidatePath('/tracker');
+  revalidatePath('/today');
+  revalidatePath('/followups');
+  revalidatePath(`/leads/${id}`);
+  return { ok: true, value: saved };
 }
 
 /** Corrects the point of contact from Today: name, designation, number, email, LinkedIn. */

@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
-import { updateTrackerFieldAction, updateTrackerPhoneAction } from '../../team-actions';
+import { updateTrackerEmailAction, updateTrackerFieldAction, updateTrackerPhoneAction } from '../../team-actions';
 import { AddLeadRow } from './add-lead';
 
 export type TrackerViewRow = {
@@ -108,6 +108,42 @@ function Phone({ id, value, label }: { id: number; value: string; label: string 
   );
 }
 
+/** The Email cell: the main contact's email, typed in place and saved on leaving the cell (or Enter), like the number. */
+function Email({ id, value, label }: { id: number; value: string; label: string }) {
+  const [saved, setSaved] = useState(value);
+  const [error, setError] = useState(false);
+  return (
+    <input
+      type="email"
+      inputMode="email"
+      aria-label={label}
+      defaultValue={value}
+      placeholder="Add an email"
+      title={error ? 'Not an email address (one address, like name@company.com)' : undefined}
+      onBlur={async (e) => {
+        const input = e.currentTarget;
+        const next = input.value.trim().toLowerCase();
+        if (next === saved) return;
+        const r = await updateTrackerEmailAction(id, next);
+        if (r.ok) {
+          setSaved(r.value ?? next);
+          input.value = r.value ?? next;
+          setError(false);
+        } else setError(true);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          e.currentTarget.value = saved;
+          setError(false);
+          e.currentTarget.blur();
+        }
+      }}
+      className={`${CELL} min-w-[13rem] ${error ? 'border-critical-ink' : ''}`}
+    />
+  );
+}
+
 export function TrackerTable({
   rows,
   options,
@@ -123,7 +159,7 @@ export function TrackerTable({
   const td = 'border-b border-r border-line px-2 py-1.5 align-top';
   return (
     <div className="card relative overflow-x-auto">
-      <table className="w-full min-w-[1800px] border-collapse text-xs">
+      <table className="w-full min-w-[2000px] border-collapse text-xs">
         <thead className="sticky top-0 z-10 bg-surface-2 text-ink-2">
           <tr>
             <th className={`${th} sticky left-0 z-20 bg-surface-2`}>Company Name</th>
@@ -132,6 +168,7 @@ export function TrackerTable({
             <th className={th}>Designation</th>
             <th className={th}>Point of Contact</th>
             <th className={th}>Contact Number</th>
+            <th className={th}>Email</th>
             <th className={th}>Call Status</th>
             <th className={th}>Call Outcome / Feedback</th>
             <th className={th}>Call Remark</th>
@@ -147,7 +184,7 @@ export function TrackerTable({
           </tr>
         </thead>
         <tbody>
-          <AddLeadRow segments={segments} columns={showOwner ? 19 : 18} showOwner={showOwner} />
+          <AddLeadRow segments={segments} columns={showOwner ? 20 : 19} showOwner={showOwner} />
           {rows.map((r) => (
             <tr key={r.id} className="hover:bg-surface-2/50">
               <td className={`${td} sticky left-0 z-[5] bg-surface font-medium`}>
@@ -174,6 +211,7 @@ export function TrackerTable({
                 />
               </td>
               <td className={`${td} p-1`}><Phone id={r.id} value={r.cells.phone} label={`${r.cells.company}: contact number`} /></td>
+              <td className={`${td} p-1`}><Email id={r.id} value={r.cells.email} label={`${r.cells.company}: email`} /></td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callStatus}</td>
               <td className={`${td} p-1`}><Choice id={r.id} field="callFeedback" value={r.callFeedback} options={options.callFeedback} label={`${r.cells.company}: call outcome`} /></td>
               <td className={`${td} p-1`}><Remark id={r.id} field="callRemark" value={r.cells.callRemark} placeholder="Add a call remark" label={`${r.cells.company}: call remark`} /></td>

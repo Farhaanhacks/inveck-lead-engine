@@ -99,3 +99,35 @@ export async function saveContactEdit(db: Db, id: number, input: ContactEdit, op
   }
   return { newPerson: newPerson && !!v.contactName };
 }
+
+/** An email address as typed in a cell: trimmed, lower case, one address. '' clears it; null when it isn't an address. */
+export function cleanEmail(value: string): string | null {
+  const email = String(value ?? '').trim().toLowerCase();
+  if (!email) return '';
+  return email.length <= 200 && /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(email) ? email : null;
+}
+
+/**
+ * Only the main contact's email changes (the tracker's Email cell): kept in step with the people list and the email status,
+ * a timeline entry written, and, as when it is entered on the contact form, the email steps planned when a first address
+ * arrives. It doesn't confirm the contact or switch the person. Returns the saved address, or null when it isn't one.
+ */
+export async function saveContactEmail(db: Db, id: number, value: string): Promise<string | null> {
+  const email = cleanEmail(value);
+  if (email === null) return null;
+  const [before] = await db.select().from(leads).where(eq(leads.id, id));
+  if (!before) return null;
+  if (email === before.contactEmail) return email;
+  await db.update(leads).set({ contactEmail: email, ...teamEmail(email), updatedAt: new Date() }).where(eq(leads.id, id));
+  await db.update(people).set({ email, ...teamEmail(email) }).where(and(eq(people.leadId, id), eq(people.isPrimary, true)));
+  await logActivity(db, id, 'contact', email ? `Email for ${before.contactName || 'the company'} set to ${email} (tracker)` : `Email for ${before.contactName || 'the company'} removed (tracker)`);
+  if (email && !before.contactEmail) {
+    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, id), isNull(tasks.doneAt)));
+    if (open.length && !open.some((t) => t.kind === 'email')) {
+      for (const c of open.filter((t) => t.kind === 'call' && !t.priority)) {
+        await db.insert(tasks).values({ leadId: id, ownerId: c.ownerId, kind: 'email', step: c.step, title: `${c.step}: email`, dueDate: c.dueDate, slot: c.slot });
+      }
+    }
+  }
+  return email;
+}
