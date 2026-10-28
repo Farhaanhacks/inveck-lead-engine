@@ -12,14 +12,18 @@ import type { PeopleQuery } from './people-first';
  * lists it showed, the new companies it found, and how many of those passed the company check. From what
  * the searches found before a sample started, its plan:
  * - leaves out a search made in the last `days` that found no new company (it would show the same people);
+ * - reads a search made in the last `nextPageDays` that found companies further down, its next page, not the same
+ *   page again (it would show the same people, at companies now known; from 28 Oct 2026), up to page `lastPage`,
+ *   and not past a page that wasn't full;
  * - leaves out the rest of an industry word and town pair when `deadAfter` of its searches showed nobody on
  *   the lists, and none ever showed anyone;
  * - takes first the pairs whose searches found companies that passed, most first.
  * Only what was known when the sample started counts, so its plan is the same on every invocation.
  */
-export const SEARCH_MEMORY = { days: 30, deadAfter: 2, keepDays: 90 } as const;
+export const SEARCH_MEMORY = { days: 30, deadAfter: 2, keepDays: 90, nextPageDays: 7, lastPage: 5 } as const;
 
-export type SearchOutcome = { at: string; listed: number; fresh: number; kept: number; error?: boolean };
+/** One search's outcome: `page`, the page of results read (1 when absent), and `results`, how many it showed. */
+export type SearchOutcome = { at: string; listed: number; fresh: number; kept: number; page?: number; results?: number; error?: boolean };
 export type SearchMemoryEntry = { title: string; keyword: string; place: string; outcomes: SearchOutcome[] };
 
 const PREFIX = 'sample-search:v1:';
@@ -41,7 +45,7 @@ export async function searchMemory(db: Db, segment: SourcingSegment, before: Dat
 }
 
 /** The plan with dead searches left out and the productive pairs first (see SEARCH_MEMORY); `skipped` is how many were left out. */
-export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMemoryEntry>): { plan: PeopleQuery[]; skipped: number } {
+export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMemoryEntry>, at = new Date()): { plan: PeopleQuery[]; skipped: number } {
   // Per industry word and town: searches whose last outcome showed nobody on the lists, those that showed someone, companies kept.
   const pairs = new Map<string, { empty: number; listed: number; kept: number }>();
   for (const e of memory.values()) {
@@ -58,19 +62,30 @@ export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMe
     return !!t && t.empty >= SEARCH_MEMORY.deadAfter && t.listed === 0;
   };
   const kept = (pq: PeopleQuery) => pairs.get(pairOf(pq))?.kept ?? 0;
-  const live = plan.filter((pq) => !dead(pq));
+  // Made in the last few days (before `at`, when the sample started): its next page, or nothing when there is none (a
+  // page that wasn't full was the last).
+  const recently = at.getTime() - SEARCH_MEMORY.nextPageDays * 86_400_000;
+  const live = plan.flatMap((pq): PeopleQuery[] => {
+    if (dead(pq)) return [];
+    const own = memory.get(normQuery(pq.q));
+    const last = own?.outcomes[own.outcomes.length - 1];
+    if (!last || Date.parse(last.at) < recently) return [pq];
+    const next = (last.page ?? 1) + 1;
+    if (next > SEARCH_MEMORY.lastPage || (last.results != null && last.results < 10)) return [];
+    return [{ ...pq, page: next }];
+  });
   // A stable order otherwise: the plan's own (titles in turn, words and towns shuffled per run).
   const ordered = live.map((pq, i) => ({ pq, i })).sort((a, b) => kept(b.pq) - kept(a.pq) || a.i - b.i).map((x) => x.pq);
   return { plan: ordered, skipped: plan.length - live.length };
 }
 
 /** Keeps a search's outcome (outcomes older than SEARCH_MEMORY.keepDays are dropped). */
-export async function rememberSearch(db: Db, segment: SourcingSegment, pq: PeopleQuery, r: { listed: number; fresh: number; error?: string }): Promise<void> {
+export async function rememberSearch(db: Db, segment: SourcingSegment, pq: PeopleQuery, r: { listed: number; fresh: number; results?: number; error?: string }): Promise<void> {
   const cache = dbEnrichmentCache(db);
   const key = keyOf(segment, normQuery(pq.q));
   const was = (await cache.get(key)) as SearchMemoryEntry | null;
   const cutoff = Date.now() - SEARCH_MEMORY.keepDays * 86_400_000;
-  const outcome: SearchOutcome = { at: new Date().toISOString(), listed: r.listed, fresh: r.fresh, kept: 0, ...(r.error ? { error: true } : {}) };
+  const outcome: SearchOutcome = { at: new Date().toISOString(), listed: r.listed, fresh: r.fresh, kept: 0, ...(pq.page && pq.page > 1 ? { page: pq.page } : {}), ...(r.results != null ? { results: r.results } : {}), ...(r.error ? { error: true } : {}) };
   await cache.set(key, { title: pq.title, keyword: pq.keyword, place: pq.place, outcomes: [...(was?.outcomes ?? []).filter((o) => Date.parse(o.at) >= cutoff), outcome] });
 }
 

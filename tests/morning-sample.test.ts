@@ -15,6 +15,9 @@ import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
 import { verifyContacts } from '@/lib/verify-contacts';
 import { normQuery } from '@/lib/pipeline/query-history';
 import { normCompany } from '@/lib/pipeline/text';
+import { morningPlan, searchRound, startRound } from '@/lib/sourcing/morning';
+import { companiesQuery, lookupBatch, PAGES_PER_SEARCH } from '@/lib/sourcing/people-first';
+import { rememberKept, rememberSearch } from '@/lib/sourcing/search-memory';
 
 /**
  * The Morning Sample Run: tomorrow's 6 am run and 8 am draw on paper. The made-up Google (see
@@ -446,6 +449,99 @@ describe('the Morning Sample Run', () => {
     const html = renderToStaticMarkup(createElement(MorningSample, { test: row, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
     expect(html).toContain('Where the credits went');
     expect(html).toContain('per company researched');
+    // Its people searches: how many found a new company (28 Oct).
+    expect(r.yields?.[MANUFACTURING]?.found).toBeGreaterThan(0);
+    expect(html).toContain('people searches: ');
+    expect(html).toContain('found a new company');
+  });
+
+  it('gives up on a segment after its searches in a row find no new company, even when they show new people at companies INVECK already has (28 Oct)', async () => {
+    const base = morningServices(log);
+    let n = 0;
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+        // Every people search shows someone new on the lists, at Known Gears (a lead already).
+        if (String(input).includes('google.serper.dev') && q.startsWith('site:linkedin.com/in "')) {
+          n++;
+          const who = { title: `Person ${n} - Plant Head - Known Gears | LinkedIn`, subtitle: 'Pune, Maharashtra, India · Plant Head · Known Gears', link: `https://in.linkedin.com/in/person-${n}`, snippet: '' };
+          return new Response(JSON.stringify({ organic: [who] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    // 15 in a row, in steps of eight: 16, not the whole plan.
+    expect(r.yields?.[MANUFACTURING]).toEqual({ found: 0, none: 16 });
+    expect(r.yields?.[LOGISTICS]?.found).toBe(0);
+    expect(r.yields?.[LOGISTICS]?.none).toBeLessThanOrEqual(56);
+  });
+
+  it('reads a people search made in the last week that found companies further down (its next page), not again (28 Oct)', async () => {
+    const [icp] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const pq = morningPlan(MANUFACTURING, icp, 1)[0];
+    await rememberSearch(db, MANUFACTURING, pq, { listed: 3, fresh: 2, results: 10 });
+    await rememberKept(db, MANUFACTURING, normQuery(pq.q));
+    await new Promise((done) => setTimeout(done, 5));
+    const sent: [string, number][] = [];
+    const base = morningServices(log);
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        if (String(input).includes('google.serper.dev') && String(body.q ?? '').startsWith('site:linkedin.com/in ')) sent.push([String(body.q), Number(body.page ?? 1)]);
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+    expect(sent).toContainEqual([pq.q, 2]);
+    expect(sent).not.toContainEqual([pq.q, 1]);
+  });
+
+  it(`looks up to ${PAGES_PER_SEARCH} companies' pages in one search, within Google's 32 words`, () => {
+    const six = ['Alpha Forge', 'Beta Cast', 'Gamma Gear', 'Delta Shaft', 'Epsilon Valve', 'Zeta Pump', 'Eta Bolt'].map((employer) => ({ employer }));
+    expect(lookupBatch([...six]).length).toBe(PAGES_PER_SEARCH);
+    const long = Array.from({ length: 6 }, (_, i) => ({ employer: `Shree Precision Engineering Auto Components Works ${'ABCDEF'[i]}` }));
+    const batch = lookupBatch([...long]);
+    expect(batch.length).toBeLessThan(6);
+    expect(companiesQuery(batch.map((c) => c.employer)).split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length).toBeLessThanOrEqual(32);
+    // Those already found, or looked up on their own, don't take up words.
+    expect(lookupBatch([...long.slice(0, 2).map((c) => ({ ...c, alone: true })), ...long]).length).toBeGreaterThan(batch.length);
+  });
+
+  it('looks a company up on its own, and checks its size, only while companies are still needed; the others wait their turn (28 Oct)', async () => {
+    const names = ['Alpha Forge Components', 'Beta Cast Components', 'Gamma Gear Components', 'Delta Shaft Components', 'Epsilon Valve Components', 'Zeta Pump Components', 'Eta Bolt Components'];
+    const pageOf = (n: string) => ({ title: `${n} | LinkedIn`, link: `https://in.linkedin.com/company/${n.toLowerCase().replace(/ /g, '-')}`, snippet: `${n} | 1,234 followers on LinkedIn. Website: http://www.${n.split(' ')[0].toLowerCase()}.in. Industry: Motor Vehicle Parts Manufacturing. Company size: 501-1,000 employees. Headquarters: Pune, Maharashtra` });
+    const sent: string[] = [];
+    const base = morningServices(log);
+    const reply = (organic: unknown[]) => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+        if (String(input).includes('google.serper.dev')) sent.push(q);
+        // The search for several shows two of them; nothing else is found.
+        if (q.startsWith('site:linkedin.com/company (')) return reply([pageOf(names[0]), pageOf(names[1])]);
+        if (q.startsWith('site:linkedin.com/')) return reply([]);
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const state = startRound(null, { [MANUFACTURING]: 1, [LOGISTICS]: 0 });
+    const seg = state.segments.find((s) => s.segment === MANUFACTURING)!;
+    seg.pending = names.map((employer, i) => ({ employer, contacts: [{ name: `Person ${i}`, title: 'Plant Head', tier: 'P1', employer, location: 'Pune, Maharashtra, India', linkedin: `https://in.linkedin.com/in/person-${i}`, why: '' }] }));
+    const added: string[] = [];
+    await searchRound(db, svc, state, { started: Date.now(), budgetMs: 60_000, log: async () => {}, seed: 1, budgetLeft: async () => 10_000, recent: new Set(), cheaperChecks: true, sink: { add: async (c) => void added.push(c.name), save: async () => {} } });
+    // One search for the first six; the one needed found there; nobody looked up on their own, no people searched.
+    expect(sent).toEqual([companiesQuery(names.slice(0, 6))]);
+    expect(added).toHaveLength(1);
+    // The other one found waits with its page; the four not shown wait to be looked up on their own; the seventh, its turn.
+    expect(seg.pending.filter((c) => c.page).map((c) => c.employer)).toEqual(names.slice(0, 2).filter((n) => !added.includes(n)));
+    expect(seg.pending.filter((c) => c.alone).map((c) => c.employer)).toEqual(names.slice(2, 6));
+    expect(seg.pending.map((c) => c.employer)).toContain(names[6]);
   });
 
   it('tallies why the companies it checked were not approved, per segment, on the report (27 Oct)', async () => {

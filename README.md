@@ -293,11 +293,15 @@ researches exactly as the run does, deals each active associate their quota from
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
 nobody is given anything and the 6 am run's own search memory isn't touched, so tomorrow's run starts fresh.
 CA firms aren't part of it. The sample is also where cheaper rules are tried before the 6 am run uses them
-(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, companies ruled out remembered for 90 days,
-companies outside the ICP by name not looked up and several looked up in one search, the sample's own memory of
-its people searches (`search-memory.ts`: a search that found no new company isn't made again within 30 days, an
-industry word and town where two searches found nobody isn't searched with other titles, and the pairs that
-found companies that passed go first), two contacts a company with the hunt for a P1 kept (the staff search
+(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 15 searches in a row
+find no new company (from 28 Oct 2026; before, nobody new on the lists, so people at companies INVECK already has
+kept it searching), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
+up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
+company's size checked only while companies are still needed, the sample's own memory of its people searches
+(`search-memory.ts`: a search that found no new company isn't made again within 30 days, one made in the last 7
+days that found companies is read further down, its next page up to page 5, rather than again, an industry word and
+town where two searches found nobody isn't searched with other titles, and the pairs that found companies that
+passed go first), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
@@ -311,10 +315,11 @@ credits at most for a new sample (3,000 until 27 Oct 2026), a hard limit (a sear
 a company whose research reaches it is left for the next day). A company with no LinkedIn page, or whose page
 doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
 would only be ruled out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
-(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find nobody new, asks for 25% extra and takes up
+(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no new company, asks for 25% extra and takes up
 to five rounds (each only while its last one found companies). The report tallies why the companies it checked
 weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
-contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company.
+contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company,
+and (from 28 Oct 2026) how many of each segment's people searches found a new company.
 A sample carried on from where it stopped uses them too.
 
 **One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on

@@ -44,10 +44,13 @@ const CONCURRENCY = 5;
  * - a company with no LinkedIn page, or whose page doesn't show an ICP industry, isn't researched (from 27 Oct 2026;
  *   before, it was passed to research: see lenientScreen);
  * - cheaper company checks with the same companies kept: names that show a company is outside the ICP
- *   aren't looked up, likely misfits are checked last, and several companies are looked up in one search
- *   (see cheaperChecks); companies ruled out are remembered and not checked again;
- * - people searches of ten results, and a segment stops after 15 searches in a row find nobody new;
- * - its people searches are remembered: one that found no new company isn't made again within 30 days, an
+ *   aren't looked up, likely misfits are checked last, and up to six companies are looked up in one search
+ *   (see cheaperChecks; from 28 Oct 2026, four before), a company that search doesn't show looked up on its own and
+ *   its size checked only while companies are still needed; companies ruled out are remembered and not checked again;
+ * - people searches of ten results, and a segment stops after 15 searches in a row find no new company (from 28 Oct
+ *   2026; before, nobody new on the lists, so people at companies already known kept it searching);
+ * - its people searches are remembered: one that found no new company isn't made again within 30 days, one made in
+ *   the last 7 days that found companies is read further down (its next page, to page 5) rather than again, an
  *   industry word and town that found nobody twice isn't searched with other titles, and the pairs that
  *   found companies that passed go first (see search-memory.ts);
  * - two contacts a company, with the hunt for a P1 when none is among them; the staff search stops once
@@ -64,7 +67,7 @@ export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.
 
 /**
  * 3PL & Logistics (INVECK's decision, 26 Oct 2026): fewer companies to find, and research rules more of them out, so
- * the cheaper rules above left its lists short. Its search goes on until 50 searches in a row found nobody new, asks
+ * the cheaper rules above left its lists short. Its search goes on until 50 searches in a row found no new company, asks
  * for a quarter more than it is short of, and takes up to five rounds; and its company check is strict, as the run's:
  * a company with no LinkedIn page, or whose page doesn't show a 3PL industry, isn't passed to research. Still within
  * the sample's credits. Manufacturing keeps the rules above.
@@ -185,6 +188,8 @@ export type MorningSampleReport = {
   skipped?: Partial<Record<SourcingSegment, number>>;
   /** What its Google search credits were spent on, per step (see spendStep); absent on samples from before 27 Oct 2026. */
   spend?: Record<string, number>;
+  /** Its people searches per segment: how many found a new company, and how many found none (from 28 Oct 2026). */
+  yields?: Partial<Record<SourcingSegment, { found: number; none: number }>>;
   /** A prospect search (see ProspectSearch), and what it added to the pipeline when it finished (see addFoundLeads). */
   find?: ProspectSearch;
   added?: { at: string; leads: number; given: string; skipped: string[] };
@@ -360,7 +365,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           recent: await recentSearches(db, null),
           // What earlier samples' searches found (before this one started, so the plan stays the same).
           plan: async (segment, plan) => {
-            const out = planFromMemory(plan, await searchMemory(db, segment, new Date(test.startedAt)));
+            const out = planFromMemory(plan, await searchMemory(db, segment, new Date(test.startedAt)), new Date(test.startedAt));
             r.skipped = { ...r.skipped, [segment]: out.skipped };
             return out.plan;
           },
@@ -380,7 +385,13 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
               await save({ progress: progressOf(r) });
             },
             async searched(segment, pq, result) {
-              await rememberSearch(db, segment, pq, { listed: result.listed, fresh: result.newCompanies, error: result.error }).catch(() => {});
+              await rememberSearch(db, segment, pq, { listed: result.listed, fresh: result.newCompanies, results: result.results, error: result.error }).catch(() => {});
+              // For the report: did the search find a new company?
+              if (!result.error) {
+                const y = ((r.yields ??= {})[segment] ??= { found: 0, none: 0 });
+                if (result.newCompanies) y.found++;
+                else y.none++;
+              }
             },
           },
         });
