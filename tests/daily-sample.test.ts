@@ -69,6 +69,16 @@ describe('the daily run', () => {
   });
 
   it("is for that day's lists, leaving out what anyone already has for it, and gives its leads out when it finishes", async () => {
+    // That morning (its leads are given out for the day, or today when the day has passed).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(ist('2026-10-28', '06:05'));
+    try {
+      await dayRun();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  const dayRun = async () => {
     const puja = await person('Puja');
     await db.insert(leads).values({ company: 'Already Given Co', segment: MANUFACTURING, status: 'Approved', ownerId: puja.id, drawnOn: '2026-10-28' });
     const id = (await startScheduledSample(db, ist('2026-10-28', '06:05')))!;
@@ -84,7 +94,7 @@ describe('the daily run', () => {
     const given = await db.select().from(leads).where(eq(leads.drawnOn, '2026-10-28'));
     for (const owner of new Set(given.map((l) => l.ownerId))) for (const s of [MANUFACTURING, '3PL & Logistics']) expect(given.filter((l) => l.ownerId === owner && l.segment === s).length).toBeLessThanOrEqual(1);
     expect(given.filter((l) => l.ownerId === puja.id && l.segment === MANUFACTURING).map((l) => l.company)).toEqual(['Already Given Co']);
-  });
+  };
 });
 
 describe('the one-off top-up (28 Oct, 10:15 pm)', () => {
