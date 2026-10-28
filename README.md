@@ -285,7 +285,9 @@ From Tuesday 27 October each working day's run happens **the evening before, fro
 Morning Sample for the next day's lists, its leads approved and given out when it finishes, on the evening just before
 a working day the morning search runs (Sunday's for Monday; none on Friday or Saturday evenings, before a holiday or a
 paused day). In the evening the outside timer starts and wakes it. The 6 am daily run then fills only what is still
-missing (nothing when the lists are full). There is no 6 am run on Tuesday 27 October (`DAILY_SAMPLE.skip`).
+missing (nothing when the lists are full). There is no 6 am run on Tuesday 27 October (`DAILY_SAMPLE.skip`). A
+one-off top-up (`TOP_UP_SAMPLES`) ran at 10:15 pm IST on 28 October for Thursday 29 October's lists, what each person
+already had left out, to try that evening's rules.
 
 To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
 (`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
@@ -293,13 +295,15 @@ researches exactly as the run does, deals each active associate their quota from
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
 nobody is given anything and the 6 am run's own search memory isn't touched, so tomorrow's run starts fresh.
 CA firms aren't part of it. The sample is also where cheaper rules are tried before the 6 am run uses them
-(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 15 searches in a row
-find no new company (from 28 Oct 2026; before, nobody new on the lists, so people at companies INVECK already has
-kept it searching), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
+(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 60 searches in a row
+find no new company (from 28 Oct 2026, 15 that morning; before, nobody new on the lists, so people at companies INVECK
+already has kept it searching; a company ruled out in the last 90 days, or outside the ICP by its name, isn't a new
+company), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
 up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
 company's size checked only while companies are still needed, the sample's own memory of its people searches
 (`search-memory.ts`: a search that found no new company isn't made again within 30 days, one made in the last 7
-days that found companies is read further down, its next page up to page 5, rather than again, an industry word and
+days that found companies is read further down rather than again: its first hundred results in one search (2
+credits; its next ten if Serper refuses a hundred), then the next hundred, to 300, an industry word and
 town where two searches found nobody isn't searched with other titles, and the pairs that found companies that
 passed go first), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
@@ -314,7 +318,9 @@ pipeline, 10% extra companies, 25 credits kept back for researching each company
 credits at most for a new sample (3,000 until 27 Oct 2026), a hard limit (a search that would go over it isn't made;
 a company whose research reaches it is left for the next day). A company with no LinkedIn page, or whose page
 doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
-would only be ruled out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
+would only be ruled out. From 28 Oct 2026 a Manufacturing company whose page shows no industry either way (no label,
+or a catch-all one, and nothing on its page or website) is researched, and approved only if research confirms its
+industry (`industryConfirmed`); one with no LinkedIn page still isn't (nothing shows its size). 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
 (`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no new company, asks for 25% extra and takes up
 to five rounds (each only while its last one found companies). The report tallies why the companies it checked
 weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,

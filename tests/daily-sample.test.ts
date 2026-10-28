@@ -6,7 +6,7 @@ import { leads, runs, settings, sourcingTests, users } from '@/lib/db/schema';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { saveHolidays } from '@/lib/holidays';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { assignSampleLeads, cardLead, quotaFor, startScheduledSample, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { assignSampleLeads, cardLead, quotaFor, startScheduledSample, TOP_UP_SAMPLES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { istDay } from '@/lib/tasks';
 import { MANUFACTURING } from '@/lib/db/seed';
 import type { FakeLog } from './fake-apis';
@@ -84,6 +84,21 @@ describe('the daily run', () => {
     const given = await db.select().from(leads).where(eq(leads.drawnOn, '2026-10-28'));
     for (const owner of new Set(given.map((l) => l.ownerId))) for (const s of [MANUFACTURING, '3PL & Logistics']) expect(given.filter((l) => l.ownerId === owner && l.segment === s).length).toBeLessThanOrEqual(1);
     expect(given.filter((l) => l.ownerId === puja.id && l.segment === MANUFACTURING).map((l) => l.company)).toEqual(['Already Given Co']);
+  });
+});
+
+describe('the one-off top-up (28 Oct, 10:15 pm)', () => {
+  it("starts once from 10:15 pm India time, for Thursday 29 October's lists, after the 9 pm run has had its turn", async () => {
+    // The 9 pm run for Thursday has run.
+    await db.insert(settings).values({ key: 'scheduledSample:evening:2026-10-29', value: { claimedAt: ist('2026-10-28', '21:00').toISOString(), testId: 1 } });
+    expect(await startScheduledSample(db, ist('2026-10-28', '22:10'))).toBeNull();
+    const id = (await startScheduledSample(db, ist('2026-10-28', '22:16')))!;
+    expect(id).toBeGreaterThan(0);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    expect(row.report).toMatchObject({ mode: 'morning', phase: 'init', fresh: false, assign: true, day: '2026-10-29' });
+    // Once; and not more than three hours late.
+    expect(await startScheduledSample(db, ist('2026-10-28', '22:30'))).toBeNull();
+    expect(TOP_UP_SAMPLES.every(({ at }) => Date.parse(at) + 3 * 3600_000 < Date.parse(ist('2026-10-29', '06:00').toISOString()))).toBe(true);
   });
 });
 

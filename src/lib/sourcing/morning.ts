@@ -273,7 +273,7 @@ export type RoundSink = {
    * A search made: the run remembers it, so it isn't made again for a while (a sample run keeps its own
    * memory, see search-memory.ts). `listed`: the people on the ICP's lists it showed, seen before or not.
    */
-  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; listed: number; error?: string }): Promise<void>;
+  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; listed: number; error?: string; page: number; num: number }): Promise<void>;
   save(state: MorningSourcing): Promise<unknown>;
 };
 
@@ -316,7 +316,7 @@ export type RoundOptions = {
    * Per segment, in place of `quietSearches`, and of `lenientScreen` for passing a company with no LinkedIn page or an
    * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics).
    */
-  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean }>>;
+  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean; unclearIndustry?: boolean }>>;
   /** Reorders or shortens a segment's plan (a sample run's memory of its searches); the same answer on every invocation. */
   plan?: (segment: SourcingSegment, plan: PeopleQuery[]) => Promise<PeopleQuery[]>;
   sink: RoundSink;
@@ -352,8 +352,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
   const peopleResults = o.peopleResults ?? PEOPLE_RESULTS;
-  // The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks.
-  const stepCredits = 8 * searchCredits(peopleResults);
+  // The most one step of the search can spend: a batch of searches (a hundred results each when read deep), or a batch
+  // of company checks with their second looks.
+  const stepCredits = 8 * searchCredits(100);
 
   // Each segment's search, ready to take a step.
   type Worker = { seg: MorningSegment; step: () => Promise<'more' | 'stop'>; checked: Set<string> };
@@ -367,6 +368,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const own = o.segmentRules?.[seg.segment];
     const quietLimit = own?.quietSearches ?? o.quietSearches ?? MORNING_LIMITS.quietSearches;
     const lenientScreen = own?.lenientScreen ?? o.lenientScreen;
+    // A page that shows no industry either way (no label, or a catch-all one): its website, then research, decides.
+    const unclearIndustry = own?.unclearIndustry ?? lenientScreen;
     const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
     const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
@@ -380,15 +383,17 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     };
     // An account Serper doesn't allow more than ten results on: ten at a time, for the rest of the round.
     let fewer = false;
-    const search = async (q: string, num = 10, page = 1): Promise<{ results: SerperResult[]; error?: string }> => {
+    // The page and number of results actually read come back with them (a refused hundred is read as ten, `fallbackPage`).
+    const search = async (q: string, num = 10, page = 1, fallbackPage?: number): Promise<{ results: SerperResult[]; error?: string; page: number; num: number }> => {
+      if (fewer && num > 10) return search(q, 10, fallbackPage ?? page);
       try {
-        return { results: await googleSearch(counting, q, page, fewer ? Math.min(num, 10) : num) };
+        return { results: await googleSearch(counting, q, page, num), page, num };
       } catch (e) {
         if (num > 10 && !fewer && /not allowed/i.test(errorMessage(e))) {
           fewer = true;
-          return search(q, 10, page);
+          return search(q, 10, fallbackPage ?? page);
         }
-        return { results: [], error: errorMessage(e) };
+        return { results: [], error: errorMessage(e), page, num };
       }
     };
     // Companies ruled out earlier for this segment and size (when asked): not checked (searched) again.
@@ -439,7 +444,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       // Its people work in India, so it has a site here whatever its headquarters.
       const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
       let s = screenPage(seenAs, seg.segment, icp.companySize, known);
-      if (lenientScreen && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+      if (unclearIndustry && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
         const words = await websiteWords(svc, page.website);
         s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
         if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };
@@ -506,7 +511,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return 'stop';
       }
       seg.cursor += batch.length;
-      const got = await mapLimit(batch, 4, (pq) => search(pq.q, peopleResults, pq.page ?? 1));
+      const got = await mapLimit(batch, 4, (pq) => search(pq.q, pq.num ?? peopleResults, pq.page ?? 1, pq.fallbackPage));
       // Every search refused (out of credits, a wrong key): the run ends as failed, with the reason.
       if (got.every((g) => g.error)) {
         seg.stopped = 'failed';
@@ -534,6 +539,13 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           if (person.why || !key) continue;
           if (o.cheaperChecks) person.hint = industryHint(`${r.title ?? ''} ${r.subtitle ?? ''} ${r.snippet ?? ''}`, seg.segment);
           if (known.names.has(key) || checked.has(key)) continue;
+          // Ruled out in the last 90 days, or outside the ICP by its name: not a new company (28 Oct 2026; before, it
+          // counted as one and was dropped at its check, so searches turning up only old rejects kept the search going).
+          if (!seg.pending.some((x) => normCompany(x.employer) === key) && ((o.cheaperChecks && outsideIcpByName(person.employer, seg.segment)) || (await ruledOutBefore(person.employer)))) {
+            checked.add(key);
+            seg.ruledOut++;
+            continue;
+          }
           const c = seg.pending.find((x) => normCompany(x.employer) === key);
           if (c) c.contacts.push(person);
           else {
@@ -543,7 +555,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         }
         // A new company is what counts (28 Oct 2026): people at companies already known or checked can't become new leads.
         seg.quiet = newCompanies ? 0 : seg.quiet + 1;
-        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, listed, error: got[i].error });
+        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, listed, error: got[i].error, page: got[i].page, num: got[i].num });
       }
       for (const c of seg.pending) c.contacts.sort((a, b) => rank(a) - rank(b));
       return 'more';

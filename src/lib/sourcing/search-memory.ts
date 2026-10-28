@@ -12,18 +12,22 @@ import type { PeopleQuery } from './people-first';
  * lists it showed, the new companies it found, and how many of those passed the company check. From what
  * the searches found before a sample started, its plan:
  * - leaves out a search made in the last `days` that found no new company (it would show the same people);
- * - reads a search made in the last `nextPageDays` that found companies further down, its next page, not the same
- *   page again (it would show the same people, at companies now known; from 28 Oct 2026), up to page `lastPage`,
- *   and not past a page that wasn't full;
+ * - reads a search made in the last `nextPageDays` that found companies further down, not the same page again (it
+ *   would show the same people, at companies now known; from 28 Oct 2026): a first read of ten results is followed by
+ *   the first hundred in one search (2 credits for up to 90 more people), a hundred by the next hundred, up to
+ *   `deepPages` hundreds, and nothing past a page that wasn't full;
  * - leaves out the rest of an industry word and town pair when `deadAfter` of its searches showed nobody on
  *   the lists, and none ever showed anyone;
  * - takes first the pairs whose searches found companies that passed, most first.
  * Only what was known when the sample started counts, so its plan is the same on every invocation.
  */
-export const SEARCH_MEMORY = { days: 30, deadAfter: 2, keepDays: 90, nextPageDays: 7, lastPage: 5 } as const;
+export const SEARCH_MEMORY = { days: 30, deadAfter: 2, keepDays: 90, nextPageDays: 7, deepPages: 3 } as const;
 
-/** One search's outcome: `page`, the page of results read (1 when absent), and `results`, how many it showed. */
-export type SearchOutcome = { at: string; listed: number; fresh: number; kept: number; page?: number; results?: number; error?: boolean };
+/**
+ * One search's outcome: `page`, the page of results read (1 when absent), `num`, the results asked for (10 when
+ * absent), and `results`, how many it showed.
+ */
+export type SearchOutcome = { at: string; listed: number; fresh: number; kept: number; page?: number; num?: number; results?: number; error?: boolean };
 export type SearchMemoryEntry = { title: string; keyword: string; place: string; outcomes: SearchOutcome[] };
 
 const PREFIX = 'sample-search:v1:';
@@ -70,9 +74,12 @@ export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMe
     const own = memory.get(normQuery(pq.q));
     const last = own?.outcomes[own.outcomes.length - 1];
     if (!last || Date.parse(last.at) < recently) return [pq];
+    const num = last.num ?? 10;
+    if (last.results != null && last.results < num) return [];
+    // Ten read: the first hundred in one search (the next ten instead if Serper refuses a hundred). A hundred read: the next hundred.
+    if (num <= 10) return [{ ...pq, num: 100, page: 1, fallbackPage: (last.page ?? 1) + 1 }];
     const next = (last.page ?? 1) + 1;
-    if (next > SEARCH_MEMORY.lastPage || (last.results != null && last.results < 10)) return [];
-    return [{ ...pq, page: next }];
+    return next > SEARCH_MEMORY.deepPages ? [] : [{ ...pq, num: 100, page: next }];
   });
   // A stable order otherwise: the plan's own (titles in turn, words and towns shuffled per run).
   const ordered = live.map((pq, i) => ({ pq, i })).sort((a, b) => kept(b.pq) - kept(a.pq) || a.i - b.i).map((x) => x.pq);
@@ -85,7 +92,16 @@ export async function rememberSearch(db: Db, segment: SourcingSegment, pq: Peopl
   const key = keyOf(segment, normQuery(pq.q));
   const was = (await cache.get(key)) as SearchMemoryEntry | null;
   const cutoff = Date.now() - SEARCH_MEMORY.keepDays * 86_400_000;
-  const outcome: SearchOutcome = { at: new Date().toISOString(), listed: r.listed, fresh: r.fresh, kept: 0, ...(pq.page && pq.page > 1 ? { page: pq.page } : {}), ...(r.results != null ? { results: r.results } : {}), ...(r.error ? { error: true } : {}) };
+  const outcome: SearchOutcome = {
+    at: new Date().toISOString(),
+    listed: r.listed,
+    fresh: r.fresh,
+    kept: 0,
+    ...(pq.page && pq.page > 1 ? { page: pq.page } : {}),
+    ...(pq.num && pq.num > 10 ? { num: pq.num } : {}),
+    ...(r.results != null ? { results: r.results } : {}),
+    ...(r.error ? { error: true } : {}),
+  };
   await cache.set(key, { title: pq.title, keyword: pq.keyword, place: pq.place, outcomes: [...(was?.outcomes ?? []).filter((o) => Date.parse(o.at) >= cutoff), outcome] });
 }
 

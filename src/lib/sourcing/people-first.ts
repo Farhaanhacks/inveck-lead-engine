@@ -44,6 +44,10 @@ export type PeopleQuery = {
   place: string;
   /** The page of Google's results to read (the first when absent): a search made in the last days is read further down, not again (see planFromMemory). */
   page?: number;
+  /** Results asked for (ten when absent); a hundred to read a rich search deep in one search, 2 credits (see planFromMemory). */
+  num?: number;
+  /** The page of ten to read instead, when Serper refuses a hundred results. */
+  fallbackPage?: number;
 };
 
 /**
