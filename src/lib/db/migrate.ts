@@ -561,6 +561,23 @@ export const SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS message_templates_idx ON message_templates (product_id, icp_id, channel)`,
+  `CREATE TABLE IF NOT EXISTS email_templates (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL,
+    icp_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS email_template_steps (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL,
+    icp_id INTEGER NOT NULL,
+    step INTEGER NOT NULL,
+    template_id INTEGER NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS email_template_steps_idx ON email_template_steps (product_id, icp_id, step)`,
   `CREATE TABLE IF NOT EXISTS followup_rules (
     id SERIAL PRIMARY KEY,
     product_id INTEGER NOT NULL,

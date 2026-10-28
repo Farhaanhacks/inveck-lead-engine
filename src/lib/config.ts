@@ -1,12 +1,14 @@
 import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { allocationRules, allocationTargets, followupRules, icps, leads, messageTemplates, products, settings, userProducts, users, type Icp, type MessageTemplate, type Product } from './db/schema';
+import { allocationRules, allocationTargets, emailTemplateSteps, emailTemplates, followupRules, icps, leads, messageTemplates, products, settings, userProducts, users, type EmailTemplate, type Icp, type MessageTemplate, type Product } from './db/schema';
 import { MANUFACTURING, LOGISTICS } from './db/seed';
 import { normSegment } from './icp-match';
 import { PROSPECT_QUERIES_LOGISTICS, PROSPECT_QUERIES_MANUFACTURING } from './pipeline/prompts';
 import { CA_FOLLOWUP, DEFAULT_FOLLOWUP, parseOutcomes, validateFollowup, type FollowupRule } from './config-rules';
 import { DEFAULT_TEMPLATES, variablesIn } from './config-templates';
 import { getSettings } from './settings';
+import { htmlToText, plainToHtml } from './rich-text';
+import { sanitizeEmailHtml } from './mail/sanitize';
 
 /**
  * Configuration: products, their ICPs, team assignments, allocation, templates and follow-up rules. The initial
@@ -189,10 +191,11 @@ export async function listTemplates(db: Db, productId: number): Promise<MessageT
 /** Saves a template for a product, ICP and channel. Unknown variables are refused; the subject is for email only. */
 export async function saveTemplate(db: Db, productId: number, icpId: number, channel: 'email' | 'whatsapp', input: { subject: string; body: string; active: boolean }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!(await listIcps(db, productId)).some((i) => i.id === icpId)) return { ok: false, error: 'Choose one of this product\'s ICPs.' };
-  const subject = channel === 'email' ? input.subject.trim() : '';
+  // Email templates are per step now (see below): this is the first-contact one, as it always was.
+  if (channel === 'email') return saveFirstContactEmail(db, productId, icpId, input);
+  const subject = '';
   const body = input.body.replace(/\r\n/g, '\n').trim();
   if (!body) return { ok: false, error: 'Write the message.' };
-  if (channel === 'email' && !subject) return { ok: false, error: 'An email template needs a subject.' };
   if (body.length > 8000 || subject.length > 300) return { ok: false, error: 'The template is too long.' };
   const unknown = [...variablesIn(body).unknown, ...variablesIn(subject).unknown];
   if (unknown.length) return { ok: false, error: `Unknown variable${unknown.length > 1 ? 's' : ''}: ${unknown.map((u) => `{{${u}}}`).join(', ')}. Use {{contact_name}}, {{first_name}}, {{greeting}}, {{company_name}} or {{bd_name}}.` };
@@ -205,7 +208,8 @@ export async function saveTemplate(db: Db, productId: number, icpId: number, cha
 }
 
 /** The configured templates for a product, found by the ICP's name (a lead's segment). Active ones only. */
-export type TemplateSet = Map<string, { subject: string; body: string }>;
+/** Keyed `<icp>|whatsapp`, `<icp>|email` (first contact) and `<icp>|email|<n>` (follow-up n). `html`: the body is sanitized HTML (every email template is). */
+export type TemplateSet = Map<string, { subject: string; body: string; html?: boolean }>;
 export async function loadTemplateSet(db: Db, productId?: number): Promise<TemplateSet> {
   const pid = productId ?? (await defaultProduct(db))?.id;
   const set: TemplateSet = new Map();
@@ -213,7 +217,14 @@ export async function loadTemplateSet(db: Db, productId?: number): Promise<Templ
   const productIcps = await listIcps(db, pid);
   for (const t of await listTemplates(db, pid)) {
     const icp = productIcps.find((i) => i.id === t.icpId);
-    if (icp && t.active) set.set(`${normSegment(icp.segment)}|${t.channel}`, { subject: t.subject, body: t.body });
+    // Email templates are the per-step ones below; the old email rows were carried over into them.
+    if (icp && t.active && t.channel === 'whatsapp') set.set(`${normSegment(icp.segment)}|whatsapp`, { subject: t.subject, body: t.body });
+  }
+  const byId = new Map((await listEmailTemplates(db, pid)).map((t) => [t.id, t]));
+  for (const a of await listEmailAssignments(db, pid)) {
+    const icp = productIcps.find((i) => i.id === a.icpId);
+    const t = byId.get(a.templateId);
+    if (icp && t) set.set(`${normSegment(icp.segment)}|email${a.step ? `|${a.step}` : ''}`, { subject: t.subject, body: t.body, html: true });
   }
   return set;
 }
@@ -223,7 +234,110 @@ export async function loadTemplateSets(db: Db, productIds: (number | null | unde
   const ids = [...new Set(productIds.map((p) => p ?? fallback).filter((p): p is number => typeof p === 'number'))];
   return new Map(await Promise.all(ids.map(async (id) => [id, await loadTemplateSet(db, id)] as const)));
 }
-export const templateKey = (segment: string, channel: 'email' | 'whatsapp') => `${normSegment(segment)}|${channel}`;
+export const templateKey = (segment: string, channel: 'email' | 'whatsapp', step = 0) => `${normSegment(segment)}|${channel}${channel === 'email' && step > 0 ? `|${step}` : ''}`;
+
+// ─── Email templates per step ───
+
+export const FIRST_CONTACT = 'First contact';
+export async function listEmailTemplates(db: Db, productId: number): Promise<EmailTemplate[]> {
+  return db.select().from(emailTemplates).where(eq(emailTemplates.productId, productId)).orderBy(asc(emailTemplates.icpId), asc(emailTemplates.id));
+}
+export async function listEmailAssignments(db: Db, productId: number) {
+  return db.select().from(emailTemplateSteps).where(eq(emailTemplateSteps.productId, productId));
+}
+
+/** The steps an ICP's emails go through: the first contact, then one per follow-up of its follow-up rule (so a changed rule changes this list). */
+export async function emailStepsFor(db: Db, productId: number, icpId: number): Promise<{ step: number; label: string }[]> {
+  const { rule } = await followupRuleFor(db, productId, icpId);
+  return [{ step: 0, label: FIRST_CONTACT }, ...Array.from({ length: rule.rounds }, (_, i) => ({ step: i + 1, label: `Follow-up ${i + 1}` }))];
+}
+
+/** Checks and cleans a template: the HTML is sanitized, a name, subject and message are needed, and only known variables are used. */
+function cleanEmailTemplate(input: { name: string; subject: string; body: string }): { ok: true; name: string; subject: string; body: string } | { ok: false; error: string } {
+  const name = input.name.replace(/\s+/g, ' ').trim();
+  const subject = input.subject.replace(/\s+/g, ' ').trim();
+  const body = sanitizeEmailHtml(input.body);
+  if (!name) return { ok: false, error: 'Give the template a name.' };
+  if (name.length > 80) return { ok: false, error: 'The template name is too long.' };
+  if (!subject) return { ok: false, error: 'An email template needs a subject.' };
+  if (!htmlToText(body)) return { ok: false, error: 'Write the message.' };
+  if (body.length > 20000 || subject.length > 300) return { ok: false, error: 'The template is too long.' };
+  const unknown = [...variablesIn(htmlToText(body)).unknown, ...variablesIn(subject).unknown];
+  if (unknown.length) return { ok: false, error: `Unknown variable${unknown.length > 1 ? 's' : ''}: ${unknown.map((u) => `{{${u}}}`).join(', ')}. Use {{contact_name}}, {{first_name}}, {{greeting}}, {{company_name}} or {{bd_name}}.` };
+  return { ok: true, name, subject, body };
+}
+
+/** Creates (no id) or edits one of an ICP's email templates. Steps using it send the new text from now on; emails already sent are unchanged. */
+export async function saveEmailTemplate(db: Db, productId: number, icpId: number, input: { id?: number; name: string; subject: string; body: string }): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+  if (!(await listIcps(db, productId)).some((i) => i.id === icpId)) return { ok: false, error: "Choose one of this product's ICPs." };
+  const clean = cleanEmailTemplate(input);
+  if (!clean.ok) return clean;
+  const mine = (await listEmailTemplates(db, productId)).filter((t) => t.icpId === icpId);
+  if (mine.some((t) => t.id !== input.id && t.name.toLowerCase() === clean.name.toLowerCase())) return { ok: false, error: `This ICP already has a template called ${clean.name}.` };
+  let id = input.id;
+  if (id) {
+    if (!mine.some((t) => t.id === id)) return { ok: false, error: 'That template is not one of this ICP\'s.' };
+    await db.update(emailTemplates).set({ name: clean.name, subject: clean.subject, body: clean.body, updatedAt: new Date() }).where(eq(emailTemplates.id, id));
+  } else {
+    [{ id }] = await db.insert(emailTemplates).values({ productId, icpId, name: clean.name, subject: clean.subject, body: clean.body }).returning({ id: emailTemplates.id });
+  }
+  await bumpVersion(db, productId);
+  return { ok: true, id: id! };
+}
+
+/** Deletes a template; the steps that used it are left without one (flagged on the page, and sent as the AI draft until assigned again). */
+export async function deleteEmailTemplate(db: Db, productId: number, id: number): Promise<void> {
+  await db.delete(emailTemplateSteps).where(and(eq(emailTemplateSteps.productId, productId), eq(emailTemplateSteps.templateId, id)));
+  await db.delete(emailTemplates).where(and(eq(emailTemplates.productId, productId), eq(emailTemplates.id, id)));
+  await bumpVersion(db, productId);
+}
+
+/** Chooses the template a step uses (null: none, so the step sends the AI draft as before). */
+export async function assignEmailTemplate(db: Db, productId: number, icpId: number, step: number, templateId: number | null): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!(await emailStepsFor(db, productId, icpId)).some((s) => s.step === step)) return { ok: false, error: 'That step is not in this ICP\'s follow-up sequence.' };
+  if (templateId === null) {
+    await db.delete(emailTemplateSteps).where(and(eq(emailTemplateSteps.productId, productId), eq(emailTemplateSteps.icpId, icpId), eq(emailTemplateSteps.step, step)));
+  } else {
+    const [t] = await db.select().from(emailTemplates).where(and(eq(emailTemplates.id, templateId), eq(emailTemplates.productId, productId), eq(emailTemplates.icpId, icpId)));
+    if (!t) return { ok: false, error: "Choose one of this ICP's templates." };
+    await db
+      .insert(emailTemplateSteps)
+      .values({ productId, icpId, step, templateId })
+      .onConflictDoUpdate({ target: [emailTemplateSteps.productId, emailTemplateSteps.icpId, emailTemplateSteps.step], set: { templateId } });
+  }
+  await bumpVersion(db, productId);
+  return { ok: true };
+}
+
+/** The first-contact email as the earlier single template: edits the template the first-contact step uses (or makes one); off unassigns the step. */
+async function saveFirstContactEmail(db: Db, productId: number, icpId: number, input: { subject: string; body: string; active: boolean }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const [step0] = await db.select().from(emailTemplateSteps).where(and(eq(emailTemplateSteps.productId, productId), eq(emailTemplateSteps.icpId, icpId), eq(emailTemplateSteps.step, 0)));
+  const named = (await listEmailTemplates(db, productId)).find((t) => t.icpId === icpId && t.name === FIRST_CONTACT);
+  const id = step0?.templateId ?? named?.id;
+  const html = /<(p|br|strong|b|em|ul|ol|li|a)\b/i.test(input.body) ? input.body : plainToHtml(input.body.replace(/\r\n/g, '\n'));
+  const r = await saveEmailTemplate(db, productId, icpId, { id, name: FIRST_CONTACT, subject: input.subject, body: html });
+  if (!r.ok) return r;
+  return assignEmailTemplate(db, productId, icpId, 0, input.active ? r.id : null);
+}
+
+/**
+ * Once: the email templates saved before steps existed (one per ICP) become that ICP's "First contact" template, assigned to the
+ * first-contact step, with the same wording as HTML paragraphs. The old rows stay as they were. Nothing sends differently.
+ */
+export async function migrateEmailTemplatesOnce(db: Db): Promise<void> {
+  const key = 'emailTemplatesStepsV1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const old = await db.select().from(messageTemplates).where(eq(messageTemplates.channel, 'email'));
+  let moved = 0;
+  for (const t of old) {
+    const [has] = await db.select({ id: emailTemplates.id }).from(emailTemplates).where(and(eq(emailTemplates.productId, t.productId), eq(emailTemplates.icpId, t.icpId), eq(emailTemplates.name, FIRST_CONTACT)));
+    if (has) continue;
+    const [made] = await db.insert(emailTemplates).values({ productId: t.productId, icpId: t.icpId, name: FIRST_CONTACT, subject: t.subject, body: sanitizeEmailHtml(plainToHtml(t.body)) }).returning({ id: emailTemplates.id });
+    if (t.active) await db.insert(emailTemplateSteps).values({ productId: t.productId, icpId: t.icpId, step: 0, templateId: made.id }).onConflictDoNothing();
+    moved++;
+  }
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), moved } }).onConflictDoNothing();
+}
 
 // ─── Follow-up rules ───
 

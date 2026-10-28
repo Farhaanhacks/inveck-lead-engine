@@ -811,3 +811,32 @@ export const followupRules = pgTable(
   (t) => [uniqueIndex('followup_rules_idx').on(t.productId, t.icpId)],
 );
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
+
+/**
+ * An email template for a product and ICP, kept as sanitized HTML (bold, links and line breaks survive into the email). An ICP
+ * has as many as it likes; which one a step uses is email_template_steps.
+ */
+export const emailTemplates = pgTable('email_templates', {
+  id: serial('id').primaryKey(),
+  productId: integer('product_id').notNull(),
+  icpId: integer('icp_id').notNull(),
+  name: text('name').notNull(),
+  subject: text('subject').notNull().default(''),
+  /** Sanitized HTML (see mail/sanitize.ts) with {{variables}}. */
+  body: text('body').notNull().default(''),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type EmailTemplate = typeof emailTemplates.$inferSelect;
+
+/** Which email template an ICP's step uses: step 0 is the first contact, 1.. the follow-up rounds of its follow-up rule. */
+export const emailTemplateSteps = pgTable(
+  'email_template_steps',
+  {
+    id: serial('id').primaryKey(),
+    productId: integer('product_id').notNull(),
+    icpId: integer('icp_id').notNull(),
+    step: integer('step').notNull(),
+    templateId: integer('template_id').notNull(),
+  },
+  (t) => [uniqueIndex('email_template_steps_idx').on(t.productId, t.icpId, t.step)],
+);

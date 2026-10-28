@@ -62,7 +62,7 @@ export default async function ConfigurationPage({ searchParams }: PageProps<'/co
       {tab === 'team' && <TeamTab products={products} showNew={!!notice} />}
       {tab === 'icps' && product && <IcpsTab product={product} />}
       {tab === 'allocation' && product && <AllocationTab product={product} />}
-      {tab === 'templates' && product && <TemplatesTab product={product} />}
+      {tab === 'templates' && product && <TemplatesTab product={product} sp={sp} />}
       {tab === 'followups' && product && <FollowupsTab product={product} sp={sp} />}
     </>
   );

@@ -69,7 +69,7 @@ import { PhoneLinks } from '@/components/phone-links';
 import { loadFunnel } from '@/lib/followups';
 import { SendMail } from '@/components/send-mail';
 import { getMailbox, mailConfig } from '@/lib/mail/outlook';
-import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
+import { emailedAlready, emailStepOf, lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
 import { getSettings } from '@/lib/settings';
 import type { SentEmail } from '@/lib/db/schema';
 import { OpenWhatsApp } from '@/components/open-whatsapp';
@@ -243,7 +243,7 @@ function Step({
   const outreach = task.kind === 'whatsapp' ? whatsapp?.outreach : undefined;
   // The email this step sends: the first email, or a follow-up replying to the last one sent.
   const prior = task.kind === 'email' && mail ? lastSentTo(mail.sent, emails[0] ?? '') : undefined;
-  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda, owner: mail.ownerName, templates: mail.templates }) : null;
+  const plan = task.kind === 'email' && mail ? planEmail(lead, prior, { from: mail.senderName, as: bda, owner: mail.ownerName, templates: mail.templates, step: emailStepOf(task, lead, !!prior || emailedAlready(lead)) }) : null;
   // This step's email already went from Outlook (and the step was undone since): only to be logged.
   const went = task.kind === 'email' ? mail?.sent?.find((e) => e.taskId === task.id) : undefined;
   return (
@@ -287,6 +287,7 @@ function Step({
                     addresses={emails}
                     subject={plan.subject}
                     body={plan.body}
+                    html={!!plan.html}
                     followUp={plan.followUp}
                     problem={plan.problem}
                   />

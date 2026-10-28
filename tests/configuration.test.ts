@@ -4,6 +4,7 @@ import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { allocationRules, allocationTargets, followupRules, icps, leads, messageTemplates, runs, settings, tasks, userProducts, users } from '@/lib/db/schema';
 import { PROSPECT_QUERIES_BASE_PROMPT, PROSPECT_QUERIES_LOGISTICS, PROSPECT_QUERIES_MANUFACTURING } from '@/lib/pipeline/prompts';
 import { queryPlannerPrompt } from '@/lib/pipeline/prospects';
+import { htmlToText } from '@/lib/rich-text';
 import { seedConfiguration, allocationFor, defaultProduct, listIcps, listProducts, listTeam, loadTemplateSet, saveAllocation, saveFollowupRule, saveIcp, saveProduct, saveTemplate, setIcpActive } from '@/lib/config';
 import { createBda } from '@/lib/config-team';
 import { CA_FOLLOWUP, DEFAULT_FOLLOWUP, offsetsOf, scheduleFor, validateAllocation, validateFollowup } from '@/lib/config-rules';
@@ -197,12 +198,15 @@ describe('templates', () => {
     const lead = { segment: 'Manufacturing', contactName: 'Mr. Ravi Kumar', company: 'Hosur Gears' };
     const before = firstEmailFor(lead, 'Puja', await loadTemplateSet(db, p.id));
     const builtIn = firstEmailFor(lead, 'Puja');
-    expect(before).toEqual(builtIn);
-    expect(before?.body.startsWith('Hello Mr. Ravi Kumar,\n\nI hope')).toBe(true);
+    // The configured template is the same wording, now kept as HTML paragraphs.
+    expect(before).toMatchObject({ subject: builtIn!.subject, template: builtIn!.template, html: true, problem: '' });
+    expect(htmlToText(before!.body)).toBe(builtIn!.body);
+    expect(htmlToText(before!.body).startsWith('Hello Mr. Ravi Kumar,\n\nI hope')).toBe(true);
     const m = await icpNamed('Manufacturing');
     await saveTemplate(db, p.id, m.id, 'email', { subject: 'New subject for {{company_name}}', body: 'Hi {{contact_name}}, {{bd_name}} here.', active: true });
     const after = firstEmailFor(lead, 'Puja', await loadTemplateSet(db, p.id));
-    expect(after).toMatchObject({ subject: 'New subject for Hosur Gears', body: 'Hi Ravi Kumar, Puja here.', problem: '' });
+    expect(after).toMatchObject({ subject: 'New subject for Hosur Gears', problem: '' });
+    expect(htmlToText(after!.body)).toBe('Hi Ravi Kumar, Puja here.');
     expect(firstEmailFor({ ...lead, contactName: '' }, 'Puja', await loadTemplateSet(db, p.id))).toMatchObject({ problem: expect.stringContaining("main contact's name is missing") });
     // Turning it off: that ICP goes back to the AI draft (no template).
     await saveTemplate(db, p.id, m.id, 'email', { subject: 'x', body: 'x', active: false });

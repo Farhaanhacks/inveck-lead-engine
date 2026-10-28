@@ -2,7 +2,8 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db';
 import { mailboxes, type Mailbox } from '../db/schema';
-import { hasSignature, LOGO_CID, loadEmailLogo, signatureHtml, signerOf, textToHtml, withoutSignOff } from './signature';
+import { htmlToText } from '../rich-text';
+import { hasSignature, htmlBody, LOGO_CID, loadEmailLogo, signatureHtml, signerOf, textToHtml, withoutSignOff } from './signature';
 
 /**
  * Sending email from each team member's own Outlook mailbox (Microsoft 365), through Microsoft's
@@ -249,8 +250,9 @@ export async function createTeamsMeeting(db: Db, userId: number, req: TeamsMeeti
 export type OutgoingMail = {
   to: string;
   subject: string;
-  /** Plain text, sent as written (made HTML only to carry the signature). */
+  /** Plain text, sent as written (made HTML only to carry the signature); or, with `html`, already sanitized HTML. */
   body: string;
+  html?: boolean;
   /** The earlier email a follow-up quotes: goes under the signature. */
   quote?: string;
   /** Files sent with it (the product profile). */
@@ -273,10 +275,10 @@ export async function sendFromMailbox(db: Db, userId: number, mail: OutgoingMail
   const t = await freshAccess(db, c, box);
   // Every email carries the sender's own signature, once (not again when the text already has one).
   const logo = await loadEmailLogo();
-  const signed = hasSignature(mail.body);
+  const signed = hasSignature(mail.html ? htmlToText(mail.body) : mail.body);
   const who = signed ? null : await signerOf(db, userId);
-  const text = who ? withoutSignOff(mail.body, [who.name, who.name.split(' ')[0]]) : mail.body;
-  const html = [textToHtml(text), who ? signatureHtml(who, !!logo) : '', mail.quote ? `<div style="margin-top:18px;">${textToHtml(mail.quote)}</div>` : ''].join('');
+  const text = who && !mail.html ? withoutSignOff(mail.body, [who.name, who.name.split(' ')[0]]) : mail.body;
+  const html = [mail.html ? htmlBody(text) : textToHtml(text), who ? signatureHtml(who, !!logo) : '', mail.quote ? `<div style="margin-top:18px;">${textToHtml(mail.quote)}</div>` : ''].join('');
   const files = [
     ...(mail.attachments ?? []).map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.bytes.toString('base64') })),
     ...(logo && !signed ? [{ '@odata.type': '#microsoft.graph.fileAttachment', name: logo.name, contentType: logo.contentType, contentBytes: logo.bytes.toString('base64'), contentId: LOGO_CID, isInline: true }] : []),

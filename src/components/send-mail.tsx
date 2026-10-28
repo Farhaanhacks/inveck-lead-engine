@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useActionState, useState, type FormEvent } from 'react';
 import { useFormStatus } from 'react-dom';
+import { RichEditor } from './rich-editor';
+import { htmlToText } from '@/lib/rich-text';
 import { sendEmailAction, writeFollowUpForTaskAction, type SendMailState } from '@/app/mail-actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
@@ -38,6 +40,7 @@ export function SendMail({
   addresses,
   subject,
   body,
+  html,
   followUp,
   problem,
 }: {
@@ -49,6 +52,8 @@ export function SendMail({
   addresses: string[];
   subject: string;
   body: string;
+  /** The body is formatted (a template): edited with the formatting editor, and sent as HTML. */
+  html?: boolean;
   followUp: boolean;
   /** Why it can't be sent yet (a name the template needs is missing). */
   problem?: string;
@@ -71,8 +76,10 @@ export function SendMail({
   const toMailApp = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const url = mailtoUrl(String(f.get('to') ?? ''), String(f.get('subject') ?? ''), String(f.get('body') ?? ''));
-    openedInApp(url, String(f.get('body') ?? ''));
+    // A mail app link carries text only: the formatting is not sent that way.
+    const text = html ? htmlToText(String(f.get('body') ?? '')) : String(f.get('body') ?? '');
+    const url = mailtoUrl(String(f.get('to') ?? ''), String(f.get('subject') ?? ''), text);
+    openedInApp(url, text);
     window.location.href = url;
   };
   return (
@@ -94,7 +101,7 @@ export function SendMail({
             <button disabled={pending} className={MAIN}>{pending ? 'Sending…' : 'Send mail'}</button>
           </form>
         ) : (
-          <a href={mailtoUrl(addresses[0] ?? '', subject, body)} onClick={(e) => openedInApp(e.currentTarget.href, body)} title="Opens your email app with this email ready to send" className={MAIN}>
+          <a href={mailtoUrl(addresses[0] ?? '', subject, html ? htmlToText(body) : body)} onClick={(e) => openedInApp(e.currentTarget.href, html ? htmlToText(body) : body)} title="Opens your email app with this email ready to send" className={MAIN}>
             Send mail
           </a>
         )}
@@ -146,7 +153,11 @@ export function SendMail({
             <label htmlFor={`subject-${taskId}`} className="label">Subject</label>
             <input id={`subject-${taskId}`} name="subject" defaultValue={subject} required className="field" />
             <label htmlFor={`body-${taskId}`} className="label">Message</label>
-            <textarea id={`body-${taskId}`} name="body" defaultValue={body} rows={10} required className="field font-[inherit] leading-relaxed" />
+            {html ? (
+              <RichEditor id={`body-${taskId}`} name="body" defaultHtml={body} label="Message" />
+            ) : (
+              <textarea id={`body-${taskId}`} name="body" defaultValue={body} rows={10} required className="field font-[inherit] leading-relaxed" />
+            )}
             <div className="flex flex-wrap gap-2">
               <button disabled={pending} className="btn-primary px-2.5 py-1 text-xs">{pending ? 'Sending…' : 'Send mail'}</button>
               <button type="button" onClick={() => setOpen(false)} className={SMALL}>Close</button>

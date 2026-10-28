@@ -9,7 +9,9 @@ import { getSettings } from '@/lib/settings';
 import { requireUser } from '@/lib/users';
 import { disconnectMailbox, MailError, sendFromMailbox } from '@/lib/mail/outlook';
 import { loadProfilePdf } from '@/lib/mail/profile-pdf';
-import { lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
+import { emailedAlready, emailStepOf, lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
+import { sanitizeEmailHtml } from '@/lib/mail/sanitize';
+import { htmlToText } from '@/lib/rich-text';
 import { draftFollowUp } from '@/lib/pipeline/follow-ups';
 import { ruleForLead } from '@/lib/follow-up-sequence';
 import { defaultProduct, loadTemplateSets } from '@/lib/config';
@@ -65,18 +67,20 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   // The BDA named in the email is the company's owner, from the owner record.
   const [owner] = await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId));
   const templates = (await loadTemplateSets(db, [lead.productId])).get(lead.productId ?? (await defaultProduct(db))?.id ?? 0);
-  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name, owner: owner?.name, templates });
+  const step = emailStepOf(task, lead, !!prior || emailedAlready(lead));
+  const plan = planEmail(lead, prior, { from: settings.senderName, as: user.name, owner: owner?.name, templates, step });
   if (plan.problem) return { error: plan.problem };
   const reviewed = form.has('body');
   const subject = (reviewed ? str(form, 'subject') : plan.subject).trim();
-  const body = (reviewed ? String(form.get('body') ?? '') : plan.body).trim();
+  // A configured template is HTML: what is sent is the sanitized HTML of what the person reviewed (formatting kept, nothing unsafe).
+  const body = plan.html ? sanitizeEmailHtml(reviewed ? String(form.get('body') ?? '') : plan.body) : (reviewed ? String(form.get('body') ?? '') : plan.body).trim();
   // Edited by hand before this send (the text or the subject differs from the draft).
   // (A browser sends line breaks as CRLF: they are not an edit.)
   const lf = (t: string) => t.replace(/\r\n/g, '\n').trim();
-  const edited = reviewed && (lf(subject) !== lf(plan.subject) || lf(body) !== lf(plan.body));
-  if (!body) return { error: plan.followUp ? 'No follow-up written yet: write it, or use Write it for me.' : 'There is no email draft yet: write it first.' };
+  const edited = reviewed && (lf(subject) !== lf(plan.subject) || lf(body) !== lf(plan.html ? sanitizeEmailHtml(plan.body) : plan.body));
+  if (!(plan.html ? htmlToText(body) : body)) return { error: plan.followUp ? 'No follow-up written yet: write it, or use Write it for me.' : 'There is no email draft yet: write it first.' };
   if (!subject) return { error: 'Add a subject.' };
-  if (/\{\{.*?\}\}/.test(`${subject}\n${body}`)) return { error: 'The email still has a {{placeholder}} in it: fill it in before sending.' };
+  if (/\{\{.*?\}\}/.test(`${subject}\n${plan.html ? htmlToText(body) : body}`)) return { error: 'The email still has a {{placeholder}} in it: fill it in before sending.' };
 
   // One send per step, even with two clicks or two tabs open.
   const [claim] = await db
@@ -91,7 +95,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
     profile = await loadProfilePdf(lead.segment);
     // The Manufacturing and 3PL emails say the profile is attached: never send them without it.
     if (plan.template && !profile) throw new MailError(`The ${plan.template === '3pl' ? '3PL' : 'Manufacturing'} profile PDF isn't on the server (assets/), so this email can't be sent.`);
-    sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body, quote: plan.quote || undefined, attachments: profile ? [profile] : undefined });
+    sent = await sendFromMailbox(db, lead.ownerId, { to, subject, body, html: plan.html, quote: plan.quote || undefined, attachments: profile ? [profile] : undefined });
   } catch (e) {
     if (e instanceof MailError && e.unconfirmed) {
       // Kept, so a second click can't send it twice while nobody knows whether the first went.
@@ -112,7 +116,7 @@ export async function sendEmailAction(_prev: SendMailState, form: FormData): Pro
   // What went out is what the lead shows: the first email as sent; a follow-up is used up. Text edited by hand for this one
   // send is recorded with the sent email only: it never replaces the lead's saved draft or any later draft.
   if (!plan.followUp && !edited) {
-    await db.update(leads).set({ emailSubject: subject, emailBody: body, updatedAt: now }).where(eq(leads.id, lead.id));
+    await db.update(leads).set({ emailSubject: subject, emailBody: plan.html ? htmlToText(body) : body, updatedAt: now }).where(eq(leads.id, lead.id));
   } else {
     const step = task.followUpRound > 0 ? task.followUpRound : Math.min(lead.followUpStep + 1, (await ruleForLead(db, lead)).rounds);
     await db

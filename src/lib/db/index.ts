@@ -6,7 +6,7 @@ import { SCHEMA_STATEMENTS } from './migrate';
 import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingDealBreakersV5, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
 import { ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
-import { seedConfiguration } from '../config';
+import { migrateEmailTemplatesOnce, seedConfiguration } from '../config';
 import { backfillSignatureDetails } from '../mail/signature';
 import { retireWithoutContactOnce } from '../escalate';
 import { approveSheetLeadsOnce } from '../ca-sheet';
@@ -68,6 +68,7 @@ async function connect(): Promise<Db> {
     await seedUsers(db);
     await backfillSignatureDetails(db);
     await seedConfiguration(db);
+    await migrateEmailTemplatesOnce(db);
     await ensureMarketingUser(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);

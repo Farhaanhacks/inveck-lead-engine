@@ -65,6 +65,11 @@ export function textToHtml(text: string): string {
   return `<div style="${FONT}font-size:11pt;color:#000;">${lines.join('<br>')}</div>`;
 }
 
+/** An email body that is already (sanitized) HTML, in the same wrapper as plain text gets. */
+export function htmlBody(html: string): string {
+  return `<div style="${FONT}font-size:11pt;color:#000;">${html}</div>`;
+}
+
 /** The signature block. `withLogo`: the logo is attached (inline) under the website line. */
 export function signatureHtml(who: { name: string; phone: string }, withLogo: boolean): string {
   const p = (inner: string, extra = '') => `<p style="margin:0;${extra}">${inner}</p>`;
