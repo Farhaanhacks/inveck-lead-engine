@@ -255,7 +255,10 @@ A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches n
 working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
 `morningStartsOn` setting, which holds the 8 am draw back until then too), finds new prospects **people first**
 (`src/lib/sourcing/morning.ts`): Google searches of LinkedIn profiles with the ICP's P1 and P2 titles (plant
-heads first), each with an industry word and a town; then each person's company page on LinkedIn, screened
+heads first), each with an industry word and a town (`PEOPLE_KEYWORDS` in `people-first.ts`, `SEGMENT_SEARCH` in
+`linkedin-pages.ts`; from 28 Oct 2026, 39 words for Manufacturing and 14 for 3PL, all for the ICP's own industries,
+and every industrial town across India, 134 and 60, the ICP being all of India; the titles unchanged); then each
+person's company page on LinkedIn, screened
 on size, industry, headquarters and whether INVECK already has it (by name, website or LinkedIn page). Each
 company that passes becomes one lead with the people found there, and research makes the ICP check:
 Approved or Disqualified. It finds what the morning draw is short of in each segment (active associates times

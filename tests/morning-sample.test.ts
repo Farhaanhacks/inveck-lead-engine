@@ -16,7 +16,7 @@ import { verifyContacts } from '@/lib/verify-contacts';
 import { normQuery } from '@/lib/pipeline/query-history';
 import { normCompany } from '@/lib/pipeline/text';
 import { morningPlan, searchRound, startRound } from '@/lib/sourcing/morning';
-import { companiesQuery, lookupBatch, PAGES_PER_SEARCH } from '@/lib/sourcing/people-first';
+import { companiesQuery, lookupBatch, PAGES_PER_SEARCH, PEOPLE_KEYWORDS } from '@/lib/sourcing/people-first';
 import { rememberKept, rememberSearch } from '@/lib/sourcing/search-memory';
 import { dbEnrichmentCache } from '@/lib/enrichment-cache';
 
@@ -346,7 +346,7 @@ describe('the Morning Sample Run', () => {
   });
 
   describe('3PL & Logistics searches longer and screens strictly (26 Oct)', () => {
-    const TPL = /^site:linkedin\.com\/in .*"(3PL|warehousing|contract logistics|third party logistics|supply chain solutions|cold chain)"/;
+    const TPL = new RegExp(`^site:linkedin\\.com\\/in .*"(${PEOPLE_KEYWORDS[LOGISTICS].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})"`);
     const MFG_PEOPLE = /^site:linkedin\.com\/in /;
     /** The world, with `extra` people added to the people searches `match` picks, or none at all there with `empty`. */
     const withPeople = (asked: string[], match: RegExp, extra: unknown[], empty = false) => {

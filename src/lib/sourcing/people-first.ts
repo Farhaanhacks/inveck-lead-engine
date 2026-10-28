@@ -20,8 +20,18 @@ type TitleIcp = Pick<Icp, 'segment' | 'targetTitles' | 'p2Titles' | 'p3Titles' |
  * profiles. Every people search has one: a title and a place alone bring every hotel and app company.
  */
 export const PEOPLE_KEYWORDS: Record<SourcingSegment, string[]> = {
-  [MANUFACTURING]: ['bearings', 'auto components', 'automotive components', 'forging', 'foundry', 'castings', 'heavy engineering', 'industrial machinery', 'machine tools', 'industrial equipment', 'precision engineering', 'defence manufacturing', 'aerospace components'],
-  [LOGISTICS]: ['3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain'],
+  [MANUFACTURING]: [
+    'bearings', 'auto components', 'automotive components', 'forging', 'foundry', 'castings', 'heavy engineering', 'industrial machinery', 'machine tools', 'industrial equipment', 'precision engineering', 'defence manufacturing', 'aerospace components',
+    // More words for the same ICP industries (INVECK, 28 Oct 2026): what their people write instead.
+    'auto parts', 'auto ancillary', 'engine components', 'tractor components', 'gears', 'gearbox', 'transmission components', 'fasteners', 'sheet metal', 'pressings',
+    'die casting', 'investment casting', 'precision machining', 'CNC machining', 'machined components', 'hydraulics', 'pumps', 'valves', 'compressors',
+    'material handling equipment', 'construction equipment', 'earthmoving equipment', 'heavy fabrication', 'railway components', 'defence equipment', 'aircraft components',
+  ],
+  [LOGISTICS]: [
+    '3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain',
+    // More words for the same ICP industries (INVECK, 28 Oct 2026).
+    'warehousing and distribution', 'distribution centre', 'logistics park', 'integrated logistics', 'cold storage', 'fulfilment centre', 'in-plant logistics', 'temperature controlled logistics',
+  ],
 };
 
 const listOf = (s: string) => s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
