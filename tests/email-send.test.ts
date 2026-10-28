@@ -74,6 +74,16 @@ beforeEach(async () => {
   assets.dir = await mkdtemp(join(tmpdir(), 'assets-'));
   await writeFile(join(assets.dir, 'inveck-profile-manufacturing.pdf'), Buffer.from('%PDF-1.4 manufacturing'));
   await writeFile(join(assets.dir, 'inveck-profile-3pl.pdf'), Buffer.from('%PDF-1.4 3pl'));
+  // An ICP called Other with a first-contact template and a Follow-up 1 template (Follow-up 2 and later have none).
+  const { defaultProduct, saveIcp, saveEmailTemplate, assignEmailTemplate } = await import('@/lib/config');
+  const product = (await defaultProduct(db))!;
+  const other = await saveIcp(db, product.id, { segment: 'Other' });
+  if (!other.ok) throw new Error(other.error);
+  const first = await saveEmailTemplate(db, product.id, other.icp.id, { name: 'First contact', subject: 'Stock checks at {{company_name}}', body: '<p>Hi Ravi,</p><p>A quick note about your stock counts.</p>' });
+  const again = await saveEmailTemplate(db, product.id, other.icp.id, { name: 'Follow-up 1', subject: 'Re: Stock checks at {{company_name}}', body: '<p>Hi Ravi,</p><p>Just following up.</p>' });
+  if (!first.ok || !again.ok) throw new Error('template');
+  await assignEmailTemplate(db, product.id, other.icp.id, 0, first.id);
+  await assignEmailTemplate(db, product.id, other.icp.id, 1, again.id);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -174,9 +184,9 @@ describe('Send mail on Today', () => {
     expect(saveToSentItems).toBe(true);
     expect(message.subject).toBe('Stock checks at Hosur Gears');
     expect(message.toRecipients).toEqual([{ emailAddress: { address: 'ravi@hosurgears.in' } }]);
-    // The draft's own closing gives way to the signature, which carries the sender's full name.
+    // The template's text, then the signature, which carries the sender's full name.
     expect(message.body.contentType).toBe('HTML');
-    expect(written(message.body.content)).not.toContain('Regards');
+    expect(written(message.body.content)).toBe('Hi Ravi,\n\nA quick note about your stock counts.');
     expect(plain(message.body.content)).toMatch(/ \| Inveck India\s+Business Development/);
     expect(message.body.content).not.toContain('INVECK Sales Team');
 
@@ -217,7 +227,6 @@ describe('Send mail on Today', () => {
     await connect();
     const l = await lead();
     expect((await send({ id: (await emailTask(l.id)).id })).error).toBe('');
-    await db.update(leads).set({ followUpSubject: 'Re: Stock checks at Hosur Gears', followUpBody: 'Hi Ravi,\n\nJust following up.\n\nRegards,\nINVECK Sales Team' }).where(eq(leads.id, l.id));
     const follow = await emailTask(l.id, 'Follow-up 1');
     calls = [];
     expect((await send({ id: follow.id })).error).toBe('');
@@ -237,14 +246,16 @@ describe('Send mail on Today', () => {
     expect(log.some((x) => x.startsWith('Follow-up sent from Outlook'))).toBe(true);
   });
 
-  it('a follow-up with nothing written asks for one instead of resending the first email', async () => {
+  it('a follow-up step with no template sends nothing (no AI draft), and says which step is missing', async () => {
     await connect();
-    const l = await lead();
+    const l = await lead({ followUpSubject: 'Re: x', followUpBody: 'An AI-written draft that must never be sent.' });
     expect((await send({ id: (await emailTask(l.id)).id })).error).toBe('');
-    const follow = await emailTask(l.id, 'Follow-up 1');
+    const follow = await emailTask(l.id, 'Follow-up 2');
+    await db.update(tasks).set({ followUpRound: 2 }).where(eq(tasks.id, follow.id));
     calls = [];
-    expect((await send({ id: follow.id })).error).toMatch(/No follow-up written yet/);
+    expect((await send({ id: follow.id })).error).toMatch(/No email template is assigned to Follow-up 2 for Other/);
     expect(graphCalls()).toEqual([]);
+    expect((await db.select().from(tasks).where(eq(tasks.id, follow.id)))[0].doneAt).toBeNull();
   });
 
   it('refuses, and sends nothing: someone else\'s company, an unsaved address, no mailbox, a step already sent', async () => {
@@ -329,14 +340,16 @@ describe('Microsoft not answering', () => {
 describe('emails sent by hand (Mark sent)', () => {
   const { completeTaskAction, undoTaskAction } = { completeTaskAction: async (f: FormData) => (await import('@/app/team-actions')).completeTaskAction(f), undoTaskAction: async (f: FormData) => (await import('@/app/team-actions')).undoTaskAction(f) };
 
-  it('after the first email is marked sent, a later email step (Call again) is never the first email again', async () => {
+  it('after the first email is marked sent, a later email step (Call again) is a follow-up from its own template, never the first email again', async () => {
     await connect();
     const l = await lead();
     await completeTaskAction(form({ id: (await emailTask(l.id)).id, outcome: 'done' }));
     const again = await emailTask(l.id, 'Call again');
     calls = [];
-    expect((await send({ id: again.id })).error).toMatch(/No follow-up written yet/);
-    expect(graphCalls()).toEqual([]);
+    expect((await send({ id: again.id })).error).toBe('');
+    const m = JSON.parse(graphCalls().find((c) => c.url.endsWith('/me/sendMail'))!.body).message;
+    expect(m.subject).toBe('Re: Stock checks at Hosur Gears');
+    expect(written(m.body.content)).toBe('Hi Ravi,\n\nJust following up.');
   });
 
   it('a follow-up marked sent uses up its draft (the next round asks for a new one), and Undo puts it back', async () => {
@@ -382,26 +395,24 @@ describe('emails sent by hand (Mark sent)', () => {
 });
 
 describe('what the next email is', () => {
-  it('first email until they have been emailed; then a follow-up; signed with the sender\'s name', async () => {
+  it('the template of the step: first contact until they have been emailed, then follow-up n; a step with none is a problem, never a draft', async () => {
     const { planEmail } = await import('@/lib/mail/plan');
-    const l = await lead();
-    const sign = { from: 'INVECK Sales Team', as: 'Puja' };
-    expect(planEmail(l, undefined, sign)).toMatchObject({ followUp: false, subject: 'Stock checks at Hosur Gears' });
-    expect(planEmail(l, undefined, sign).body).toContain('Regards,\nPuja');
-    // Emailed by hand on Day 1 (marked sent): Follow-up 1 is a follow-up, as a new email.
-    const marked = { ...l, mailOutcome: 'Sent', followUpBody: 'Following up.' };
-    expect(planEmail(marked, undefined, sign)).toMatchObject({ followUp: true, subject: 'Re: Stock checks at Hosur Gears', body: 'Following up.' });
-    // No sender name in Settings that matches: the text is left as written.
-    expect(planEmail(l, undefined, { from: '', as: 'Puja' }).body).toContain('INVECK Sales Team');
+    const { loadTemplateSet } = await import('@/lib/config');
+    const templates = await loadTemplateSet(db);
+    const l = await lead({ emailBody: 'An AI draft that must never be used.', followUpBody: 'Neither this one.' });
+    expect(planEmail(l, undefined, { templates, owner: 'Puja' })).toMatchObject({ followUp: false, subject: 'Stock checks at Hosur Gears', html: true, problem: '' });
+    // Emailed by hand on Day 1 (marked sent): Follow-up 1 is a follow-up, as a new email, from its own template.
+    const marked = { ...l, mailOutcome: 'Sent' };
+    expect(planEmail(marked, undefined, { templates, owner: 'Puja', step: 1 })).toMatchObject({ followUp: true, subject: 'Re: Stock checks at Hosur Gears', problem: '' });
+    // Follow-up 2 has no template: nothing is written for it.
+    const two = planEmail(marked, undefined, { templates, owner: 'Puja', step: 2 });
+    expect(two).toMatchObject({ followUp: true, subject: '', body: '' });
+    expect(two.problem).toMatch(/No email template is assigned to Follow-up 2 for Other/);
+    // No configured templates at all: the same, for any ICP without a built-in one.
+    expect(planEmail(l, undefined, { owner: 'Puja' }).problem).toMatch(/first contact/);
     // Any email marked as gone counts, on any step; a bounce never arrived.
-    expect(planEmail({ ...l, mailOutcome: 'No reply' }, undefined, sign).followUp).toBe(true);
-    expect(planEmail({ ...l, mailOutcome: 'Bounced' }, undefined, sign).followUp).toBe(false);
-  });
-
-  it('only the sign-off is re-signed, not every mention of the sender name', async () => {
-    const { planEmail } = await import('@/lib/mail/plan');
-    const l = await lead({ emailBody: 'Hi Ravi,\n\nINVECK helps plants count stock on mobile.\n\nRegards,\nINVECK' });
-    expect(planEmail(l, undefined, { from: 'INVECK', as: 'Puja' }).body).toBe('Hi Ravi,\n\nINVECK helps plants count stock on mobile.\n\nRegards,\nPuja');
+    expect(planEmail({ ...l, mailOutcome: 'No reply' }, undefined, { templates }).followUp).toBe(true);
+    expect(planEmail({ ...l, mailOutcome: 'Bounced' }, undefined, { templates }).followUp).toBe(false);
   });
 });
 
@@ -508,16 +519,14 @@ describe('first emails for Manufacturing and 3PL', () => {
     expect(Buffer.from(m.attachments[0].contentBytes, 'base64').toString()).toContain('3pl');
   });
 
-  it('CA firms keep their own draft and get no Manufacturing or 3PL template or PDF', async () => {
+  it('CA firms have no email template until one is assigned: nothing is drafted or sent, and no Manufacturing or 3PL template or PDF is used', async () => {
     await connect();
     const l = await lead({ segment: 'CA Firms' });
     const t = await emailTask(l.id);
     calls = [];
-    expect((await send({ id: t.id })).error).toBe('');
-    const m = sentMessage();
-    expect(m.subject).toBe('Stock checks at Hosur Gears');
-    // No profile PDF: the only attachment is the signature's inline logo.
-    expect((m.attachments ?? []).filter((a: { isInline?: boolean }) => !a.isInline)).toEqual([]);
+    expect((await send({ id: t.id })).error).toMatch(/No email template is assigned to the first contact for CA Firms/);
+    expect(graphCalls()).toEqual([]);
+    expect((await db.select().from(tasks).where(eq(tasks.id, t.id)))[0].doneAt).toBeNull();
   });
 
   it('a missing contact name or owner stops the send with a clear message, even from the review form', async () => {
@@ -579,11 +588,12 @@ describe('editing the email before it is sent', () => {
     const l = await lead();
     const t = await emailTask(l.id);
     const { planEmail } = await import('@/lib/mail/plan');
-    const plan = planEmail(l, undefined, { from: 'INVECK Sales Team', as: 'Puja', owner: 'Puja' });
-    expect((await send({ id: t.id, subject: plan.subject, body: plan.body.replace(/\n/g, '\r\n') })).error).toBe('');
+    const { loadTemplateSet } = await import('@/lib/config');
+    const plan = planEmail(l, undefined, { templates: await loadTemplateSet(db), owner: 'Puja' });
+    expect((await send({ id: t.id, subject: plan.subject, body: plan.body })).error).toBe('');
     const log = (await db.select().from(activities).where(eq(activities.leadId, l.id))).map((a) => a.text);
     expect(log.some((x) => x.includes('text edited before sending'))).toBe(false);
-    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailBody).toMatch(/Regards,\r?\nPuja/);
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].emailBody).toContain('A quick note about your stock counts.');
   });
 });
 
@@ -719,14 +729,12 @@ describe('email templates for every step', () => {
     expect(m.body.content).not.toMatch(/<script|onclick|javascript:/);
     expect((m.body.content.match(/Business Development/g) ?? []).length).toBe(1);
 
-    // A different follow-up with no template of its own: the follow-up draft as before.
+    // A different follow-up with no template of its own: nothing is sent, and the AI draft on the lead is not used.
     const l2 = await lead({ segment: 'Manufacturing', mailOutcome: 'Sent', contactEmail: 'b@x.in', followUpSubject: 'Re: x', followUpBody: 'The AI draft.' });
     const t2 = await followUpTask(l2.id, 2);
     calls = [];
-    expect((await send({ id: t2.id })).error).toBe('');
-    m = sentMessage();
-    expect(m.subject).toBe('Re: x');
-    expect(m.body.content).toContain('The AI draft.');
+    expect((await send({ id: t2.id })).error).toMatch(/No email template is assigned to Follow-up 2 for Manufacturing/);
+    expect(graphCalls()).toEqual([]);
 
     // Editing one email (review form) changes only that email: the saved template is as it was.
     const l3 = await lead({ segment: 'Manufacturing', mailOutcome: 'Sent', contactEmail: 'c@x.in' });

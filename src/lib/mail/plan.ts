@@ -46,37 +46,20 @@ export type EmailPlan = {
 };
 
 /**
- * What the next email to a contact is: the lead's drafted first email, or, once they have been
- * emailed, a follow-up (the follow-up draft, with the last email quoted below it). Drafts are signed
- * with the sender name in Settings; sent from someone's own mailbox, they are signed with theirs.
+ * What the next email to a contact is: the template assigned to the step it is for (Configuration → Templates): the first
+ * contact, or follow-up n once they have been emailed (with the last email quoted below it). A step with no template is a
+ * problem to fix, never a drafted email: nothing is written for it, and it can't be sent until an administrator assigns one.
  */
-export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from: string; as: string; owner?: string | null; templates?: TemplateSet; /** Which follow-up this is (see emailStepOf); 0 or none: the first contact. */ step?: number }): EmailPlan {
+export function planEmail(lead: Lead, prior: SentEmail | undefined, sign: { from?: string; as?: string; owner?: string | null; templates?: TemplateSet; /** Which follow-up this is (see emailStepOf); 0 or none: the first contact. */ step?: number }): EmailPlan {
   // Emailed from the app before, or by hand on any earlier step (marked sent): never the first email twice.
   const followUp = !!prior || emailedAlready(lead);
-  const from = sign.from.trim();
-  const as = sign.as.trim();
-  // Only the sign-off: the sender name where it last appears, near the end (not every mention of it).
-  const signed = (text: string) => {
-    const i = text.lastIndexOf(from);
-    return from.length >= 3 && as && from !== as && i >= 0 && i >= text.length - from.length - 200 ? text.slice(0, i) + as + text.slice(i + from.length) : text;
-  };
-  if (!followUp) {
-    // Manufacturing and 3PL: the fixed first email, with the contact's name and the owner's. Others keep the draft.
-    const first = firstEmailFor(lead, sign.owner, sign.templates);
-    if (first) return { followUp, subject: first.subject, body: first.body, html: first.html, quote: '', template: first.template, problem: first.problem };
-    return { followUp, subject: lead.emailSubject, body: signed(lead.emailBody), quote: '', problem: '' };
+  const step = followUp ? sign.step || 1 : 0;
+  const found = firstEmailFor(lead, sign.owner, sign.templates, step);
+  if (!found) {
+    const where = step === 0 ? 'the first contact' : `Follow-up ${step}`;
+    return { followUp, subject: '', body: '', quote: '', problem: `No email template is assigned to ${where} for ${lead.segment || 'this ICP'}. Nothing is written for it: an administrator can assign one under Configuration → Templates.` };
   }
-  // A follow-up step with a template assigned (Configuration → Templates) sends it; with none, the follow-up draft as before.
-  const stepTemplate = sign.step && sign.step > 0 ? firstEmailFor(lead, sign.owner, sign.templates, sign.step) : null;
-  if (stepTemplate) return { followUp, subject: stepTemplate.subject, body: stepTemplate.body, html: stepTemplate.html, quote: prior ? quoteOf(prior) : '', problem: stepTemplate.problem };
-  const original = (prior?.subject || lead.emailSubject).replace(/^\s*re:\s*/i, '');
-  return {
-    followUp,
-    subject: lead.followUpSubject || (original ? `Re: ${original}` : ''),
-    body: signed(lead.followUpBody),
-    quote: prior ? quoteOf(prior) : '',
-    problem: '',
-  };
+  return { followUp, subject: found.subject, body: found.body, html: found.html, quote: followUp && prior ? quoteOf(prior) : '', template: found.template, problem: found.problem };
 }
 
 /**

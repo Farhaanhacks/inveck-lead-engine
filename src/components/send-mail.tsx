@@ -2,10 +2,9 @@
 
 import Link from 'next/link';
 import { useActionState, useState, type FormEvent } from 'react';
-import { useFormStatus } from 'react-dom';
 import { RichEditor } from './rich-editor';
 import { htmlToText } from '@/lib/rich-text';
-import { sendEmailAction, writeFollowUpForTaskAction, type SendMailState } from '@/app/mail-actions';
+import { sendEmailAction, type SendMailState } from '@/app/mail-actions';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 const MAIN = 'btn-primary rounded-r-none px-2.5 py-1 text-xs';
@@ -17,15 +16,6 @@ const MAILTO_SAFE = 1800;
 function mailtoUrl(to: string, subject: string, body: string): string {
   const q = [subject && `subject=${encodeURIComponent(subject)}`, body && `body=${encodeURIComponent(body.replace(/\r?\n/g, '\r\n'))}`].filter(Boolean);
   return `mailto:${to.trim()}${q.length ? `?${q.join('&')}` : ''}`;
-}
-
-function WriteButton() {
-  const { pending } = useFormStatus();
-  return (
-    <button disabled={pending} className={SMALL}>
-      {pending ? 'Writing…' : 'Write it for me'}
-    </button>
-  );
 }
 
 /**
@@ -92,8 +82,8 @@ export function SendMail({
             Send mail
           </button>
         ) : !ready ? (
-          <button type="button" onClick={() => setOpen(true)} disabled={pending} className={MAIN}>
-            Write and send
+          <button type="button" disabled className={MAIN}>
+            Send mail
           </button>
         ) : outlook ? (
           <form action={send}>
@@ -108,7 +98,7 @@ export function SendMail({
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          disabled={pending}
+          disabled={pending || !!problem}
           aria-expanded={open}
           aria-controls={reviewId}
           aria-label="Edit the email before sending"
@@ -163,13 +153,6 @@ export function SendMail({
               <button type="button" onClick={() => setOpen(false)} className={SMALL}>Close</button>
             </div>
           </form>
-          {followUp && !ready && (
-            <form action={writeFollowUpForTaskAction} className="flex items-center gap-2 border-t border-line pt-2">
-              <input type="hidden" name="id" value={taskId} />
-              <span className="text-xs text-muted">No follow-up written yet.</span>
-              <WriteButton />
-            </form>
-          )}
         </div>
       )}
       {!outlook && opened && (

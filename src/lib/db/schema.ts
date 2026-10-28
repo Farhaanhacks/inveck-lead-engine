@@ -820,6 +820,8 @@ export const emailTemplates = pgTable('email_templates', {
   id: serial('id').primaryKey(),
   productId: integer('product_id').notNull(),
   icpId: integer('icp_id').notNull(),
+  /** 'email' (the table's first use) or 'whatsapp': a plain-text message. */
+  channel: text('channel').$type<'email' | 'whatsapp'>().notNull().default('email'),
   name: text('name').notNull(),
   subject: text('subject').notNull().default(''),
   /** Sanitized HTML (see mail/sanitize.ts) with {{variables}}. */
@@ -835,8 +837,9 @@ export const emailTemplateSteps = pgTable(
     id: serial('id').primaryKey(),
     productId: integer('product_id').notNull(),
     icpId: integer('icp_id').notNull(),
+    channel: text('channel').$type<'email' | 'whatsapp'>().notNull().default('email'),
     step: integer('step').notNull(),
     templateId: integer('template_id').notNull(),
   },
-  (t) => [uniqueIndex('email_template_steps_idx').on(t.productId, t.icpId, t.step)],
+  (t) => [uniqueIndex('email_template_steps_v2').on(t.productId, t.icpId, t.channel, t.step)],
 );

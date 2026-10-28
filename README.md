@@ -498,6 +498,6 @@ neither Vercel's scheduled jobs nor anyone opening a page.
 
 **Versions.** Every change to a product's configuration raises its configuration version. Each run records the product, that version and (on the AI planner) the exact prompt; leads record their product, ICP and the version in force when they were found or imported.
 
-### Email templates per step
+### Email and WhatsApp templates per step
 
-Configuration → Templates: pick an ICP, write its email templates (formatting such as bold text, links and line breaks is kept), and assign one to each step: the first contact and every follow-up of that ICP's follow-up rule (the steps change with the rule). A step without a template is flagged and sends the AI-written follow-up draft, as before. Templates are stored as sanitized HTML and sent as HTML with the sender's signature; editing an email while sending it never changes its template. The earlier single email template of each ICP became its "First contact" template, with the same wording.
+Configuration → Templates: pick an ICP, write its email and WhatsApp templates, and assign one to each step: the first contact and every follow-up of that ICP's follow-up rule (the steps change with the rule). Email templates keep formatting (bold text, links, line breaks) as sanitized HTML, sent with the sender's signature; WhatsApp templates are plain text. Nothing is drafted by AI: a step with no template shows as Missing and nothing is written or sent for it until an administrator assigns one. Editing a message while sending it never changes its template. The earlier single email and WhatsApp template of each ICP became its "First contact" template, with the same wording.

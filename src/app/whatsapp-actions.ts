@@ -11,7 +11,7 @@ import { requireUser } from '@/lib/users';
 import { formatDateTime } from '@/lib/dates';
 import { waConfig } from '@/lib/whatsapp/cloud';
 import { CONSENT_WAYS, recordConsent, removeConsent, sendFromInveck } from '@/lib/whatsapp/contacts';
-import { buildWhatsApp } from '@/lib/whatsapp-outreach';
+import { buildWhatsApp, whatsappStepOf } from '@/lib/whatsapp-outreach';
 import { defaultProduct, loadTemplateSets } from '@/lib/config';
 import { completeTaskAction } from './team-actions';
 
@@ -116,7 +116,7 @@ export async function openedWhatsAppAction(taskId: number): Promise<{ error: str
   if (!lead) return { error: 'This company no longer exists.' };
   const [owner] = lead.ownerId != null ? await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId)) : [];
   const templates = (await loadTemplateSets(db, [lead.productId])).get(lead.productId ?? (await defaultProduct(db))?.id ?? 0);
-  const built = buildWhatsApp(lead, owner?.name, templates);
+  const built = buildWhatsApp(lead, owner?.name, templates, whatsappStepOf(task));
   if (!built.ok) return { error: built.error };
   const done = new FormData();
   done.set('id', String(task.id));

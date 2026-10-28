@@ -577,7 +577,10 @@ export const SCHEMA_STATEMENTS = [
     step INTEGER NOT NULL,
     template_id INTEGER NOT NULL
   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS email_template_steps_idx ON email_template_steps (product_id, icp_id, step)`,
+  `ALTER TABLE email_templates ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email'`,
+  `ALTER TABLE email_template_steps ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email'`,
+  `DROP INDEX IF EXISTS email_template_steps_idx`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS email_template_steps_v2 ON email_template_steps (product_id, icp_id, channel, step)`,
   `CREATE TABLE IF NOT EXISTS followup_rules (
     id SERIAL PRIMARY KEY,
     product_id INTEGER NOT NULL,

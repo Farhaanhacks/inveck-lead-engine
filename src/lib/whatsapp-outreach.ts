@@ -12,6 +12,9 @@ import { templateKey, type TemplateSet } from './config';
 
 export type WhatsAppTemplate = 'manufacturing' | '3pl' | 'ca';
 
+/** Which step of its ICP's sequence a WhatsApp task is: the follow-up round it carries (the general one, or a CA firm's), else the first contact. */
+export const whatsappStepOf = (task: { followUpRound: number; caRound: number }) => (task.followUpRound > 0 ? task.followUpRound : task.caRound > 0 ? task.caRound : 0);
+
 /** The template for a segment, or null when it is none of the three (no guessing). */
 export function templateFor(segment: string): WhatsAppTemplate | null {
   const s = normSegment(segment);
@@ -67,11 +70,14 @@ export function buildWhatsApp(
   lead: { segment: string; company: string; contactName: string; contactPhone: string },
   ownerName: string | null | undefined,
   templates?: TemplateSet,
+  /** Which step of the ICP's sequence this message is for: 0 the first contact, n the n-th follow-up. */
+  step = 0,
 ): WhatsAppOutreach {
   const number = whatsAppDigits(lead.contactPhone);
   if (!number) return { ok: false, error: "A valid WhatsApp number is needed for the main contact. Add a mobile number under Edit point of contact first." };
-  const body = templates ? (templates.get(templateKey(lead.segment, 'whatsapp'))?.body ?? null) : builtInBody(lead.segment);
-  if (!body) return { ok: false, error: `There is no WhatsApp message for the segment "${lead.segment || 'not set'}". Add a WhatsApp template for it under Configuration → Templates.` };
+  const body = templates ? (templates.get(templateKey(lead.segment, 'whatsapp', step))?.body ?? null) : step === 0 ? builtInBody(lead.segment) : null;
+  // Nothing is written for a step with no template: it is flagged until an administrator assigns one.
+  if (!body) return { ok: false, error: step === 0 ? `There is no WhatsApp template for the segment "${lead.segment || 'not set'}". An administrator can add and assign one under Configuration → Templates.` : `No WhatsApp template is assigned to Follow-up ${step} for "${lead.segment || 'not set'}". An administrator can assign one under Configuration → Templates.` };
   const vars = varsFor(lead, ownerName, contactFirstName, (n) => (contactFirstName(n) ? n.trim() : ''));
   const r = renderTemplate(body, vars);
   if (!r.ok) {

@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { getDb } from '@/lib/db';
 import { requireAdmin } from '@/lib/access';
-import { assignEmailTemplate, deleteEmailTemplate, emailStepsFor, saveAllocation, saveEmailTemplate, saveFollowupRule, saveIcp, saveProduct, saveSearchPrompt, saveTemplate, setIcpActive, setUserProducts } from '@/lib/config';
+import { assignStepTemplate, deleteStepTemplate, saveAllocation, saveFollowupRule, saveIcp, saveProduct, saveSearchPrompt, saveStepTemplate, setIcpActive, setUserProducts, stepsFor } from '@/lib/config';
 import { createBda, setBdaActive } from '@/lib/config-team';
 import { parseOutcomes } from '@/lib/config-rules';
 import { driveSourcingTest } from '@/lib/sourcing/drive';
@@ -97,43 +97,40 @@ export async function saveAllocationAction(form: FormData) {
   back('allocation', productId, r.ok ? { ok: true, notice: 'Allocation saved. It applies from the next draw.' } : r);
 }
 
-export async function saveTemplateAction(form: FormData) {
-  await requireAdmin();
-  const productId = num(form, 'productId');
-  const r = await saveTemplate(await getDb(), productId, num(form, 'icpId'), 'whatsapp', { subject: '', body: raw(form, 'body'), active: form.get('active') === 'on' });
-  back('templates', productId, r.ok ? { ok: true, notice: 'Template saved. It applies to messages from now on; messages already sent are unchanged.' } : r, num(form, 'icpId'));
-}
+const channelOf = (form: FormData): 'email' | 'whatsapp' => (str(form, 'channel') === 'whatsapp' ? 'whatsapp' : 'email');
+const WHAT = { email: 'email', whatsapp: 'WhatsApp' } as const;
 
-/** Creates or edits one of an ICP's email templates (the body is sanitized HTML from the formatting editor). */
-export async function saveEmailTemplateAction(form: FormData) {
+/** Creates or edits one of an ICP's templates: an email's body is sanitized HTML from the formatting editor, a WhatsApp text is plain. */
+export async function saveStepTemplateAction(form: FormData) {
   await requireAdmin();
   const productId = num(form, 'productId');
   const icpId = num(form, 'icpId');
   const id = num(form, 'id') || undefined;
-  const r = await saveEmailTemplate(await getDb(), productId, icpId, { id, name: raw(form, 'name'), subject: raw(form, 'subject'), body: raw(form, 'body') });
-  back('templates', productId, r.ok ? { ok: true, notice: id ? 'Template saved. Steps using it send the new text from now on; emails already sent are unchanged.' : 'Template added. Assign it to a step below to use it.' } : r, icpId);
+  const channel = channelOf(form);
+  const r = await saveStepTemplate(await getDb(), channel, productId, icpId, { id, name: raw(form, 'name'), subject: raw(form, 'subject'), body: raw(form, 'body') });
+  back('templates', productId, r.ok ? { ok: true, notice: id ? `Template saved. Steps using it send the new text from now on; ${WHAT[channel]} messages already sent are unchanged.` : 'Template added. Assign it to a step to use it.' } : r, icpId);
 }
 
-export async function deleteEmailTemplateAction(form: FormData) {
+export async function deleteStepTemplateAction(form: FormData) {
   await requireAdmin();
   const productId = num(form, 'productId');
-  await deleteEmailTemplate(await getDb(), productId, num(form, 'id'));
-  back('templates', productId, { ok: true, notice: 'Template deleted. Any step that used it now has none (flagged below) and sends the AI draft until one is assigned.' }, num(form, 'icpId'));
+  await deleteStepTemplate(await getDb(), productId, num(form, 'id'));
+  back('templates', productId, { ok: true, notice: 'Template deleted. Any step that used it now has none (flagged as missing): nothing is sent for it until one is assigned.' }, num(form, 'icpId'));
 }
 
-/** Saves which template each step of an ICP's email sequence uses (the fields are named step_<n>; empty: none). */
-export async function saveEmailStepsAction(form: FormData) {
+/** Saves which template each step of an ICP's sequence uses on a channel (the fields are named step_<n>; empty: none). */
+export async function saveStepAssignmentsAction(form: FormData) {
   await requireAdmin();
   const productId = num(form, 'productId');
   const icpId = num(form, 'icpId');
+  const channel = channelOf(form);
   const db = await getDb();
-  for (const { step } of await emailStepsFor(db, productId, icpId)) {
+  for (const { step } of await stepsFor(db, productId, icpId)) {
     if (!form.has(`step_${step}`)) continue;
-    const chosen = num(form, `step_${step}`) || null;
-    const r = await assignEmailTemplate(db, productId, icpId, step, chosen);
+    const r = await assignStepTemplate(db, channel, productId, icpId, step, num(form, `step_${step}`) || null);
     if (!r.ok) back('templates', productId, r, icpId);
   }
-  back('templates', productId, { ok: true, notice: 'Template assignments saved. They apply to emails from now on.' }, icpId);
+  back('templates', productId, { ok: true, notice: `${WHAT[channel][0].toUpperCase()}${WHAT[channel].slice(1)} template assignments saved. They apply from now on.` }, icpId);
 }
 
 export async function saveFollowupAction(form: FormData) {
