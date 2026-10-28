@@ -41,10 +41,28 @@ describe('the sample plan from what earlier searches found', () => {
     const memory = new Map([entry(plan[0], [{ listed: 4, fresh: 0 }]), entry(plan[1], [{ listed: 3, fresh: 2 }])]);
     const out = planFromMemory(plan, memory);
     expect(out.skipped).toBe(1);
-    expect(out.plan).not.toContainEqual(plan[0]);
-    expect(out.plan).toContainEqual(plan[1]);
+    expect(out.plan.map((q) => q.q)).not.toContain(plan[0].q);
+    // Made yesterday: read further down (28 Oct), not again.
+    expect(out.plan).toContainEqual({ ...plan[1], page: 2 });
     // Its last outcome counts: it found something the time before, nothing the last time.
     expect(planFromMemory(plan, new Map([entry(plan[1], [{ listed: 3, fresh: 2 }, { listed: 3, fresh: 0 }])])).plan).not.toContainEqual(plan[1]);
+  });
+
+  it(`a search made in the last ${SEARCH_MEMORY.nextPageDays} days that found companies is read further down: its next page, to page ${SEARCH_MEMORY.lastPage}, not past a page that wasn't full; older, from the top again (28 Oct)`, () => {
+    const pageOf = (outcomes: Partial<SearchMemoryEntry['outcomes'][number]>[]) => planFromMemory([plan[1]], new Map([entry(plan[1], outcomes)])).plan[0]?.page ?? (planFromMemory([plan[1]], new Map([entry(plan[1], outcomes)])).plan.length ? 1 : null);
+    expect(pageOf([{ listed: 3, fresh: 2, results: 10 }])).toBe(2);
+    expect(pageOf([{ listed: 3, fresh: 2, results: 10 }, { listed: 3, fresh: 1, page: 2, results: 10 }])).toBe(3);
+    // The last page read, or one that wasn't full: nothing further down, and the same page would show the same people.
+    expect(pageOf([{ listed: 3, fresh: 2, page: SEARCH_MEMORY.lastPage, results: 10 }])).toBeNull();
+    expect(pageOf([{ listed: 3, fresh: 2, results: 6 }])).toBeNull();
+    // Found nothing new on its next page: left out (for 30 days), as before.
+    expect(pageOf([{ listed: 3, fresh: 2, results: 10 }, { listed: 3, fresh: 0, page: 2, results: 10 }])).toBeNull();
+    // Older than a week: searched from the top again.
+    expect(pageOf([{ at: daysAgo(SEARCH_MEMORY.nextPageDays + 1), listed: 3, fresh: 2, page: 3, results: 10 }])).toBe(1);
+    // Counted from when the sample started.
+    const memory = new Map([entry(plan[1], [{ at: daysAgo(10), listed: 3, fresh: 2, results: 10 }])]);
+    expect(planFromMemory([plan[1]], memory, new Date(Date.now() - 5 * 86_400_000)).plan[0].page).toBe(2);
+    expect(planFromMemory([plan[1]], memory).plan[0].page).toBeUndefined();
   });
 
   it(`leaves out an industry word and town once ${SEARCH_MEMORY.deadAfter} searches there found nobody on the lists, and none found anyone`, () => {

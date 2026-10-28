@@ -3,7 +3,7 @@ import type { Client, Icp, Lead, NewLead, NewPerson } from '../db/schema';
 import { EMPTY_CONTACT, atBranch, atOtherSite, buildCandidates, canBeMain, contactStanding, personSite, siteEvidence, findLinkedinProfile, rankCandidates, sameName, pickContact, searchLeaders, searchLinkedIn, type Candidate } from './contacts';
 import { writeOutreach } from './draft';
 import { researchLead, type Research } from './research';
-import { buildSources, tooSmall } from './fit';
+import { buildSources, onlyUnconfirmed, tooSmall, unconfirmedGoesAhead } from './fit';
 import { scoreLead } from './scoring';
 import { NO_CONTACT_FOUND, unconfirmedFit } from '../retired-statuses';
 import { isCaSegment } from '../tasks';
@@ -237,10 +237,14 @@ export async function processLead(
   // A list the team researched themselves: what the website doesn't show isn't held against a firm.
   // Only evidence against it (a must-have shown missing, a deal-breaker) stops it; anything that only
   // couldn't be confirmed goes ahead, with the same score and the reason kept.
-  const onlyUnconfirmed = (reason: string) =>
-    /^Needs review: /.test(reason) && !/contradicts|failed the checks/.test(reason) && reason.replace(/^Needs review: /, '').split('; ').every((part) => part.startsWith("couldn't confirm must-have"));
   if (a?.status === 'review' && lead.source === IMPORTED_SOURCE && onlyUnconfirmed(a.reason)) {
     a = { ...a, status: 'qualified', reason: `On the team's researched list; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
+  }
+  // Manufacturing and 3PL & Logistics the same way (INVECK's decisions, 26 and 27 Oct 2026): a must-have the website
+  // doesn't confirm ("multiple locations", "holds physical inventory") doesn't hold a company back; only evidence
+  // against it, or a deal-breaker, rules it out.
+  if (a?.status === 'review' && unconfirmedGoesAhead(icp.segment) && onlyUnconfirmed(a.reason)) {
+    a = { ...a, status: 'qualified', reason: `No must-have shown missing and no deal-breaker found; ${a.reason.replace(/^Needs review: /, 'not confirmed from the website: ')}` };
   }
   // Clearly too small (its own LinkedIn page at half the ICP's size or less): ruled out with that
   // reason, rather than a review for a person or a contact search with nobody to find. Never a firm
@@ -291,7 +295,7 @@ export async function processLead(
     : { name: '', title: '', email: '', phone: '', linkedin: '' };
   const notes: string[] = [];
   const [searched, leaders, news] = await Promise.all([
-    // One designation at a time from the ICP's lists, P1 first (see contactSearchPlan); each search and
+    // The ICP's designations, P1 first: one at a time (see contactSearchPlan), or lean in groups (see groupedSearchPlan); each search and
     // each person's verdict goes on the run's log. People the people-first search found here count
     // towards the contacts it looks for, so it stops sooner.
     searchLinkedIn(svc, '', lead.company, lead.city, icp, (m) => log(`${lead.company}: ${m}`), { known: opts.found, lean: opts.lean }),

@@ -2,7 +2,7 @@ import 'server-only';
 import { getDb } from './db';
 import { apiKeys, getSettings } from './settings';
 import { dbEnrichmentCache } from './enrichment-cache';
-import { dbSearchMeter, searchBudgetLeft } from './search-budget';
+import { dbSearchMeter, researchCreditsLeft, searchBudgetLeft } from './search-budget';
 import { activeRun, claimStalledRun, executeRun, logEvent, markRunPaused, MAX_RESUMES, startRun } from './runs';
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { after } from 'next/server';
@@ -111,8 +111,8 @@ export async function ensureResearch(origin: string): Promise<void> {
       .from(leads)
       .where(eq(leads.status, 'New'));
     if (!waiting || (await activeRun(db))) return;
-    // The day's Google search budget is used: they wait for the next run.
-    if ((await searchBudgetLeft(db, await getSettings(db))) < 30) return;
+    // The day's Google search budget, or its research limit, is used: they wait for the next day.
+    if ((await searchBudgetLeft(db, await getSettings(db))) < 30 || (await researchCreditsLeft(db)) < 30) return;
     const [last] = await db.select().from(runs).orderBy(desc(runs.id)).limit(1);
     if (last && Date.now() - new Date(last.startedAt).getTime() < 5 * 60 * 1000) return;
     const { run, created } = await startRun(db, { findProspects: false, trigger: 'auto' });
@@ -146,7 +146,7 @@ export async function startRefetchIfWaiting(origin?: string) {
   const db = await getDb();
   if (await pausedToday(db)) return;
   if (await activeRun(db)) return;
-  if ((await searchBudgetLeft(db, await getSettings(db))) < 30) return;
+  if ((await searchBudgetLeft(db, await getSettings(db))) < 30 || (await researchCreditsLeft(db)) < 30) return;
   // Not again straight after a run that just ended or was stopped.
   const [last] = await db.select().from(runs).orderBy(desc(runs.id)).limit(1);
   if (last && Date.now() - new Date(last.finishedAt ?? last.startedAt).getTime() < 10 * 60 * 1000) return;

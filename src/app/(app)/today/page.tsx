@@ -13,7 +13,8 @@ import { addDays } from '@/lib/content-meta';
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
-import { liveServices, startRefetchIfWaiting } from '@/lib/run-driver';
+import { liveServices, requestOrigin, startRefetchIfWaiting } from '@/lib/run-driver';
+import { noteWake, wakeDailyRun } from '@/lib/sourcing/wake';
 import { searchBudgetLeft } from '@/lib/search-budget';
 import { findCaFirmLinkedin } from '@/lib/ca-linkedin';
 import { pausedToday } from '@/lib/pause';
@@ -622,6 +623,14 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
     await bestEffort('restarting contact searches', () => startRefetchIfWaiting(), undefined);
     await bestEffort('planning Today steps', () => ensureSequences(db), 0);
   }, undefined);
+  // The daily Morning Sample starts from here once it is due, and carries on when it paused, as the CA draw does: anyone
+  // opening Today wakes it (at most every minute).
+  if (!fromAction) {
+    await atMostEvery('today:daily-run', 60_000, () => bestEffort('waking the daily run', async () => {
+      await noteWake(db, 'page', 'Today');
+      await wakeDailyRun(db, await requestOrigin());
+    }, undefined), undefined);
+  }
   // The inbound demo sheet (read-only): new requests become leads, and Teams meetings when the sheet gives a slot. At most
   // every five minutes (the same cadence as the scheduled sync in vercel.json), however many pages are opened.
   // (After the page is sent, so reading the sheet never makes Today wait.)

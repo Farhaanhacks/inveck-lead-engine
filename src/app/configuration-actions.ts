@@ -9,8 +9,8 @@ import { requireAdmin } from '@/lib/access';
 import { assignEmailTemplate, deleteEmailTemplate, emailStepsFor, saveAllocation, saveEmailTemplate, saveFollowupRule, saveIcp, saveProduct, saveSearchPrompt, saveTemplate, setIcpActive, setUserProducts } from '@/lib/config';
 import { createBda, setBdaActive } from '@/lib/config-team';
 import { parseOutcomes } from '@/lib/config-rules';
-import { startRun } from '@/lib/runs';
-import { driveRun } from '@/lib/run-driver';
+import { driveSourcingTest } from '@/lib/sourcing/drive';
+import { startProspectSearch } from '@/lib/sourcing/sample-run';
 
 /** Every action here is administrators only (checked on the server, whatever page sent it). */
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -143,15 +143,18 @@ export async function saveFollowupAction(form: FormData) {
   back('followups', productId, r.ok ? { ok: true, notice: 'Follow-up rule saved. It applies to sequences that start from now on.' } : r);
 }
 
-/** Starts a prospecting run for one product (its search mode and prompts), like Run on the dashboard. */
+/**
+ * Starts a prospect search for what the morning draw is short of, on the one capped engine the daily run uses (INVECK,
+ * 26 Oct 2026: its rules and its credit limit), like Find new prospects on the dashboard.
+ */
 export async function startProspectingAction(form: FormData) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const productId = num(form, 'productId');
-  const { run, created } = await startRun(await getDb(), { findProspects: true, trigger: 'manual', productId });
-  if (created) {
+  const search = await startProspectSearch(await getDb(), { wanted: null, to: '' }, user.id);
+  if (search.created) {
     const h = await headers();
     const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;
-    after(() => driveRun(run.id, origin));
+    after(() => driveSourcingTest(search.id, origin));
   }
-  back('icps', productId, { ok: true, notice: created ? `Prospecting run ${run.id} started. Watch it on the dashboard.` : 'A run is already in progress.' });
+  back('icps', productId, { ok: true, notice: search.created ? `Prospect search ${search.id} started. Watch it on the Sourcing page.` : `A search is already running (${search.id}). Watch it on the Sourcing page.` });
 }

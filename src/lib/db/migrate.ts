@@ -773,4 +773,42 @@ export const SCHEMA_STATEMENTS = [
    WHERE key = 'pausedDays' AND jsonb_typeof(value) = 'array' AND NOT value @> '["2026-10-23"]'::jsonb
    AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'pauseFriday23V1')`,
   `INSERT INTO settings (key, value) SELECT 'pauseFriday23V1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM settings WHERE key = 'pausedDays') ON CONFLICT (key) DO NOTHING`,
+  // P1 only (INVECK's decision, 25 Oct 2026): their P1 designations for Manufacturing and 3PL & Logistics, and no P2
+  // or P3. Set once on the live database (raising the product's configuration version, as saving the ICP does); the
+  // Configuration page can change them afterwards.
+  `UPDATE icps SET target_titles = 'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Head of Procurement & Supply Chain', p2_titles = '', p3_titles = ''
+   WHERE lower(segment) = 'manufacturing' AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpP1OnlyV1')`,
+  `UPDATE icps SET target_titles = 'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Warehouse Operations, Warehouse Manager, Head of Procurement & Supply Chain', p2_titles = '', p3_titles = ''
+   WHERE lower(segment) = '3pl & logistics' AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpP1OnlyV1')`,
+  `UPDATE products SET config_version = config_version + 1
+   WHERE id IN (SELECT product_id FROM icps WHERE lower(segment) IN ('manufacturing', '3pl & logistics'))
+   AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpP1OnlyV1')`,
+  `INSERT INTO settings (key, value) SELECT 'icpP1OnlyV1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
+  // INVECK's decision, 26 Oct 2026: Finance Head and Finance Controller on the Manufacturing P1 list, and a Store
+  // Incharge is never a contact (Manufacturing and 3PL & Logistics; CA firms keep their own rules). Set once, as above.
+  `UPDATE icps SET target_titles = 'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Finance Head, Finance Controller, Head of Procurement & Supply Chain'
+   WHERE lower(segment) = 'manufacturing' AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpFinanceStoreV1')`,
+  `UPDATE icps SET avoid_titles = CASE WHEN trim(avoid_titles) = '' THEN 'Store Incharge' ELSE avoid_titles || ', Store Incharge' END
+   WHERE lower(segment) IN ('manufacturing', '3pl & logistics') AND avoid_titles NOT ILIKE '%store incharge%'
+   AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpFinanceStoreV1')`,
+  `UPDATE products SET config_version = config_version + 1
+   WHERE id IN (SELECT product_id FROM icps WHERE lower(segment) IN ('manufacturing', '3pl & logistics'))
+   AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icpFinanceStoreV1')`,
+  `INSERT INTO settings (key, value) SELECT 'icpFinanceStoreV1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
+  // "No contact found" ends a company's follow-ups (INVECK's decision, 27 Oct 2026; see completeTaskAction). Once, for
+  // companies where it was logged during their follow-ups before that: their open rounds are ticked off, with a note.
+  // CA firms keep their own flow.
+  `INSERT INTO activities (lead_id, kind, text)
+   SELECT DISTINCT t.lead_id, 'note', 'Follow-ups stopped: "No contact found" was logged during them (tidied up on 27 Oct 2026; open follow-up rounds ticked off)'
+   FROM tasks t WHERE t.follow_up_round > 0 AND t.done_at IS NULL
+     AND EXISTS (SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.status <> 'Deleted' AND l.segment !~* '\\m(ca|chartered|audit|accountant)')
+     AND EXISTS (SELECT 1 FROM tasks c WHERE c.lead_id = t.lead_id AND c.kind = 'call' AND c.outcome = 'no_contact' AND c.done_at IS NOT NULL
+       AND c.done_at >= (SELECT min(r.created_at) FROM tasks r WHERE r.lead_id = t.lead_id AND r.follow_up_round > 0))
+     AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'noContactFollowUpsV1')`,
+  `UPDATE tasks t SET done_at = now(), outcome = 'closed' WHERE t.follow_up_round > 0 AND t.done_at IS NULL
+     AND EXISTS (SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.status <> 'Deleted' AND l.segment !~* '\\m(ca|chartered|audit|accountant)')
+     AND EXISTS (SELECT 1 FROM tasks c WHERE c.lead_id = t.lead_id AND c.kind = 'call' AND c.outcome = 'no_contact' AND c.done_at IS NOT NULL
+       AND c.done_at >= (SELECT min(r.created_at) FROM tasks r WHERE r.lead_id = t.lead_id AND r.follow_up_round > 0))
+     AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'noContactFollowUpsV1')`,
+  `INSERT INTO settings (key, value) SELECT 'noContactFollowUpsV1', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
 ];

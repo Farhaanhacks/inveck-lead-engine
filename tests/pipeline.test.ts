@@ -147,10 +147,11 @@ describe('full run with DeepSeek-style messy answers', () => {
     expect(log.verified).toEqual([]);
     expect(log.apollo ?? []).toEqual([]);
 
-    // No LinkedIn hits: leadership named only in company records can't be confirmed on LinkedIn, so it is
-    // set aside, not used: no main contact (the team finds one); invented names are dropped.
+    // No LinkedIn hits: no main contact (the team finds one); invented names are dropped. On the daily run's research
+    // rules (every lead's since 26 Oct 2026) company records aren't searched for its officers, so nobody named only
+    // there is even set aside.
     expect(L['Ash Logistics and Traders Pvt Ltd'].contactName).toBe('');
-    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).toContain('Jitendra Govind Joshi set aside: no LinkedIn profile confirms');
+    expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Jitendra Govind Joshi');
     // A CFO isn't on the Manufacturing P1/P2/P3 lists, so the client doesn't want their details.
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Vidya Girish Pathak');
     expect(L['Ash Logistics and Traders Pvt Ltd'].otherDecisionMakers).not.toContain('Invented Person');

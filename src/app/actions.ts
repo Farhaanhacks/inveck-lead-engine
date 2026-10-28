@@ -24,6 +24,8 @@ import { importContactSheet, parseContactSheet } from '@/lib/contact-import';
 import { cleanPhone } from '@/lib/tracker';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
+import { driveSourcingTest } from '@/lib/sourcing/drive';
+import { startProspectSearch } from '@/lib/sourcing/sample-run';
 import { KnownBranches } from '@/lib/branches';
 import { escalate, newContactNamed } from '@/lib/escalate';
 import { stampNewLead } from '@/lib/config';
@@ -103,7 +105,7 @@ async function researchNow() {
 }
 
 export async function startRunAction(form: FormData) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const db = await getDb();
   // Who gets what the search finds: the morning draw (''), the whole team now ('team') or one person (their id).
   const to = str(form, 'prospectsTo');
@@ -112,7 +114,18 @@ export async function startRunAction(form: FormData) {
   const count = (name: string) => Math.min(200, Math.max(0, Math.floor(Number(str(form, name)) || 0)));
   const asked = { [MANUFACTURING]: count('manufacturing'), [LOGISTICS]: count('logistics') };
   const prospectsWanted = asked[MANUFACTURING] || asked[LOGISTICS] ? asked : null;
-  const { run, created } = await startRun(db, { findProspects: str(form, 'findProspects') === 'yes', trigger: 'manual', prospectsTo, prospectsWanted });
+  // Finding new prospects runs on the one capped engine, as the daily run does (INVECK, 26 Oct 2026): its rules and its
+  // credit limit. It's watched on the Sourcing page; what it approves goes into the pipeline, to whoever was chosen.
+  if (str(form, 'findProspects') === 'yes') {
+    const search = await startProspectSearch(db, { wanted: prospectsWanted, to: prospectsTo }, user.id);
+    if (search.created) {
+      const h = await headers();
+      const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;
+      after(() => driveSourcingTest(search.id, origin));
+    }
+    redirect(`/sourcing?sample=${search.id}#morning`);
+  }
+  const { run, created } = await startRun(db, { findProspects: false, trigger: 'manual', prospectsTo, prospectsWanted });
   if (created) {
     const h = await headers();
     const origin = `${h.get('x-forwarded-proto') || 'http'}://${h.get('host')}`;

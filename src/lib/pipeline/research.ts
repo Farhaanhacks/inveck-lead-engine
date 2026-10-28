@@ -8,8 +8,10 @@ import {
   FIT_JSON_SCHEMA,
   icpCriteria,
   mergeRisks,
+  onlyUnconfirmed,
   readCheckReply,
   readFitReply,
+  unconfirmedGoesAhead,
   verdictProblems,
   type Criterion,
   type FitDecision,
@@ -239,7 +241,9 @@ export async function researchLead(
   if (round.error !== undefined) return { error: round.error };
 
   const first = round.ok;
-  if (first && first.decision.status === 'review' && first.decision.unconfirmed.length) {
+  // Where an unconfirmed must-have doesn't hold a company back (unconfirmedGoesAhead), no search is paid to settle one.
+  const settles = !first || !unconfirmedGoesAhead(icp.segment) || !onlyUnconfirmed(first.decision.reason);
+  if (first && settles && first.decision.status === 'review' && first.decision.unconfirmed.length) {
     const more = await moreEvidence(svc, lead, first.decision.unconfirmed, read.sources.length + 1);
     searches = more.searches;
     if (more.sources.length) {

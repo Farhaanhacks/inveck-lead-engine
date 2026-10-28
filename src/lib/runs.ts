@@ -10,7 +10,7 @@ import { products, type Product } from './db/schema';
 import { normSegment } from './icp-match';
 import { isCaSegment } from './tasks';
 import { peopleFirstContacts, sourceProspects, wantsAnotherRound } from './sourcing/morning';
-import { RESEARCH_CREDITS, searchBudgetLeft } from './search-budget';
+import { RESEARCH_CREDITS, RESEARCH_DAY_CREDITS, researchCreditsLeft, researchMeter, searchBudgetLeft } from './search-budget';
 import { normQuery } from './pipeline/query-history';
 import { contactFromTeam } from './team-contact';
 export { contactFromTeam };
@@ -219,8 +219,10 @@ async function claimRefetch(db: Db, limit: number): Promise<Lead[]> {
  * Works on a run until it's finished or `budgetMs` runs out.
  * Returns 'continue' when there's more to do (the caller then schedules another invocation).
  */
-export async function executeRun(db: Db, runId: number, svc: Services, budgetMs: number): Promise<'done' | 'continue'> {
+export async function executeRun(db: Db, runId: number, live: Services, budgetMs: number): Promise<'done' | 'continue'> {
   const started = Date.now();
+  // Everything a run searches counts into the day's research total too (RESEARCH_DAY_CREDITS; live runs only).
+  const svc: Services = live.meter ? { ...live, meter: researchMeter(db, live.meter) } : live;
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
   if (!run || run.status !== 'running') return 'done';
   const stats: RunStats = { ...EMPTY_STATS, ...run.stats };
@@ -230,14 +232,19 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
   };
   // Stop means stop: companies still waiting to have their contacts found again are dropped from the
   // queue (their saved contacts stay as they are), so opening Today doesn't start it all again.
-  // Whether the day's Google search budget (counted only on live runs, which have a meter) has room for this much.
-  const budgetFor = async (credits: number) => !svc.meter || (await searchBudgetLeft(db, svc.settings)) >= credits;
+  // Whether the day's Google search budget (counted only on live runs, which have a meter) has room for this much, and
+  // the day's research limit (RESEARCH_DAY_CREDITS) too.
+  const budgetFor = async (credits: number) => !svc.meter || ((await searchBudgetLeft(db, svc.settings)) >= credits && (await researchCreditsLeft(db)) >= credits);
   let budgetLogged = false;
   const logBudgetUsed = async () => {
     if (budgetLogged) return;
     budgetLogged = true;
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(eq(leads.status, 'New'));
-    await log(`The day's Google search budget (${svc.settings.dailySearchBudget.toLocaleString('en-IN')}) is used${Number(n) ? `: ${n} compan${Number(n) === 1 ? 'y waits' : 'ies wait'} for research on the next run` : ''}`, 'warn');
+    const which =
+      (await researchCreditsLeft(db)) < CONCURRENCY * RESEARCH_CREDITS.other
+        ? `The day's research limit (${RESEARCH_DAY_CREDITS.toLocaleString('en-IN')} Google search credits)`
+        : `The day's Google search budget (${svc.settings.dailySearchBudget.toLocaleString('en-IN')})`;
+    await log(`${which} is used${Number(n) ? `: ${n} compan${Number(n) === 1 ? 'y waits' : 'ies wait'} for research on the next day` : ''}`, 'warn');
   };
   const stop = async (): Promise<'done'> => {
     const left = await db.update(leads).set({ refetchPending: false, refetchClaimedAt: null }).where(eq(leads.refetchPending, true)).returning({ id: leads.id });
@@ -361,6 +368,8 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
             result = await processLead(svc, lead, { icps: allIcps, clients: clientList, taken, ownLeads }, (m, l) => log(m, l, lead.id), {
               teamContact: await contactFromTeam(db, lead),
               found: await peopleFirstContacts(db, lead),
+              // The daily run's research rules for every lead (CA firms keep theirs).
+              lean: !isCaSegment(lead.segment),
             });
           } catch (e) {
             result = { status: 'Error' as const, lastError: errorMessage(e) };
@@ -411,6 +420,7 @@ export async function executeRun(db: Db, runId: number, svc: Services, budgetMs:
             contactsOnly: true,
             teamContact: await contactFromTeam(db, lead),
             found: await peopleFirstContacts(db, lead),
+            lean: !isCaSegment(lead.segment),
           });
           const { people: found, ...update } = result;
           await db.update(leads).set({ ...update, refetchPending: false, refetchClaimedAt: null, processingStartedAt: null, updatedAt: new Date() }).where(eq(leads.id, lead.id));

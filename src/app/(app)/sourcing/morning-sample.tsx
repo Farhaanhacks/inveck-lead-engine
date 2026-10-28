@@ -13,7 +13,7 @@ import { AutoRefresh } from '@/components/auto-refresh';
 import { CopyButton } from '@/components/copy-button';
 import { assignSampleAction, carryOnSampleAction, pushSampleAction, startMorningSampleAction, stopSampleAction } from '@/app/sourcing-actions';
 import { canCarryOn } from '@/lib/sourcing/test-run';
-import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, SAMPLE_RULES, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
+import { CA_PER_ASSOCIATE, cardLead, isMorningSample, quotaFor, rejectionReason, SAMPLE_3PL_RULES, SAMPLE_RULES, type MorningSampleReport, type SampleCard, type SampleHand, type SamplePerson } from '@/lib/sourcing/sample-run';
 
 const SMALL = 'btn-secondary px-2.5 py-1 text-xs';
 const th = 'px-3 py-2 text-left font-medium whitespace-nowrap';
@@ -206,6 +206,71 @@ function PersonDay({ r, hand, senderName, icps }: { r: MorningSampleReport; hand
   );
 }
 
+/** Where a run's Google search credits went, step by step, and what that came to per company researched and per approved one. */
+function SpendCard({ r }: { r: MorningSampleReport }) {
+  const steps = Object.entries(r.spend ?? {}).sort((a, b) => b[1] - a[1]);
+  if (!steps.length) return null;
+  const total = r.credits ?? 0;
+  const counted = steps.reduce((a, [, n]) => a + n, 0);
+  const researched = r.companies.filter((c) => c.outcome && c.outcome !== 'waiting').length;
+  const approved = r.companies.filter((c) => c.outcome === 'approved').length;
+  const pct = (n: number) => (total ? `${Math.round((n / total) * 100)}%` : '');
+  return (
+    <div className="card mb-4 p-4 text-sm">
+      <p className="font-medium">Where the credits went</p>
+      <ul className="mt-1 space-y-0.5 text-ink-2">
+        {steps.map(([step, n]) => (
+          <li key={step}>
+            <span className="tabular-nums font-medium">{n.toLocaleString('en-IN')}</span> {step} <span className="text-xs text-muted">{pct(n)}</span>
+          </li>
+        ))}
+        {counted < total && <li className="text-xs text-muted">{(total - counted).toLocaleString('en-IN')} spent before this was counted</li>}
+      </ul>
+      {Object.entries(r.yields ?? {}).map(([segment, y]) => (
+        <p key={segment} className="mt-1 text-xs text-muted">
+          {segment} people searches: {y.found.toLocaleString('en-IN')} found a new company, {y.none.toLocaleString('en-IN')} found none.
+        </p>
+      ))}
+      <p className="mt-2 text-xs text-muted">
+        {total.toLocaleString('en-IN')} credits in all{researched ? `: ${Math.round(total / researched)} per company researched` : ''}{approved ? `, ${Math.round(total / approved)} per approved company` : ''}.
+      </p>
+    </div>
+  );
+}
+
+/** Why the companies a run checked weren't approved, most common first, per segment: where its credits went for nothing. */
+function RejectionTally({ r }: { r: MorningSampleReport }) {
+  const rows = DRAW_SEGMENTS.map((s) => {
+    const mine = r.companies.filter((c) => c.segment === s && c.outcome);
+    const counts = new Map<string, number>();
+    for (const c of mine) {
+      const why = rejectionReason(c);
+      if (why) counts.set(why, (counts.get(why) ?? 0) + 1);
+    }
+    return { s, checked: mine.length, reasons: [...counts.entries()].sort((a, b) => b[1] - a[1]) };
+  }).filter((x) => x.reasons.length);
+  if (!rows.length) return null;
+  return (
+    <div className="card mb-4 p-4 text-sm">
+      <p className="font-medium">Why companies weren&apos;t approved</p>
+      {rows.map(({ s, checked, reasons }) => (
+        <div key={s} className="mt-2">
+          <p className="text-xs text-muted">
+            {s}: {reasons.reduce((a, [, n]) => a + n, 0)} of {checked} checked
+          </p>
+          <ul className="mt-0.5 space-y-0.5 text-ink-2">
+            {reasons.map(([why, n]) => (
+              <li key={why}>
+                <span className="tabular-nums font-medium">{n}</span> {why}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Every associate's leads in one place: what each gets per segment, then every lead, person by person. */
 /** Puts the leads a finished sample dealt into the pipeline, given out as dealt; or what that did. */
 function AssignBar({ r, id }: { r: MorningSampleReport; id: number }) {
@@ -216,6 +281,7 @@ function AssignBar({ r, id }: { r: MorningSampleReport; id: number }) {
       <div className="card mb-4 p-4 text-sm">
         <span className="font-medium">Added and assigned {formatDateTime(new Date(a.at))}</span>, for {dayName(a.day)}: {a.given.length ? a.given.map((g) => `${g.name} ${g.leads}`).join(', ') : 'none (each was already taken)'}.
         {a.skipped.length > 0 && <span className="mt-1 block text-xs text-muted">Left as they were (someone already has them, or the company is already in the pipeline): {a.skipped.join(', ')}.</span>}
+        {!!a.pooled && <span className="mt-1 block text-xs text-muted">{a.pooled} left in the pool, approved, for the next draw: that person already had their full list for the day.</span>}
       </div>
     );
   }
@@ -382,7 +448,7 @@ export function MorningSample({
           The next 6 am run and 8 am draw, done now (the date is shown on the result): it finds what the draw is short of (people first), researches every company exactly as the run does (the ICP check, the contact, the drafts), then deals each associate their own daily list (Team page) as the draw would. Switch between the team to see each person&apos;s Today. Nothing is saved as a lead and nobody is given anything unless you push or assign its leads, and the 6 am run&apos;s memory of its searches isn&apos;t touched: the real run starts fresh, so it can find these same companies again (none is used up), though the companies it picks will differ. CA firms aren&apos;t part of it.
         </p>
         <p className="mt-2 text-sm text-ink-2">
-          <span className="font-medium">Rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): no LinkedIn page doesn&apos;t rule a company out; an industry LinkedIn doesn&apos;t show is read from the company&apos;s own website (no search credit); companies whose name shows they&apos;re outside the ICP (banks, IT and consulting firms, hospitals, hotels) aren&apos;t looked up; several companies are looked up in one search; companies found but not needed are kept for the next search; people searches of 10 results, giving up on a segment after 15 searches in a row find nobody new; a people search that found no new company isn&apos;t made again for 30 days, an industry and town where searches twice found nobody isn&apos;t searched with other titles, and the industries and towns that found good companies go first; 2 contacts a company, always with a search for a plant-head-level (P1) contact when none is among them; no repeat look-ups of a person&apos;s profile within 14 days or a company&apos;s news within 7; the people research found count as checked on LinkedIn when pushed into the pipeline; 10% extra companies; and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample, a hard limit: a search that would go over it isn&apos;t made. A sample carried on from where it stopped uses them too.
+          <span className="font-medium">Rules being tried here first</span> (the 6 am run doesn&apos;t use them yet): a company with no LinkedIn page, or whose page doesn&apos;t show an ICP industry, isn&apos;t researched; a must-have the company&apos;s website doesn&apos;t confirm doesn&apos;t rule it out (only evidence against it, or a deal-breaker); companies whose name shows they&apos;re outside the ICP (banks, IT and consulting firms, hospitals, hotels) aren&apos;t looked up; up to six companies are looked up in one search, and a company&apos;s size is checked only while companies are still needed; companies found but not needed are kept for the next search; people searches of 10 results, giving up on a segment after 15 searches in a row find no new company; a people search that found no new company isn&apos;t made again for 30 days, one made in the last 7 days is read further down (its next page) rather than again, an industry and town where searches twice found nobody isn&apos;t searched with other titles, and the industries and towns that found good companies go first; 2 contacts a company, always with a search for a plant-head-level (P1) contact when none is among them; no repeat look-ups of a person&apos;s profile within 14 days or a company&apos;s news within 7; the people research found count as checked on LinkedIn when pushed into the pipeline; 10% extra companies; and at most {SAMPLE_RULES.credits.toLocaleString('en-IN')} Google search credits for a new sample, a hard limit: a search that would go over it isn&apos;t made. 3PL &amp; Logistics searches longer: it gives up only after {SAMPLE_3PL_RULES.quietSearches} searches in a row find no new company, asks for 25% extra, and takes up to {SAMPLE_3PL_RULES.rounds} rounds. A sample carried on from where it stopped uses them too.
         </p>
         <form action={startMorningSampleAction} className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-start gap-2 text-sm">
@@ -404,7 +470,7 @@ export function MorningSample({
         <div className="mb-4">
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-semibold">
-              Sample {test.id}{r ? `: ${dayName(r.day)}` : ''}
+              {r?.find ? 'Prospect search' : 'Sample'} {test.id}{r && !r.find ? `: ${dayName(r.day)}` : ''}
               <span className="ml-2 font-normal text-muted">started {formatDateTime(test.startedAt)}{r?.seconds ? `, ${Math.round(r.seconds / 60)} min` : ''}{r?.fresh ? ', from the search alone' : ''}</span>
             </h2>
             <span className={`inline-flex h-5 items-center rounded px-1.5 text-[11px] font-medium ${test.status === 'done' ? 'bg-good-soft text-good-ink' : test.status === 'failed' ? 'bg-critical-soft text-critical-ink' : 'bg-accent-soft text-accent'}`}>
@@ -435,7 +501,7 @@ export function MorningSample({
                 <div key={s} className="card p-4 text-sm">
                   <div className="font-medium">{s}</div>
                   <p className="mt-1 text-xs text-muted">
-                    The draw needs {r.start[s].need} ({r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). {r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for {r.start[s].wanted}.{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}{r.skipped?.[s] ? ` ${r.skipped[s].toLocaleString('en-IN')} people searches left out (in earlier samples they found nothing new, or nobody in that industry and town).` : ''}
+                    {r.find?.wanted ? `Asked for ${r.start[s].need} new leads; the search was asked for ${r.start[s].wanted} companies (a few extra for those research rules out).` : `The draw needs ${r.start[s].need} (${r.team.map((t) => `${t.name} ${quotaFor(r, t.id)[s]}`).join(', ')}). ${r.fresh ? 'Pool left out' : `${r.start[s].pool} waiting in the pool`}; the search was asked for ${r.start[s].wanted}.`}{r.carried?.[s] ? ` ${r.carried[s]} companies found by earlier searches but not checked then were checked first (no new people search needed for them).` : ''}{r.skipped?.[s] ? ` ${r.skipped[s].toLocaleString('en-IN')} people searches left out (in earlier samples they found nothing new, or nobody in that industry and town).` : ''}
                     {r.start[s].waiting ? ` ${r.start[s].waiting} companies already waiting for research would be researched first at 6 am (not shown here).` : ''}
                   </p>
                   <p className="mt-2">
@@ -445,6 +511,9 @@ export function MorningSample({
               ))}
             </div>
           )}
+
+          {r && <SpendCard r={r} />}
+          {r && <RejectionTally r={r} />}
 
           {r && r.phase === 'done' && r.hands.length > 0 && hand && (
             <>
@@ -466,7 +535,15 @@ export function MorningSample({
               <PersonDay r={r} hand={hand} senderName={senderName} icps={icps} />
             </>
           )}
-          {r && r.phase === 'done' && !r.hands.length && <p className="card p-5 text-sm text-muted">No active associates to deal leads to.</p>}
+          {r && r.phase === 'done' && r.find && (
+            <p className="card mb-4 p-4 text-sm">
+              {r.added
+                ? `Added ${formatDateTime(new Date(r.added.at))}: ${r.added.leads} approved leads into the pipeline, ${r.added.given ? r.added.given.replace(/^New prospects handed out: /, 'given to ') : 'for the morning draw to deal'}.`
+                : 'Adding what it found to the pipeline…'}
+              {r.added && r.added.skipped.length > 0 && <span className="mt-1 block text-xs text-muted">Already in the pipeline, left as they were: {r.added.skipped.join(', ')}.</span>}
+            </p>
+          )}
+          {r && r.phase === 'done' && !r.find && !r.hands.length && <p className="card p-5 text-sm text-muted">No active associates to deal leads to.</p>}
 
           {r && r.companies.length > 0 && (
             <details className="card mt-4 overflow-x-auto">

@@ -12,6 +12,7 @@ import { fillMissingDrafts, redraftForContact } from '@/lib/pipeline/redraft';
 import { ensureSequences } from '@/lib/tasks';
 import { searchBudgetLeft } from '@/lib/search-budget';
 import { pausedToday } from '@/lib/pause';
+import { noteWake, wakeDailyRun } from '@/lib/sourcing/wake';
 
 export const maxDuration = 300;
 
@@ -24,10 +25,12 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
   const db = await getDb();
+  await noteWake(db, 'vercel', 'the 8 am draw').catch(() => {});
   // Paused today (Settings key pausedDays): no contact checks, draw, CA draw or drafts.
   if (await pausedToday(db)) return Response.json({ paused: true });
-  // The 6 am run, if it stalled (its chain of invocations ended), carries on from here.
+  // The 6 am run, if it stalled (its chain of invocations ended), carries on from here; so does the daily sample (started here if no earlier check did).
   await resumeStalledRun(new URL(request.url).origin);
+  await bestEffort('the daily sample', () => wakeDailyRun(db, new URL(request.url).origin), null);
   // Each step on its own: a failure in one (a search quota, a slow lookup) never stops the draw.
   // Every contact the team will see today checked on LinkedIn first: profile and current designation.
   const svc = await liveServices();

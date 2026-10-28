@@ -1,5 +1,5 @@
 import type { Icp } from '../db/schema';
-import { cleanTitle, companyWide, contactPriority, noDepartment, roleOnly, tierOf } from '../tiers';
+import { cleanTitle, companyWide, contactPriority, noDepartment, roleOnly, tierOf, titlePhrase } from '../tiers';
 import { askJson } from './ai';
 import { CONTACT_PROMPT, LEADERS_PROMPT } from './prompts';
 import type { Research } from './research';
@@ -51,8 +51,16 @@ export type Contact = {
 
 export const EMPTY_CONTACT: Contact = { name: '', title: '', email: '', phone: '', linkedin: '', emailSource: '', roleMatch: false, reason: '' };
 
-/** One designation from the ICP's lists, searched on its own, and the Google queries it may take. */
-export type DesignationStep = { tier: 'P1' | 'P2' | 'P3'; designation: string; queries: string[] };
+/** One designation from the ICP's lists searched on its own (or several in one search), and the Google queries it may take. */
+export type DesignationStep = {
+  tier: 'P1' | 'P2' | 'P3';
+  designation: string;
+  queries: string[];
+  /** Several designations in one search (see groupedSearchPlan). */
+  grouped?: boolean;
+  /** One of the top P1 designations searched one at a time after the grouped searches (see groupedSearchPlan). */
+  net?: boolean;
+};
 
 /**
  * `site:linkedin.com/in "Company" Town`: the company's staff on LinkedIn, whatever their titles. A
@@ -74,7 +82,7 @@ export function staffSearches(company: string, city: string): string[] {
 export function designationQuery(firm: string, designation: string, town = ''): string {
   // A quote typed into a name or designation would end the quoted phrase early.
   const phrase = (s: string) => `"${s.replace(/"/g, '').trim()}"`;
-  return ['site:linkedin.com/in', phrase(firm), phrase(designation), town.replace(/"/g, '')].filter(Boolean).join(' ');
+  return ['site:linkedin.com/in', phrase(firm), `"${titlePhrase(designation)}"`, town.replace(/"/g, '')].filter(Boolean).join(' ');
 }
 
 /**
@@ -95,6 +103,63 @@ export function contactSearchPlan(company: string, city: string, icp: RankIcp & 
       seen.add(key);
       const queries = [...names.map((n) => designationQuery(n, designation, town)), ...(town ? [designationQuery(names[0], designation)] : [])];
       plan.push({ tier, designation, queries: [...new Set(queries)] });
+    }
+  }
+  return plan;
+}
+
+/** Google reads only the first 32 words of a search: a grouped search stays within them. */
+const QUERY_WORDS = 32;
+/** At most this many designations share one grouped search (they share its ten results). */
+export const DESIGNATIONS_PER_SEARCH = 5;
+/** The top P1 designations searched one at a time too, when the grouped searches leave the contacts short. */
+export const ONE_AT_A_TIME = 3;
+/** Which those are, where the ICP lists them (INVECK, 28 Oct 2026); otherwise the first in the contact priority. */
+const ONE_AT_A_TIME_FIRST: [RegExp, string[]][] = [
+  [/manufactur/i, ['Plant Head', 'Plant Manager', 'Head of Supply Chain']],
+  [/\b3pl\b|logistic/i, ['Warehouse Manager', 'Head of Warehouse Operations', 'Head of Supply Chain']],
+];
+const wordCount = (s: string) => s.split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
+
+/** `site:linkedin.com/in "Company" ("Plant Head" OR "Plant Manager" OR …) Town`: several designations in one search. */
+export function groupedDesignationQuery(firm: string, designations: string[], town = ''): string {
+  const any = designations.map((d) => `"${titlePhrase(d)}"`).join(' OR ');
+  return ['site:linkedin.com/in', `"${firm.replace(/"/g, '').trim()}"`, designations.length > 1 ? `(${any})` : any, town.replace(/"/g, '')].filter(Boolean).join(' ');
+}
+
+/**
+ * The lean contact search's plan (Morning Sample Runs and research runs; INVECK's decision, 28 Oct 2026, to spend fewer
+ * credits): each tier's designations in grouped searches, up to DESIGNATIONS_PER_SEARCH a search in INVECK's contact
+ * priority, every designation still searched; each group's queries tried as a designation's are (the company's name with
+ * the town, each verified alias with the town, the name without the town). After the P1 groups, ONE_AT_A_TIME P1
+ * designations one at a time, as contactSearchPlan searches them (the segment's own, see ONE_AT_A_TIME_FIRST, or the
+ * first in the contact priority): for when the grouped searches leave it short.
+ */
+export function groupedSearchPlan(company: string, city: string, icp: RankIcp & Partial<Pick<Icp, 'segment' | 'industries'>>): DesignationStep[] {
+  const single = contactSearchPlan(company, city, icp);
+  const names = firmNames(company);
+  const town = city.split(',')[0].trim();
+  // The words left for the designations, and the ORs between them, in the longest of the group's queries.
+  const room = QUERY_WORDS - 1 - Math.max(...names.map(wordCount)) - wordCount(town);
+  const plan: DesignationStep[] = [];
+  for (const tier of ['P1', 'P2', 'P3'] as const) {
+    const groups: string[][] = [];
+    for (const { designation } of single.filter((s) => s.tier === tier)) {
+      const last = groups.at(-1);
+      const words = last ? last.reduce((n, d) => n + wordCount(titlePhrase(d)), 0) + last.length + wordCount(titlePhrase(designation)) : 0;
+      if (last && last.length < DESIGNATIONS_PER_SEARCH && words <= room) last.push(designation);
+      else groups.push([designation]);
+    }
+    for (const group of groups) {
+      const queries = [...names.map((n) => groupedDesignationQuery(n, group, town)), ...(town ? [groupedDesignationQuery(names[0], group)] : [])];
+      plan.push({ tier, designation: group.join(' / '), queries: [...new Set(queries)], grouped: true });
+    }
+    if (tier === 'P1') {
+      const p1 = single.filter((s) => s.tier === 'P1');
+      const key = (d: string) => d.toLowerCase().replace(/\s+/g, ' ');
+      const first = (ONE_AT_A_TIME_FIRST.find(([re]) => re.test(icp.segment ?? ''))?.[1] ?? []).flatMap((d) => p1.filter((s) => key(s.designation) === key(d)));
+      const net = [...new Set([...first, ...p1])].slice(0, ONE_AT_A_TIME);
+      plan.push(...net.map((s) => ({ ...s, net: true })));
     }
   }
   return plan;
@@ -314,8 +379,9 @@ export type SearchLog = (message: string) => unknown;
  * people-first search): checked like anyone the search finds, the acceptable ones count towards enough
  * contacts and a P1, so the search stops sooner; they aren't returned (the caller already has them).
  * `lean` is the Morning Sample Run's cheaper rules, tried there first: two contacts are enough (a P1 is
- * still hunted for when none is among them), the staff search stops once that is in hand, and a person's
- * own profile looked up in the last 14 days isn't searched again.
+ * still hunted for when none is among them), the staff search stops once that is in hand, a person's
+ * own profile looked up in the last 14 days isn't searched again, and the designations are searched in
+ * groups, then the top P1 ones one at a time when that leaves it short (see groupedSearchPlan).
  */
 export async function searchLinkedIn(
   svc: Services,
@@ -418,7 +484,7 @@ export async function searchLinkedIn(
     const [, broadResults] = await run([query, broad].filter(Boolean));
     if (broad && (broadResults?.length ?? 0) >= 10) await run([broad], 2);
   } else {
-    const plan = opts.staffOnly ? [] : contactSearchPlan(company, city, icp);
+    const plan = opts.staffOnly ? [] : opts.lean ? groupedSearchPlan(company, city, icp) : contactSearchPlan(company, city, icp);
     let left: number = CONTACT_SEARCH_BUDGET.designationQueries;
     const started = Date.now();
     // One failed search is skipped; two in a row mean the search is down (out of credits, no network).
@@ -428,7 +494,11 @@ export async function searchLinkedIn(
     const staff = staffSearches(company, city);
     let staffLeft: number = CONTACT_SEARCH_BUDGET.staff;
     if (opts.staffOnly) await say(`contact search: the company's staff on LinkedIn only (${staff.length} search${staff.length === 1 ? '' : 'es'})`);
-    else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${wanted} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    else if (opts.lean) {
+      const groups = plan.filter((s) => s.grouped).length;
+      const net = plan.filter((s) => s.net).length;
+      await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then the ${icp.segment ?? ''} ICP's designations in ${groups} grouped search${groups === 1 ? '' : 'es'}, P1 first, and the top ${net} P1 one at a time if still short; stops at ${wanted} acceptable contacts with a P1 among them, or when the P1 designations are done`);
+    } else await say(`contact search: the company's staff on LinkedIn (${staff.length} search${staff.length === 1 ? '' : 'es'}), then ${plan.length} designation${plan.length === 1 ? '' : 's'} from the ${icp.segment ?? ''} ICP, one at a time, P1 first; stops at ${wanted} acceptable contacts with a P1 among them, or when the P1 designations are done`);
     if (known.length) {
       await say(`${known.length} found here earlier by the people-first search, counted towards the ${wanted} contacts when they pass: ${known.map((p) => `${p.name} (${p.title})`).join('; ')}`);
       for (const p of known) await report(p);
@@ -473,7 +543,7 @@ export async function searchLinkedIn(
         }
         left--;
         const got = await searchOnce(q);
-        const searched = `${step.tier} ${i + 1}/${plan.length} "${step.designation}": ${q}`;
+        const searched = `${step.tier}${step.net ? ' (one at a time)' : ''} ${i + 1}/${plan.length} "${step.designation}": ${q}`;
         if (!got) {
           await say(`${searched} → search failed: ${errorMessage(failures[failures.length - 1])}`);
           if (++failedInRow >= 2) break designations;
@@ -483,9 +553,20 @@ export async function searchLinkedIn(
         const n = got.people.length;
         await say(`${searched} → ${n ? `${n} LinkedIn profile${n === 1 ? '' : 's'}` : `no LinkedIn profiles${got.results ? ` (${got.results} other result${got.results === 1 ? '' : 's'})` : ''}`}`);
         await reportAll(got.people);
+        // A grouped search's ten results are shared by its designations: a full page has a second one, while still short.
+        let people = got.people;
+        if (step.grouped && got.results >= 10 && !leanDone() && left > 0) {
+          left--;
+          const more = await searchOnce(q, 2);
+          await say(`${searched} (page 2) → ${more ? `${more.people.length} LinkedIn profile${more.people.length === 1 ? '' : 's'}` : `search failed: ${errorMessage(failures[failures.length - 1])}`}`);
+          if (more) {
+            await reportAll(more.people);
+            people = [...people, ...more.people];
+          }
+        }
         // Someone at the company turned up under this name: the next designation. Otherwise the next
         // name (a verified alias), then the name without the town.
-        const keys = new Set(got.people.map(keyOf));
+        const keys = new Set(people.map(keyOf));
         if (merged().some((p) => keys.has(keyOf(p)) && p.employer === 'here')) break;
       }
     }

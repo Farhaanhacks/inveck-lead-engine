@@ -41,8 +41,11 @@ export const SOURCING_LIMITS = {
   quietSearches: 15,
   /** The test stops checking people after this long (the server allows 300s). */
   seconds: 240,
-  /** A test that hasn't saved anything for this long is closed as stopped (one that stalls sooner is picked up again first). */
-  staleMinutes: 45,
+  /**
+   * A test that hasn't saved anything for this long is closed as stopped. Anything that wakes a stalled test before then
+   * (a scheduled check, the outside timer, a page) carries it on, however long it waited.
+   */
+  staleMinutes: 360,
 } as const;
 
 export type QueryReport = { q: string; form: PlannedQuery['form']; page: number; results: number; pages: number; newPages: number; passed: number; error?: string };
@@ -238,7 +241,8 @@ export async function reopenTest(db: Db, id: number): Promise<boolean> {
 
 /**
  * Tests running whose invocations stopped (the next couldn't be called, or one died): claimed for carrying
- * on, each by one caller only. Empty when none, or they're still working.
+ * on, each by one caller only, however long they waited (up to SOURCING_LIMITS.staleMinutes). Empty when none,
+ * or they're still working.
  */
 export async function claimStalledTests(db: Db, now = new Date()): Promise<SourcingTest[]> {
   return db

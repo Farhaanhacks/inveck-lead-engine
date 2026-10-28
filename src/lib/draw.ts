@@ -1,12 +1,13 @@
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
-import { allocationRules, icps, leads, products, settings, users, type Lead, type LeadStatus } from './db/schema';
+import { allocationRules, icps, leads, products, settings, users, type Icp, type Lead, type LeadStatus } from './db/schema';
 import { LOGISTICS, MANUFACTURING } from './db/seed';
 import { normSegment } from './icp-match';
 import { getSettings, type Settings } from './settings';
 import { getHolidays } from './holidays';
 import { pausedToday } from './pause';
 import { istDay } from './tasks';
+import { icpFor, tierOf } from './tiers';
 
 /** The draw happens from this hour, India time, so the lists are ready before the team starts. */
 export const DRAW_HOUR_IST = 8;
@@ -169,6 +170,44 @@ export function dealToDeficits<T>(items: T[], deficits: Map<number, number>, ran
       hands.get(o)!.push(items[next++]);
       idle = 0;
     } else idle++;
+  }
+  return hands;
+}
+
+/**
+ * The head of the company (MD, CEO, owner) is a last-resort main contact: at most this share of anyone's leads on a
+ * day (INVECK's cap, 10%: 2 of a list of 20). A lead over the cap stays in the pool for another day.
+ */
+export const TOP_CONTACT_SHARE = 0.1;
+/** How many leads with the head of the company as the main contact an associate may get in a day. */
+export const topAllowance = (quota: Quota) => Math.floor(quotaTotal(quota) * TOP_CONTACT_SHARE);
+/** The lead's main contact is the head of the company (MD, CEO, owner, founder): a tier set on the lead decides, else the title against its ICP. */
+export function isTopContact(l: Pick<Lead, 'contactTier' | 'contactTitle' | 'segment'>, icpList: Pick<Icp, 'segment' | 'active' | 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'>[]): boolean {
+  if (['P1', 'P2', 'P3'].includes(l.contactTier)) return false;
+  return tierOf(l.contactTitle, icpFor(l.segment, icpList)) === 'Top';
+}
+
+/**
+ * dealToDeficits, from a fixed start, with the cap: nobody is given a lead whose main contact is the head of the company
+ * (`top`) beyond what they have left of their share (`topLeft`); such a lead goes to someone with room, else stays undealt.
+ */
+export function dealCapped<T>(items: { item: T; top: boolean }[], deficits: Map<number, number>, topLeft: Map<number, number>, start = 0): Map<number, T[]> {
+  const owners = [...deficits.keys()];
+  const hands = new Map<number, T[]>(owners.map((o) => [o, []]));
+  if (!owners.length) return hands;
+  const left = [...items];
+  const room = new Map(topLeft);
+  for (let at = start, idle = 0; left.length && idle < owners.length; at++) {
+    const o = owners[at % owners.length];
+    const i = hands.get(o)!.length < (deficits.get(o) ?? 0) ? left.findIndex((x) => !x.top || (room.get(o) ?? 0) > 0) : -1;
+    if (i < 0) {
+      idle++;
+      continue;
+    }
+    const [x] = left.splice(i, 1);
+    if (x.top) room.set(o, (room.get(o) ?? 0) - 1);
+    hands.get(o)!.push(x.item);
+    idle = 0;
   }
   return hands;
 }
@@ -341,26 +380,32 @@ async function drawInto(db: Db, quotas: Quotas, day: string, now: Date, random?:
   void random; // kept for callers: nothing here is random any more
   const segs = segmentsOf(quotas);
   const hands = await handedOut(db, day, segs);
+  // Each associate's share of leads with the head of the company as the main contact, less those already given today.
+  const icpList = await db.select().from(icps);
+  const today = await db.select({ ownerId: leads.ownerId, contactTier: leads.contactTier, contactTitle: leads.contactTitle, segment: leads.segment }).from(leads).where(and(eq(leads.drawnOn, day), isNotNull(leads.ownerId)));
+  const topLeft = new Map([...quotas].map(([o, quota]) => [o, topAllowance(quota) - today.filter((l) => l.ownerId === o && isTopContact(l, icpList)).length] as const));
   let drawn = 0;
   for (const segment of segs) {
     const deficits = new Map([...quotas].map(([o, quota]) => [o, Math.max(0, (quota[segment] ?? 0) - (hands[String(o)]?.[segment] ?? 0))] as const).filter(([, n]) => n > 0));
     const need = [...deficits.values()].reduce((a, b) => a + b, 0);
     if (!need) continue;
+    // In the same order as ever; a lead over someone's cap is passed over for the next one.
     const picked = await db
-      .select({ id: leads.id })
+      .select({ id: leads.id, contactTier: leads.contactTier, contactTitle: leads.contactTitle, segment: leads.segment })
       .from(leads)
       .where(inPool(segment, segs))
-      .orderBy(sql`(${leads.contactName} = '')`, leads.id)
-      .limit(need);
+      .orderBy(sql`(${leads.contactName} = '')`, leads.id);
     const cursor = await readCursor(db, segment);
     const start = cursor % deficits.size;
     let given = 0;
-    for (const [owner, ids] of dealToDeficits(picked.map((p) => p.id), deficits, () => (start + 0.5) / deficits.size)) {
+    const tops = new Set(picked.filter((p) => isTopContact(p, icpList)).map((p) => p.id));
+    for (const [owner, ids] of dealCapped(picked.map((p) => ({ item: p.id, top: tops.has(p.id) })), deficits, topLeft, start)) {
       if (!ids.length) continue;
       // Only leads still without an owner: a lead added by hand meanwhile keeps its person.
       const got = await db.update(leads).set({ ownerId: owner, drawnOn: day, updatedAt: now }).where(and(inArray(leads.id, ids), isNull(leads.ownerId))).returning({ id: leads.id });
       drawn += got.length;
       given += got.length;
+      topLeft.set(owner, (topLeft.get(owner) ?? 0) - got.filter((g) => tops.has(g.id)).length);
     }
     if (given) await writeCursor(db, segment, cursor + given);
   }

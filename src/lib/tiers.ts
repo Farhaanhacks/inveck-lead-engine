@@ -53,6 +53,16 @@ function tokens(text: string): string[] {
   return s.split(/[^a-z0-9]+/).filter((w) => w && !FILLER.has(w));
 }
 
+/** A title's words as written, without the aliases: "Director - Operations" stays a director. */
+function plainTokens(text: string): string[] {
+  return cleanTitle(text).toLowerCase().replace(/[–—]/g, '-').split(/[^a-z0-9]+/).filter((w) => w && !FILLER.has(w));
+}
+
+/** A designation as a Google phrase: an abbreviation in brackets left out ("Chief Operating Officer (COO)" is searched as "Chief Operating Officer"). */
+export function titlePhrase(title: string): string {
+  return title.replace(/"/g, '').replace(/\s*\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /** True when every word of the role (after aliases) appears in the title: "Head of Supply Chain" matches "Supply Chain Head". */
 function matches(title: string[], role: string): boolean {
   const want = tokens(role);
@@ -91,9 +101,15 @@ export function isHrRole(title: string): boolean {
   return HR.test(roleOnly(title).replace(/[-–—/&,.|()]/g, ' '));
 }
 
-export function tierOf(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): Tier {
+export function tierOf(title: string, icp: (Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> & Partial<Pick<Icp, 'segment'>>) | undefined): Tier {
   if (!title || !icp) return '';
-  if (isDirector(title) || isHrRole(title)) return 'Avoid';
+  if (isHrRole(title)) return 'Avoid';
+  // Directors are never contacted, except one the ICP itself names on its P1 list ("Director of Operations"). CA firms keep their own rules.
+  if (isDirector(title)) {
+    const t = plainTokens(roleOnly(title));
+    const named = !/\b(ca|chartered|audit|accountant)/i.test(icp.segment ?? '') && list(icp.targetTitles).some((r) => /\bdirector\b/i.test(r) && plainTokens(r).every((w) => t.includes(w)));
+    return named ? 'P1' : 'Avoid';
+  }
   // The head of the company is never P1 (INVECK's instruction): kept only as the last resort.
   if (isTopOfCompany(title)) return 'Top';
   // Only the role, not the company after it: "Manager at Allcargo Logistics" is a manager, not a logistics manager.
@@ -163,8 +179,9 @@ function tierByFunction(t: string[], icp: Pick<Icp, 'targetTitles' | 'p2Titles' 
   const wanted = new Set(functionsOf(lists));
   if (!functionsOf(title).some((f) => wanted.has(f))) return '';
   if (HEAD_LEVEL.test(title)) return 'P1';
-  if (MANAGER_LEVEL.test(title)) return 'P2';
-  if (LEAD_LEVEL.test(title)) return 'P3';
+  // An ICP with no P2 (or P3) titles wants nobody at that level.
+  if (MANAGER_LEVEL.test(title)) return list(icp.p2Titles).length ? 'P2' : '';
+  if (LEAD_LEVEL.test(title)) return list(icp.p3Titles).length ? 'P3' : '';
   return '';
 }
 
@@ -182,16 +199,30 @@ const TOP_EXEC = /\b(md|ceo|coo|cfo|cto|cio|chief executive|chief \w+ officer|ch
 /** Senior but a step away from the floor: VPs, CXOs, functional directors. */
 const SENIOR = /\b(vp|avp|coo|cfo|cto|director|chief)\b/;
 const FUNCTION = /\b(supply|chain|operations|plant|manufacturing|production|logistics|warehous\w*|procurement|purchase|inventory|stores?|finance|works)\b/;
+/** The plant head (plant, factory and works managers and site heads read as one, see ALIASES). */
+const PLANT_HEAD = /\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/;
+
+/**
+ * Each segment's most wanted contact, ahead of everyone else on its lists (INVECK, 28 Oct 2026): the plant head for
+ * Manufacturing, the warehouse manager for 3PL & Logistics. Not an assistant or a deputy one.
+ */
+function segmentsFirst(t: string, segment = ''): boolean {
+  if (/\b(assistant|asst|deputy|dy|junior|jr|trainee|intern)\b/.test(t)) return false;
+  if (/manufactur/i.test(segment)) return PLANT_HEAD.test(t);
+  if (/\b3pl\b|logistic/i.test(segment)) return /\bwarehouse\b.*\bmanager\b|\bmanager\b.*\bwarehouse\b/.test(t);
+  return false;
+}
 
 /**
  * Who to approach first; lower is better. INVECK's rule: people who run the floor answer, the top
- * of the company doesn't. So within the ICP's lists: plant heads and supply chain managers first,
+ * of the company doesn't. So within the ICP's lists: the segment's most wanted contact first (the plant head for
+ * Manufacturing, the warehouse manager for 3PL & Logistics), then plant heads and supply chain managers,
  * then regional / national / warehouse heads, then other hands-on heads
  * (operations, manufacturing, supply chain, warehouse, logistics, national / regional heads), then
- * P2 process owners, then VPs and CXOs, then P3, and the MD / CEO / founder last. HR, admin, quality
+ * P2 process owners, then VPs and CXOs (the COO), then finance, then P3, and the MD / CEO / founder last. HR, admin, quality
  * and titles on no list aren't wanted (99).
  */
-export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> | undefined): number {
+export function contactPriority(title: string, icp: (Pick<Icp, 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'> & Partial<Pick<Icp, 'segment'>>) | undefined): number {
   const tier = tierOf(title, icp);
   if (tier === 'Avoid' || tier === '') return 99;
   // The head of the company: the last resort, never ahead of anyone on the lists.
@@ -200,18 +231,20 @@ export function contactPriority(title: string, icp: Pick<Icp, 'targetTitles' | '
   if (/\b(marketing|sales|business development|legal|secretarial|investor|public relations|human resources|talent|commercial|customer service|engineering|maintenance|projects?|safety|design|r&d|research|it|sap|erp|information technology|software)\b/i.test(roleOnly(title))) return 99;
   const t = tokens(roleOnly(title)).join(' ');
   const vpOrCxo = SENIOR.test(t) || /\bdirector\b/i.test(title);
-  if (TOP_EXEC.test(t) && !/\bvice\b/.test(t)) return 50;
+  // A CXO the ICP names on its P1 list (the COO) is a P1 contact, not the last resort.
+  if (TOP_EXEC.test(t) && !/\bvice\b/.test(t) && !(tier === 'P1' && icp && list(icp.targetTitles).some((r) => matches(tokens(roleOnly(title)), r)))) return 50;
   // A partner or managing partner of a company is its owner, ranked like one; where the ICP names
   // partners itself (CA firms), its lists decide.
   if (/\bpartner\b/.test(t) && TOP_ONLY.test(t) && icp && !onLists(title, icp)) return 50;
   if (/\bdirector\b/.test(t) && !FUNCTION.test(t)) return 50;
-  // Plant heads and supply chain managers / heads answer and own the stock: they come first.
-  if ((tier === 'P1' || tier === 'P2') && (/\bplant head\b|\bplant\b.*\b(operations|ops)\b.*\bhead\b|\bhead\b.*\bplant operations\b/.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
+  if ((tier === 'P1' || tier === 'P2') && segmentsFirst(t, icp?.segment)) return 3;
+  // Plant heads and supply chain managers / heads answer and own the stock: they come next.
+  if ((tier === 'P1' || tier === 'P2') && (PLANT_HEAD.test(t) || /\bsupply chain\b.*\b(head|manager|lead)\b|\b(head|manager|lead)\b.*\bsupply chain\b/.test(t))) return 5;
   if (tier === 'P1') {
     // Then the people who run a region or a warehouse (logistics: national, regional and warehouse
-    // heads). Finance comes after the process owners.
+    // heads). Finance comes after the process owners and the CXOs on the list (INVECK: the COO before finance).
     if (/\b(regional|national|zonal|cluster|warehouse)\b.*\bhead\b|\bhead\b.*\b(regional|national|zonal|warehouse)\b/.test(t)) return 7;
-    if (/\b(finance|accounts|controller|cfo)\b/.test(t)) return 22;
+    if (/\b(finance|accounts|controller|cfo)\b/.test(t)) return 26;
     return vpOrCxo ? 25 : 10;
   }
   if (tier === 'P2') return 20;

@@ -264,9 +264,9 @@ describe('a test run', () => {
     expect(row).toMatchObject({ status: 'failed' });
     expect(row.error).toContain('Not enough credits');
 
-    // Stale means nothing saved for a while (a test carried on across invocations runs longer than one,
-    // and one that stalls is picked up again before this).
-    const longAgo = new Date(Date.now() - 50 * 60_000);
+    // Stale means nothing saved for hours (a test carried on across invocations runs longer than one,
+    // and one that stalls is picked up again before this, however long it waited).
+    const longAgo = new Date(Date.now() - 7 * 3600_000);
     const [old] = await db.insert(sourcingTests).values({ segment: MANUFACTURING, startedAt: longAgo, updatedAt: longAgo }).returning();
     expect(await activeSourcingTest(db)).toBeNull();
     const [stale] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, old.id));

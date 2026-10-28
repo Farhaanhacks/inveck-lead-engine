@@ -124,15 +124,17 @@ export async function completeTaskAction(form: FormData): Promise<TaskResult> {
   }
   // Wrong number only once no number is left to try.
   if (task.kind === 'call' && outcome === 'wrong_number' && !dropped.rest) await db.update(leads).set({ callFeedback: 'Wrong number' }).where(eq(leads.id, task.leadId));
-  // No number found: nothing to call or WhatsApp today, so today's WhatsApp is ticked off with the call
-  // (Undo brings it back). Later rounds stay, for when a number turns up.
-  // The tracker's call outcome says so too.
+  // No contact found: nothing to call or WhatsApp today, so today's WhatsApp is ticked off with the call
+  // (Undo brings it back). The tracker's call outcome says so too.
   if (task.kind === 'call' && outcome === 'no_contact') await db.update(leads).set({ callFeedback: 'No contact found' }).where(eq(leads.id, task.leadId));
   if (task.kind === 'call' && outcome === 'no_contact') {
     await db
       .update(tasks)
       .set({ doneAt: now, outcome: 'closed', note: 'No contact found' })
       .where(and(eq(tasks.leadId, task.leadId), eq(tasks.kind, 'whatsapp'), isNull(tasks.doneAt), lte(tasks.dueDate, istDay())));
+    // And no follow-ups for the company (INVECK's decision, 27 Oct 2026): every open follow-up round, today's and later,
+    // is ticked off with the call (Undo brings them back). It isn't moved to Deleted for it. CA firms keep their own flow.
+    if (!ca) await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), gt(tasks.followUpRound, 0)));
   }
   if (task.kind === 'email' && outcome === 'done') {
     await followUpSentByHand(db, task);

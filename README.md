@@ -39,6 +39,12 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
   Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no
   role isn't picked automatically (the team can add them by hand).
 
+Among the candidates, each segment's most wanted contact comes first (from 28 Oct 2026, `contactPriority` in
+`tiers.ts`): the plant head for Manufacturing (plant, factory and works managers count as plant heads), the warehouse
+manager for 3PL & Logistics (not an assistant or deputy one); then plant heads and supply chain heads and managers,
+regional, national and warehouse heads, the other heads, the COO and finance. A lead nobody has started on gets that
+contact as its main contact when they are on file at the site and the current one ranks well below.
+
 ### Emails and phone numbers
 
 Neither is looked up. The app finds the right person and their LinkedIn profile; an email or phone
@@ -236,9 +242,14 @@ Each report shows the funnel, every company with its outcome, and each search wi
 one invocation (300 s) hands itself to the next by calling the app's own address. Vercel ends such a chain
 after a few hand-offs (`508 INFINITE_LOOP_DETECTED`), so the run then pauses, with everything it did saved,
 and the next fresh request picks it up again: a page opened (Dashboard, Leads, Today, Team, or the Sourcing
-page while a test runs), the 8 am draw, or the checks every 10 minutes from 06:10 to 07:50 IST
+page while a test runs), the 8 am draw, or the checks every 10 minutes from 06:10 to 11:00 IST on weekdays
 (`/api/cron/resume` in `vercel.json`). A Morning Sample Run stopped that way before this existed can be carried
-on from where it got to ("Carry on from here").
+on from where it got to ("Carry on from here"). A paused Sourcing test or Morning Sample Run is picked up again
+however long it waited (the 6 am job, the 8 am draw, the checks, the outside five-minute timer calling
+`/api/cron/inbound-demos`, or the Dashboard, Sourcing or Today page opened, as Today starts the CA draw); only
+after 6 hours with nothing waking it is it closed as stopped, and it can still carry on from there. The Sourcing
+page shows when each kind of wake-up last came (`src/lib/sourcing/wake.ts`): the outside timer should show a time
+within the last 5 minutes.
 
 A scheduled run starts at 06:00 IST on weekdays (`vercel.json`). It researches new leads and, on every
 working day (not holidays marked in Settings; on the live database, from Thursday 22 October 2026, the
@@ -262,23 +273,67 @@ towards those 4, so it stops sooner; all of them are kept as candidates. CA firm
 never searched for: they come from their sheet. The Dashboard's "This morning" card shows the run, what each
 segment has ready for the draw, and warns when the searches are running thin.
 
+From Monday 26 October 2026 that 6 am run no longer starts (`OLD_RUN_UNTIL` in `sample-run.ts`): Monday has no
+run, and from Tuesday 27 October a **daily Morning Sample** (`DAILY_SAMPLE`) starts at 06:00 IST instead, on the
+same days the morning search would run (a working day, not a holiday or a paused day, the search on in
+Settings), started once by the first wake-up between 06:00 and 14:00. It is for that day's lists (what anyone
+already has for the day left out), uses the sample's rules below (4,000 credits at most), and gives its leads out
+itself when it finishes, never more than anyone's list for the day (a lead over it stays in the pool for the
+next draw). The 8 am draw then fills only what is still missing.
+
+From Tuesday 27 October each working day's run happens **the evening before, from 9 pm IST** (`EVENING_SAMPLE`): a
+Morning Sample for the next day's lists, its leads approved and given out when it finishes, on the evening just before
+a working day the morning search runs (Sunday's for Monday; none on Friday or Saturday evenings, before a holiday or a
+paused day). In the evening the outside timer starts and wakes it. The 6 am daily run then fills only what is still
+missing (nothing when the lists are full). There is no 6 am run on Tuesday 27 October (`DAILY_SAMPLE.skip`).
+
 To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
 (`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
 researches exactly as the run does, deals each active associate their quota from the pool and what it found,
 and shows each person's Today for the next working day (switch between the team). Nothing is saved as a lead,
 nobody is given anything and the 6 am run's own search memory isn't touched, so tomorrow's run starts fresh.
 CA firms aren't part of it. The sample is also where cheaper rules are tried before the 6 am run uses them
-(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, companies ruled out remembered for 90 days,
-companies outside the ICP by name not looked up and several looked up in one search, the sample's own memory of
-its people searches (`search-memory.ts`: a search that found no new company isn't made again within 30 days, an
-industry word and town where two searches found nobody isn't searched with other titles, and the pairs that
-found companies that passed go first), two contacts a company with the hunt for a P1 kept (the staff search
-stops once two with a P1 are in hand), no repeat lookup of the company's LinkedIn page or of its officers in the
+(`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 15 searches in a row
+find no new company (from 28 Oct 2026; before, nobody new on the lists, so people at companies INVECK already has
+kept it searching), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
+up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
+company's size checked only while companies are still needed, the sample's own memory of its people searches
+(`search-memory.ts`: a search that found no new company isn't made again within 30 days, one made in the last 7
+days that found companies is read further down, its next page up to page 5, rather than again, an industry word and
+town where two searches found nobody isn't searched with other titles, and the pairs that found companies that
+passed go first), two contacts a company with the hunt for a P1 kept (the staff search
+stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
+credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
+...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
+then three P1 designations one at a time when the contacts are still short (Plant Head, Plant Manager and Head of
+Supply Chain for Manufacturing; Warehouse Manager, Head of Warehouse Operations and Head of Supply Chain for 3PL): at most 12 designation searches
+a company instead of 28 for Manufacturing, plus any second pages), no repeat lookup of the company's LinkedIn page or of its officers in the
 news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the
-pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 3,000 Google search
-credits at most for a new sample, a hard limit (a search that would go over it isn't made; a company whose
-research reaches it is left for the next day). A sample carried on from where it stopped uses them too.
+pipeline, 10% extra companies, 25 credits kept back for researching each company found, and 4,000 Google search
+credits at most for a new sample (3,000 until 27 Oct 2026), a hard limit (a search that would go over it isn't made;
+a company whose research reaches it is left for the next day). A company with no LinkedIn page, or whose page
+doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
+would only be ruled out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
+(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no new company, asks for 25% extra and takes up
+to five rounds (each only while its last one found companies). The report tallies why the companies it checked
+weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
+contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company,
+and (from 28 Oct 2026) how many of each segment's people searches found a new company.
+A sample carried on from where it stopped uses them too.
+
+**One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on
+the Dashboard (leads per segment, and who gets them) and the Configuration page's run start a prospect search on the
+daily run's engine (`startProspectSearch` in `sample-run.ts`): its rules and its 4,000-credit limit, watched on the
+Sourcing page. It deals nothing; when it finishes, its approved companies go into the pipeline as Approved, given to
+the person or team chosen, or left for the morning draw. Research of any other lead (added by hand, imported, contacts
+searched again) uses the same research rules (two contacts a company, no repeat look-ups; CA firms keep theirs) and
+at most 4,000 credits a day (`RESEARCH_DAY_CREDITS` in `search-budget.ts`); what is left waits for the next day.
+
+A Manufacturing or 3PL company whose website doesn't confirm a must-have ("holds physical inventory", "multiple
+locations", "B2B") is approved, with what wasn't confirmed noted on the lead; only evidence against a must-have, or a
+deal-breaker, rules it out, and no extra search is paid to settle one (`unconfirmedGoesAhead` in `fit.ts`; INVECK's
+decisions, 3PL on 26 Oct 2026, Manufacturing on 27 Oct; the team's imported lists are treated the same way).
 
 At 08:00 IST on weekdays the **morning draw** (`/api/cron/draw`) hands each active associate their own daily
 list, per segment, set on the Team page: Anchal and Puja 40 Manufacturing each (their CA firms come apart, from
@@ -418,7 +473,9 @@ Vercel's free plan runs scheduled jobs once a day, so a free outside timer calls
 2. On cron-job.org (free), create a job: URL `https://inveck-lead-engine.vercel.app/api/cron/inbound-demos`, method GET, schedule every 5 minutes, and under Advanced add the header `Authorization` with the value `Bearer <your INBOUND_SYNC_SECRET>`.
 3. The job's history should show status 200 and a short JSON result (`read`, `created`, `meetings`...). A 403 means the secret doesn't match.
 
-This secret can only start the read-only sheet sync; it does not open anything else. Do not put it in the URL.
+This secret can only start the read-only sheet sync and wake the daily Morning Sample (start it when it is due, carry on
+one that paused); it does not open anything else. Do not put it in the URL. With this timer live, the daily run needs
+neither Vercel's scheduled jobs nor anyone opening a page.
 
 ## Configuration (administrators)
 

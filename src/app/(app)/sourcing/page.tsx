@@ -8,7 +8,7 @@ import { formatDateTime } from '@/lib/dates';
 import { PageHeader } from '@/components/page-header';
 import { SubmitButton } from '@/components/submit-button';
 import { AutoRefresh } from '@/components/auto-refresh';
-import { resumeStalledTests } from '@/lib/sourcing/drive';
+import { noteWake, wakeDailyRun, wakeUps, type WakeSource, type WakeUps } from '@/lib/sourcing/wake';
 import { requestOrigin } from '@/lib/run-driver';
 import { startSourcingTestAction } from '@/app/sourcing-actions';
 import { SOURCING_SEGMENTS } from '@/lib/sourcing/linkedin-pages';
@@ -61,12 +61,38 @@ function GoogleText({ c }: { c: CompanyReport }) {
 
 const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : '–');
 
+const WAKE_LABEL: Record<WakeSource, string> = { timer: 'Outside timer (cron-job.org)', vercel: "Vercel's scheduled jobs", page: 'A page opened' };
+
+/** When each wake-up of the daily run last came: the way to see the outside timer and Vercel's scheduled jobs fire. */
+function WakeUpsCard({ wakes }: { wakes: WakeUps }) {
+  return (
+    <div className="card mb-4 p-4 text-sm">
+      <p className="font-medium">What keeps the daily run going: last woken up by</p>
+      <ul className="mt-1 space-y-0.5 text-ink-2">
+        {(['timer', 'vercel', 'page'] as const).map((s) => {
+          const w = wakes[s];
+          return (
+            <li key={s}>
+              {WAKE_LABEL[s]}: {w ? `${formatDateTime(new Date(w.at))} (${w.by})` : 'never yet'}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-1 text-xs text-muted">
+        The outside timer should show a time within the last 5 minutes: then the daily run starts by about 6:05 am and carries on by itself whatever else happens. Vercel&apos;s jobs run on weekdays from 6 to 11 am India time.
+      </p>
+    </div>
+  );
+}
+
 export default async function SourcingPage({ searchParams }: PageProps<'/sourcing'>) {
   await adminPage();
   const db = await getDb();
   const sp = await searchParams;
-  // A test or sample whose chain of invocations stopped carries on from this request.
-  await resumeStalledTests(await requestOrigin());
+  // A test or sample whose chain of invocations stopped carries on from this request, and a scheduled sample that is due
+  // starts from here too, in case the scheduled checks are late.
+  await noteWake(db, 'page', 'the Sourcing page').catch(() => {});
+  await wakeDailyRun(db, await requestOrigin()).catch(() => null);
   const running = await activeSourcingTest(db);
   const sampleRunning = await activeSourcingTest(db, 'morning');
   const listed = { id: sourcingTests.id, segment: sourcingTests.segment, mode: sourcingTests.mode, status: sourcingTests.status, startedAt: sourcingTests.startedAt };
@@ -90,6 +116,7 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
   const checkedList = report?.companies.filter((c) => c.people) ?? [];
   const otherList = report?.companies.filter((c) => !c.people) ?? [];
   const noSerper = !apiKeys().serper;
+  const wakes = await wakeUps(db);
 
   return (
     <>
@@ -99,6 +126,8 @@ export default async function SourcingPage({ searchParams }: PageProps<'/sourcin
       >
         <Link href="/" className="btn-secondary">Dashboard</Link>
       </PageHeader>
+
+      <WakeUpsCard wakes={wakes} />
 
       <MorningSample test={sample ?? null} running={!!sampleRunning} earlier={samples} person={Number(sp.person) || 0} senderName={settings.senderName} icps={icpRows} />
 

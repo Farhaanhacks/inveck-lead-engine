@@ -4,7 +4,7 @@ import { toLinkedInPeople } from '../pipeline/contacts';
 import { isPlace, snippetRoles, subtitleJob } from '../pipeline/employer';
 import type { SerperResult } from '../pipeline/services';
 import { normCompany, searchName } from '../pipeline/text';
-import { contactPriority, noDepartment, tierOf } from '../tiers';
+import { contactPriority, noDepartment, tierOf, titlePhrase } from '../tiers';
 import { readCompanyPage, SEGMENT_SEARCH, shuffled, type CompanyPage, type SourcingSegment } from './linkedin-pages';
 
 /**
@@ -42,6 +42,8 @@ export type PeopleQuery = {
   title: string;
   keyword: string;
   place: string;
+  /** The page of Google's results to read (the first when absent): a search made in the last days is read further down, not again (see planFromMemory). */
+  page?: number;
 };
 
 /**
@@ -58,7 +60,7 @@ export function planPeopleQueries(segment: SourcingSegment, icp: TitleIcp, count
     const title = titles[i % titles.length];
     const keyword = ks[i % ks.length];
     const place = ps[(i + Math.floor(i / ps.length)) % ps.length];
-    const q = ['site:linkedin.com/in', `"${title.replace(/"/g, '')}"`, `"${keyword}"`, place].join(' ');
+    const q = ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' ');
     if (!out.some((o) => o.q === q)) out.push({ q, form: 'industry', title, keyword, place });
   }
   return out;
@@ -143,6 +145,28 @@ export function companyQuery(employer: string): string {
 export function companiesQuery(employers: string[]): string {
   if (employers.length === 1) return companyQuery(employers[0]);
   return `site:linkedin.com/company (${employers.map((e) => `"${(searchName(e) || e).replace(/"/g, '')}"`).join(' OR ')})`;
+}
+
+/** Companies whose LinkedIn pages are looked up in one search (see companiesQuery): up to this many, as Google's 32 words allow. */
+export const PAGES_PER_SEARCH = 6;
+
+/**
+ * The next companies to check, taken from the front of `pending`: up to PAGES_PER_SEARCH, the ones looked up together
+ * (not those whose page is already known, or that are looked up on their own) within Google's 32 words.
+ */
+export function lookupBatch<T extends { employer: string; page?: unknown; alone?: boolean }>(pending: T[]): T[] {
+  let words = 1;
+  let n = 0;
+  for (const c of pending) {
+    if (n >= PAGES_PER_SEARCH) break;
+    if (!c.page && !c.alone) {
+      const w = (searchName(c.employer) || c.employer).split(/\s+/).filter((x) => /[a-z0-9]/i.test(x)).length + (words > 1 ? 1 : 0);
+      if (n && words + w > 32) break;
+      words += w;
+    }
+    n++;
+  }
+  return pending.splice(0, Math.max(1, n));
 }
 
 /** The order to check companies in: any whose people's own results show another industry last, then by their best contact. */

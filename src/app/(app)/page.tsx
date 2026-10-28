@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { ensureResearch, requestOrigin } from '@/lib/run-driver';
+import { noteWake, wakeDailyRun } from '@/lib/sourcing/wake';
 import { leads, opportunities } from '@/lib/db/schema';
 import { RadarCard } from '@/components/radar-card';
 import { getAnalytics, type Best } from '@/lib/analytics';
@@ -56,6 +57,9 @@ export default async function Dashboard({ searchParams }: PageProps<'/'>) {
   await adminPage();
   const wanted = Number((await searchParams).run) || 0;
   await ensureResearch(await requestOrigin());
+  // A scheduled Morning Sample that is due starts from here too, in case the scheduled checks are late; one that stalled carries on.
+  await noteWake(await getDb(), 'page', 'the Dashboard').catch(() => {});
+  await wakeDailyRun(await getDb(), await requestOrigin()).catch(() => null);
   const db = await getDb();
   const team = await listBdas(db);
   const [byStatus, analytics, [totals], topLeads, runList, running, fresh, added, [{ waiting }]] = await Promise.all([

@@ -97,6 +97,54 @@ describe('what starts the sequence', () => {
     expect((await openTasks(l2.id)).every((t) => t.followUpRound === 0)).toBe(true);
   });
 
+  it('no contact found during the sequence ends it for the company: every open round is ticked off, the company stays, and Undo brings them back (27 Oct)', async () => {
+    const { completeTaskAction, undoTaskAction } = await import('@/app/team-actions');
+    const l = await mk();
+    await completeTaskAction(form({ id: (await dayOne(l.id, 'call')).id, outcome: 'no_answer' }));
+    expect(await rounds(l.id)).toHaveLength(15);
+    const r1 = (await rounds(l.id)).find((t) => t.followUpRound === 1 && t.kind === 'call')!;
+    await db.update(tasks).set({ dueDate: today() }).where(eq(tasks.id, r1.id));
+    await completeTaskAction(form({ id: r1.id, outcome: 'no_contact' }));
+    expect((await rounds(l.id)).filter((t) => !t.doneAt)).toHaveLength(0);
+    expect((await rounds(l.id)).filter((t) => t.id !== r1.id).every((t) => t.outcome === 'closed')).toBe(true);
+    expect((await leadOf(l.id)).status).not.toBe('Deleted');
+    // Nothing starts them again: another unanswered call later doesn't.
+    const [later] = await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'call', step: 'Call again', title: 'later', dueDate: today() }).returning();
+    await completeTaskAction(form({ id: later.id, outcome: 'no_answer' }));
+    expect((await rounds(l.id)).filter((t) => !t.doneAt)).toHaveLength(0);
+    await undoTaskAction(form({ id: later.id }));
+    // Undo of the no-contact call brings every round back.
+    await undoTaskAction(form({ id: r1.id }));
+    expect((await rounds(l.id)).filter((t) => !t.doneAt)).toHaveLength(15);
+  });
+
+  it('once on the live database: companies already marked "No contact found" during their follow-ups have their open rounds ticked off, with a note (27 Oct)', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { SCHEMA_STATEMENTS } = await import('@/lib/db/migrate');
+    const { sql } = await import('drizzle-orm');
+    // Before the fix: a round call saved as no contact found left the other rounds open.
+    const marked = await mk();
+    await completeTaskAction(form({ id: (await dayOne(marked.id, 'call')).id, outcome: 'no_answer' }));
+    const r1 = (await rounds(marked.id)).find((t) => t.followUpRound === 1 && t.kind === 'call')!;
+    await db.update(tasks).set({ doneAt: new Date(), outcome: 'no_contact' }).where(eq(tasks.id, r1.id));
+    // Untouched: a company in follow-ups with no such call, and one marked before its follow-ups started (a number turned up since).
+    const plain = await mk({ company: 'Plain Co' });
+    await completeTaskAction(form({ id: (await dayOne(plain.id, 'call')).id, outcome: 'no_answer' }));
+    const earlier = await mk({ company: 'Earlier Co' });
+    await db.insert(tasks).values({ leadId: earlier.id, ownerId: me.id, kind: 'call', step: 'Call again', title: 'old', dueDate: today(), doneAt: new Date(Date.now() - 86_400_000), outcome: 'no_contact' });
+    await completeTaskAction(form({ id: (await dayOne(earlier.id, 'call')).id, outcome: 'no_answer' }));
+    const step = SCHEMA_STATEMENTS.filter((x) => x.includes('noContactFollowUpsV1'));
+    expect(step).toHaveLength(3);
+    for (let i = 0; i < 2; i++) for (const x of step) await db.execute(sql.raw(x));
+    expect((await rounds(marked.id)).filter((t) => !t.doneAt)).toHaveLength(0);
+    expect((await rounds(marked.id)).filter((t) => t.id !== r1.id).every((t) => t.outcome === 'closed')).toBe(true);
+    expect((await leadOf(marked.id)).status).not.toBe('Deleted');
+    const notes = (await db.select().from(activities).where(eq(activities.leadId, marked.id))).filter((a) => a.text.startsWith('Follow-ups stopped: "No contact found"'));
+    expect(notes).toHaveLength(1);
+    expect((await rounds(plain.id)).filter((t) => !t.doneAt)).toHaveLength(15);
+    expect((await rounds(earlier.id)).filter((t) => !t.doneAt)).toHaveLength(15);
+  });
+
   it('another qualifying outcome during the sequence does not duplicate or reset it', async () => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const l = await mk();

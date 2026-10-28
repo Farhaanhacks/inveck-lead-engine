@@ -4,7 +4,7 @@ import type { EnrichmentCache, Services } from '@/lib/pipeline/services';
 import { distanceKm, forgetPlaces, knowPlaces, placeKey, pointOf } from '@/lib/pipeline/places';
 import { learnFirm, linkedinPageName, recallFirm } from '@/lib/pipeline/firm-identity';
 import { firmAliasesOf, sameFirm, siteOf } from '@/lib/pipeline/employer';
-import { atOtherSite, confirmedAtSite, contactSearchPlan, findLinkedinProfile, personSite, PROFILE_MEMORY_DAYS, searchLinkedIn, staffSearches } from '@/lib/pipeline/contacts';
+import { atOtherSite, confirmedAtSite, contactSearchPlan, DESIGNATIONS_PER_SEARCH, findLinkedinProfile, groupedSearchPlan, ONE_AT_A_TIME, personSite, PROFILE_MEMORY_DAYS, searchLinkedIn, staffSearches } from '@/lib/pipeline/contacts';
 import { findSignals, NEWS_MEMORY_DAYS } from '@/lib/pipeline/signals';
 import { cleanTitle, companyWide, contactPriority, noDepartment, tierOf } from '@/lib/tiers';
 import { DEFAULT_ICPS } from '@/lib/db/seed';
@@ -758,7 +758,7 @@ describe('the Morning Sample Run\'s lean research (the 6 am run keeps four conta
     expect(logs.some((m) => m.startsWith('staff search not needed: 2 acceptable contacts with a P1 among them'))).toBe(true);
   });
 
-  it('two acceptable without a P1: the staff, then every P1 designation (a plant head is always looked for), nothing below P1', async () => {
+  it('two acceptable without a P1: the staff, then every P1 designation in grouped searches and the top ones one at a time (a plant head is always looked for), nothing below P1', async () => {
     const svc = services(seen);
     await knowPlaces(svc, ['Hosur']);
     const two = [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')];
@@ -767,9 +767,12 @@ describe('the Morning Sample Run\'s lean research (the 6 am run keeps four conta
     expect(linkedinSearches().slice(0, staff.length)).toEqual(staff);
     const designations = linkedinSearches().slice(staff.length);
     expect(designations.length).toBeGreaterThan(0);
-    expect(designations.every((q) => tierOf(/"[^"]+" "([^"]+)"/.exec(q)![1], mfg) === 'P1')).toBe(true);
+    const named = (q: string) => [...q.matchAll(/"([^"]+)"/g)].slice(1).map((m) => m[1]);
+    expect(designations.every((q) => named(q).every((d) => tierOf(d, mfg) === 'P1'))).toBe(true);
     const p1 = contactSearchPlan(company, 'Hosur', mfg).filter((s) => s.tier === 'P1');
-    expect(designations).toEqual(p1.flatMap((s) => s.queries));
+    expect(designations).toEqual(groupedSearchPlan(company, 'Hosur', mfg).filter((s) => s.tier === 'P1').flatMap((s) => s.queries));
+    expect(designations.length).toBeLessThan(p1.flatMap((s) => s.queries).length);
+    expect(designations.some((q) => q.includes('"Plant Head" OR'))).toBe(true);
     // Not lean (the run): two are fewer than four, so the P2 and P3 designations are searched too.
     seen.searches.length = 0;
     await searchLinkedIn(svc, '', company, 'Hosur', mfg, undefined, { known: two });
@@ -792,14 +795,87 @@ describe('the Morning Sample Run\'s lean research (the 6 am run keeps four conta
     expect(linkedinSearches().slice(0, staff.length)).toEqual(staff);
   });
 
-  it('with one person found, it looks for one more, designation by designation', async () => {
+  it('a Store Incharge is not the P1 it stops at: the search goes on to the COO on the list, who comes first', async () => {
+    const p1Only = {
+      ...mfg,
+      targetTitles: 'Plant Head, Head of Operations, Chief Operating Officer (COO)',
+      p2Titles: '',
+      p3Titles: '',
+      avoidTitles: `${mfg.avoidTitles}, Store Incharge`,
+    };
+    const coo = { title: 'Ramesh I - Chief Operating Officer - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Chief Operating Officer · Hosur Gears', link: 'https://in.linkedin.com/in/ramesh-i', snippet: '' };
+    const storeIncharge = { title: 'Kajal H - Store Incharge - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Store Incharge · Hosur Gears', link: 'https://in.linkedin.com/in/kajal-h', snippet: '' };
+    const svc = services(seen, (q) => (q.includes('"Chief Operating Officer"') ? [coo] : q === staffSearches(company, 'Hosur')[0] ? [storeIncharge] : []));
+    await knowPlaces(svc, ['Hosur']);
+    const result = await searchLinkedIn(svc, '', company, 'Hosur', p1Only, undefined, { known: [person('Kajal H', 'Store Incharge')], lean: true });
+    expect(linkedinSearches().some((q) => q.includes('"Chief Operating Officer"'))).toBe(true);
+    expect(result.accepted.map((p) => p.name)).toEqual(['Ramesh I']);
+  });
+
+  it('with one person found, it looks for one more: the first grouped search finds the plant manager, and it stops', async () => {
     const svc = services(seen, (q) => (q.includes('"Plant Manager"') ? [{ title: 'Bina B - Plant Manager - Hosur Gears', subtitle: 'Hosur, Tamil Nadu, India · Plant Manager · Hosur Gears', link: 'https://in.linkedin.com/in/bina-b', snippet: '' }] : []));
     await knowPlaces(svc, ['Hosur']);
     const logs: string[] = [];
     await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: [person('Ravi Kumar', 'Plant Head')], lean: true });
     const designations = linkedinSearches().filter((q) => !staffSearches(company, 'Hosur').includes(q));
-    expect(designations.at(-1)).toBe('site:linkedin.com/in "Hosur Gears" "Plant Manager" Hosur');
+    expect(designations).toEqual([groupedSearchPlan(company, 'Hosur', mfg)[0].queries[0]]);
+    expect(designations[0]).toMatch(/^site:linkedin\.com\/in "Hosur Gears" \("Plant Head" OR "Plant Manager" OR .*\) Hosur$/);
     expect(logs.at(-1)).toMatch(/^contact search done: 2 acceptable contacts/);
+  });
+
+  it('the grouped plan (28 Oct): every P1 designation in one grouped search, five at most, within 32 words, then the top three one at a time', () => {
+    const p1Titles = 'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Finance Head, Finance Controller, Head of Procurement & Supply Chain';
+    const icp = { ...mfg, targetTitles: p1Titles, p2Titles: '', p3Titles: '' };
+    const single = contactSearchPlan('Forgeline Components Private Limited', 'Pune, Maharashtra', icp);
+    const plan = groupedSearchPlan('Forgeline Components Private Limited', 'Pune, Maharashtra', icp);
+    const groups = plan.filter((s) => s.grouped);
+    expect(groups.flatMap((s) => s.designation.split(' / ')).sort()).toEqual(single.map((s) => s.designation).sort());
+    expect(groups.every((s) => s.designation.split(' / ').length <= DESIGNATIONS_PER_SEARCH)).toBe(true);
+    const words = (q: string) => q.split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
+    expect(plan.flatMap((s) => s.queries).every((q) => words(q) <= 32)).toBe(true);
+    // Each group: with the town, then without it.
+    expect(groups[0].queries).toEqual([
+      'site:linkedin.com/in "Forgeline Components" ("Plant Head" OR "Plant Manager" OR "Head of Supply Chain" OR "Supply Chain Manager" OR "Head of Procurement & Supply Chain") Pune',
+      'site:linkedin.com/in "Forgeline Components" ("Plant Head" OR "Plant Manager" OR "Head of Supply Chain" OR "Supply Chain Manager" OR "Head of Procurement & Supply Chain")',
+    ]);
+    // Then the top three P1 designations exactly as the one-at-a-time search has them.
+    const net = plan.filter((s) => s.net);
+    expect(net.length).toBe(ONE_AT_A_TIME);
+    expect(net.map(({ tier, designation, queries }) => ({ tier, designation, queries }))).toEqual(single.slice(0, ONE_AT_A_TIME));
+    expect(plan.flatMap((s) => s.queries).length).toBeLessThanOrEqual(12);
+    expect(single.flatMap((s) => s.queries).length).toBe(28);
+  });
+
+  it("the ones searched one at a time are the segment's own (28 Oct): the plant head first for Manufacturing, the warehouse manager first for 3PL", () => {
+    const tpl = { ...mfg, segment: '3PL & Logistics', targetTitles: 'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Warehouse Operations, Warehouse Manager, Head of Procurement & Supply Chain', p2Titles: '', p3Titles: '' };
+    const manufacturing = { ...mfg, segment: 'Manufacturing', targetTitles: 'Plant Head, Head of Operations, Supply Chain Manager, Head of Supply Chain, Chief Operating Officer (COO)', p2Titles: '', p3Titles: '' };
+    const net = (icp: typeof mfg) => groupedSearchPlan('Swift Warehousing', 'Pune', icp).filter((s) => s.net).map((s) => s.designation);
+    expect(net(tpl)).toEqual(['Warehouse Manager', 'Head of Warehouse Operations', 'Head of Supply Chain']);
+    expect(net(manufacturing)).toEqual(['Plant Head', 'Plant Manager', 'Head of Supply Chain']);
+    // The warehouse manager leads 3PL's first grouped search.
+    expect(groupedSearchPlan('Swift Warehousing', 'Pune', tpl)[0].designation.startsWith('Warehouse Manager / ')).toBe(true);
+    // An ICP that doesn't list them: the first in its contact priority.
+    const other = { ...tpl, targetTitles: 'Head of Logistics, Head of Operations, General Manager – Logistics, Chief Operating Officer (COO)' };
+    expect(net(other)).toEqual(contactSearchPlan('Swift Warehousing', 'Pune', other).slice(0, ONE_AT_A_TIME).map((s) => s.designation));
+  });
+
+  it('a grouped search with a full page of ten looks at its second page while still short; one at a time does not', async () => {
+    const pages: [string, number][] = [];
+    const elsewhere = Array.from({ length: 10 }, (_, i) => ({ title: `Person ${i} - Plant Head - Other Gears`, subtitle: 'Chennai, Tamil Nadu, India · Plant Head · Other Gears', link: `https://in.linkedin.com/in/p${i}`, snippet: '' }));
+    const svc = services(seen, (q) => (q.includes(' OR ') ? elsewhere : []));
+    const fetchFn = svc.fetch;
+    svc.fetch = (async (u: RequestInfo | URL, init: RequestInit = {}) => {
+      const body = JSON.parse(String(init.body));
+      if (!String(u).endsWith('/maps')) pages.push([String(body.q), Number(body.page ?? 1)]);
+      return fetchFn(u, init);
+    }) as typeof fetch;
+    await knowPlaces(svc, ['Hosur']);
+    const logs: string[] = [];
+    await searchLinkedIn(svc, '', company, 'Hosur', mfg, (m) => void logs.push(m), { known: [person('Vikram P', 'Supply Chain Manager'), person('Anita S', 'Materials Manager')], lean: true });
+    const first = groupedSearchPlan(company, 'Hosur', mfg)[0].queries[0];
+    expect(pages).toContainEqual([first, 2]);
+    expect(pages.filter(([q, page]) => page === 2 && !q.includes(' OR '))).toEqual([]);
+    expect(logs.some((m) => m.includes('(page 2)'))).toBe(true);
   });
 });
 

@@ -11,7 +11,7 @@ import { settingsSchema, saveSettings } from '@/lib/settings';
 import { istDay } from '@/lib/tasks';
 import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, searchesThisMorning, type MorningSourcing } from '@/lib/sourcing/morning';
 import { fakeFetch, type FakeLog } from './fake-apis';
-import { dbSearchMeter, searchBudgetLeft, searchesUsed } from '@/lib/search-budget';
+import { dbSearchMeter, RESEARCH_DAY_CREDITS, researchCreditsLeft, researchMeter, searchBudgetLeft, searchesUsed } from '@/lib/search-budget';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MorningCard } from '@/components/morning-card';
@@ -336,6 +336,28 @@ describe("the day's Google search budget", () => {
     expect(rows.filter((l) => l.company.startsWith('Waiting Co')).some((l) => l.status === 'New')).toBe(false);
     expect(await searchesUsed(db)).toBeGreaterThan(20000);
     expect(await searchBudgetLeft(db, settingsSchema.parse({}))).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('research outside the daily run keeps to its own limit of 4,000 credits a day: what is left waits for the next day', async () => {
+    await db.insert(leads).values(Array.from({ length: 4 }, (_, i) => ({ company: `Waiting Co ${i}`, website: `waiting${i}.in`, segment: MANUFACTURING })));
+    await researchMeter(db).spend(RESEARCH_DAY_CREDITS - 10);
+    const { run } = await startRun(db, { findProspects: false, trigger: 'auto' });
+    expect(await executeRun(db, run.id, services([], { meter: dbSearchMeter(db) }), Number.POSITIVE_INFINITY)).toBe('done');
+    const rows = await db.select().from(leads).where(eq(leads.segment, MANUFACTURING));
+    expect(rows.filter((l) => l.company.startsWith('Waiting Co')).every((l) => l.status === 'New')).toBe(true);
+    const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(events.some((e) => /research limit \(4,000 Google search credits\) is used: 4 companies wait/.test(e.message))).toBe(true);
+  });
+
+  it("research outside the daily run uses the daily run's rules (two contacts a company) and counts into the research total", async () => {
+    await db.insert(leads).values({ company: 'Waiting Co 0', website: 'waiting0.in', segment: MANUFACTURING });
+    const { run } = await startRun(db, { findProspects: false, trigger: 'auto' });
+    expect(await executeRun(db, run.id, services([], { meter: dbSearchMeter(db) }), Number.POSITIVE_INFINITY)).toBe('done');
+    const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(events.some((e) => /stops at 2 acceptable contacts/.test(e.message))).toBe(true);
+    expect(events.some((e) => /stops at 4 acceptable contacts/.test(e.message))).toBe(false);
+    expect(await researchCreditsLeft(db)).toBeLessThan(RESEARCH_DAY_CREDITS);
+    expect(await researchCreditsLeft(db)).toBe(RESEARCH_DAY_CREDITS - (await searchesUsed(db)));
   });
 
   it('the contact checks stop when the budget is used', async () => {

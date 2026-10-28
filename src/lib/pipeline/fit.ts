@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Icp } from '../db/schema';
+import { normSegment } from '../icp-match';
 
 /**
  * Whether a company fits an ICP, decided by explicit rules over evidence instead of by one AI verdict.
@@ -372,6 +373,19 @@ export function mergeRisks(found: RiskFlag[], fromAi: RiskFlag[]): RiskFlag[] {
 }
 
 // ─── The decision ────────────────────────────────────────────────────────
+
+/**
+ * Segments where a must-have the company's own pages don't confirm doesn't hold it back (INVECK's decisions: 3PL &
+ * Logistics on 26 Oct 2026, Manufacturing on 27 Oct): only evidence against it, or a deal-breaker, rules a company out.
+ * (The team's imported lists are judged the same way, whatever their segment.)
+ */
+const UNCONFIRMED_GOES_AHEAD = new Set(['Manufacturing', '3PL & Logistics'].map(normSegment));
+export const unconfirmedGoesAhead = (segment: string) => UNCONFIRMED_GOES_AHEAD.has(normSegment(segment));
+
+/** A "Needs review" whose only reasons are must-haves that couldn't be confirmed (nothing shown against the company). */
+export function onlyUnconfirmed(reason: string): boolean {
+  return /^Needs review: /.test(reason) && !/contradicts|failed the checks/.test(reason) && reason.replace(/^Needs review: /, '').split('; ').every((part) => part.startsWith("couldn't confirm must-have"));
+}
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 const cite = (e: { evidence: string; url: string }) => `“${clip(e.evidence, 160)}”${e.url ? ` (${e.url})` : ''}`;
