@@ -18,10 +18,13 @@ import type { PeopleQuery } from './people-first';
  *   `deepPages` hundreds, and nothing past a page that wasn't full;
  * - leaves out the rest of an industry word and town pair when `deadAfter` of its searches showed nobody on
  *   the lists, and none ever showed anyone;
+ * - leaves out a town once searches there with `deadTownWords` different industry words showed nobody on the lists,
+ *   and none there ever showed anyone; and an industry word once it showed nobody in `deadWordTowns` towns, and never
+ *   anyone anywhere (28 Oct 2026: the new towns and words cost a few credits to rule out, not dozens);
  * - takes first the pairs whose searches found companies that passed, most first.
  * Only what was known when the sample started counts, so its plan is the same on every invocation.
  */
-export const SEARCH_MEMORY = { days: 30, deadAfter: 2, keepDays: 90, nextPageDays: 7, deepPages: 3 } as const;
+export const SEARCH_MEMORY = { days: 30, deadAfter: 2, deadTownWords: 3, deadWordTowns: 5, keepDays: 90, nextPageDays: 7, deepPages: 3 } as const;
 
 /**
  * One search's outcome: `page`, the page of results read (1 when absent), `num`, the results asked for (10 when
@@ -59,9 +62,34 @@ export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMe
     t.kept += e.outcomes.reduce((a, o) => a + o.kept, 0);
     pairs.set(pairOf(e), t);
   }
+  // Per town: the industry words whose searches there showed nobody, and whether any search there showed someone; per word, the same by town.
+  const towns = new Map<string, { empty: Set<string>; listed: boolean }>();
+  const words = new Map<string, { empty: Set<string>; listed: boolean }>();
+  for (const e of memory.values()) {
+    const [town, word] = [e.place.toLowerCase(), e.keyword.toLowerCase()];
+    const listed = e.outcomes.some((o) => o.listed > 0);
+    const t = towns.get(town) ?? { empty: new Set<string>(), listed: false };
+    const w = words.get(word) ?? { empty: new Set<string>(), listed: false };
+    if (listed) t.listed = w.listed = true;
+    else {
+      t.empty.add(word);
+      w.empty.add(town);
+    }
+    towns.set(town, t);
+    words.set(word, w);
+  }
+  const deadTown = (pq: PeopleQuery) => {
+    const t = towns.get(pq.place.toLowerCase());
+    return !!t && !t.listed && t.empty.size >= SEARCH_MEMORY.deadTownWords;
+  };
+  const deadWord = (pq: PeopleQuery) => {
+    const w = words.get(pq.keyword.toLowerCase());
+    return !!w && !w.listed && w.empty.size >= SEARCH_MEMORY.deadWordTowns;
+  };
   const dead = (pq: PeopleQuery) => {
     const own = memory.get(normQuery(pq.q));
     if (own && own.outcomes[own.outcomes.length - 1].fresh === 0) return true;
+    if (deadTown(pq) || deadWord(pq)) return true;
     const t = pairs.get(pairOf(pq));
     return !!t && t.empty >= SEARCH_MEMORY.deadAfter && t.listed === 0;
   };

@@ -481,6 +481,43 @@ describe('the Morning Sample Run', () => {
     expect(r.yields?.[LOGISTICS]?.none).toBeLessThanOrEqual(56);
   });
 
+  it('a people search whose first page of ten is full and finds new companies is read on at once: its first hundred, 2 credits (28 Oct)', async () => {
+    const sent: [string, number, number][] = [];
+    const base = morningServices(log);
+    let n = 0;
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        const q = String(body.q ?? '');
+        if (String(input).includes('google.serper.dev') && q.startsWith('site:linkedin.com/in "')) {
+          const num = Number(body.num ?? 10);
+          sent.push([q, Number(body.page ?? 1), num]);
+          // The forging searches: a full page of ten people at new companies (and more further down).
+          if (/"forging"/.test(q)) {
+            const people = Array.from({ length: num }, () => {
+              n++;
+              return { title: `Person ${n} - Plant Head - Gear Works ${n} | LinkedIn`, subtitle: `Pune, Maharashtra, India · Plant Head · Gear Works ${n}`, link: `https://in.linkedin.com/in/p-${n}`, snippet: '' };
+            });
+            return new Response(JSON.stringify({ organic: people }), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+    const forging = sent.filter(([q]) => /"forging"/.test(q));
+    const first = forging.find(([, , num]) => num === 10)!;
+    expect(first).toBeDefined();
+    // Read on in the same run, its first hundred.
+    expect(forging).toContainEqual([first[0], 1, 100]);
+    // Not for a search that found nothing new, or whose page wasn't full.
+    const empty = sent.filter(([q]) => !/"forging"/.test(q));
+    expect(empty.length).toBeGreaterThan(0);
+    expect(empty.every(([, , num]) => num === 10)).toBe(true);
+  });
+
   it('a company ruled out in the last 90 days is not a new company when a search finds it again (28 Oct)', async () => {
     const base = morningServices(log);
     let n = 0;

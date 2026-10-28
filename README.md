@@ -290,7 +290,8 @@ a working day the morning search runs (Sunday's for Monday; none on Friday or Sa
 paused day). In the evening the outside timer starts and wakes it. The 6 am daily run then fills only what is still
 missing (nothing when the lists are full). There is no 6 am run on Tuesday 27 October (`DAILY_SAMPLE.skip`). A
 one-off top-up (`TOP_UP_SAMPLES`) ran at 10:15 pm IST on 28 October for Thursday 29 October's lists, what each person
-already had left out, to try that evening's rules.
+already had left out, to try that evening's rules, and another at 12:30 am on 29 October with the new industry words
+and towns.
 
 To see what tomorrow will look like first, the Sourcing page has a **Morning Sample Run**
 (`src/lib/sourcing/sample-run.ts`): tomorrow's 6 am run and 8 am draw done now on paper. It searches and
@@ -304,11 +305,14 @@ already has kept it searching; a company ruled out in the last 90 days, or outsi
 company), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
 up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
 company's size checked only while companies are still needed, the sample's own memory of its people searches
-(`search-memory.ts`: a search that found no new company isn't made again within 30 days, one made in the last 7
+(`search-memory.ts`; and from 28 Oct 2026 a people search whose first page of ten was full and found new companies is
+read on at once, its first hundred results for 2 credits: a search that found no new company isn't made again within
+30 days, one made in the last 7
 days that found companies is read further down rather than again: its first hundred results in one search (2
 credits; its next ten if Serper refuses a hundred), then the next hundred, to 300, an industry word and
-town where two searches found nobody isn't searched with other titles, and the pairs that found companies that
-passed go first), two contacts a company with the hunt for a P1 kept (the staff search
+town where two searches found nobody isn't searched with other titles, a town where three industry words found nobody
+and a word that found nobody in five towns aren't searched again (from 28 Oct 2026), and the pairs that found
+companies that passed go first), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,

@@ -312,6 +312,8 @@ export type RoundOptions = {
   peopleResults?: number;
   /** Searches in a row finding no new company before a segment stops (default MORNING_LIMITS.quietSearches). */
   quietSearches?: number;
+  /** A first page of ten that was full and found new companies is read on at once: its first hundred, 2 credits. */
+  deepReads?: boolean;
   /** Companies ruled out (too small, the wrong industry, no LinkedIn page) are remembered and not checked again. */
   rememberRuledOut?: boolean;
   /**
@@ -366,9 +368,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
   const peopleResults = o.peopleResults ?? PEOPLE_RESULTS;
-  // The most one step of the search can spend: a batch of searches (a hundred results each when read deep), or a batch
-  // of company checks with their second looks.
-  const stepCredits = 8 * searchCredits(100);
+  // The most one step of the search can spend: a batch of searches and their deep reads (a hundred results each), or a
+  // batch of company checks with their second looks.
+  const stepCredits = 8 * (searchCredits(10) + searchCredits(100));
 
   // Each segment's search, ready to take a step.
   type Worker = { seg: MorningSegment; step: () => Promise<'more' | 'stop'>; checked: Set<string> };
@@ -546,10 +548,11 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         await save();
         throw new Error(`Google search failed: ${got[0]?.error ?? 'no answer'}`);
       }
-      for (const [i, pq] of batch.entries()) {
+      // One search's people: the new companies go to be checked; what it showed comes back.
+      const absorb = async (pq: PeopleQuery, results: SerperResult[]) => {
         let listed = 0;
         let newCompanies = 0;
-        for (const r of got[i].results) {
+        for (const r of results) {
           let person: FoundContact | null;
           try {
             person = readPerson(r, icp);
@@ -579,10 +582,24 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
             newCompanies++;
           }
         }
+        return { listed, newCompanies };
+      };
+      const record = async (pq: PeopleQuery, g: (typeof got)[number]) => {
+        const { listed, newCompanies } = await absorb(pq, g.results);
         // A new company is what counts (28 Oct 2026): people at companies already known or checked can't become new leads.
         seg.quiet = newCompanies ? 0 : seg.quiet + 1;
-        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, listed, error: got[i].error, page: got[i].page, num: got[i].num });
+        await o.sink.searched?.(seg.segment, pq, { results: g.results.length, newCompanies, listed, error: g.error, page: g.page, num: g.num });
+        return newCompanies;
+      };
+      // A full first page of ten that found new companies: its next ninety people now, in one search (2 credits for up
+      // to 90, not nine more searches; 28 Oct 2026).
+      const deep: PeopleQuery[] = [];
+      for (const [i, pq] of batch.entries()) {
+        const fresh = await record(pq, got[i]);
+        if (o.deepReads && fresh && got[i].num <= 10 && got[i].page === 1 && got[i].results.length >= 10) deep.push(pq);
       }
+      const more = await mapLimit(deep, 4, (pq) => search(pq.q, 100, 1, 2));
+      for (const [i, pq] of deep.entries()) await record({ ...pq, num: more[i].num, page: more[i].page }, more[i]);
       for (const c of seg.pending) c.contacts.sort((a, b) => rank(a) - rank(b));
       return 'more';
     };

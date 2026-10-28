@@ -72,6 +72,23 @@ describe('the sample plan from what earlier searches found', () => {
     expect(planFromMemory([plan[1]], memory).plan[0].num).toBeUndefined();
   });
 
+  it(`leaves out a town once ${SEARCH_MEMORY.deadTownWords} industry words there found nobody on the lists, and a word once it found nobody in ${SEARCH_MEMORY.deadWordTowns} towns; not where anyone was ever found (28 Oct)`, () => {
+    const towns = ['Hubli', 'Salem', 'Karur', 'Erode', 'Kota', 'Rohtak'];
+    const empty = (title: string, keyword: string, place: string) => entry(query(title, keyword, place), [{ listed: 0 }]);
+    // Three words found nobody in Hubli: every Hubli search is left out, whatever its word or title.
+    const hubli = new Map(['gears', 'pumps', 'valves'].map((k) => empty('Plant Head', k, 'Hubli')));
+    const hubliPlan = [query('Works Manager', 'fasteners', 'Hubli'), query('Plant Head', 'forging', 'Pune')];
+    expect(planFromMemory(hubliPlan, hubli).plan.map((q) => q.place)).toEqual(['Pune']);
+    // Two words aren't enough; and one search there that showed someone keeps the town.
+    expect(planFromMemory(hubliPlan, new Map(['gears', 'pumps'].map((k) => empty('Plant Head', k, 'Hubli')))).plan).toHaveLength(2);
+    expect(planFromMemory(hubliPlan, new Map([...hubli, entry(query('Plant Head', 'castings', 'Hubli'), [{ listed: 2, fresh: 1 }])])).plan).toHaveLength(2);
+    // A word that found nobody in five towns is left out everywhere; in four, it's still searched.
+    const wordPlan = [query('Plant Head', 'tractor components', 'Pune'), query('Plant Head', 'forging', 'Pune')];
+    const five = new Map(towns.slice(0, 5).map((t) => empty('Plant Head', 'tractor components', t)));
+    expect(planFromMemory(wordPlan, five).plan.map((q) => q.keyword)).toEqual(['forging']);
+    expect(planFromMemory(wordPlan, new Map(towns.slice(0, 4).map((t) => empty('Plant Head', 'tractor components', t)))).plan).toHaveLength(2);
+  });
+
   it(`leaves out an industry word and town once ${SEARCH_MEMORY.deadAfter} searches there found nobody on the lists, and none found anyone`, () => {
     // Two titles found nobody making machined parts in Rajkot: the third isn't searched.
     const dead = new Map([entry(plan[4], [{ listed: 0 }]), entry(plan[5], [{ listed: 0 }])]);

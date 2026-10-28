@@ -51,6 +51,8 @@ const CONCURRENCY = 5;
  * - people searches of ten results, and a segment stops after 60 searches in a row find no new company (from 28 Oct
  *   2026, 15 that morning; before, nobody new on the lists, so people at companies already known kept it searching); a
  *   company ruled out in the last 90 days, or outside the ICP by its name, isn't a new company;
+ * - a people search whose first page of ten was full and found new companies is read on at once: its first hundred
+ *   results, 2 credits (from 28 Oct 2026);
  * - its people searches are remembered: one that found no new company isn't made again within 30 days, one made in
  *   the last 7 days that found companies is read further down rather than again (its first hundred results in one
  *   search, then the next hundred, to 300), an
@@ -367,6 +369,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           budgetLeft: async () => budgetLeft() - r.companies.filter((c) => !c.outcome).length * SAMPLE_RULES.researchCredits - CHECKS_RESERVE,
           peopleResults: SAMPLE_RULES.peopleResults,
           quietSearches: SAMPLE_RULES.quietSearches,
+          deepReads: true,
           rememberRuledOut: true,
           lenientScreen: true,
           // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
@@ -507,7 +510,11 @@ export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z'
  * once by the first wake-up after the time, not more than three hours late (INVECK, 28 Oct 2026: at 10:15 pm India
  * time, Thursday 29 October's lists after the 9 pm run left them short, to try that evening's rules).
  */
-export const TOP_UP_SAMPLES: { at: string; day: string }[] = [{ at: '2026-10-28T16:45:00Z', day: '2026-10-29' }];
+export const TOP_UP_SAMPLES: { at: string; day: string }[] = [
+  { at: '2026-10-28T16:45:00Z', day: '2026-10-29' },
+  // And at 12:30 am on Thursday 29 October (INVECK, 28 Oct 2026, night), with the new industry words and towns.
+  { at: '2026-10-28T19:00:00Z', day: '2026-10-29' },
+];
 
 /**
  * The evening run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, each working day's run happens the evening
