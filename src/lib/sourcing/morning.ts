@@ -84,7 +84,21 @@ export type MorningSourcing = {
   history: { round: number; segment: string; wanted: number; added: number; searches: number; stopped?: MorningSegment['stopped'] }[];
   /** The leads this run's search added (every round). */
   addedIds?: number[];
+  /** Companies the search found that its check dropped, per segment and reason (every round; from 28 Oct 2026). */
+  drops?: Partial<Record<SourcingSegment, Record<string, number>>>;
 };
+
+/** Why the check dropped a company, as the report says it (see MorningSourcing.drops). */
+export const DROP_REASONS = {
+  before: 'ruled out in the last 90 days',
+  name: 'outside the ICP by its name',
+  noName: 'no company name (only an industry word)',
+  noPage: 'no LinkedIn page found',
+  small: 'too small',
+  industry: 'industry not on the ICP',
+  abroad: 'based abroad',
+  known: 'already known (by another name, its website or LinkedIn page)',
+} as const;
 
 const isSerper = (input: RequestInfo | URL) => String(input instanceof Request ? input.url : input).includes('google.serper.dev');
 const profileKey = (url: string) => url.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '').replace(/\/+$/, '');
@@ -179,7 +193,7 @@ export function startRound(prev: MorningSourcing | null, wanted: Record<Sourcing
     const before = prev?.segments.find((p) => p.segment === segment);
     return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
   });
-  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [] };
+  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [], drops: prev?.drops ?? {} };
 }
 
 /** Leads this run's search added that research approved, per segment. */
@@ -408,6 +422,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     };
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);
+    const drop = (why: keyof typeof DROP_REASONS) => {
+      const mine = ((state.drops ??= {})[seg.segment] ??= {});
+      mine[DROP_REASONS[why]] = (mine[DROP_REASONS[why]] ?? 0) + 1;
+    };
 
     // A company not needed now (the segment has what it wants): it waits, with its page when that was found.
     const putBack = (c: MorningSegment['pending'][number], page?: CompanyPage) => {
@@ -420,11 +438,13 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       checked.add(normCompany(c.employer));
       if (await ruledOutBefore(c.employer)) {
         seg.ruledOut++;
+        drop('before');
         return;
       }
       // An employer that is only an industry word isn't looked up (the sample's rule, for every segment).
       if (o.lenientScreen && noCompanyName(c.employer)) {
         seg.noPage++;
+        drop('noName');
         return;
       }
       const fromPre = c.page ?? (pre ? matchingPage(pre, c.employer) : null);
@@ -433,6 +453,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (!page && !got.error && lenientScreen) page = pagelessCompany(c.employer);
       if (!page) {
         seg.noPage++;
+        drop('noPage');
         if (!got.error) await rememberRuledOut(c.employer, 'no LinkedIn page');
         return;
       }
@@ -452,6 +473,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (s.pass && !page.url) s = { ...s, note: `no LinkedIn company page found; ${s.note}` };
       if (!s.pass || (page.url && pages.has(page.url))) {
         seg.ruledOut++;
+        drop(s.pass ? 'known' : s.reason);
         // Too small or the wrong industry doesn't change soon; abroad depends on who was found there.
         if (!s.pass && (s.reason === 'small' || s.reason === 'industry')) await rememberRuledOut(c.employer, s.note);
         return;
@@ -484,10 +506,12 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           // show, on their own, only as many as are still needed (the others wait their turn).
           const toLook: typeof batch = [];
           for (const c of batch) {
-            if (!outsideIcpByName(c.employer, seg.segment) && !(await ruledOutBefore(c.employer))) toLook.push(c);
+            const outside = !!outsideIcpByName(c.employer, seg.segment);
+            if (!outside && !(await ruledOutBefore(c.employer))) toLook.push(c);
             else {
               checked.add(normCompany(c.employer));
               seg.ruledOut++;
+              drop(outside ? 'name' : 'before');
             }
           }
           const together = toLook.filter((c) => !c.page && !c.alone && !noCompanyName(c.employer));
@@ -541,9 +565,11 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           if (known.names.has(key) || checked.has(key)) continue;
           // Ruled out in the last 90 days, or outside the ICP by its name: not a new company (28 Oct 2026; before, it
           // counted as one and was dropped at its check, so searches turning up only old rejects kept the search going).
-          if (!seg.pending.some((x) => normCompany(x.employer) === key) && ((o.cheaperChecks && outsideIcpByName(person.employer, seg.segment)) || (await ruledOutBefore(person.employer)))) {
+          const outside = !!o.cheaperChecks && !!outsideIcpByName(person.employer, seg.segment);
+          if (!seg.pending.some((x) => normCompany(x.employer) === key) && (outside || (await ruledOutBefore(person.employer)))) {
             checked.add(key);
             seg.ruledOut++;
+            drop(outside ? 'name' : 'before');
             continue;
           }
           const c = seg.pending.find((x) => normCompany(x.employer) === key);

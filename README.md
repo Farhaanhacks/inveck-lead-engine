@@ -325,7 +325,9 @@ industry (`industryConfirmed`); one with no LinkedIn page still isn't (nothing s
 to five rounds (each only while its last one found companies). The report tallies why the companies it checked
 weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
 contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company,
-and (from 28 Oct 2026) how many of each segment's people searches found a new company.
+and (from 28 Oct 2026) how many of each segment's people searches found a new company, and what the company check did
+before research: how many passed, how many it dropped and why (no LinkedIn page, industry not on the ICP, too small,
+already known and so on), and why each round stopped searching.
 A sample carried on from where it stopped uses them too.
 
 **One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on

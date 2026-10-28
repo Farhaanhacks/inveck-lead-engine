@@ -505,6 +505,13 @@ describe('the Morning Sample Run', () => {
     const r = await reportOf(id);
     expect(r.yields?.[MANUFACTURING]).toEqual({ found: 0, none: 64 });
     expect(r.companies.some((c) => c.employer === 'Tiny Tools')).toBe(false);
+    // The report says why: dropped as ruled out before, and the segment stopped dry.
+    expect(r.search?.drops?.[MANUFACTURING]?.['ruled out in the last 90 days']).toBeGreaterThan(0);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const html = renderToStaticMarkup(createElement(MorningSample, { test: row, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(html).toContain('The company check, before research');
+    expect(html).toContain('ruled out in the last 90 days');
+    expect(html).toContain('stopped: searches in a row found no new company');
   });
 
   it("a Manufacturing company whose industry shows nowhere goes to research, and is approved only if research confirms the industry (28 Oct)", async () => {
