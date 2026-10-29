@@ -58,7 +58,7 @@ async function connect(): Promise<Db> {
   // Schema upkeep on each cold start. When the database won't take it (read-only, over a plan limit,
   // a lock), the app still runs on the tables already there instead of every page failing.
   try {
-    for (const statement of [...SCHEMA_STATEMENTS, ...BLOG_SCHEMA_STATEMENTS]) await db.execute(sql.raw(statement));
+    for (const statement of SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
     await seedIfEmpty(db);
     await upgradeIcpsV2(db);
     await upgradeManufacturingIndustriesV3(db);
@@ -72,9 +72,6 @@ async function connect(): Promise<Db> {
     await seedConfiguration(db);
     await migrateEmailTemplatesOnce(db);
     await ensureMarketingUser(db);
-    // The Blogs profile: created only when BLOGS_INITIAL_PASSWORD is set (see README); the Inveck blog profile is made empty.
-    await ensureBlogsUser(db);
-    await ensureBlogProfile(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);
     await approveSheetLeadsOnce(db);
@@ -82,6 +79,19 @@ async function connect(): Promise<Db> {
   } catch (e) {
     const cause = (e as { cause?: unknown })?.cause;
     console.error('[db] schema upkeep failed; running on the existing schema:', cause ?? e);
+  }
+  // The Blogs area, apart from the rest so that nothing here can stop the CRM's upkeep above (or the other way round): the login
+  // (created only when BLOGS_INITIAL_PASSWORD is set, see README), then the blog tables and the empty Inveck profile.
+  try {
+    console.log(`[blogs] login: ${await ensureBlogsUser(db)}`);
+  } catch (e) {
+    console.error('[blogs] could not create the Blogs login:', (e as { cause?: unknown })?.cause ?? e);
+  }
+  try {
+    for (const statement of BLOG_SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
+    await ensureBlogProfile(db);
+  } catch (e) {
+    console.error('[blogs] could not set up the blog tables:', (e as { cause?: unknown })?.cause ?? e);
   }
   return db;
 }
