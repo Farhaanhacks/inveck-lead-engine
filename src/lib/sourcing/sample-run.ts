@@ -8,6 +8,7 @@ import { listKnownCompanies } from '../known-companies';
 import { normSegment } from '../icp-match';
 import { processLead } from '../pipeline/process-lead';
 import { knowFirmPage } from '../pipeline/firm-identity';
+import type { FitEvidence } from '../pipeline/fit';
 import { mapLimit, type Services } from '../pipeline/services';
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { logActivity } from '../activity';
@@ -21,7 +22,7 @@ import { LOGISTICS, MANUFACTURING } from '../db/seed';
 import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchesThisMorning, searchRound, startRound, type MorningSourcing } from './morning';
 import { pausedToday } from '../pause';
 import { getSettings } from '../settings';
-import { planFromMemory, rememberKept, rememberSearch, searchMemory } from './search-memory';
+import { DeadGround, planFromMemory, rememberKept, rememberSearch, searchMemory } from './search-memory';
 import { CHECKS_RESERVE } from '../search-budget';
 import type { CompanyPage, SourcingSegment } from './linkedin-pages';
 import type { FoundContact } from './people-first';
@@ -47,10 +48,14 @@ const CONCURRENCY = 5;
  *   aren't looked up, likely misfits are checked last, and up to six companies are looked up in one search
  *   (see cheaperChecks; from 28 Oct 2026, four before), a company that search doesn't show looked up on its own and
  *   its size checked only while companies are still needed; companies ruled out are remembered and not checked again;
- * - people searches of ten results, and a segment stops after 15 searches in a row find no new company (from 28 Oct
- *   2026; before, nobody new on the lists, so people at companies already known kept it searching);
+ * - people searches of ten results, and a segment stops after 60 searches in a row find no new company (from 28 Oct
+ *   2026, 15 that morning; before, nobody new on the lists, so people at companies already known kept it searching); a
+ *   company ruled out in the last 90 days, or outside the ICP by its name, isn't a new company;
+ * - a people search whose first page of ten was full and found new companies is read on at once: its first hundred
+ *   results, 2 credits (from 28 Oct 2026);
  * - its people searches are remembered: one that found no new company isn't made again within 30 days, one made in
- *   the last 7 days that found companies is read further down (its next page, to page 5) rather than again, an
+ *   the last 7 days that found companies is read further down rather than again (its first hundred results in one
+ *   search, then the next hundred, to 300), an
  *   industry word and town that found nobody twice isn't searched with other titles, and the pairs that
  *   found companies that passed go first (see search-memory.ts);
  * - two contacts a company, with the hunt for a P1 when none is among them; the staff search stops once
@@ -63,7 +68,7 @@ const CONCURRENCY = 5;
  *   credits at most for a new sample (3,000 until 27 Oct 2026): a search that would go over it isn't made.
  * A sample carried on from where it stopped uses them too.
  */
-export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 15, headroom: 1.1, credits: 4000, researchCredits: 25 } as const;
+export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 60, headroom: 1.1, credits: 4000, researchCredits: 25 } as const;
 
 /**
  * 3PL & Logistics (INVECK's decision, 26 Oct 2026): fewer companies to find, and research rules more of them out, so
@@ -250,6 +255,14 @@ export function spendStep(r: Pick<MorningSampleReport, 'phase' | 'companies'>, i
   return 'Research: other';
 }
 
+/** The company check's note on a company passed to research with its industry shown nowhere (see screenPage). */
+const UNCLEAR_INDUSTRY = /industry not shown on LinkedIn or its website: research checks it/;
+
+/** Research found the company in one of the ICP's industries. */
+export function industryConfirmed(evidence: FitEvidence[] | null | undefined): boolean {
+  return (evidence ?? []).some((e) => e.kind === 'industry' && e.status === 'met');
+}
+
 /**
  * Why a company the run checked wasn't approved, in a few words (null: approved, or not done yet): the report's tally of
  * where its credits went for nothing.
@@ -356,11 +369,17 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           budgetLeft: async () => budgetLeft() - r.companies.filter((c) => !c.outcome).length * SAMPLE_RULES.researchCredits - CHECKS_RESERVE,
           peopleResults: SAMPLE_RULES.peopleResults,
           quietSearches: SAMPLE_RULES.quietSearches,
+          deepReads: true,
+          // Ground the searches have found empty, this run's included: not searched (28 Oct 2026).
+          deadGround: async (segment) => new DeadGround(await searchMemory(db, segment, new Date())),
           rememberRuledOut: true,
           lenientScreen: true,
           // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
           // whose page doesn't show an ICP industry, isn't researched (and paid for) only to be ruled out.
-          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen }, [MANUFACTURING]: { lenientScreen: false } },
+          // Manufacturing's company whose LinkedIn page shows no industry either way (no label, or a catch-all one) goes to
+          // research when its website doesn't settle it (from 28 Oct 2026), where it's approved only if research confirms
+          // the industry (see industryConfirmed); one with no LinkedIn page still isn't (nothing shows its size).
+          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen }, [MANUFACTURING]: { lenientScreen: false, unclearIndustry: true } },
           cheaperChecks: true,
           recent: await recentSearches(db, null),
           // What earlier samples' searches found (before this one started, so the plan stays the same).
@@ -385,7 +404,7 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
               await save({ progress: progressOf(r) });
             },
             async searched(segment, pq, result) {
-              await rememberSearch(db, segment, pq, { listed: result.listed, fresh: result.newCompanies, results: result.results, error: result.error }).catch(() => {});
+              await rememberSearch(db, segment, { ...pq, page: result.page, num: result.num }, { listed: result.listed, fresh: result.newCompanies, results: result.results, error: result.error }).catch(() => {});
               // For the report: did the search find a new company?
               if (!result.error) {
                 const y = ((r.yields ??= {})[segment] ??= { found: 0, none: 0 });
@@ -489,6 +508,17 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
 export const SCHEDULED_SAMPLES = ['2026-10-25T14:20:00Z', '2026-10-26T14:30:00Z'];
 
 /**
+ * One-off runs for a day's lists, what each person already has for it left out, given out when they finish; started
+ * once by the first wake-up after the time, not more than three hours late (INVECK, 28 Oct 2026: at 10:15 pm India
+ * time, Thursday 29 October's lists after the 9 pm run left them short, to try that evening's rules).
+ */
+export const TOP_UP_SAMPLES: { at: string; day: string }[] = [
+  { at: '2026-10-28T16:45:00Z', day: '2026-10-29' },
+  // And at 12:30 am on Thursday 29 October (INVECK, 28 Oct 2026, night), with the new industry words and towns.
+  { at: '2026-10-28T19:00:00Z', day: '2026-10-29' },
+];
+
+/**
  * The evening run (INVECK's decision, 26 Oct 2026): from Tuesday 27 October, each working day's run happens the evening
  * before, from 9 pm India time: a Morning Sample for the next day's lists (its leads given out when it finishes), on
  * the evening just before a working day the morning search runs (Sunday's for Monday; none on Friday or Saturday
@@ -527,6 +557,7 @@ export async function startScheduledSample(db: Db, now = new Date()): Promise<nu
     today >= EVENING_SAMPLE.from && hourIst >= EVENING_SAMPLE.startIst && !(await pausedToday(db, now)) && !(await pausedToday(db, tomorrowAt)) && (await searchesThisMorning(db, await getSettings(db), tomorrowAt));
   const due = [
     ...SCHEDULED_SAMPLES.filter((at) => now.getTime() >= Date.parse(at) && now.getTime() - Date.parse(at) <= 3 * 3600_000).map((at) => ({ key: `scheduledSample:${at}`, day: undefined as string | undefined })),
+    ...TOP_UP_SAMPLES.filter(({ at }) => now.getTime() >= Date.parse(at) && now.getTime() - Date.parse(at) <= 3 * 3600_000).map(({ at, day }) => ({ key: `scheduledSample:topUp:${at}`, day })),
     ...(daily ? [{ key: `scheduledSample:daily:${today}`, day: today }] : []),
     ...(evening ? [{ key: `scheduledSample:evening:${tomorrow}`, day: tomorrow }] : []),
   ];
@@ -869,6 +900,13 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       const icp = allIcps.find((i) => normSegment(i.segment) === normSegment(c.segment));
       c.lead = { ...lead, ...update } as Lead;
       c.people = (found ?? []).map((p) => asPerson(p, icp));
+      // Passed to research because its industry showed nowhere: approved only when research confirms the industry (INVECK,
+      // 28 Oct 2026: no weaker leads for it).
+      if (update.status === 'Approved' && UNCLEAR_INDUSTRY.test(c.note) && !industryConfirmed(update.fitEvidence)) {
+        const why = "Not approved: its industry isn't shown on LinkedIn or its website, and research couldn't confirm it";
+        Object.assign(update, { status: 'Disqualified', qualified: false, fitStatus: 'review', fitDecision: why, finalScore: null });
+        c.lead = { ...c.lead, ...update } as Lead;
+      }
       const s = update.status;
       c.outcome = s === 'Approved' ? 'approved' : s === 'Deleted' ? 'no_contact' : s === 'Error' ? 'error' : 'ruled_out';
       c.why = s === 'Approved' ? update.fitReason ?? '' : update.deletedReason || update.fitDecision || update.fitReason || update.lastError || s || '';

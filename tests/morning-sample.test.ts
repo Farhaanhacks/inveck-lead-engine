@@ -16,8 +16,9 @@ import { verifyContacts } from '@/lib/verify-contacts';
 import { normQuery } from '@/lib/pipeline/query-history';
 import { normCompany } from '@/lib/pipeline/text';
 import { morningPlan, searchRound, startRound } from '@/lib/sourcing/morning';
-import { companiesQuery, lookupBatch, PAGES_PER_SEARCH } from '@/lib/sourcing/people-first';
+import { companiesQuery, lookupBatch, PAGES_PER_SEARCH, PEOPLE_KEYWORDS } from '@/lib/sourcing/people-first';
 import { rememberKept, rememberSearch } from '@/lib/sourcing/search-memory';
+import { dbEnrichmentCache } from '@/lib/enrichment-cache';
 
 /**
  * The Morning Sample Run: tomorrow's 6 am run and 8 am draw on paper. The made-up Google (see
@@ -345,7 +346,7 @@ describe('the Morning Sample Run', () => {
   });
 
   describe('3PL & Logistics searches longer and screens strictly (26 Oct)', () => {
-    const TPL = /^site:linkedin\.com\/in .*"(3PL|warehousing|contract logistics|third party logistics|supply chain solutions|cold chain)"/;
+    const TPL = new RegExp(`^site:linkedin\\.com\\/in .*"(${PEOPLE_KEYWORDS[LOGISTICS].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})"`);
     const MFG_PEOPLE = /^site:linkedin\.com\/in /;
     /** The world, with `extra` people added to the people searches `match` picks, or none at all there with `empty`. */
     const withPeople = (asked: string[], match: RegExp, extra: unknown[], empty = false) => {
@@ -412,15 +413,15 @@ describe('the Morning Sample Run', () => {
       expect(segmentsToSearchAgain({ [MANUFACTURING]: 0, [LOGISTICS]: 0 } as typeof short, found, 1)).toEqual([]);
     });
 
-    it('Manufacturing with nobody to find still gives up after 15', async () => {
+    it(`Manufacturing with nobody to find still gives up, after ${SAMPLE_RULES.quietSearches} (28 Oct; 15 before)`, async () => {
       const asked2: string[] = [];
       const id2 = await startSample(true);
       await runSourcingTest(db, withPeople(asked2, MFG_PEOPLE, [], true), id2, Number.POSITIVE_INFINITY);
       const r2 = await reportOf(id2);
       const mfgSearches = asked2.filter((q) => MFG_PEOPLE.test(q) && !TPL.test(q));
       expect(r2.search!.history.find((h) => h.segment === MANUFACTURING)).toMatchObject({ stopped: 'dry', added: 0 });
-      expect(mfgSearches.length).toBeGreaterThanOrEqual(15);
-      expect(mfgSearches.length).toBeLessThan(15 + 8 * 2);
+      expect(mfgSearches.length).toBeGreaterThanOrEqual(SAMPLE_RULES.quietSearches);
+      expect(mfgSearches.length).toBeLessThan(SAMPLE_RULES.quietSearches + 8 * 2);
     });
   });
 
@@ -474,32 +475,172 @@ describe('the Morning Sample Run', () => {
     const id = await startSample(true);
     await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
     const r = await reportOf(id);
-    // 15 in a row, in steps of eight: 16, not the whole plan.
-    expect(r.yields?.[MANUFACTURING]).toEqual({ found: 0, none: 16 });
+    // 60 in a row, in steps of eight: 64, not the whole plan.
+    expect(r.yields?.[MANUFACTURING]).toEqual({ found: 0, none: 64 });
     expect(r.yields?.[LOGISTICS]?.found).toBe(0);
     expect(r.yields?.[LOGISTICS]?.none).toBeLessThanOrEqual(56);
   });
 
-  it('reads a people search made in the last week that found companies further down (its next page), not again (28 Oct)', async () => {
-    const [icp] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
-    const pq = morningPlan(MANUFACTURING, icp, 1)[0];
-    await rememberSearch(db, MANUFACTURING, pq, { listed: 3, fresh: 2, results: 10 });
-    await rememberKept(db, MANUFACTURING, normQuery(pq.q));
-    await new Promise((done) => setTimeout(done, 5));
-    const sent: [string, number][] = [];
+  it('a people search whose first page of ten is full and finds new companies is read on at once: its first hundred, 2 credits (28 Oct)', async () => {
+    const sent: [string, number, number][] = [];
     const base = morningServices(log);
+    let n = 0;
     const svc = {
       ...base,
       fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body ?? '{}'));
-        if (String(input).includes('google.serper.dev') && String(body.q ?? '').startsWith('site:linkedin.com/in ')) sent.push([String(body.q), Number(body.page ?? 1)]);
+        const q = String(body.q ?? '');
+        if (String(input).includes('google.serper.dev') && q.startsWith('site:linkedin.com/in "')) {
+          const num = Number(body.num ?? 10);
+          sent.push([q, Number(body.page ?? 1), num]);
+          // The forging searches: a full page of ten people at new companies (and more further down).
+          if (/"forging"/.test(q)) {
+            const people = Array.from({ length: num }, () => {
+              n++;
+              return { title: `Person ${n} - Plant Head - Gear Works ${n} | LinkedIn`, subtitle: `Pune, Maharashtra, India · Plant Head · Gear Works ${n}`, link: `https://in.linkedin.com/in/p-${n}`, snippet: '' };
+            });
+            return new Response(JSON.stringify({ organic: people }), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+        }
         return base.fetch(input, init);
       }) as typeof fetch,
     };
     const id = await startSample(true);
     await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
-    expect(sent).toContainEqual([pq.q, 2]);
-    expect(sent).not.toContainEqual([pq.q, 1]);
+    const forging = sent.filter(([q]) => /"forging"/.test(q));
+    const first = forging.find(([, , num]) => num === 10)!;
+    expect(first).toBeDefined();
+    // Read on in the same run, its first hundred.
+    expect(forging).toContainEqual([first[0], 1, 100]);
+    // Not for a search that found nothing new, or whose page wasn't full.
+    const empty = sent.filter(([q]) => !/"forging"/.test(q));
+    expect(empty.length).toBeGreaterThan(0);
+    expect(empty.every(([, , num]) => num === 10)).toBe(true);
+  });
+
+  it('a company ruled out in the last 90 days is not a new company when a search finds it again (28 Oct)', async () => {
+    const base = morningServices(log);
+    let n = 0;
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+        // Every people search shows someone new at Tiny Tools, too small and ruled out before.
+        if (String(input).includes('google.serper.dev') && q.startsWith('site:linkedin.com/in "')) {
+          n++;
+          return new Response(JSON.stringify({ organic: [{ title: `Person ${n} - Plant Head - Tiny Tools | LinkedIn`, subtitle: 'Pune, Maharashtra, India · Plant Head · Tiny Tools', link: `https://in.linkedin.com/in/tiny-${n}`, snippet: '' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const [icp] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const cache = dbEnrichmentCache(db);
+    await cache.set(`company-check:v1:${MANUFACTURING}:${icp.companySize}:${normCompany('Tiny Tools')}`, { at: new Date().toISOString(), why: 'too small' });
+    const id = await startSample(true);
+    // The database's memory of companies ruled out, as the live run has it.
+    await runSourcingTest(db, { ...svc, cache }, id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    expect(r.yields?.[MANUFACTURING]).toEqual({ found: 0, none: 64 });
+    expect(r.companies.some((c) => c.employer === 'Tiny Tools')).toBe(false);
+    // The report says why: dropped as ruled out before, and the segment stopped dry.
+    expect(r.search?.drops?.[MANUFACTURING]?.['ruled out in the last 90 days']).toBeGreaterThan(0);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    const html = renderToStaticMarkup(createElement(MorningSample, { test: row, running: false, earlier: [], person: 0, senderName: 'INVECK Sales Team', icps: [] }));
+    expect(html).toContain('The company check, before research');
+    expect(html).toContain('ruled out in the last 90 days');
+    expect(html).toContain('stopped: searches in a row found no new company');
+  });
+
+  it("a Manufacturing company whose industry shows nowhere goes to research, and is approved only if research confirms the industry (28 Oct)", async () => {
+    const { industryConfirmed } = await import('@/lib/sourcing/sample-run');
+    expect(industryConfirmed([{ kind: 'industry', status: 'met' } as never])).toBe(true);
+    expect(industryConfirmed([{ kind: 'industry', status: 'unknown' } as never, { kind: 'requirement', status: 'met' } as never])).toBe(false);
+    expect(industryConfirmed([])).toBe(false);
+    // Through research: Forgeline, as if its industry had shown nowhere.
+    const plain = await startSample(true);
+    await runSourcingTest(db, morningServices(log), plain, Number.POSITIVE_INFINITY);
+    const done = await reportOf(plain);
+    const forgeline = done.companies.find((c) => c.page.name === 'Forgeline Components')!;
+    const unclear = { ...forgeline, note: `${forgeline.note}; industry not shown on LinkedIn or its website: research checks it`, outcome: undefined, why: undefined, lead: undefined, people: undefined, researchedAt: undefined };
+    const report: MorningSampleReport = { ...done, phase: 'research', companies: [unclear], hands: [] };
+    const [row] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, report: JSON.parse(JSON.stringify(report)) }).returning({ id: sourcingTests.id });
+    await runSourcingTest(db, morningServices(log), row.id, Number.POSITIVE_INFINITY);
+    const [c] = (await reportOf(row.id)).companies;
+    // Research confirmed its industry: approved.
+    expect(industryConfirmed(c.lead?.fitEvidence)).toBe(true);
+    expect(c.outcome).toBe('approved');
+    // Research couldn't confirm it (everything else as before): not approved, and not a lead for the pipeline.
+    const base = morningServices(log);
+    const vague = (text: string) => {
+      try {
+        const a = JSON.parse(text);
+        if (!Array.isArray(a.criteria)) return text;
+        return JSON.stringify({ ...a, criteria: a.criteria.map((x: { id: string }) => (x.id === 'IND' ? { ...x, status: 'unknown', evidence: 'Not stated', source: '' } : x)) });
+      } catch {
+        return text;
+      }
+    };
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const res = await base.fetch(input, init);
+        const host = new URL(String(input instanceof Request ? input.url : input)).host;
+        if (host !== 'api.deepseek.com' && host !== 'api.anthropic.com') return res;
+        const body = await res.json();
+        for (const m of body.choices ?? []) m.message.content = vague(m.message.content);
+        for (const m of body.content ?? []) if (m.type === 'text') m.text = vague(m.text);
+        return new Response(JSON.stringify(body), { status: res.status, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch,
+    };
+    const [again] = await db.insert(sourcingTests).values({ segment: 'Manufacturing and 3PL & Logistics', mode: 'morning', companies: 0, report: JSON.parse(JSON.stringify(report)) }).returning({ id: sourcingTests.id });
+    await runSourcingTest(db, svc, again.id, Number.POSITIVE_INFINITY);
+    const [d] = (await reportOf(again.id)).companies;
+    expect(industryConfirmed(d.lead?.fitEvidence)).toBe(false);
+    expect(d.outcome).toBe('ruled_out');
+    expect(d.why).toMatch(/industry isn't shown on LinkedIn or its website, and research couldn't confirm it/);
+    expect(d.lead).toMatchObject({ status: 'Disqualified', qualified: false });
+  });
+
+  it('reads a people search made in the last week that found companies further down (its first hundred results), not again (28 Oct)', async () => {
+    const [icp] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const pq = morningPlan(MANUFACTURING, icp, 1)[0];
+    await rememberSearch(db, MANUFACTURING, pq, { listed: 3, fresh: 2, results: 10 });
+    await rememberKept(db, MANUFACTURING, normQuery(pq.q));
+    await new Promise((done) => setTimeout(done, 5));
+    const sent: [string, number, number][] = [];
+    let cost = 0;
+    const base = morningServices(log);
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        if (String(input).includes('google.serper.dev')) cost += Number(body.num ?? 10) > 10 ? 2 : 1;
+        if (String(input).includes('google.serper.dev') && String(body.q ?? '').startsWith('site:linkedin.com/in ')) sent.push([String(body.q), Number(body.page ?? 1), Number(body.num ?? 10)]);
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, svc, id, Number.POSITIVE_INFINITY);
+    // Its first hundred results in one search (2 credits), not its first ten again.
+    expect(sent).toContainEqual([pq.q, 1, 100]);
+    expect(sent).not.toContainEqual([pq.q, 1, 10]);
+    // Every search counted at what it costs: 2 credits for a hundred results.
+    expect((await reportOf(id)).credits).toBe(cost);
+    // A hundred refused (Serper doesn't allow it on some accounts): its next ten instead.
+    sent.length = 0;
+    await rememberSearch(db, MANUFACTURING, pq, { listed: 3, fresh: 2, results: 10 });
+    await new Promise((done) => setTimeout(done, 5));
+    const refusing = {
+      ...svc,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (Number(JSON.parse(String(init?.body ?? '{}')).num ?? 10) > 10) return new Response(JSON.stringify({ message: 'num > 10 is not allowed on this plan' }), { status: 400 });
+        return svc.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const again = await startSample(true);
+    await runSourcingTest(db, refusing, again, Number.POSITIVE_INFINITY);
+    expect(sent).toContainEqual([pq.q, 2, 10]);
+    expect(sent).not.toContainEqual([pq.q, 1, 10]);
   });
 
   it(`looks up to ${PAGES_PER_SEARCH} companies' pages in one search, within Google's 32 words`, () => {

@@ -17,6 +17,7 @@ import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noComp
 import { websiteWords } from './website-words';
 import { companiesQuery, companyQuery, hintRank, lookupBatch, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
+import type { DeadGround } from './search-memory';
 
 /**
  * The scheduled run's prospect search, people first: LinkedIn profiles with the ICP's P1 and P2
@@ -84,7 +85,21 @@ export type MorningSourcing = {
   history: { round: number; segment: string; wanted: number; added: number; searches: number; stopped?: MorningSegment['stopped'] }[];
   /** The leads this run's search added (every round). */
   addedIds?: number[];
+  /** Companies the search found that its check dropped, per segment and reason (every round; from 28 Oct 2026). */
+  drops?: Partial<Record<SourcingSegment, Record<string, number>>>;
 };
+
+/** Why the check dropped a company, as the report says it (see MorningSourcing.drops). */
+export const DROP_REASONS = {
+  before: 'ruled out in the last 90 days',
+  name: 'outside the ICP by its name',
+  noName: 'no company name (only an industry word)',
+  noPage: 'no LinkedIn page found',
+  small: 'too small',
+  industry: 'industry not on the ICP',
+  abroad: 'based abroad',
+  known: 'already known (by another name, its website or LinkedIn page)',
+} as const;
 
 const isSerper = (input: RequestInfo | URL) => String(input instanceof Request ? input.url : input).includes('google.serper.dev');
 const profileKey = (url: string) => url.toLowerCase().replace(/^https?:\/\/[a-z]+\./, '').replace(/\/+$/, '');
@@ -96,21 +111,20 @@ async function icpFor(db: Db, segment: SourcingSegment) {
 }
 
 /**
- * Every search for one segment: each P1 and P2 title with every industry word and town, titles taken
- * in turn so every title is searched early, and the words and towns in an order that changes each run.
+ * Every search for one segment: each P1 and P2 title with every industry word and town, the words and towns in an
+ * order that changes each run. The most wanted titles first (28 Oct 2026; before, titles in turn): every word and town
+ * with the plant head (the warehouse manager for 3PL) before any with the next title, so new ground is tried with the
+ * titles most likely to find someone, and the others only where it isn't dead by then (see DeadGround).
  */
 export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof searchTitles>[0], seed: number): PeopleQuery[] {
-  const titles = searchTitles(icp);
+  const titles = [...searchTitles(icp)].sort((a, b) => contactPriority(a, icp) - contactPriority(b, icp));
   const pairs = shuffled(
     PEOPLE_KEYWORDS[segment].flatMap((k) => SEGMENT_SEARCH[segment].places.map((p) => [k, p] as const)),
     seed,
   );
   const out: PeopleQuery[] = [];
-  for (let j = 0; j < pairs.length; j++) {
-    titles.forEach((title, t) => {
-      const [keyword, place] = pairs[(j + t * 7) % pairs.length];
-      out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
-    });
+  for (const title of titles) {
+    for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
   }
   return out;
 }
@@ -179,7 +193,7 @@ export function startRound(prev: MorningSourcing | null, wanted: Record<Sourcing
     const before = prev?.segments.find((p) => p.segment === segment);
     return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
   });
-  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [] };
+  return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [], drops: prev?.drops ?? {} };
 }
 
 /** Leads this run's search added that research approved, per segment. */
@@ -273,7 +287,7 @@ export type RoundSink = {
    * A search made: the run remembers it, so it isn't made again for a while (a sample run keeps its own
    * memory, see search-memory.ts). `listed`: the people on the ICP's lists it showed, seen before or not.
    */
-  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; listed: number; error?: string }): Promise<void>;
+  searched?(segment: SourcingSegment, pq: PeopleQuery, result: { results: number; newCompanies: number; listed: number; error?: string; page: number; num: number }): Promise<void>;
   save(state: MorningSourcing): Promise<unknown>;
 };
 
@@ -298,6 +312,10 @@ export type RoundOptions = {
   peopleResults?: number;
   /** Searches in a row finding no new company before a segment stops (default MORNING_LIMITS.quietSearches). */
   quietSearches?: number;
+  /** A first page of ten that was full and found new companies is read on at once: its first hundred, 2 credits. */
+  deepReads?: boolean;
+  /** Where searches have found nobody (see DeadGround), kept up to date as the run searches: that ground isn't searched. */
+  deadGround?: (segment: SourcingSegment) => Promise<DeadGround>;
   /** Companies ruled out (too small, the wrong industry, no LinkedIn page) are remembered and not checked again. */
   rememberRuledOut?: boolean;
   /**
@@ -316,7 +334,7 @@ export type RoundOptions = {
    * Per segment, in place of `quietSearches`, and of `lenientScreen` for passing a company with no LinkedIn page or an
    * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics).
    */
-  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean }>>;
+  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean; unclearIndustry?: boolean }>>;
   /** Reorders or shortens a segment's plan (a sample run's memory of its searches); the same answer on every invocation. */
   plan?: (segment: SourcingSegment, plan: PeopleQuery[]) => Promise<PeopleQuery[]>;
   sink: RoundSink;
@@ -352,8 +370,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
   for (const p of o.alsoKnown?.pages ?? []) pages.add(p);
   const seen = new Set(state.seen);
   const peopleResults = o.peopleResults ?? PEOPLE_RESULTS;
-  // The most one step of the search can spend: a batch of searches, or a batch of company checks with their second looks.
-  const stepCredits = 8 * searchCredits(peopleResults);
+  // The most one step of the search can spend: a batch of searches and their deep reads (a hundred results each), or a
+  // batch of company checks with their second looks.
+  const stepCredits = 8 * (searchCredits(10) + searchCredits(100));
 
   // Each segment's search, ready to take a step.
   type Worker = { seg: MorningSegment; step: () => Promise<'more' | 'stop'>; checked: Set<string> };
@@ -367,7 +386,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const own = o.segmentRules?.[seg.segment];
     const quietLimit = own?.quietSearches ?? o.quietSearches ?? MORNING_LIMITS.quietSearches;
     const lenientScreen = own?.lenientScreen ?? o.lenientScreen;
+    // A page that shows no industry either way (no label, or a catch-all one): its website, then research, decides.
+    const unclearIndustry = own?.unclearIndustry ?? lenientScreen;
     const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
+    const ground = o.deadGround ? await o.deadGround(seg.segment) : null;
     const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
       ...svc,
@@ -380,15 +402,17 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     };
     // An account Serper doesn't allow more than ten results on: ten at a time, for the rest of the round.
     let fewer = false;
-    const search = async (q: string, num = 10, page = 1): Promise<{ results: SerperResult[]; error?: string }> => {
+    // The page and number of results actually read come back with them (a refused hundred is read as ten, `fallbackPage`).
+    const search = async (q: string, num = 10, page = 1, fallbackPage?: number): Promise<{ results: SerperResult[]; error?: string; page: number; num: number }> => {
+      if (fewer && num > 10) return search(q, 10, fallbackPage ?? page);
       try {
-        return { results: await googleSearch(counting, q, page, fewer ? Math.min(num, 10) : num) };
+        return { results: await googleSearch(counting, q, page, num), page, num };
       } catch (e) {
         if (num > 10 && !fewer && /not allowed/i.test(errorMessage(e))) {
           fewer = true;
-          return search(q, 10, page);
+          return search(q, 10, fallbackPage ?? page);
         }
-        return { results: [], error: errorMessage(e) };
+        return { results: [], error: errorMessage(e), page, num };
       }
     };
     // Companies ruled out earlier for this segment and size (when asked): not checked (searched) again.
@@ -403,6 +427,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     };
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);
+    const drop = (why: keyof typeof DROP_REASONS) => {
+      const mine = ((state.drops ??= {})[seg.segment] ??= {});
+      mine[DROP_REASONS[why]] = (mine[DROP_REASONS[why]] ?? 0) + 1;
+    };
 
     // A company not needed now (the segment has what it wants): it waits, with its page when that was found.
     const putBack = (c: MorningSegment['pending'][number], page?: CompanyPage) => {
@@ -415,11 +443,13 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       checked.add(normCompany(c.employer));
       if (await ruledOutBefore(c.employer)) {
         seg.ruledOut++;
+        drop('before');
         return;
       }
       // An employer that is only an industry word isn't looked up (the sample's rule, for every segment).
       if (o.lenientScreen && noCompanyName(c.employer)) {
         seg.noPage++;
+        drop('noName');
         return;
       }
       const fromPre = c.page ?? (pre ? matchingPage(pre, c.employer) : null);
@@ -428,6 +458,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (!page && !got.error && lenientScreen) page = pagelessCompany(c.employer);
       if (!page) {
         seg.noPage++;
+        drop('noPage');
         if (!got.error) await rememberRuledOut(c.employer, 'no LinkedIn page');
         return;
       }
@@ -439,7 +470,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       // Its people work in India, so it has a site here whatever its headquarters.
       const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
       let s = screenPage(seenAs, seg.segment, icp.companySize, known);
-      if (lenientScreen && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+      if (unclearIndustry && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
         const words = await websiteWords(svc, page.website);
         s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
         if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };
@@ -447,6 +478,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (s.pass && !page.url) s = { ...s, note: `no LinkedIn company page found; ${s.note}` };
       if (!s.pass || (page.url && pages.has(page.url))) {
         seg.ruledOut++;
+        drop(s.pass ? 'known' : s.reason);
         // Too small or the wrong industry doesn't change soon; abroad depends on who was found there.
         if (!s.pass && (s.reason === 'small' || s.reason === 'industry')) await rememberRuledOut(c.employer, s.note);
         return;
@@ -479,10 +511,12 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           // show, on their own, only as many as are still needed (the others wait their turn).
           const toLook: typeof batch = [];
           for (const c of batch) {
-            if (!outsideIcpByName(c.employer, seg.segment) && !(await ruledOutBefore(c.employer))) toLook.push(c);
+            const outside = !!outsideIcpByName(c.employer, seg.segment);
+            if (!outside && !(await ruledOutBefore(c.employer))) toLook.push(c);
             else {
               checked.add(normCompany(c.employer));
               seg.ruledOut++;
+              drop(outside ? 'name' : 'before');
             }
           }
           const together = toLook.filter((c) => !c.page && !c.alone && !noCompanyName(c.employer));
@@ -500,13 +534,17 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         seg.stopped = 'dry';
         return 'stop';
       }
-      const batch = plan.slice(seg.cursor, seg.cursor + 8);
+      // The next eight searches, past any on ground this run has found empty.
+      const batch: PeopleQuery[] = [];
+      while (batch.length < 8 && seg.cursor < plan.length) {
+        const pq = plan[seg.cursor++];
+        if (!ground?.dead(pq)) batch.push(pq);
+      }
       if (!batch.length) {
         seg.stopped = 'exhausted';
         return 'stop';
       }
-      seg.cursor += batch.length;
-      const got = await mapLimit(batch, 4, (pq) => search(pq.q, peopleResults, pq.page ?? 1));
+      const got = await mapLimit(batch, 4, (pq) => search(pq.q, pq.num ?? peopleResults, pq.page ?? 1, pq.fallbackPage));
       // Every search refused (out of credits, a wrong key): the run ends as failed, with the reason.
       if (got.every((g) => g.error)) {
         seg.stopped = 'failed';
@@ -517,10 +555,11 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         await save();
         throw new Error(`Google search failed: ${got[0]?.error ?? 'no answer'}`);
       }
-      for (const [i, pq] of batch.entries()) {
+      // One search's people: the new companies go to be checked; what it showed comes back.
+      const absorb = async (pq: PeopleQuery, results: SerperResult[]) => {
         let listed = 0;
         let newCompanies = 0;
-        for (const r of got[i].results) {
+        for (const r of results) {
           let person: FoundContact | null;
           try {
             person = readPerson(r, icp);
@@ -534,6 +573,15 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
           if (person.why || !key) continue;
           if (o.cheaperChecks) person.hint = industryHint(`${r.title ?? ''} ${r.subtitle ?? ''} ${r.snippet ?? ''}`, seg.segment);
           if (known.names.has(key) || checked.has(key)) continue;
+          // Ruled out in the last 90 days, or outside the ICP by its name: not a new company (28 Oct 2026; before, it
+          // counted as one and was dropped at its check, so searches turning up only old rejects kept the search going).
+          const outside = !!o.cheaperChecks && !!outsideIcpByName(person.employer, seg.segment);
+          if (!seg.pending.some((x) => normCompany(x.employer) === key) && (outside || (await ruledOutBefore(person.employer)))) {
+            checked.add(key);
+            seg.ruledOut++;
+            drop(outside ? 'name' : 'before');
+            continue;
+          }
           const c = seg.pending.find((x) => normCompany(x.employer) === key);
           if (c) c.contacts.push(person);
           else {
@@ -541,10 +589,25 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
             newCompanies++;
           }
         }
+        return { listed, newCompanies };
+      };
+      const record = async (pq: PeopleQuery, g: (typeof got)[number]) => {
+        const { listed, newCompanies } = await absorb(pq, g.results);
+        if (!g.error) ground?.note(pq, listed > 0);
         // A new company is what counts (28 Oct 2026): people at companies already known or checked can't become new leads.
         seg.quiet = newCompanies ? 0 : seg.quiet + 1;
-        await o.sink.searched?.(seg.segment, pq, { results: got[i].results.length, newCompanies, listed, error: got[i].error });
+        await o.sink.searched?.(seg.segment, pq, { results: g.results.length, newCompanies, listed, error: g.error, page: g.page, num: g.num });
+        return newCompanies;
+      };
+      // A full first page of ten that found new companies: its next ninety people now, in one search (2 credits for up
+      // to 90, not nine more searches; 28 Oct 2026).
+      const deep: PeopleQuery[] = [];
+      for (const [i, pq] of batch.entries()) {
+        const fresh = await record(pq, got[i]);
+        if (o.deepReads && fresh && got[i].num <= 10 && got[i].page === 1 && got[i].results.length >= 10) deep.push(pq);
       }
+      const more = await mapLimit(deep, 4, (pq) => search(pq.q, 100, 1, 2));
+      for (const [i, pq] of deep.entries()) await record({ ...pq, num: more[i].num, page: more[i].page }, more[i]);
       for (const c of seg.pending) c.contacts.sort((a, b) => rank(a) - rank(b));
       return 'more';
     };

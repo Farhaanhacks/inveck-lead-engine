@@ -20,8 +20,18 @@ type TitleIcp = Pick<Icp, 'segment' | 'targetTitles' | 'p2Titles' | 'p3Titles' |
  * profiles. Every people search has one: a title and a place alone bring every hotel and app company.
  */
 export const PEOPLE_KEYWORDS: Record<SourcingSegment, string[]> = {
-  [MANUFACTURING]: ['bearings', 'auto components', 'automotive components', 'forging', 'foundry', 'castings', 'heavy engineering', 'industrial machinery', 'machine tools', 'industrial equipment', 'precision engineering', 'defence manufacturing', 'aerospace components'],
-  [LOGISTICS]: ['3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain'],
+  [MANUFACTURING]: [
+    'bearings', 'auto components', 'automotive components', 'forging', 'foundry', 'castings', 'heavy engineering', 'industrial machinery', 'machine tools', 'industrial equipment', 'precision engineering', 'defence manufacturing', 'aerospace components',
+    // More words for the same ICP industries (INVECK, 28 Oct 2026): what their people write instead.
+    'auto parts', 'auto ancillary', 'engine components', 'tractor components', 'gears', 'gearbox', 'transmission components', 'fasteners', 'sheet metal', 'pressings',
+    'die casting', 'investment casting', 'precision machining', 'CNC machining', 'machined components', 'hydraulics', 'pumps', 'valves', 'compressors',
+    'material handling equipment', 'construction equipment', 'earthmoving equipment', 'heavy fabrication', 'railway components', 'defence equipment', 'aircraft components',
+  ],
+  [LOGISTICS]: [
+    '3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain',
+    // More words for the same ICP industries (INVECK, 28 Oct 2026).
+    'warehousing and distribution', 'distribution centre', 'logistics park', 'integrated logistics', 'cold storage', 'fulfilment centre', 'in-plant logistics', 'temperature controlled logistics',
+  ],
 };
 
 const listOf = (s: string) => s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
@@ -44,6 +54,10 @@ export type PeopleQuery = {
   place: string;
   /** The page of Google's results to read (the first when absent): a search made in the last days is read further down, not again (see planFromMemory). */
   page?: number;
+  /** Results asked for (ten when absent); a hundred to read a rich search deep in one search, 2 credits (see planFromMemory). */
+  num?: number;
+  /** The page of ten to read instead, when Serper refuses a hundred results. */
+  fallbackPage?: number;
 };
 
 /**

@@ -3,7 +3,7 @@ import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { enrichmentCache } from '@/lib/db/schema';
 import { MANUFACTURING, LOGISTICS } from '@/lib/db/seed';
 import { normQuery } from '@/lib/pipeline/query-history';
-import { planFromMemory, rememberKept, rememberSearch, SEARCH_MEMORY, searchMemory, type SearchMemoryEntry } from '@/lib/sourcing/search-memory';
+import { DeadGround, planFromMemory, rememberKept, rememberSearch, SEARCH_MEMORY, searchMemory, type SearchMemoryEntry } from '@/lib/sourcing/search-memory';
 import type { PeopleQuery } from '@/lib/sourcing/people-first';
 
 /** The Morning Sample Run's memory of its people searches: dead ones left out, productive industries and towns first. */
@@ -42,27 +42,67 @@ describe('the sample plan from what earlier searches found', () => {
     const out = planFromMemory(plan, memory);
     expect(out.skipped).toBe(1);
     expect(out.plan.map((q) => q.q)).not.toContain(plan[0].q);
-    // Made yesterday: read further down (28 Oct), not again.
-    expect(out.plan).toContainEqual({ ...plan[1], page: 2 });
+    // Made yesterday: read further down (28 Oct), not again: its first hundred results.
+    expect(out.plan).toContainEqual({ ...plan[1], num: 100, page: 1, fallbackPage: 2 });
     // Its last outcome counts: it found something the time before, nothing the last time.
     expect(planFromMemory(plan, new Map([entry(plan[1], [{ listed: 3, fresh: 2 }, { listed: 3, fresh: 0 }])])).plan).not.toContainEqual(plan[1]);
   });
 
-  it(`a search made in the last ${SEARCH_MEMORY.nextPageDays} days that found companies is read further down: its next page, to page ${SEARCH_MEMORY.lastPage}, not past a page that wasn't full; older, from the top again (28 Oct)`, () => {
-    const pageOf = (outcomes: Partial<SearchMemoryEntry['outcomes'][number]>[]) => planFromMemory([plan[1]], new Map([entry(plan[1], outcomes)])).plan[0]?.page ?? (planFromMemory([plan[1]], new Map([entry(plan[1], outcomes)])).plan.length ? 1 : null);
-    expect(pageOf([{ listed: 3, fresh: 2, results: 10 }])).toBe(2);
-    expect(pageOf([{ listed: 3, fresh: 2, results: 10 }, { listed: 3, fresh: 1, page: 2, results: 10 }])).toBe(3);
-    // The last page read, or one that wasn't full: nothing further down, and the same page would show the same people.
-    expect(pageOf([{ listed: 3, fresh: 2, page: SEARCH_MEMORY.lastPage, results: 10 }])).toBeNull();
-    expect(pageOf([{ listed: 3, fresh: 2, results: 6 }])).toBeNull();
-    // Found nothing new on its next page: left out (for 30 days), as before.
-    expect(pageOf([{ listed: 3, fresh: 2, results: 10 }, { listed: 3, fresh: 0, page: 2, results: 10 }])).toBeNull();
-    // Older than a week: searched from the top again.
-    expect(pageOf([{ at: daysAgo(SEARCH_MEMORY.nextPageDays + 1), listed: 3, fresh: 2, page: 3, results: 10 }])).toBe(1);
+  it(`a search made in the last ${SEARCH_MEMORY.nextPageDays} days that found companies is read further down: its first hundred results in one search, then the next hundred, to ${SEARCH_MEMORY.deepPages * 100}; not past a page that wasn't full; older, from the top again (28 Oct)`, () => {
+    const next = (outcomes: Partial<SearchMemoryEntry['outcomes'][number]>[]) => {
+      const [q] = planFromMemory([plan[1]], new Map([entry(plan[1], outcomes)])).plan;
+      return q ? { num: q.num ?? 10, page: q.page ?? 1, fallbackPage: q.fallbackPage } : null;
+    };
+    // Ten read: the first hundred (2 credits), or the next ten if Serper refuses a hundred.
+    expect(next([{ listed: 3, fresh: 2, results: 10 }])).toEqual({ num: 100, page: 1, fallbackPage: 2 });
+    expect(next([{ listed: 3, fresh: 2, results: 10 }, { listed: 3, fresh: 1, page: 2, results: 10 }])).toEqual({ num: 100, page: 1, fallbackPage: 3 });
+    // A hundred read: the next hundred, to the last.
+    expect(next([{ listed: 3, fresh: 2, num: 100, results: 100 }])).toEqual({ num: 100, page: 2, fallbackPage: undefined });
+    expect(next([{ listed: 3, fresh: 2, num: 100, page: SEARCH_MEMORY.deepPages, results: 100 }])).toBeNull();
+    // A page that wasn't full was the last: the same page would show the same people.
+    expect(next([{ listed: 3, fresh: 2, results: 6 }])).toBeNull();
+    expect(next([{ listed: 3, fresh: 2, num: 100, results: 42 }])).toBeNull();
+    // Found nothing new further down: left out (for 30 days), as before.
+    expect(next([{ listed: 3, fresh: 2, results: 10 }, { listed: 3, fresh: 0, num: 100, results: 100 }])).toBeNull();
+    // Older than a week: searched from the top again, ten results.
+    expect(next([{ at: daysAgo(SEARCH_MEMORY.nextPageDays + 1), listed: 3, fresh: 2, num: 100, page: 2, results: 100 }])).toEqual({ num: 10, page: 1, fallbackPage: undefined });
     // Counted from when the sample started.
     const memory = new Map([entry(plan[1], [{ at: daysAgo(10), listed: 3, fresh: 2, results: 10 }])]);
-    expect(planFromMemory([plan[1]], memory, new Date(Date.now() - 5 * 86_400_000)).plan[0].page).toBe(2);
-    expect(planFromMemory([plan[1]], memory).plan[0].page).toBeUndefined();
+    expect(planFromMemory([plan[1]], memory, new Date(Date.now() - 5 * 86_400_000)).plan[0].num).toBe(100);
+    expect(planFromMemory([plan[1]], memory).plan[0].num).toBeUndefined();
+  });
+
+  it(`leaves out a town once ${SEARCH_MEMORY.deadTownWords} industry words there found nobody on the lists, and a word once it found nobody in ${SEARCH_MEMORY.deadWordTowns} towns; not where anyone was ever found (28 Oct)`, () => {
+    const towns = ['Hubli', 'Salem', 'Karur', 'Erode', 'Kota', 'Rohtak'];
+    const empty = (title: string, keyword: string, place: string) => entry(query(title, keyword, place), [{ listed: 0 }]);
+    // Three words found nobody in Hubli: every Hubli search is left out, whatever its word or title.
+    const hubli = new Map(['gears', 'pumps', 'valves'].map((k) => empty('Plant Head', k, 'Hubli')));
+    const hubliPlan = [query('Works Manager', 'fasteners', 'Hubli'), query('Plant Head', 'forging', 'Pune')];
+    expect(planFromMemory(hubliPlan, hubli).plan.map((q) => q.place)).toEqual(['Pune']);
+    // Two words aren't enough; and one search there that showed someone keeps the town.
+    expect(planFromMemory(hubliPlan, new Map(['gears', 'pumps'].map((k) => empty('Plant Head', k, 'Hubli')))).plan).toHaveLength(2);
+    expect(planFromMemory(hubliPlan, new Map([...hubli, entry(query('Plant Head', 'castings', 'Hubli'), [{ listed: 2, fresh: 1 }])])).plan).toHaveLength(2);
+    // A word that found nobody in five towns is left out everywhere; in four, it's still searched.
+    const wordPlan = [query('Plant Head', 'tractor components', 'Pune'), query('Plant Head', 'forging', 'Pune')];
+    const five = new Map(towns.slice(0, 5).map((t) => empty('Plant Head', 'tractor components', t)));
+    expect(planFromMemory(wordPlan, five).plan.map((q) => q.keyword)).toEqual(['forging']);
+    expect(planFromMemory(wordPlan, new Map(towns.slice(0, 4).map((t) => empty('Plant Head', 'tractor components', t)))).plan).toHaveLength(2);
+  });
+
+  it('keeps up during a run: a town is dead once three words there have just found nobody (28 Oct)', () => {
+    const ground = new DeadGround();
+    const at = (keyword: string) => query('Plant Head', keyword, 'Karur');
+    expect(ground.dead(at('gears'))).toBe(false);
+    ground.note(at('gears'), false);
+    ground.note(at('pumps'), false);
+    expect(ground.dead(at('valves'))).toBe(false);
+    ground.note(at('valves'), false);
+    expect(ground.dead(at('fasteners'))).toBe(true);
+    // Someone found there once: never dead.
+    const lively = new DeadGround();
+    lively.note(query('Plant Head', 'gears', 'Pune'), true);
+    for (const k of ['pumps', 'valves', 'fasteners']) lively.note(query('Plant Head', k, 'Pune'), false);
+    expect(lively.dead(query('Plant Manager', 'castings', 'Pune'))).toBe(false);
   });
 
   it(`leaves out an industry word and town once ${SEARCH_MEMORY.deadAfter} searches there found nobody on the lists, and none found anyone`, () => {

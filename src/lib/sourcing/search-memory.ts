@@ -12,18 +12,25 @@ import type { PeopleQuery } from './people-first';
  * lists it showed, the new companies it found, and how many of those passed the company check. From what
  * the searches found before a sample started, its plan:
  * - leaves out a search made in the last `days` that found no new company (it would show the same people);
- * - reads a search made in the last `nextPageDays` that found companies further down, its next page, not the same
- *   page again (it would show the same people, at companies now known; from 28 Oct 2026), up to page `lastPage`,
- *   and not past a page that wasn't full;
+ * - reads a search made in the last `nextPageDays` that found companies further down, not the same page again (it
+ *   would show the same people, at companies now known; from 28 Oct 2026): a first read of ten results is followed by
+ *   the first hundred in one search (2 credits for up to 90 more people), a hundred by the next hundred, up to
+ *   `deepPages` hundreds, and nothing past a page that wasn't full;
  * - leaves out the rest of an industry word and town pair when `deadAfter` of its searches showed nobody on
  *   the lists, and none ever showed anyone;
+ * - leaves out a town once searches there with `deadTownWords` different industry words showed nobody on the lists,
+ *   and none there ever showed anyone; and an industry word once it showed nobody in `deadWordTowns` towns, and never
+ *   anyone anywhere (28 Oct 2026: the new towns and words cost a few credits to rule out, not dozens);
  * - takes first the pairs whose searches found companies that passed, most first.
  * Only what was known when the sample started counts, so its plan is the same on every invocation.
  */
-export const SEARCH_MEMORY = { days: 30, deadAfter: 2, keepDays: 90, nextPageDays: 7, lastPage: 5 } as const;
+export const SEARCH_MEMORY = { days: 30, deadAfter: 2, deadTownWords: 3, deadWordTowns: 5, keepDays: 90, nextPageDays: 7, deepPages: 3 } as const;
 
-/** One search's outcome: `page`, the page of results read (1 when absent), and `results`, how many it showed. */
-export type SearchOutcome = { at: string; listed: number; fresh: number; kept: number; page?: number; results?: number; error?: boolean };
+/**
+ * One search's outcome: `page`, the page of results read (1 when absent), `num`, the results asked for (10 when
+ * absent), and `results`, how many it showed.
+ */
+export type SearchOutcome = { at: string; listed: number; fresh: number; kept: number; page?: number; num?: number; results?: number; error?: boolean };
 export type SearchMemoryEntry = { title: string; keyword: string; place: string; outcomes: SearchOutcome[] };
 
 const PREFIX = 'sample-search:v1:';
@@ -44,22 +51,68 @@ export async function searchMemory(db: Db, segment: SourcingSegment, before: Dat
   return out;
 }
 
+/**
+ * Where searches found nobody on the lists: an industry word and town pair `deadAfter` times, a town with
+ * `deadTownWords` words, a word in `deadWordTowns` towns, none of them ever showing anyone (see SEARCH_MEMORY). Built
+ * from the memory, and kept up to date during a run (`note`), so a run stops searching ground it has just found empty
+ * (28 Oct 2026; before, only the next run did).
+ */
+export class DeadGround {
+  private pairs = new Map<string, { empty: number; listed: number }>();
+  private towns = new Map<string, { empty: Set<string>; listed: boolean }>();
+  private words = new Map<string, { empty: Set<string>; listed: boolean }>();
+
+  constructor(memory: Map<string, SearchMemoryEntry> = new Map()) {
+    for (const e of memory.values()) this.add(e, e.outcomes[e.outcomes.length - 1].listed > 0, e.outcomes.some((o) => o.listed > 0));
+  }
+
+  /** A search made now: whether it showed anyone on the lists. */
+  note(q: { keyword: string; place: string }, listed: boolean) {
+    this.add(q, listed, listed);
+  }
+
+  dead(q: { keyword: string; place: string }): boolean {
+    const t = this.towns.get(q.place.toLowerCase());
+    if (t && !t.listed && t.empty.size >= SEARCH_MEMORY.deadTownWords) return true;
+    const w = this.words.get(q.keyword.toLowerCase());
+    if (w && !w.listed && w.empty.size >= SEARCH_MEMORY.deadWordTowns) return true;
+    const p = this.pairs.get(pairOf(q));
+    return !!p && p.empty >= SEARCH_MEMORY.deadAfter && p.listed === 0;
+  }
+
+  /** One search: its pair counted empty or not; its town and word marked as having shown someone, or not here. */
+  private add(q: { keyword: string; place: string }, lastListed: boolean, everListed: boolean) {
+    const p = this.pairs.get(pairOf(q)) ?? { empty: 0, listed: 0 };
+    if (lastListed) p.listed++;
+    else p.empty++;
+    this.pairs.set(pairOf(q), p);
+    const [town, word] = [q.place.toLowerCase(), q.keyword.toLowerCase()];
+    const t = this.towns.get(town) ?? { empty: new Set<string>(), listed: false };
+    const w = this.words.get(word) ?? { empty: new Set<string>(), listed: false };
+    if (everListed) t.listed = w.listed = true;
+    else {
+      t.empty.add(word);
+      w.empty.add(town);
+    }
+    this.towns.set(town, t);
+    this.words.set(word, w);
+  }
+}
+
 /** The plan with dead searches left out and the productive pairs first (see SEARCH_MEMORY); `skipped` is how many were left out. */
 export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMemoryEntry>, at = new Date()): { plan: PeopleQuery[]; skipped: number } {
-  // Per industry word and town: searches whose last outcome showed nobody on the lists, those that showed someone, companies kept.
-  const pairs = new Map<string, { empty: number; listed: number; kept: number }>();
+  // Per industry word and town: the companies its searches found that passed.
+  const pairs = new Map<string, { kept: number }>();
   for (const e of memory.values()) {
-    const t = pairs.get(pairOf(e)) ?? { empty: 0, listed: 0, kept: 0 };
-    if (e.outcomes[e.outcomes.length - 1].listed > 0) t.listed++;
-    else t.empty++;
+    const t = pairs.get(pairOf(e)) ?? { kept: 0 };
     t.kept += e.outcomes.reduce((a, o) => a + o.kept, 0);
     pairs.set(pairOf(e), t);
   }
+  const ground = new DeadGround(memory);
   const dead = (pq: PeopleQuery) => {
     const own = memory.get(normQuery(pq.q));
     if (own && own.outcomes[own.outcomes.length - 1].fresh === 0) return true;
-    const t = pairs.get(pairOf(pq));
-    return !!t && t.empty >= SEARCH_MEMORY.deadAfter && t.listed === 0;
+    return ground.dead(pq);
   };
   const kept = (pq: PeopleQuery) => pairs.get(pairOf(pq))?.kept ?? 0;
   // Made in the last few days (before `at`, when the sample started): its next page, or nothing when there is none (a
@@ -70,9 +123,12 @@ export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMe
     const own = memory.get(normQuery(pq.q));
     const last = own?.outcomes[own.outcomes.length - 1];
     if (!last || Date.parse(last.at) < recently) return [pq];
+    const num = last.num ?? 10;
+    if (last.results != null && last.results < num) return [];
+    // Ten read: the first hundred in one search (the next ten instead if Serper refuses a hundred). A hundred read: the next hundred.
+    if (num <= 10) return [{ ...pq, num: 100, page: 1, fallbackPage: (last.page ?? 1) + 1 }];
     const next = (last.page ?? 1) + 1;
-    if (next > SEARCH_MEMORY.lastPage || (last.results != null && last.results < 10)) return [];
-    return [{ ...pq, page: next }];
+    return next > SEARCH_MEMORY.deepPages ? [] : [{ ...pq, num: 100, page: next }];
   });
   // A stable order otherwise: the plan's own (titles in turn, words and towns shuffled per run).
   const ordered = live.map((pq, i) => ({ pq, i })).sort((a, b) => kept(b.pq) - kept(a.pq) || a.i - b.i).map((x) => x.pq);
@@ -85,7 +141,16 @@ export async function rememberSearch(db: Db, segment: SourcingSegment, pq: Peopl
   const key = keyOf(segment, normQuery(pq.q));
   const was = (await cache.get(key)) as SearchMemoryEntry | null;
   const cutoff = Date.now() - SEARCH_MEMORY.keepDays * 86_400_000;
-  const outcome: SearchOutcome = { at: new Date().toISOString(), listed: r.listed, fresh: r.fresh, kept: 0, ...(pq.page && pq.page > 1 ? { page: pq.page } : {}), ...(r.results != null ? { results: r.results } : {}), ...(r.error ? { error: true } : {}) };
+  const outcome: SearchOutcome = {
+    at: new Date().toISOString(),
+    listed: r.listed,
+    fresh: r.fresh,
+    kept: 0,
+    ...(pq.page && pq.page > 1 ? { page: pq.page } : {}),
+    ...(pq.num && pq.num > 10 ? { num: pq.num } : {}),
+    ...(r.results != null ? { results: r.results } : {}),
+    ...(r.error ? { error: true } : {}),
+  };
   await cache.set(key, { title: pq.title, keyword: pq.keyword, place: pq.place, outcomes: [...(was?.outcomes ?? []).filter((o) => Date.parse(o.at) >= cutoff), outcome] });
 }
 

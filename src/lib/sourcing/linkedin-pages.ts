@@ -39,11 +39,31 @@ export const SEGMENT_SEARCH: Record<SourcingSegment, { keywords: string[]; place
       'heavy engineering',
       'industrial equipment',
     ],
-    places: ['Pune', 'Chakan', 'Pimpri-Chinchwad', 'Kolhapur', 'Rajkot', 'Ludhiana', 'Coimbatore', 'Belagavi', 'Chennai', 'Hosur', 'Sriperumbudur', 'Bengaluru', 'Tumakuru', 'Gurugram', 'Manesar', 'Faridabad', 'Noida', 'Sanand', 'Ahmedabad', 'Vadodara', 'Halol', 'Hyderabad', 'Kolkata', 'Nagpur'],
+    places: [
+      'Pune', 'Chakan', 'Pimpri-Chinchwad', 'Kolhapur', 'Rajkot', 'Ludhiana', 'Coimbatore', 'Belagavi', 'Chennai', 'Hosur', 'Sriperumbudur', 'Bengaluru', 'Tumakuru', 'Gurugram', 'Manesar', 'Faridabad', 'Noida', 'Sanand', 'Ahmedabad', 'Vadodara', 'Halol', 'Hyderabad', 'Kolkata', 'Nagpur',
+      // Every industrial town across India (INVECK, 28 Oct 2026: the ICP is all of India).
+      'Talegaon', 'Ranjangaon', 'Shirwal', 'Satara', 'Sangli', 'Aurangabad', 'Nashik', 'Sinnar', 'Ahmednagar', 'Jalgaon', 'Butibori', 'Mumbai', 'Thane', 'Navi Mumbai', 'Taloja', 'Boisar', 'Vasai', 'Ambernath',
+      'Jamnagar', 'Morbi', 'Surat', 'Bharuch', 'Ankleshwar', 'Vapi', 'Mehsana', 'Gandhinagar', 'Bhavnagar',
+      'Jaipur', 'Bhiwadi', 'Neemrana', 'Alwar', 'Udaipur', 'Jodhpur', 'Kota',
+      'Delhi', 'Greater Noida', 'Ghaziabad', 'Bawal', 'Dharuhera', 'Sonipat', 'Panipat', 'Rohtak', 'Yamunanagar', 'Ambala',
+      'Jalandhar', 'Mohali', 'Amritsar', 'Mandi Gobindgarh', 'Rajpura', 'Patiala', 'Baddi', 'Parwanoo',
+      'Rudrapur', 'Pantnagar', 'Haridwar', 'Dehradun', 'Kashipur', 'Kanpur', 'Lucknow', 'Agra', 'Aligarh', 'Meerut', 'Varanasi',
+      'Indore', 'Pithampur', 'Dewas', 'Bhopal', 'Mandideep', 'Jabalpur', 'Gwalior', 'Raipur', 'Bhilai',
+      'Jamshedpur', 'Ranchi', 'Bokaro', 'Dhanbad', 'Bhubaneswar', 'Cuttack', 'Rourkela', 'Howrah', 'Durgapur', 'Asansol', 'Haldia', 'Patna', 'Guwahati',
+      'Mysuru', 'Hubli', 'Dharwad', 'Mangaluru', 'Shivamogga', 'Bidadi', 'Doddaballapur',
+      'Oragadam', 'Gummidipoondi', 'Ranipet', 'Tiruchirappalli', 'Madurai', 'Salem', 'Erode', 'Karur',
+      'Sangareddy', 'Visakhapatnam', 'Sri City', 'Vijayawada', 'Anantapur', 'Nellore', 'Tirupati', 'Kochi', 'Palakkad', 'Goa',
+    ],
   },
   [LOGISTICS]: {
     keywords: ['Warehousing and Storage', '3PL', 'third party logistics', 'contract logistics', 'warehousing', 'cold chain', 'distribution centre', 'supply chain solutions'],
-    places: ['Gurugram', 'Faridabad', 'Noida', 'Bhiwandi', 'Navi Mumbai', 'Mumbai', 'Chennai', 'Sriperumbudur', 'Pune', 'Chakan', 'Bengaluru', 'Hyderabad', 'Ahmedabad', 'Vadodara', 'Kolkata'],
+    places: [
+      'Gurugram', 'Faridabad', 'Noida', 'Bhiwandi', 'Navi Mumbai', 'Mumbai', 'Chennai', 'Sriperumbudur', 'Pune', 'Chakan', 'Bengaluru', 'Hyderabad', 'Ahmedabad', 'Vadodara', 'Kolkata',
+      // Every logistics hub across India (INVECK, 28 Oct 2026: the ICP is all of India).
+      'Delhi', 'Greater Noida', 'Ghaziabad', 'Sonipat', 'Kundli', 'Bawal', 'Manesar', 'Jaipur', 'Lucknow', 'Kanpur', 'Indore', 'Nagpur', 'Raipur', 'Patna', 'Guwahati', 'Siliguri',
+      'Bhubaneswar', 'Howrah', 'Ludhiana', 'Rajpura', 'Zirakpur', 'Ambala', 'Thane', 'Panvel', 'Taloja', 'Nashik', 'Aurangabad', 'Surat', 'Vapi', 'Rajkot', 'Sanand',
+      'Hosur', 'Coimbatore', 'Kochi', 'Madurai', 'Visakhapatnam', 'Vijayawada', 'Hubli', 'Mysuru', 'Mangaluru', 'Bhopal', 'Goa', 'Tirupati', 'Sri City', 'Oragadam',
+    ],
   },
 };
 

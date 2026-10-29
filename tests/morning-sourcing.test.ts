@@ -9,7 +9,8 @@ import { saveHolidays } from '@/lib/holidays';
 import { executeRun, startRun } from '@/lib/runs';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { istDay } from '@/lib/tasks';
-import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, searchesThisMorning, type MorningSourcing } from '@/lib/sourcing/morning';
+import { beforeLastRound, MORNING_LIMITS, morningHealth, morningPlan, PEOPLE_FIRST_SOURCE, searchesThisMorning, searchRound, startRound, type MorningSourcing } from '@/lib/sourcing/morning';
+import { DeadGround } from '@/lib/sourcing/search-memory';
 import { fakeFetch, type FakeLog } from './fake-apis';
 import { dbSearchMeter, RESEARCH_DAY_CREDITS, researchCreditsLeft, researchMeter, searchBudgetLeft, searchesUsed } from '@/lib/search-budget';
 import { createElement } from 'react';
@@ -189,6 +190,32 @@ describe('the search plan', () => {
     expect(plan.some((q) => /"(General Manager|DGM)"/.test(q.q))).toBe(false);
     // Another run, another order.
     expect(morningPlan(MANUFACTURING, icp, 8).slice(0, 20).map((q) => q.q)).not.toEqual(plan.slice(0, 20).map((q) => q.q));
+    // The most wanted title with every word and town before the next title (28 Oct).
+    const pairs = new Set(plan.map((q) => `${q.keyword}|${q.place}`)).size;
+    expect(plan.slice(0, pairs).every((q) => q.title === 'Plant Head')).toBe(true);
+    expect(plan[pairs].title).toBe('Plant Manager');
+    // 3PL: the warehouse manager first.
+    const tpl = { ...DEFAULT_ICPS.find((i) => i.segment === LOGISTICS)!, targetTitles: 'National Head – Operations, Head of Operations, Head of Supply Chain, Warehouse Manager', p2Titles: '', p3Titles: '' };
+    expect(morningPlan(LOGISTICS, tpl, 7)[0].title).toBe('Warehouse Manager');
+  });
+
+  it('skips ground this run has found empty: no search in a dead town (28 Oct)', async () => {
+    const asked: string[] = [];
+    const base = services();
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('google.serper.dev/search')) asked.push(String(JSON.parse(String(init?.body)).q));
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const ground = new DeadGround();
+    for (const k of ['gears', 'pumps', 'valves']) ground.note({ keyword: k, place: 'Pune' }, false);
+    const state = startRound(null, { [MANUFACTURING]: 1, [LOGISTICS]: 0 });
+    await searchRound(db, svc, state, { started: Date.now(), budgetMs: 60_000, log: async () => {}, seed: 3, budgetLeft: async () => 10_000, recent: new Set(), quietSearches: 30, deadGround: async () => ground, sink: { add: async () => {}, save: async () => {} } });
+    const people = asked.filter((q) => q.startsWith('site:linkedin.com/in '));
+    expect(people.length).toBeGreaterThan(0);
+    expect(people.some((q) => q.endsWith(' Pune'))).toBe(false);
   });
 
   it('starts no new round after 7:30 am India time', () => {

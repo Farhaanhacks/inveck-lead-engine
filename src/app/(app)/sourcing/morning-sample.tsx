@@ -238,6 +238,51 @@ function SpendCard({ r }: { r: MorningSampleReport }) {
   );
 }
 
+const STOPPED: Record<string, string> = {
+  target: 'had what it wanted',
+  dry: 'searches in a row found no new company',
+  exhausted: 'no searches left to make',
+  cap: 'credits kept for researching what it found',
+  failed: 'Google search failed',
+};
+
+/** What the company check did with the companies the search found (passed, or dropped and why), and why each segment stopped searching. */
+function CheckCard({ r }: { r: MorningSampleReport }) {
+  const drops = r.search?.drops;
+  if (!drops) return null;
+  const rows = DRAW_SEGMENTS.map((s) => ({
+    segment: s,
+    passed: r.companies.filter((c) => c.segment === s).length,
+    dropped: Object.entries(drops[s] ?? {}).sort((a, b) => b[1] - a[1]),
+    stops: (r.search?.history ?? []).filter((h) => h.segment === s && h.wanted > 0),
+  })).filter((x) => x.passed || x.dropped.length || x.stops.length);
+  if (!rows.length) return null;
+  return (
+    <div className="card mb-4 p-4 text-sm">
+      <p className="font-medium">The company check, before research</p>
+      {rows.map((x) => (
+        <div key={x.segment} className="mt-2">
+          <p className="text-xs text-muted">
+            {x.segment}: {x.passed} passed, {x.dropped.reduce((a, [, n]) => a + n, 0)} dropped
+          </p>
+          <ul className="mt-0.5 space-y-0.5 text-ink-2">
+            {x.dropped.map(([why, n]) => (
+              <li key={why}>
+                <span className="tabular-nums font-medium">{n}</span> {why}
+              </li>
+            ))}
+          </ul>
+          {x.stops.map((h) => (
+            <p key={h.round} className="text-xs text-muted">
+              Round {h.round}: {h.added} of {h.wanted} found, {h.searches} credits; stopped: {STOPPED[h.stopped ?? ''] ?? h.stopped ?? 'still searching'}
+            </p>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Why the companies a run checked weren't approved, most common first, per segment: where its credits went for nothing. */
 function RejectionTally({ r }: { r: MorningSampleReport }) {
   const rows = DRAW_SEGMENTS.map((s) => {
@@ -513,6 +558,7 @@ export function MorningSample({
           )}
 
           {r && <SpendCard r={r} />}
+          {r && <CheckCard r={r} />}
           {r && <RejectionTally r={r} />}
 
           {r && r.phase === 'done' && r.hands.length > 0 && hand && (
