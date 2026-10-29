@@ -427,7 +427,7 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   right person", the lead switches to the next person already found at the company (a P2 process owner
   after a P1, then P3; never HR, admin or quality), shown with a P2 badge, with a fresh plan from that day
   and the email rewritten for them. When nobody else is on file, Today asks for the next contact; naming
-  them under Edit point of contact starts their plan.
+  them under Edit point of contact starts their plan. When nobody else is on file, the lead waits on its find step until someone is named: the person just ruled out never comes back as a fresh lead (fixed on 29 Oct 2026; leads that had, with nothing done on them since, were put back on the find step once, with a note).
 - **Team** (administrators): companies completed, calls, connect rate, messages, LinkedIn requests,
   meetings and attendance per person, for today, yesterday, 7 or 30 days, plus the morning draw.
 - **Attendance**: first and last time seen each day, plus Clock in and Clock out. Administrators can read

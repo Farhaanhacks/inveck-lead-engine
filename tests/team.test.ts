@@ -599,6 +599,68 @@ describe('P2 flow', () => {
     expect(await escalate(db, l.id, 'wrong_person')).toEqual({ switched: false });
     expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0].status).not.toBe('Deleted');
   });
+
+  it('not the right person, nobody else on file: Today keeps the find step, and the same person never comes back as a fresh lead (29 Oct, KR Auto)', async () => {
+    const db = await getDb();
+    const { escalate, newContactNamed } = await import('@/lib/escalate');
+    const { ensureSequences, FIND_NEXT_STEP } = await import('@/lib/tasks');
+    const { people: peopleTable } = await import('@/lib/db/schema');
+    const [l] = await db
+      .insert(leads)
+      .values(lead('KR Auto Components', { segment: 'Manufacturing', contactName: 'Sairam Srinivasan', contactTitle: 'Plant Manager', contactSince: new Date(Date.now() - 7 * 86_400_000) }))
+      .returning();
+    await assignUnowned(db, { everything: true });
+    await db.insert(peopleTable).values({ leadId: l.id, name: 'Sairam Srinivasan', title: 'Plant Manager', isPrimary: true });
+    const [owned] = await db.select().from(leads).where(eq(leads.id, l.id));
+    await db.insert(tasks).values({ leadId: l.id, ownerId: owned.ownerId!, kind: 'call', title: 'Follow-up 3: call', step: 'Follow-up 3', followUpRound: 3, dueDate: istDay() });
+    expect(await escalate(db, l.id, 'wrong_person')).toEqual({ switched: false });
+    // Planning Today (every page load) leaves it waiting for the next person.
+    await ensureSequences(db);
+    await ensureSequences(db);
+    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(open.map((t) => t.step)).toEqual([FIND_NEXT_STEP]);
+    // Someone named: a fresh plan, for them.
+    await db.update(leads).set({ contactName: 'Anil Rao', contactTitle: 'Head of Supply Chain' }).where(eq(leads.id, l.id));
+    await newContactNamed(db, l.id);
+    const fresh = await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)));
+    expect(fresh.some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
+    expect(fresh.length).toBeGreaterThan(0);
+  });
+
+  it('puts back the leads restarted with the person just ruled out, once, leaving those worked since or given a new contact (29 Oct cleanup)', async () => {
+    const db = await getDb();
+    const { restoreFindSteps } = await import('@/lib/escalate');
+    const { FIND_NEXT_STEP, planSequence } = await import('@/lib/tasks');
+    const week = new Date(Date.now() - 7 * 86_400_000);
+    const [ruled, worked, renamed] = await db
+      .insert(leads)
+      .values([
+        lead('KR Auto Components', { segment: 'Manufacturing', contactName: 'Sairam Srinivasan', contactSince: week }),
+        lead('Worked Co', { segment: 'Manufacturing', contactName: 'Ravi Shah', contactSince: week }),
+        lead('Renamed Co', { segment: 'Manufacturing', contactName: 'Anil Rao', contactSince: new Date() }),
+      ])
+      .returning();
+    await assignUnowned(db, { everything: true });
+    const owners = new Map((await db.select().from(leads)).map((x) => [x.id, x.ownerId!]));
+    // As the planner left them: the find step closed, and a fresh first-contact plan started at that moment.
+    const closedAt = new Date(Date.now() - 3600_000);
+    for (const l of [ruled, worked, renamed]) {
+      await db.insert(tasks).values({ leadId: l.id, ownerId: owners.get(l.id)!, kind: 'call', title: FIND_NEXT_STEP, step: FIND_NEXT_STEP, dueDate: istDay(), doneAt: closedAt, outcome: 'closed', createdAt: new Date(closedAt.getTime() - 600_000) });
+      await db.insert(tasks).values(planSequence(istDay()).map((t) => ({ ...t, leadId: l.id, ownerId: owners.get(l.id)!, createdAt: closedAt })));
+    }
+    // Worked Co's fresh call has been made.
+    const [call] = await db.select().from(tasks).where(and(eq(tasks.leadId, worked.id), eq(tasks.kind, 'call'), isNull(tasks.doneAt)));
+    await db.update(tasks).set({ doneAt: new Date(), outcome: 'no_answer' }).where(eq(tasks.id, call.id));
+    expect(await restoreFindSteps(db)).toEqual([ruled.id]);
+    const open = await db.select().from(tasks).where(and(eq(tasks.leadId, ruled.id), isNull(tasks.doneAt)));
+    expect(open.map((t) => t.step)).toEqual([FIND_NEXT_STEP]);
+    const notes = await db.select().from(activities).where(eq(activities.leadId, ruled.id));
+    expect(notes.some((n) => /Back to "Find the next person": Sairam Srinivasan had been ruled out/.test(n.text))).toBe(true);
+    // The others as they were.
+    for (const l of [worked, renamed]) expect((await db.select().from(tasks).where(and(eq(tasks.leadId, l.id), isNull(tasks.doneAt)))).some((t) => t.step === FIND_NEXT_STEP)).toBe(false);
+    // Run again: nothing more.
+    expect(await restoreFindSteps(db)).toEqual([]);
+  });
 });
 
 describe('LinkedIn profile by name', () => {

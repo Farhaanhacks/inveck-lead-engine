@@ -152,10 +152,13 @@ const SHOWN_ON_TODAY = or(eq(tasks.priority, true), notInArray(leads.status, HID
  *   Deleted when no P1 or P2 is on file (a CA firm, worked from the firm's own details, never).
  */
 export async function ensureSequences(db: Db, today = istDay()): Promise<number> {
+  // A lead waiting on "Find the next person" starts afresh only once its point of contact has changed since that step
+  // was set (29 Oct 2026; before, any named contact did, so the person just ruled out came back as a fresh lead). CA
+  // firms as before.
   const openFind = db
     .select({ one: sql`1` })
     .from(tasks)
-    .where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt), eq(tasks.step, FIND_NEXT_STEP)));
+    .where(and(eq(tasks.leadId, leads.id), isNull(tasks.doneAt), eq(tasks.step, FIND_NEXT_STEP), or(caFirmSql, gt(leads.contactSince, tasks.createdAt))));
   const openOther = db
     .select({ one: sql`1` })
     .from(tasks)
