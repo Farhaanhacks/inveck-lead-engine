@@ -390,7 +390,7 @@ export async function changePasswordAction(_prev: PasswordState, form: FormData)
   const [row] = await db.select().from(users).where(eq(users.id, user.id));
   if (!row || !(await checkPassword(current, row.passwordHash))) return { ok: false, message: 'Your current password is wrong.' };
   if (next.length < MIN_PASSWORD_LENGTH) return { ok: false, message: `Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.` };
-  if (next === DEFAULT_PASSWORD || next === MARKETING_PASSWORD) return { ok: false, message: 'Choose a password other than the starting one.' };
+  if (next === DEFAULT_PASSWORD || next === MARKETING_PASSWORD || (row.role === 'blogs' && next === process.env.BLOGS_INITIAL_PASSWORD)) return { ok: false, message: 'Choose a password other than the starting one.' };
   if (next !== confirm) return { ok: false, message: 'The two new passwords are different.' };
   await db.update(users).set({ passwordHash: await hashPassword(next), mustChangePassword: false }).where(eq(users.id, user.id));
   revalidatePath('/', 'layout');

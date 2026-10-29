@@ -54,3 +54,24 @@ export async function ensureMarketingUser(db: Db) {
     .values({ username: MARKETING_USERNAME, name: 'Marketing', role: 'marketing', passwordHash: await hashPassword(MARKETING_PASSWORD), mustChangePassword: true })
     .onConflictDoNothing();
 }
+
+/** The Blogs profile: its own role and its own area (/blogs), nothing from the CRM. */
+export const BLOGS_USERNAME = 'blogs@inveck';
+export const BLOGS_MIN_INITIAL_LENGTH = 8;
+
+/**
+ * Makes sure the Blogs profile exists. Its starting password is never in the code: it is read from the BLOGS_INITIAL_PASSWORD
+ * environment variable at the moment the user is created, hashed like every other password, and never stored or logged. With the
+ * variable unset (or too short) nothing is created and the profile simply doesn't exist yet. A profile that already exists is never
+ * touched, so a password changed after first login stays changed.
+ */
+export async function ensureBlogsUser(db: Db, initial = process.env.BLOGS_INITIAL_PASSWORD ?? ''): Promise<'exists' | 'created' | 'no-password'> {
+  const [found] = await db.select({ id: users.id }).from(users).where(eq(users.username, BLOGS_USERNAME));
+  if (found) return 'exists';
+  if (initial.length < BLOGS_MIN_INITIAL_LENGTH) return 'no-password';
+  await db
+    .insert(users)
+    .values({ username: BLOGS_USERNAME, name: 'Blogs', role: 'blogs', passwordHash: await hashPassword(initial), mustChangePassword: true })
+    .onConflictDoNothing();
+  return 'created';
+}

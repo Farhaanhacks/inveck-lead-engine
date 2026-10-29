@@ -16,9 +16,9 @@ export async function verifyLogin(db: Db, username: string, password: string): P
   return user && ok ? user : null;
 }
 
-/** Anyone logged in: an administrator, a BDA, or the Marketing profile. */
-export type SessionUser = { id: number; name: string; username: string; role: 'admin' | 'bda' | 'marketing'; mustChangePassword: boolean };
-/** Someone who works the Lead Engine / CRM. The Marketing profile is never one: it only has the content calendar. */
+/** Anyone logged in: an administrator, a BDA, the Marketing profile, or the Blogs profile. */
+export type SessionUser = { id: number; name: string; username: string; role: 'admin' | 'bda' | 'marketing' | 'blogs'; mustChangePassword: boolean };
+/** Someone who works the Lead Engine / CRM. The Marketing profile (content calendar) and the Blogs profile (the blog workspace) are never one. */
 export type CrmUser = SessionUser & { role: 'admin' | 'bda' };
 
 /** The shared-password login (and local development without one): sees everything. */
@@ -30,7 +30,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const subject = await readSession((await cookies()).get(SESSION_COOKIE)?.value);
   if (!subject) return null;
   if (subject === 'admin') return ADMIN_USER;
-  // u<id>: a BDA; m<id>: the Marketing profile. The role is read from the database either way.
+  // u<id>: a BDA; m<id>: the Marketing profile; b<id>: the Blogs profile. The role is read from the database either way.
   const id = Number(subject.slice(1));
   if (!Number.isInteger(id)) return null;
   const db = await getDb();
@@ -39,12 +39,12 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 });
 
 /**
- * The Lead Engine / CRM's view of who is logged in: the Marketing profile counts as nobody here, so every
+ * The Lead Engine / CRM's view of who is logged in: the Marketing and Blogs profiles count as nobody here, so every
  * page, action and API route built on this refuses it, on the server, whatever link it is given.
  */
 export const getCurrentUser = cache(async (): Promise<CrmUser | null> => {
   const user = await getSessionUser();
-  return user && user.role !== 'marketing' ? (user as CrmUser) : null;
+  return user && (user.role === 'admin' || user.role === 'bda') ? (user as CrmUser) : null;
 });
 
 export async function requireUser(): Promise<CrmUser> {

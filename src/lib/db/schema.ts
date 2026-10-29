@@ -393,7 +393,7 @@ export const enrichmentCache = pgTable('enrichment_cache', {
 });
 export type NewPerson = typeof people.$inferInsert;
 
-export const USER_ROLES = ['admin', 'bda', 'marketing'] as const;
+export const USER_ROLES = ['admin', 'bda', 'marketing', 'blogs'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /** Team members. Usernames look like parimal@inveck. */

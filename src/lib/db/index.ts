@@ -3,8 +3,10 @@ import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 import { SCHEMA_STATEMENTS } from './migrate';
+import { BLOG_SCHEMA_STATEMENTS } from '../blogs/db/ddl';
+import { ensureBlogProfile } from '../blogs/seed';
 import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingDealBreakersV5, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
-import { ensureMarketingUser, seedUsers } from '../passwords';
+import { ensureBlogsUser, ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
 import { migrateEmailTemplatesOnce, seedConfiguration } from '../config';
 import { backfillSignatureDetails } from '../mail/signature';
@@ -56,7 +58,7 @@ async function connect(): Promise<Db> {
   // Schema upkeep on each cold start. When the database won't take it (read-only, over a plan limit,
   // a lock), the app still runs on the tables already there instead of every page failing.
   try {
-    for (const statement of SCHEMA_STATEMENTS) await db.execute(sql.raw(statement));
+    for (const statement of [...SCHEMA_STATEMENTS, ...BLOG_SCHEMA_STATEMENTS]) await db.execute(sql.raw(statement));
     await seedIfEmpty(db);
     await upgradeIcpsV2(db);
     await upgradeManufacturingIndustriesV3(db);
@@ -70,6 +72,9 @@ async function connect(): Promise<Db> {
     await seedConfiguration(db);
     await migrateEmailTemplatesOnce(db);
     await ensureMarketingUser(db);
+    // The Blogs profile: created only when BLOGS_INITIAL_PASSWORD is set (see README); the Inveck blog profile is made empty.
+    await ensureBlogsUser(db);
+    await ensureBlogProfile(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);
     await approveSheetLeadsOnce(db);

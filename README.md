@@ -501,3 +501,40 @@ neither Vercel's scheduled jobs nor anyone opening a page.
 ### Email and WhatsApp templates per step
 
 Configuration → Templates: pick an ICP, write its email and WhatsApp templates, and assign one to each step: the first contact and every follow-up of that ICP's follow-up rule (the steps change with the rule). Email templates keep formatting (bold text, links, line breaks) as sanitized HTML, sent with the sender's signature; WhatsApp templates are plain text. Nothing is drafted by AI: a step with no template shows as Missing and nothing is written or sent for it until an administrator assigns one. Editing a message while sending it never changes its template. The earlier single email and WhatsApp template of each ICP became its "First contact" template, with the same wording.
+
+## Blogs (the Inveck blog workspace)
+
+A separate area at `/blogs`, built from the Article Basket project (topic discovery, approvals, article generation, scheduling and publishing, analytics) and reduced to Inveck alone: one profile, no domains to manage. It has its own login role (`blogs`), its own menu, and its own tables (`blog_*`, none linked to the CRM's). Nothing in the Lead Engine, Tracker or Marketing changes.
+
+### Signing in
+
+- Username `blogs@inveck`. The starting password is **not in the code**: it is read from the `BLOGS_INITIAL_PASSWORD` environment variable (8+ characters) when the app starts and the user does not exist yet, hashed like every other password, and never stored or shown. After the first login the app asks for a new password (Blogs → Account). Once the user exists the variable is ignored, so a changed password stays changed.
+- Local: put `BLOGS_INITIAL_PASSWORD=<starting password>` in `.env.local` (gitignored). Production: add it under Vercel → Settings → Environment Variables, then redeploy. If the variable is missing the Blogs user simply isn't created.
+- The Blogs user reaches only `/blogs` (the proxy and every page and action check the role); BDAs and the Marketing profile cannot reach it; the administrator (shared password) can reach everything.
+
+### Where Inveck's prompts and settings go
+
+**Blogs → Inveck Profile & Prompts** (`/blogs/profile`). Everything starts empty: audience, tone, rules, and one prompt box per stage (topic discovery, outline, writing, SEO, featured image). Each box is added to the end of that stage's built-in instructions, which only carry the grounding, honesty and output-format rules. Topic discovery and article writing stay off until the audience and tone are filled in. Authors are added under Settings & Integrations (none by default: no one is credited until you add them).
+
+### Environment variables (names only)
+
+| Variable | Used for | State |
+|---|---|---|
+| `BLOGS_INITIAL_PASSWORD` | Starting password of `blogs@inveck` | Set in the local `.env.local`; **add it in Vercel** |
+| `DATABASE_URL` (or `POSTGRES_URL` / `SUPABASE_DB_URL`) | The database (Inveck's existing one) | Already configured |
+| `APP_PASSWORD`, `SESSION_SECRET` | Logins and sessions (existing) | Already configured |
+| `CRON_SECRET` | Bearer secret for `/api/cron/blogs` and `/api/cron/blogs/analytics` | Existing Inveck variable; must be set in Vercel |
+| `GEMINI_API_KEY` | Writing, fact-checking, topic ideas (models `gemini-3.5-flash`, image `gemini-3.1-flash-image`) | **Missing** in Inveck |
+| `EXA_API_KEY` | Research and news search (the "XA" connection) | **Missing** in Inveck |
+| `WAVESPEED_API_KEY`, `WAVESPEED_IMAGE_MODEL` | Featured images (preferred; default model `google/nano-banana/text-to-image`) | **Missing** in Inveck |
+| `POLLINATIONS_API_KEY`, `POLLINATIONS_IMAGE_MODEL` | Featured images (second choice; Gemini's image model is the fallback) | **Missing** in Inveck |
+| `CMS_ADAPTER`, `CMS_BASE_URL`, `CMS_USERNAME`, `CMS_APP_PASSWORD` | Publishing to WordPress (`CMS_ADAPTER=mock` locally; production needs `wordpress`) | **Missing** in Inveck |
+| `GOOGLE_SERVICE_ACCOUNT_JSON`, `GSC_SITE_URL`, `GA4_PROPERTY_ID` | Search Console and GA4 (read-only). The service account is the one the CA sheet already uses; give its email access to the property | `GSC_SITE_URL` and `GA4_PROPERTY_ID` **missing** |
+| `ALERT_WEBHOOK_URL`, `APP_URL` | Optional failure alerts and links | Optional |
+
+The Gemini, Exa, WaveSpeed and Pollinations keys exist in Article Basket's own `.env.local`; they were not copied. Add them to Inveck's environment yourself.
+
+### How it runs
+
+Vercel calls `/api/cron/blogs` every 10 minutes (discovery, article jobs, publishing) and `/api/cron/blogs/analytics` daily; both need `Authorization: Bearer <CRON_SECRET>` (Vercel adds it). Approving a topic also starts its job straight away. Locally, `CRON_SECRET=... npm run blogs:worker` calls the tick every 30 seconds. Featured images are kept in `blog_image_store` (no Supabase Storage) and shown only to Blogs users and the administrator.
+

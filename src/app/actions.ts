@@ -61,8 +61,9 @@ export async function login(_prev: { error: string } | undefined, form: FormData
     const db = await getDb();
     const user = await verifyLogin(db, username, password);
     if (user) {
-      // The Marketing profile's session is marked m<id>: the proxy keeps it to the content calendar.
-      subject = `${user.role === 'marketing' ? 'm' : 'u'}${user.id}`;
+      // The Marketing profile's session is marked m<id> (the proxy keeps it to the content calendar), the Blogs profile's b<id>
+      // (kept to /blogs).
+      subject = `${user.role === 'marketing' ? 'm' : user.role === 'blogs' ? 'b' : 'u'}${user.id}`;
       if (user.role === 'bda') await recordPresence(db, user.id);
     }
   }
@@ -79,7 +80,9 @@ export async function login(_prev: { error: string } | undefined, form: FormData
   const wanted = next.startsWith('/') && !next.startsWith('//') && next !== '/' ? next : '';
   // Marketing always lands on its content calendar; nobody else is sent to the Marketing pages by a link.
   if (subject.startsWith('m')) redirect(wanted.startsWith('/marketing') ? wanted : '/marketing/calendar');
-  const allowed = wanted && (subject === 'admin' || !wanted.startsWith('/marketing')) ? wanted : '';
+  // Blogs always lands in its own workspace; nobody but Blogs and the administrator is sent to /blogs by a link.
+  if (subject.startsWith('b')) redirect(wanted.startsWith('/blogs') ? wanted : '/blogs');
+  const allowed = wanted && (subject === 'admin' || (!wanted.startsWith('/marketing') && !wanted.startsWith('/blogs'))) ? wanted : '';
   redirect(allowed || (subject === 'admin' ? '/' : '/today'));
 }
 

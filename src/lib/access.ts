@@ -38,6 +38,24 @@ export async function requireMarketing(): Promise<SessionUser> {
   return user;
 }
 
+/**
+ * For the Blogs pages: the Blogs profile, or an administrator. Anyone else (a BDA, the Marketing profile) is sent back to their own
+ * area; nobody logged in goes to the login page. The proxy keeps the Blogs profile out of everything else.
+ */
+export async function blogsPage(): Promise<SessionUser> {
+  const user = await getSessionUser();
+  if (!user) redirect('/login');
+  if (user.role !== 'blogs' && user.role !== 'admin') redirect(user.role === 'marketing' ? '/marketing/calendar' : '/today');
+  return user;
+}
+
+/** For the Blogs server actions and API routes: the same rule, enforced on the server whatever page the call came from. */
+export async function requireBlogs(): Promise<SessionUser> {
+  const user = await requireSessionUser();
+  if (user.role !== 'blogs' && user.role !== 'admin') throw new Error('Blogs only');
+  return user;
+}
+
 /** The owner a person's lists are limited to: a team member sees only their own leads, an administrator sees all (null). */
 export function ownerScope(user: Pick<CrmUser, 'id' | 'role'>): number | null {
   return user.role === 'admin' ? null : user.id;
