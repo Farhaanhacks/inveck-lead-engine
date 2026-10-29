@@ -33,7 +33,13 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
   company's own LinkedIn page (found once by the website it lists, so a similarly named company never
   counts). The search uses these names too.
 - **Based in India**: any Indian city counts; the lead's own city is no longer required. People whose profile
-  places them abroad are left out, and someone at the lead's city is ranked ahead within the same tier.
+  places them abroad are left out, and someone at the lead's city is ranked ahead within the same tier. The main
+  contact must be shown in India (from 29 Oct 2026): one whose result shows no location is looked up, and isn't the
+  contact when that shows them abroad or still nowhere. Leads given out before with a contact never placed were
+  checked on LinkedIn again, once.
+- **The company's website**: the one its own LinkedIn page lists is kept, even when it can't be read (from 29 Oct
+  2026); one found by a search for the name is used only when its pages name the company (a shared word isn't
+  enough: nordicglobal.net, Nordic Shipping's, had been taken for Nordic Logistics and Warehousing's).
 - **A role the ICP wants**: a title on the ICP's lists, or one in a function the lists name
   (operations, supply chain, finance) at head, manager or lead level ("Senior Manager, Site
   Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no

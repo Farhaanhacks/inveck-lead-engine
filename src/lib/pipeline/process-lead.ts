@@ -13,11 +13,11 @@ import { IMPORTED_SOURCE } from '../contact-import';
 import { currentEmployer } from './employer';
 import { learnFirm } from './firm-identity';
 import { checkCompanyName } from './company-name';
-import { firmAliasesOf, vagueLocation } from './employer';
+import { basedAbroad, firmAliasesOf, vagueLocation } from './employer';
 import type { Services } from './services';
-import { crawlSite, fetchWebsiteText } from './site-reader';
+import { crawlSite, fetchWebsiteText, type SiteText } from './site-reader';
 import { domainOf, errorMessage, normalizeWebsite, normCompany, rootDomain } from './text';
-import { findOfficialWebsite } from './website';
+import { findOfficialWebsite, siteNamesCompany } from './website';
 import { findSignals } from './signals';
 
 export type LeadUpdate = Partial<Omit<NewLead, 'id' | 'createdAt'>>;
@@ -134,27 +134,14 @@ export async function processLead(
   // A person confirmed the fit: research again keeps their call and only finds contacts and drafts.
   const keepFit = !opts.contactsOnly && lead.fitOverride === 'qualified';
 
-  let website = normalizeWebsite(lead.website);
-  let site = await fetchWebsiteText(svc, website);
-  // No website, or one that doesn't load (often a wrong domain): look the real one up.
-  const corrected: LeadUpdate = {};
-  if (!website || site.error) {
-    const found = await findOfficialWebsite(svc, lead.company, lead.city);
-    if (found && found !== domainOf(website)) {
-      const retry = await fetchWebsiteText(svc, normalizeWebsite(found));
-      // Keep a found address even when its page can't be read (big sites often block
-      // automated readers): it's still the domain the company's emails are on.
-      if (!retry.error || !website) {
-        await log(`${lead.company}: website ${website ? `corrected from ${domainOf(website)} ` : ''}set to ${found}`);
-        website = normalizeWebsite(found);
-        site = retry;
-        corrected.website = found;
-        const client = matchClient({ company: lead.company, website }, ctx.clients);
-        if (client) {
-          await log(`${lead.company}: already a client (${client.company}), skipped`);
-          return { ...corrected, status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
-        }
-      }
+  const resolved = await resolveWebsite(svc, lead, log);
+  const { website, site } = resolved;
+  const corrected: LeadUpdate = resolved.found ? { website: resolved.found } : {};
+  if (resolved.found) {
+    const client = matchClient({ company: lead.company, website }, ctx.clients);
+    if (client) {
+      await log(`${lead.company}: already a client (${client.company}), skipped`);
+      return { ...corrected, status: 'Existing Client', fitReason: `Already an INVECK client (matches "${client.company}" in Clients)`, lastError: '' };
     }
   }
   // The other names its staff use: its website name ("Lumax World") and its LinkedIn page's name
@@ -497,7 +484,46 @@ export async function processLead(
   };
 }
 
+/**
+ * The company's website, and what it says. The one the company's own LinkedIn page lists is the company's: it is kept
+ * even when it can't be read (research then has Google's copy of its pages, or the LinkedIn page alone), never swapped
+ * for one a search for the name finds (29 Oct 2026: nordiccold.com, Nordic Logistics and Warehousing's own, had been
+ * swapped for nordicglobal.net, Nordic Shipping's). Otherwise, with no website or one that doesn't load (often a wrong
+ * domain), the real one is looked up by the name, and kept only when its own pages name the company. `found`: the
+ * address looked up, when one was.
+ */
+export async function resolveWebsite(
+  svc: Services,
+  lead: Pick<Lead, 'company' | 'website' | 'city'>,
+  log: (message: string, level?: 'info' | 'warn' | 'error') => unknown = () => {},
+): Promise<{ website: string; site: SiteText; found?: string }> {
+  const website = normalizeWebsite(lead.website);
+  const site = await fetchWebsiteText(svc, website);
+  if (website && !site.error) return { website, site };
+  const page = website ? await learnFirm(svc, lead.company, website, { cacheOnly: true, city: lead.city }) : null;
+  const domain = rootDomain(website);
+  if (page && domain && page.text.toLowerCase().includes(domain)) {
+    await log(`${lead.company}: website ${domain} not readable (${site.error}); kept, as its LinkedIn page lists it`, 'warn');
+    return { website, site };
+  }
+  const found = await findOfficialWebsite(svc, lead.company, lead.city);
+  if (!found || found === domainOf(website)) return { website, site };
+  const retry = await fetchWebsiteText(svc, normalizeWebsite(found));
+  if (retry.error || !siteNamesCompany(retry.text, lead.company)) {
+    await log(`${lead.company}: ${found} turned up for its name, but its pages don't name the company: not used`, 'warn');
+    return { website, site };
+  }
+  await log(`${lead.company}: website ${website ? `corrected from ${domainOf(website)} ` : ''}set to ${found}`);
+  return { website: normalizeWebsite(found), site: retry, found };
+}
+
 type Picked = Awaited<ReturnType<typeof pickContact>>;
+
+/** Where someone is based shows they're in India: a location shown, and not abroad. */
+export function shownInIndia(p: { location?: string | null; jobLocation?: string | null }): boolean {
+  const where = (p.location || p.jobLocation || '').trim();
+  return !!where && !basedAbroad(where);
+}
 
 /**
  * Titles from email records and old pages go stale: unless the chosen contact came from the LinkedIn
@@ -510,7 +536,7 @@ export async function vetPick(
   svc: Services,
   lead: { company: string; city: string },
   candidates: Candidate[],
-  linkedinPeople: { name: string; title: string }[],
+  linkedinPeople: { name: string; title: string; location?: string | null; jobLocation?: string | null }[],
   pick: (list: Candidate[]) => Promise<Picked>,
   notes: string[],
   icp?: Parameters<typeof contactPriority>[1],
@@ -526,7 +552,9 @@ export async function vetPick(
     // The sales team's own contact is theirs to vouch for. Someone found in the LinkedIn search has a
     // profile showing this company, and was only picked with a location confirmed at the site.
     if (chosen?.source === 'Sales team') return { picked, lookupFailed: false, verified: true };
-    if (linkedinPeople.some((p) => sameName(p.name, contact.name) && p.title)) return { picked, lookupFailed: false, verified: true };
+    // Where they're based must show India: one the search didn't show is looked up (29 Oct 2026: Joey Williams, in
+    // Georgia, USA, whose result showed no location, had been made the main contact).
+    if (linkedinPeople.some((p) => sameName(p.name, contact.name) && p.title && shownInIndia(p))) return { picked, lookupFailed: false, verified: true };
     let profile: Awaited<ReturnType<typeof findLinkedinProfile>>;
     try {
       profile = await findLinkedinProfile(svc, contact.name, lead.company, { title: contact.title, city: lead.city }, lookup);
@@ -541,6 +569,8 @@ export async function vetPick(
       ? `${contact.name} set aside: no LinkedIn profile confirms they work at ${lead.company}`
       : profile.abroad
         ? `${contact.name} left out: LinkedIn shows them based in ${profile.location || 'another country'}`
+        : !shownInIndia(profile)
+          ? `${contact.name} left out: LinkedIn doesn't show where they're based, so they aren't confirmed in India`
         : profile.employer === 'unknown'
           ? `${contact.name} left out: ${profile.evidence || "LinkedIn doesn't confirm a current job here"}`
           : profile.employer !== 'here'

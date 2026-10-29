@@ -236,6 +236,32 @@ export async function restoreFindSteps(db: Db, now = new Date()): Promise<number
   return put;
 }
 
+/**
+ * Leads given out with a main contact whose location was never shown (29 Oct 2026: Joey Williams, in Georgia, USA, had
+ * been confirmed by research without one): not confirmed any more, so the next contact check looks them up, and one
+ * based abroad is moved on as the check does. Contacts with a location on file, and CA firms, are left alone.
+ */
+export async function recheckUnplacedContacts(db: Db): Promise<number[]> {
+  const rows = await db.select().from(leads).where(and(isNotNull(leads.ownerId), isNotNull(leads.contactVerifiedAt)));
+  const out: number[] = [];
+  for (const lead of rows) {
+    if (!lead.contactName || lead.status === 'Deleted' || isCaSegment(lead.segment)) continue;
+    const [primary] = await db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, true)));
+    if (primary && (primary.location.trim() || primary.jobLocation.trim())) continue;
+    await db.update(leads).set({ contactVerifiedAt: null, contactCheckedAt: null }).where(eq(leads.id, lead.id));
+    out.push(lead.id);
+  }
+  return out;
+}
+
+/** Runs recheckUnplacedContacts once per database, and keeps which leads under settings.unplacedContactsV1. */
+export async function recheckUnplacedContactsOnce(db: Db): Promise<void> {
+  const key = 'unplacedContactsV1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const leadIds = await recheckUnplacedContacts(db);
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), leads: leadIds } }).onConflictDoNothing();
+}
+
 /** Runs restoreFindSteps once per database, and keeps what it did under settings.findStepRestoreV1. */
 export async function restoreFindStepsOnce(db: Db): Promise<void> {
   const key = 'findStepRestoreV1';
