@@ -7,7 +7,7 @@ import { activities, enrichmentCache, icps, leads, people, prospectSearches, set
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, spendStep, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, spendStep, startProspectSearch, SAMPLE_3PL_RULES, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
@@ -395,7 +395,54 @@ describe('the Morning Sample Run', () => {
       const tplSearches = asked.filter((q) => TPL.test(q));
       expect(tplSearches.length).toBeGreaterThanOrEqual(50);
       expect(tplSearches.length).toBeLessThan(50 + 8 * 2);
-      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'dry', added: 0 });
+      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'nonePassed', added: 0 });
+    });
+
+    /** Every 3PL people search finds someone at a new company with no LinkedIn page (ruled out at its check); `passAt`, the search that finds Swift (it passes). */
+    const newButRuledOut = (asked: string[], passAt = 0) => {
+      const base = morningServices(log);
+      let n = 0;
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const body = String(input).includes('google.serper.dev/search') ? JSON.parse(String(init?.body)) : null;
+          if (body) asked.push(body.q);
+          if (!body || !TPL.test(body.q)) return base.fetch(input, init);
+          n++;
+          const who = n === passAt ? ['Deepak Nair', 'Swift Warehousing Solutions'] : [`Asha ${n}`, `Pageless Freight ${n}`];
+          const organic = [{ title: `${who[0]} - Head of Logistics - ${who[1]} | LinkedIn`, link: `https://in.linkedin.com/in/${who[0].toLowerCase().replace(/ /g, '-')}`, subtitle: `Pune, Maharashtra, India · Head of Logistics · ${who[1]}`, snippet: '' }];
+          return new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }) as typeof fetch,
+      };
+    };
+
+    it('3PL: a new company that is then ruled out does not keep the search going; 50 searches with none passing stop it (29 Oct)', async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, newButRuledOut(asked), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      expect(r.phase).toBe('done');
+      const tplSearches = asked.filter((q) => TPL.test(q));
+      expect(tplSearches.length).toBeGreaterThanOrEqual(SAMPLE_3PL_RULES.quietSearches);
+      expect(tplSearches.length).toBeLessThan(SAMPLE_3PL_RULES.quietSearches + 8 * 2);
+      // Nearly every search found a new company (before, each of them started the 50 again).
+      expect(r.search!.segments.find((x) => x.segment === LOGISTICS)!.checked.length).toBeGreaterThanOrEqual(SAMPLE_3PL_RULES.quietSearches - 8);
+      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'nonePassed', added: 0 });
+      // Manufacturing keeps its rule: a new company is what counts.
+      expect(r.search!.history.find((h) => h.segment === MANUFACTURING)?.stopped).not.toBe('nonePassed');
+    });
+
+    it('3PL: a company that passes the check starts the 50 again (29 Oct)', async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, newButRuledOut(asked, 30), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const first = r.search!.history.find((h) => h.segment === LOGISTICS && h.round === 1)!;
+      expect(first.added).toBe(1);
+      if (first.wanted > 1) {
+        expect(first.stopped).toBe('nonePassed');
+        expect(asked.filter((q) => TPL.test(q)).length).toBeGreaterThanOrEqual(30 + SAMPLE_3PL_RULES.quietSearches);
+      }
     });
 
     it('3PL gets up to five rounds, each only while its last round found companies; Manufacturing keeps three', async () => {

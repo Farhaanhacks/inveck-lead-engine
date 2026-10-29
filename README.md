@@ -345,8 +345,10 @@ doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segment
 would only be ruled out. From 28 Oct 2026 a Manufacturing company whose page shows no industry either way (no label,
 or a catch-all one, and nothing on its page or website) is researched, and approved only if research confirms its
 industry (`industryConfirmed`); one with no LinkedIn page still isn't (nothing shows its size). 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
-(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no new company, asks for 25% extra and takes up
-to five rounds (each only while its last one found companies). The report tallies why the companies it checked
+(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no company that passes the company check (from
+29 Oct 2026, `quietCountsPassed`; before, no new company: most companies its searches turn up aren't 3PL firms, and each
+kept the search going, so the 9 pm run of 29 Oct spent 780 credits on a round that found one), asks for 25% extra and
+takes up to five rounds (each only while its last one found companies). The report tallies why the companies it checked
 weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
 contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company,
 and (from 28 Oct 2026) how many of each segment's people searches found a new company, and what the company check did

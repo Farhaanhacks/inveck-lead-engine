@@ -54,11 +54,17 @@ export type MorningSegment = {
   /** Companies wanted this round, and added so far. */
   wanted: number;
   added: number;
-  /** Searches made from the plan, and how many in a row found no new company (from 28 Oct 2026; before, nobody new on the lists). */
+  /**
+   * Searches made from the plan, and how many in a row found no new company (from 28 Oct 2026; before, nobody new on the
+   * lists), or, where `quietCountsPassed`, no company that passed the company check.
+   */
   cursor: number;
   quiet: number;
-  /** Why it stopped: it had what was wanted, hit the day's search limit, stopped finding anyone, ran out of searches, or Google failed. */
-  stopped?: 'target' | 'cap' | 'dry' | 'exhausted' | 'failed';
+  /**
+   * Why it stopped: it had what was wanted, hit the day's search limit, stopped finding anyone, stopped finding a company
+   * that passed the check (`quietCountsPassed`), ran out of searches, or Google failed.
+   */
+  stopped?: 'target' | 'cap' | 'dry' | 'nonePassed' | 'exhausted' | 'failed';
   /**
    * Companies found with contacts, not checked yet; `via`, the search that first found them (normalised); `page`, its
    * LinkedIn page when already found (it waited, not needed then); `alone`, not shown by a search for several at once, so
@@ -332,9 +338,11 @@ export type RoundOptions = {
   cheaperChecks?: boolean;
   /**
    * Per segment, in place of `quietSearches`, and of `lenientScreen` for passing a company with no LinkedIn page or an
-   * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics).
+   * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics). With
+   * `quietCountsPassed`, a search counts as finding something only when a company it found passes the company check: new
+   * companies that are then ruled out (another industry, no LinkedIn page) don't keep the search going.
    */
-  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean; unclearIndustry?: boolean }>>;
+  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean; unclearIndustry?: boolean; quietCountsPassed?: boolean }>>;
   /** Reorders or shortens a segment's plan (a sample run's memory of its searches); the same answer on every invocation. */
   plan?: (segment: SourcingSegment, plan: PeopleQuery[]) => Promise<PeopleQuery[]>;
   sink: RoundSink;
@@ -386,6 +394,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const own = o.segmentRules?.[seg.segment];
     const quietLimit = own?.quietSearches ?? o.quietSearches ?? MORNING_LIMITS.quietSearches;
     const lenientScreen = own?.lenientScreen ?? o.lenientScreen;
+    const passedOnly = !!own?.quietCountsPassed;
     // A page that shows no industry either way (no label, or a catch-all one): its website, then research, decides.
     const unclearIndustry = own?.unclearIndustry ?? lenientScreen;
     const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
@@ -493,6 +502,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (domain) known.domains.add(domain);
       seg.added++;
       state.added++;
+      if (passedOnly) seg.quiet = 0;
       const best = c.contacts[0];
       const city = page.hq && !hqAbroad(page.hq) ? page.hq.split(',')[0].trim() : placeNamedIn(page.text) || (best.location.split(',')[0] ?? '').trim();
       await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city, ...(c.via ? { via: c.via } : {}) });
@@ -531,7 +541,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return 'more';
       }
       if (seg.quiet >= quietLimit) {
-        seg.stopped = 'dry';
+        seg.stopped = passedOnly ? 'nonePassed' : 'dry';
         return 'stop';
       }
       // The next eight searches, past any on ground this run has found empty.
@@ -595,7 +605,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         const { listed, newCompanies } = await absorb(pq, g.results);
         if (!g.error) ground?.note(pq, listed > 0);
         // A new company is what counts (28 Oct 2026): people at companies already known or checked can't become new leads.
-        seg.quiet = newCompanies ? 0 : seg.quiet + 1;
+        // Where only a company that passes counts (3PL, 29 Oct 2026), its check sets this back (companies found are
+        // checked before the next searches).
+        seg.quiet = newCompanies && !passedOnly ? 0 : seg.quiet + 1;
         await o.sink.searched?.(seg.segment, pq, { results: g.results.length, newCompanies, listed, error: g.error, page: g.page, num: g.num });
         return newCompanies;
       };
@@ -625,6 +637,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
             ? " (the day's Google search budget is kept for researching what was found)"
             : w.seg.stopped === 'dry'
               ? ` (the last ${w.seg.quiet} searches found no new company)`
+              : w.seg.stopped === 'nonePassed'
+                ? ` (the last ${w.seg.quiet} searches found no company that passed the check)`
               : ` (every search planned has been made in the last ${MORNING_LIMITS.memoryDays} days)`;
       await o.log(`${w.seg.segment}: ${w.seg.added} of ${w.seg.wanted} new companies with contacts, ${w.seg.searches} Google search credits${why}`, w.seg.added < w.seg.wanted ? 'warn' : 'info');
     }
@@ -805,7 +819,7 @@ export async function morningHealth(db: Db, settings: Services['settings'], holi
   const thin: string[] = [];
   for (const segment of SOURCING_SEGMENTS) {
     const rounds = recent.flatMap((r) => r.history?.filter((h) => h.segment === segment) ?? []);
-    const stoppedShort = rounds.filter((h) => h.added < h.wanted && (h.stopped === 'dry' || h.stopped === 'exhausted'));
+    const stoppedShort = rounds.filter((h) => h.added < h.wanted && (h.stopped === 'dry' || h.stopped === 'nonePassed' || h.stopped === 'exhausted'));
     const searches = rounds.reduce((a, h) => a + h.searches, 0);
     const added = rounds.reduce((a, h) => a + h.added, 0);
     if (stoppedShort.some((h) => h.stopped === 'exhausted')) thin.push(`${segment}: every search planned (titles, industry words, towns) has been made in the last ${MORNING_LIMITS.memoryDays} days. Add titles to the ICP's lists, or more industry words and towns, to find new companies.`);
