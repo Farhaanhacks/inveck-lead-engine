@@ -26,8 +26,11 @@ describe('vercel.json cron', () => {
     expect([dom, month, dow]).toEqual(['*', '*', '*']);
   });
 
-  it('runs one blog worker tick (discovery, article jobs, publishing) and leaves the CRM crons as they were', () => {
-    expect(jobs('/api/cron/blogs')).toHaveLength(1);
+  it('runs the blog worker tick (discovery, article jobs, publishing) hourly through the day, each entry once a day (the Hobby plan allows nothing more often), and leaves the CRM crons as they were', () => {
+    const ticks = jobs('/api/cron/blogs');
+    expect(ticks.length).toBeGreaterThan(5);
+    for (const c of ticks) expect(c.schedule).toMatch(/^\d{1,2} \d{1,2} \* \* \*$/);
+    expect(new Set(ticks.map((c: { schedule: string }) => c.schedule)).size).toBe(ticks.length);
     for (const path of ['/api/cron', '/api/cron/draw', '/api/cron/inbound-demos', '/api/cron/resume']) expect(jobs(path).length).toBeGreaterThan(0);
   });
 });

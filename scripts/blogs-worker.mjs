@@ -1,6 +1,6 @@
 // Local stand-in for the Blogs scheduler: calls the blog worker endpoint on an interval (discovery, article jobs, publishing).
 // Usage: npm run dev (one terminal), CRON_SECRET=... npm run blogs:worker (another). Stop with Ctrl+C.
-// In production Vercel calls /api/cron/blogs every 10 minutes (vercel.json); for faster article jobs, point cron-job.org at it too.
+// In production Vercel calls /api/cron/blogs hourly (vercel.json, Hobby plan); for faster article jobs, point cron-job.org at it too.
 const base = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 const secret = process.env.CRON_SECRET;
 const everyMs = Number(process.env.WORKER_INTERVAL_MS || 30_000);

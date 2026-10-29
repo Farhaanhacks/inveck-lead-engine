@@ -553,5 +553,5 @@ The Gemini, Exa, WaveSpeed and Pollinations keys exist in Article Basket's own `
 
 ### How it runs
 
-Vercel calls `/api/cron/blogs` every 10 minutes (discovery, article jobs, publishing) and `/api/cron/blogs/analytics` daily; both need `Authorization: Bearer <CRON_SECRET>` (Vercel adds it). Approving a topic also starts its job straight away. Locally, `CRON_SECRET=... npm run blogs:worker` calls the tick every 30 seconds. Featured images are kept in `blog_image_store` (no Supabase Storage) and shown only to Blogs users and the administrator.
+Vercel calls `/api/cron/blogs` once an hour between 04:45 and 16:45 UTC (one daily entry per hour, because the Hobby plan runs a cron at most once a day; on Pro it can be every few minutes) for discovery, article jobs and publishing and `/api/cron/blogs/analytics` daily; both need `Authorization: Bearer <CRON_SECRET>` (Vercel adds it). Approving a topic also starts its job straight away. Locally, `CRON_SECRET=... npm run blogs:worker` calls the tick every 30 seconds. Featured images are kept in `blog_image_store` (no Supabase Storage) and shown only to Blogs users and the administrator.
 
