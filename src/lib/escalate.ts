@@ -247,7 +247,7 @@ export async function recheckUnplacedContacts(db: Db): Promise<number[]> {
   for (const lead of rows) {
     if (!lead.contactName || lead.status === 'Deleted' || isCaSegment(lead.segment)) continue;
     const [primary] = await db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, true)));
-    if (primary && (primary.location.trim() || primary.jobLocation.trim())) continue;
+    if (primary && (primary.location.trim() || primary.jobLocation.trim() || /^https?:\/\/in\.linkedin\.com\//i.test(primary.linkedin))) continue;
     await db.update(leads).set({ contactVerifiedAt: null, contactCheckedAt: null }).where(eq(leads.id, lead.id));
     out.push(lead.id);
   }

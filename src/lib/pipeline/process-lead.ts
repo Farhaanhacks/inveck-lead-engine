@@ -519,10 +519,15 @@ export async function resolveWebsite(
 
 type Picked = Awaited<ReturnType<typeof pickContact>>;
 
-/** Where someone is based shows they're in India: a location shown, and not abroad. */
-export function shownInIndia(p: { location?: string | null; jobLocation?: string | null }): boolean {
+/**
+ * Where someone is based shows they're in India: a location shown, and not abroad; or, with none shown, a profile on
+ * LinkedIn's India site (in.linkedin.com, where LinkedIn serves its members in India; others' are on www. or their
+ * country's).
+ */
+export function shownInIndia(p: { location?: string | null; jobLocation?: string | null; linkedin?: string | null; url?: string | null }): boolean {
   const where = (p.location || p.jobLocation || '').trim();
-  return !!where && !basedAbroad(where);
+  if (where) return !basedAbroad(where);
+  return /^https?:\/\/in\.linkedin\.com\//i.test(p.linkedin || p.url || '');
 }
 
 /**
@@ -536,7 +541,7 @@ export async function vetPick(
   svc: Services,
   lead: { company: string; city: string },
   candidates: Candidate[],
-  linkedinPeople: { name: string; title: string; location?: string | null; jobLocation?: string | null }[],
+  linkedinPeople: { name: string; title: string; location?: string | null; jobLocation?: string | null; linkedin?: string | null }[],
   pick: (list: Candidate[]) => Promise<Picked>,
   notes: string[],
   icp?: Parameters<typeof contactPriority>[1],

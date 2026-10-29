@@ -41,13 +41,17 @@ describe('the main contact is shown to be in India', () => {
     expect(shownInIndia({ location: '', jobLocation: 'Chakan, Maharashtra' })).toBe(true);
     expect(shownInIndia({ location: 'Rockmart, Georgia, United States' })).toBe(false);
     expect(shownInIndia({ location: '' })).toBe(false);
+    // No location shown: a profile on LinkedIn's India site is an Indian member's; one on www. isn't shown either way.
+    expect(shownInIndia({ location: '', linkedin: 'https://in.linkedin.com/in/hari-viswanathan' })).toBe(true);
+    expect(shownInIndia({ location: '', linkedin: 'https://www.linkedin.com/in/joey-williams-1234' })).toBe(false);
+    expect(shownInIndia({ location: 'Rockmart, Georgia, United States', linkedin: 'https://in.linkedin.com/in/x' })).toBe(false);
   });
 
   it("someone the search showed no location for is looked up, and one based abroad isn't the contact", async () => {
     const searched: string[] = [];
     const notes: string[] = [];
     const joey = candidate('Joey Williams', 'Warehouse Manager');
-    const r = await vetPick(services(searched), { company, city: '' }, [joey], [{ name: 'Joey Williams', title: 'Warehouse Manager', location: '' }], firstOf, notes, DEFAULT_ICPS[1]);
+    const r = await vetPick(services(searched), { company, city: '' }, [{ ...joey, linkedin: joeyProfile.link }], [{ name: 'Joey Williams', title: 'Warehouse Manager', location: '', linkedin: joeyProfile.link }], firstOf, notes, DEFAULT_ICPS[1]);
     expect(searched.some((q) => q.includes('"Joey Williams"'))).toBe(true);
     expect(r.picked.contact.name).toBe('');
     expect(notes.join(' ')).toMatch(/Joey Williams left out/);
