@@ -84,7 +84,7 @@ function Card({ r, card, person, senderName, icps }: { r: MorningSampleReport; c
   const found = cardLead(r, card);
   if (!found) return null;
   const { lead, people, company } = found;
-  const icp = icpFor(lead.segment, icps);
+  const icp = icpFor(lead, icps);
   const tier = (['P1', 'P2', 'P3'].includes(lead.contactTier) ? lead.contactTier : tierOf(lead.contactTitle, icp)) as Tier;
   const others = people.filter((p) => !p.isPrimary && !p.setAside && p.name !== lead.contactName).slice(0, 6);
   const whatsapp = buildWhatsApp(lead, person);
@@ -423,7 +423,7 @@ function WhoGetsWhat({ r, icps }: { r: MorningSampleReport; icps: Icp[] }) {
               {leads.length ? (
                 leads.map(({ c, found }, i) => {
                   const { lead, company } = found!;
-                  const tier = (['P1', 'P2', 'P3'].includes(lead.contactTier) ? lead.contactTier : tierOf(lead.contactTitle, icpFor(lead.segment, icps))) as Tier;
+                  const tier = (['P1', 'P2', 'P3'].includes(lead.contactTier) ? lead.contactTier : tierOf(lead.contactTitle, icpFor(lead, icps))) as Tier;
                   return (
                     <tr key={`${c.from}-${c.key}`}>
                       <td className={`${td} tabular-nums text-muted`}>{i + 1}</td>

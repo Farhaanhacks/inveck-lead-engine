@@ -47,9 +47,18 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
 
 Among the candidates, each segment's most wanted contact comes first (from 28 Oct 2026, `contactPriority` in
 `tiers.ts`): the plant head for Manufacturing (plant, factory and works managers count as plant heads), the warehouse
-manager for 3PL & Logistics (not an assistant or deputy one); then plant heads and supply chain heads and managers,
-regional, national and warehouse heads, the other heads, the COO and finance. A lead nobody has started on gets that
-contact as its main contact when they are on file at the site and the current one ranks well below.
+manager for 3PL & Logistics (not an assistant or deputy one; on 3PL leads made before 29 Oct 2026); then plant heads
+and supply chain heads and managers, regional, national and warehouse heads, the other heads, the COO and finance. A
+lead nobody has started on gets that contact as its main contact when they are on file at the site and the current one
+ranks well below.
+
+The 3PL & Logistics P1 list is INVECK's new one from 29 Oct 2026 (their requirement): National Head – Operations,
+Regional Head – Warehouse Operations, Head – Supply Chain, VP – Operations, VP – Logistics (their "VP – Operations /
+Logistics", searched as two designations), Logistics Head and Head – Contract Logistics. It was set once on the live
+database; Configuration can change it. Heads in operations, warehousing, logistics and supply chain written other ways
+are still P1; managers (warehouse and operations managers) aren't contacts for new 3PL leads, and the COO is the last
+resort. 3PL leads made before it keep the contacts they were given: their people are ranked with the list it replaced
+as well (`LOGISTICS_P1_SINCE` in `tiers.ts`).
 
 ### Emails and phone numbers
 
@@ -319,13 +328,13 @@ credits; its next ten if Serper refuses a hundred), then the next hundred, to 30
 town where two searches found nobody isn't searched with other titles, a town where three industry words found nobody
 and a word that found nobody in five towns aren't searched again (from 28 Oct 2026; and from 29 Oct during the run
 itself, not only from the next one), and the pairs that found companies that passed go first; and the most wanted
-title first, every word and town with the plant head (the warehouse manager for 3PL) before the next title, so new
+title first, every word and town with the plant head (for 3PL, the head of supply chain from 29 Oct 2026) before the next title, so new
 ground is tried with the titles likeliest to find someone), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
 then three P1 designations one at a time when the contacts are still short (Plant Head, Plant Manager and Head of
-Supply Chain for Manufacturing; Warehouse Manager, Head of Warehouse Operations and Head of Supply Chain for 3PL): at most 12 designation searches
+Supply Chain for Manufacturing; for 3PL, the first three in the contact priority from 29 Oct 2026): at most 12 designation searches
 a company instead of 28 for Manufacturing, plus any second pages), no repeat lookup of the company's LinkedIn page or of its officers in the
 news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the

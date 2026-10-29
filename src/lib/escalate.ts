@@ -81,7 +81,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead) return { switched: false };
   const [icpRows, found] = await Promise.all([db.select().from(icps), db.select().from(people).where(eq(people.leadId, leadId))]);
-  const icp = icpFor(lead.segment, icpRows);
+  const icp = icpFor(lead, icpRows);
   const others = found.filter((p) => !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== lead.contactName.toLowerCase());
   const fresh = await isFresh(db, leadId);
   const eligible = eligibleContact(others, icp, lead.city);
@@ -191,7 +191,7 @@ export async function retireWithoutContact(db: Db, now = new Date()): Promise<nu
     if (!(await isFresh(db, lead.id)) || (await wasRestored(db, lead.id))) continue;
     const found = await db.select().from(people).where(eq(people.leadId, lead.id));
     const others = found.filter((p) => !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== lead.contactName.toLowerCase());
-    if (eligibleContact(others, icpFor(lead.segment, icpRows), lead.city)) continue;
+    if (eligibleContact(others, icpFor(lead, icpRows), lead.city)) continue;
     if (await softDeleteLead(db, lead.id, NO_CONTACT_REASON, now)) gone.push(lead.id);
   }
   return gone;

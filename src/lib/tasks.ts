@@ -218,7 +218,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
   for (const l of finding) {
     const lead = (await db.select().from(leads).where(eq(leads.id, l.id)))[0];
     const others = peopleRows.filter((p) => p.leadId === l.id && !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== l.contactName.toLowerCase());
-    const eligible = lead ? eligibleContact(others, icpFor(lead.segment, icpRows), lead.city) : null;
+    const eligible = lead ? eligibleContact(others, icpFor(lead, icpRows), lead.city) : null;
     if (eligible) chosen.set(l.id, `Choose the next contact: ${eligible.person.name} (${eligible.tier}) is on file`);
     else if (!l.contactName && lead && !(await wasRestored(db, l.id))) {
       await softDeleteLead(db, l.id, NO_CONTACT_REASON);

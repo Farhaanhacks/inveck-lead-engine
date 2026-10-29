@@ -36,7 +36,7 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
   const icpRows = await db.select().from(icps);
   const [rows, [{ total }]] = await Promise.all([
     db
-      .select({ p: people, company: leads.company, leadId: leads.id, status: leads.status, segment: leads.segment })
+      .select({ p: people, company: leads.company, leadId: leads.id, status: leads.status, segment: leads.segment, createdAt: leads.createdAt })
       .from(people)
       .innerJoin(leads, eq(people.leadId, leads.id))
       .where(where)
@@ -81,12 +81,12 @@ export default async function ContactsPage({ searchParams }: PageProps<'/contact
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ p, company, leadId, segment }) => (
+              {rows.map(({ p, company, leadId, segment, createdAt }) => (
                 <tr key={p.id} className="border-t border-line align-top hover:bg-surface-2">
                   <td className="px-5 py-2.5">
                     <div className="font-medium">
                       {p.name}
-                      <TierBadge tier={tierOf(p.title, icpFor(segment, icpRows))} />
+                      <TierBadge tier={tierOf(p.title, icpFor({ segment, createdAt }, icpRows))} />
                       {p.isPrimary && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">Main</span>}
                     </div>
                     <div className="max-w-[16rem] truncate text-xs text-muted" title={p.title}>{p.title || '—'}</div>

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
-import { icps, products, settings } from '@/lib/db/schema';
+import { icps, leads, people, products, settings } from '@/lib/db/schema';
 import { SCHEMA_STATEMENTS } from '@/lib/db/migrate';
 import { DEFAULT_ICPS, LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
-import { contactPriority, tierOf, titlePhrase } from '@/lib/tiers';
+import { contactPriority, icpFor, tierOf, titlePhrase } from '@/lib/tiers';
 import { contactSearchPlan, designationQuery } from '@/lib/pipeline/contacts';
 import { searchTitles } from '@/lib/sourcing/people-first';
 import { morningPlan } from '@/lib/sourcing/morning';
@@ -23,6 +23,9 @@ const MFG_P1_26 =
   'Plant Head, Plant Manager, Head of Manufacturing, Head of Operations, Head of Supply Chain, Supply Chain Manager, General Manager – Operations, General Manager – Supply Chain, Head of Warehouse & Logistics, Director of Operations, Chief Operating Officer (COO), Finance Head, Finance Controller, Head of Procurement & Supply Chain';
 const mfg26 = { ...mfg, targetTitles: MFG_P1_26, avoidTitles: `${mfg.avoidTitles}, Store Incharge` };
 const log26 = { ...log, avoidTitles: `${log.avoidTitles}, Store Incharge` };
+// 29 Oct 2026: INVECK's new 3PL & Logistics P1 list, for new leads ("VP – Operations / Logistics" as two designations).
+const LOG_P1_29 = 'National Head – Operations, Regional Head – Warehouse Operations, Head – Supply Chain, VP – Operations, VP – Logistics, Logistics Head, Head – Contract Logistics';
+const log29 = { ...log26, targetTitles: LOG_P1_29 };
 
 describe('P1 only', () => {
   it('their designations, however LinkedIn writes them, are P1', () => {
@@ -124,6 +127,51 @@ describe('Finance Head and Finance Controller on the Manufacturing list; a Store
   });
 });
 
+describe("INVECK's new 3PL P1 list (29 Oct): for new leads", () => {
+  it('their designations, however LinkedIn writes them, are P1; managers are not contacts and the COO is the last resort', () => {
+    for (const t of [
+      'National Head - Operations',
+      'Regional Head - Warehouse Operations',
+      'Head - Supply Chain',
+      'Head of Supply Chain',
+      'VP Operations',
+      'Vice President - Logistics',
+      'Logistics Head',
+      'Head of Logistics',
+      'Head - Contract Logistics',
+      'Contract Logistics Head',
+    ])
+      expect([t, tierOf(t, log29)]).toEqual([t, 'P1']);
+    for (const t of ['Warehouse Manager', 'Regional Operations Manager', 'National Operations Manager', 'Operations Manager']) {
+      expect([t, tierOf(t, log29)]).toEqual([t, '']);
+      expect(contactPriority(t, log29)).toBe(99);
+    }
+    expect(contactPriority('Chief Operating Officer', log29)).toBe(50);
+  });
+
+  it('searched: only the new designations, VP – Operations and VP – Logistics each on its own', () => {
+    expect(searchTitles(log29)).toEqual(LOG_P1_29.split(', '));
+    const queries = morningPlan(LOGISTICS, log29, 1).map((q) => q.q);
+    expect(queries.some((q) => q.includes('"Warehouse Manager"'))).toBe(false);
+    expect(queries.some((q) => q.includes('"VP – Operations"'))).toBe(true);
+    const plan = contactSearchPlan('Acme Logistics', 'Pune', log29).map((s) => s.designation);
+    expect([...plan].sort()).toEqual(LOG_P1_29.split(', ').sort());
+  });
+
+  it('a 3PL lead made before it keeps the contacts it was given; new leads and searches use the new list', () => {
+    const before = { segment: LOGISTICS, createdAt: new Date('2026-10-28T10:00:00Z') };
+    const after = { segment: LOGISTICS, createdAt: new Date('2026-10-29T15:30:00Z') };
+    expect(contactPriority('Warehouse Manager', icpFor(before, [log29]))).toBe(3);
+    expect(tierOf('Regional Operations Manager', icpFor(before, [log29]))).toBe('P1');
+    expect(contactPriority('Chief Operating Officer', icpFor(before, [log29]))).toBeLessThan(50);
+    expect(tierOf('Head - Contract Logistics', icpFor(before, [log29]))).toBe('P1');
+    expect(contactPriority('Warehouse Manager', icpFor(after, [log29]))).toBe(99);
+    expect(contactPriority('Warehouse Manager', icpFor(LOGISTICS, [log29]))).toBe(99);
+    // Manufacturing leads keep their own ICP as it is.
+    expect(icpFor({ segment: MANUFACTURING, createdAt: before.createdAt }, [mfg26, log29])).toBe(mfg26);
+  });
+});
+
 describe('set once on the live database', () => {
   let db: Db;
   beforeEach(async () => {
@@ -168,5 +216,44 @@ describe('set once on the live database', () => {
     expect(tierOf('Finance Controller', m)).toBe('P1');
     expect((await db.select().from(icps).where(eq(icps.segment, 'CA Firms')))[0]).toEqual(caBefore);
     expect(await version()).toBe(before + 1);
+  });
+
+  it("29 Oct: the 3PL P1 list becomes INVECK's new one, once; Manufacturing and CA firms untouched; 3PL leads made before keep their contacts", async () => {
+    const step = SCHEMA_STATEMENTS.filter((s) => s.includes('icp3plP1V2'));
+    expect(step).toHaveLength(3);
+    const version = async () => (await db.select({ v: products.configVersion }).from(products))[0]?.v ?? 0;
+    // As on the live database: P1 only since 25 Oct.
+    await db.delete(settings).where(eq(settings.key, 'icpP1OnlyV1'));
+    for (const s of SCHEMA_STATEMENTS.filter((x) => x.includes('icpP1OnlyV1'))) await db.execute(sql.raw(s));
+    const [mfgBefore] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const caBefore = (await db.select().from(icps).where(eq(icps.segment, 'CA Firms')))[0];
+    const [logBefore] = await db.select().from(icps).where(eq(icps.segment, LOGISTICS));
+    await db.delete(settings).where(eq(settings.key, 'icp3plP1V2'));
+    const before = await version();
+    for (let i = 0; i < 2; i++) for (const s of step) await db.execute(sql.raw(s));
+    const [l] = await db.select().from(icps).where(eq(icps.segment, LOGISTICS));
+    expect(l).toMatchObject({ targetTitles: LOG_P1_29, p2Titles: logBefore.p2Titles, p3Titles: logBefore.p3Titles, avoidTitles: logBefore.avoidTitles });
+    expect((await db.select().from(icps).where(eq(icps.segment, MANUFACTURING)))[0]).toEqual(mfgBefore);
+    expect((await db.select().from(icps).where(eq(icps.segment, 'CA Firms')))[0]).toEqual(caBefore);
+    expect(await version()).toBe(before + 1);
+
+    // A Warehouse Manager stays the main contact of a 3PL lead made before; on a new lead they aren't a contact.
+    const { tidyContacts } = await import('@/lib/verify-contacts');
+    const lead = async (company: string, createdAt: Date) => {
+      const [row] = await db
+        .insert(leads)
+        .values({ company, city: 'Pune', segment: LOGISTICS, status: 'Approved', contactName: 'Vikas Rao', contactTitle: 'Warehouse Manager', contactLinkedin: `https://in.linkedin.com/in/vikas-${row0(company)}`, createdAt })
+        .returning();
+      await db.insert(people).values({ leadId: row.id, name: 'Vikas Rao', title: 'Warehouse Manager', linkedin: `https://in.linkedin.com/in/vikas-${row0(company)}`, location: 'Pune', source: 'LinkedIn', isPrimary: true });
+      return row.id;
+    };
+    const row0 = (s: string) => s.toLowerCase().replace(/\W+/g, '-');
+    const old = await lead('Old Freight Lines', new Date('2026-10-28T10:00:00Z'));
+    const fresh = await lead('New Freight Lines', new Date('2026-10-29T15:30:00Z'));
+    await tidyContacts(db, {});
+    const person = async (id: number) => (await db.select().from(people).where(eq(people.leadId, id)))[0];
+    expect(await person(old)).toMatchObject({ isPrimary: true, passedReason: '' });
+    expect((await db.select().from(leads).where(eq(leads.id, old)))[0].contactName).toBe('Vikas Rao');
+    expect(await person(fresh)).toMatchObject({ isPrimary: false, passedReason: 'excluded' });
   });
 });
