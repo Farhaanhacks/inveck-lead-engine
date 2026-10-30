@@ -77,9 +77,11 @@ export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 60, headroom: 1.
  * a company with no LinkedIn page, or whose page doesn't show a 3PL industry, isn't passed to research. Still within
  * the sample's credits. Manufacturing keeps the rules above. From 29 Oct 2026 (INVECK, after the 9 pm run spent 780 credits
  * on a round that found one company), the 50 count searches since a company passed the check, not since a new one was
- * found: most companies 3PL's searches turn up aren't 3PL firms, and each kept the search going.
+ * found: most companies 3PL's searches turn up aren't 3PL firms, and each kept the search going. From 30 Oct 2026 (INVECK),
+ * a 3PL company whose industry shows nowhere (no label on its page, or a catch-all one, and nothing on its page or
+ * website) goes to research, as Manufacturing's does, approved only if research confirms the industry.
  */
-export const SAMPLE_3PL_RULES = { quietSearches: 50, headroom: 1.25, rounds: 5, lenientScreen: false, quietCountsPassed: true } as const;
+export const SAMPLE_3PL_RULES = { quietSearches: 50, headroom: 1.25, rounds: 5, lenientScreen: false, quietCountsPassed: true, unclearIndustry: true } as const;
 const headroomFor = (s: string) => (s === LOGISTICS ? SAMPLE_3PL_RULES.headroom : SAMPLE_RULES.headroom);
 
 /**
@@ -381,10 +383,13 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           keepPageless: true,
           // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
           // whose page doesn't show an ICP industry, isn't researched (and paid for) only to be ruled out.
-          // Manufacturing's company whose LinkedIn page shows no industry either way (no label, or a catch-all one) goes to
-          // research when its website doesn't settle it (from 28 Oct 2026), where it's approved only if research confirms
-          // the industry (see industryConfirmed); one with no LinkedIn page still isn't (nothing shows its size).
-          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen, quietCountsPassed: SAMPLE_3PL_RULES.quietCountsPassed }, [MANUFACTURING]: { lenientScreen: false, unclearIndustry: true } },
+          // A company whose LinkedIn page shows no industry either way (no label, or a catch-all one) goes to research when
+          // its website doesn't settle it (Manufacturing from 28 Oct 2026, 3PL from 30 Oct), where it's approved only if
+          // research confirms the industry (see industryConfirmed).
+          segmentRules: {
+            [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen, quietCountsPassed: SAMPLE_3PL_RULES.quietCountsPassed, unclearIndustry: SAMPLE_3PL_RULES.unclearIndustry },
+            [MANUFACTURING]: { lenientScreen: false, unclearIndustry: true },
+          },
           cheaperChecks: true,
           recent: await recentSearches(db, null),
           // What earlier samples' searches found (before this one started, so the plan stays the same).

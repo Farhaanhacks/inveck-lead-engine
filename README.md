@@ -349,7 +349,7 @@ pipeline, 10% extra companies, 25 credits kept back for researching each company
 credits at most for a new sample (3,000 until 27 Oct 2026), a hard limit (a search that would go over it isn't made;
 a company whose research reaches it is left for the next day). A company with no LinkedIn page, or whose page
 doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
-would only be ruled out. From 28 Oct 2026 a Manufacturing company whose page shows no industry either way (no label,
+would only be ruled out. From 28 Oct 2026 a Manufacturing company (a 3PL one from 30 Oct) whose page shows no industry either way (no label,
 or a catch-all one, and nothing on its page or website) is researched, and approved only if research confirms its
 industry (`industryConfirmed`); one with no LinkedIn page isn't ruled out (from 30 Oct 2026, INVECK; from 26-27 Oct it was): it's kept aside
 (`keepPageless`), and researched by its name only when its segment would otherwise end up short, where research

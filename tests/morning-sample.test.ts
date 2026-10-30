@@ -417,7 +417,7 @@ describe('the Morning Sample Run', () => {
      * another industry ('other', ruled out at its check), a 3PL with its page ('good'), one with no LinkedIn page
      * ('pageless'), or Swift ('swift', the made-up world's 3PL).
      */
-    const tplWorld = (asked: string[], kind: (n: number) => 'other' | 'good' | 'pageless' | 'swift') => {
+    const tplWorld = (asked: string[], kind: (n: number) => 'other' | 'good' | 'pageless' | 'swift' | 'vague') => {
       const base = morningServices(log);
       // A different letters-only tag for every n (base 26).
       const tag = (n: number) => [...n.toString(26)].map((ch) => 'abcdefghijklmnopqrstuvwxyz'['0123456789abcdefghijklmnop'.indexOf(ch)]).join('');
@@ -436,15 +436,16 @@ describe('the Morning Sample Run', () => {
                 shown.map(([word, industry]) => ({
                   title: `${word} Group | LinkedIn`,
                   link: `https://in.linkedin.com/company/${word.toLowerCase()}`,
-                  snippet: `${word} Group | 1,234 followers on LinkedIn. Website: http://www.${word.toLowerCase()}.in. Industry: ${industry}. Company size: 201-500 employees. Headquarters: Pune, Maharashtra`,
+                  snippet: `${word} Group | 1,234 followers on LinkedIn. Website: http://www.${word.toLowerCase()}.in.${industry ? ` Industry: ${industry}.` : ''} Company size: 201-500 employees. Headquarters: Pune, Maharashtra`,
                 })),
               );
           }
           if (!body || !TPL.test(body.q)) return base.fetch(input, init);
           n++;
           const k = kind(n);
-          const word = `${k === 'good' ? 'Harbor' : k === 'other' ? 'Mercury' : 'Pageless'}${tag(n)}`;
+          const word = `${k === 'good' ? 'Harbor' : k === 'other' ? 'Mercury' : k === 'vague' ? 'Orbit' : 'Pageless'}${tag(n)}`;
           if (k === 'good') pages.set(word, 'Warehousing and Storage');
+          if (k === 'vague') pages.set(word, '');
           if (k === 'other') pages.set(word, 'Retail Apparel and Fashion');
           const [name, company] = k === 'swift' ? ['Deepak Nair', 'Swift Warehousing Solutions'] : [`Asha ${word}`, `${word} Group`];
           return json([{ title: `${name} - Head of Logistics - ${company} | LinkedIn`, link: `https://in.linkedin.com/in/${name.toLowerCase().replace(/ /g, '-')}`, subtitle: `Pune, Maharashtra, India · Head of Logistics · ${company}`, snippet: '' }]);
@@ -452,6 +453,18 @@ describe('the Morning Sample Run', () => {
       };
     };
     const newButRuledOut = (asked: string[], passAt = 0) => tplWorld(asked, (n) => (n === passAt ? 'swift' : 'other'));
+
+    it("3PL: a company whose industry shows nowhere goes to research, as Manufacturing's does (30 Oct)", async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, tplWorld(asked, () => 'vague'), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const vague = r.companies.filter((c) => c.segment === LOGISTICS && c.employer.startsWith('Orbit'));
+      expect(vague.length).toBeGreaterThan(0);
+      // Approved only if research confirms the industry (the same guard as Manufacturing's).
+      expect(vague.every((c) => /industry not shown on LinkedIn or its website: research checks it/.test(c.note))).toBe(true);
+      expect(r.search?.drops?.[LOGISTICS]?.[DROP_REASONS.industry]).toBeUndefined();
+    });
 
     it('3PL: a company with no LinkedIn page is not researched when the list fills without it (30 Oct)', async () => {
       const asked: string[] = [];
