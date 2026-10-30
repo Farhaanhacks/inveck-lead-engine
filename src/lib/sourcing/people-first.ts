@@ -63,6 +63,8 @@ export type PeopleQuery = {
   num?: number;
   /** The page of ten to read instead, when Serper refuses a hundred results. */
   fallbackPage?: number;
+  /** `q` normalised (normQuery), worked out once with the plan: the plan is checked against what was searched before. */
+  norm?: string;
 };
 
 /**

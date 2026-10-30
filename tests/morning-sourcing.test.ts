@@ -313,7 +313,7 @@ describe('the day the morning search and draw start', () => {
 
 
 describe("the day's Google search budget", () => {
-  it('people searches ask for ten results at a time (1 credit)', async () => {
+  it("people searches ask for ten results at a time (1 credit); 3PL's word-only searches a hundred (30 Oct)", async () => {
     const bodies: { q: string; num: number }[] = [];
     const base = services();
     const svc = {
@@ -329,7 +329,11 @@ describe("the day's Google search budget", () => {
     const words = Object.values(PEOPLE_KEYWORDS).flat();
     const people = bodies.filter((b) => b.q.startsWith('site:linkedin.com/in ') && words.some((w) => b.q.includes(`"${w}"`)));
     expect(people.length).toBeGreaterThan(0);
-    expect(people.every((b) => b.num === 10)).toBe(true);
+    // With a town: ten. 3PL's title-and-word searches with no town: their first hundred at once (2 credits).
+    const places = Object.values(SEGMENT_SEARCH).flatMap((s) => s.places);
+    const withTown = (q: string) => places.some((p) => q.endsWith(` ${p}`));
+    expect(people.filter((b) => withTown(b.q)).every((b) => b.num === 10)).toBe(true);
+    expect(people.filter((b) => !withTown(b.q)).every((b) => b.num === 100 && PEOPLE_KEYWORDS[LOGISTICS].some((w) => b.q.endsWith(`"${w}"`)))).toBe(true);
   });
 
   it('a company found people first still gets the search for its people, the people found counting towards the contacts it looks for', async () => {

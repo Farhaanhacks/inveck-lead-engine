@@ -143,6 +143,7 @@ export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof sea
       for (const keyword of words) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`].join(' '), form: 'industry', title, keyword, place: '', num: 100, page: 1 });
     for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
   }
+  for (const pq of out) pq.norm = normQuery(pq.q);
   return out;
 }
 
@@ -418,7 +419,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const passedOnly = !!own?.quietCountsPassed;
     // A page that shows no industry either way (no label, or a catch-all one): its website, then research, decides.
     const unclearIndustry = own?.unclearIndustry ?? lenientScreen;
-    const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
+    const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(q.norm ?? normQuery(q.q)));
     const ground = o.deadGround ? await o.deadGround(seg.segment) : null;
     const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
