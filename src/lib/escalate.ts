@@ -1,6 +1,6 @@
-import { and, eq, gt, inArray, isNull, like, or } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, like, or } from 'drizzle-orm';
 import type { Db } from './db';
-import { activities, icps, leads, people, settings, tasks, type Lead, type Person } from './db/schema';
+import { activities, icps, leads, people, settings, tasks, type Lead, type Person, type Task } from './db/schema';
 import { logActivity } from './activity';
 import { makePrimary } from './people';
 import { contactPriority, icpFor, tierOf, type Tier } from './tiers';
@@ -81,7 +81,7 @@ export async function escalate(db: Db, leadId: number, why: 'no_answer' | 'wrong
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead) return { switched: false };
   const [icpRows, found] = await Promise.all([db.select().from(icps), db.select().from(people).where(eq(people.leadId, leadId))]);
-  const icp = icpFor(lead.segment, icpRows);
+  const icp = icpFor(lead, icpRows);
   const others = found.filter((p) => !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== lead.contactName.toLowerCase());
   const fresh = await isFresh(db, leadId);
   const eligible = eligibleContact(others, icp, lead.city);
@@ -191,10 +191,83 @@ export async function retireWithoutContact(db: Db, now = new Date()): Promise<nu
     if (!(await isFresh(db, lead.id)) || (await wasRestored(db, lead.id))) continue;
     const found = await db.select().from(people).where(eq(people.leadId, lead.id));
     const others = found.filter((p) => !p.isPrimary && p.name.trim() && p.name.toLowerCase() !== lead.contactName.toLowerCase());
-    if (eligibleContact(others, icpFor(lead.segment, icpRows), lead.city)) continue;
+    if (eligibleContact(others, icpFor(lead, icpRows), lead.city)) continue;
     if (await softDeleteLead(db, lead.id, NO_CONTACT_REASON, now)) gone.push(lead.id);
   }
   return gone;
+}
+
+/**
+ * Puts back the leads the Today planner restarted by mistake (fixed on 29 Oct 2026, see ensureSequences): a lead
+ * waiting on "Find the next person" whose point of contact hadn't changed (the person just ruled out) got a fresh
+ * first-contact plan for that same person. Where none of those steps has been done, they are closed and the lead waits
+ * on its find step again, from today, with a note. Leads worked since, given a new contact, deleted, or CA firms are
+ * left as they are. The leads put back.
+ */
+export async function restoreFindSteps(db: Db, now = new Date()): Promise<number[]> {
+  const closed = await db.select().from(tasks).where(and(eq(tasks.step, FIND_NEXT_STEP), eq(tasks.outcome, 'closed'), isNotNull(tasks.doneAt)));
+  const latest = new Map<number, Task>();
+  for (const t of closed) {
+    const was = latest.get(t.leadId);
+    if (!was || t.doneAt! > was.doneAt!) latest.set(t.leadId, t);
+  }
+  const put: number[] = [];
+  for (const find of latest.values()) {
+    const [lead] = await db.select().from(leads).where(eq(leads.id, find.leadId));
+    if (!lead?.ownerId || lead.status === 'Deleted' || !lead.contactName || isCaSegment(lead.segment)) continue;
+    // A new point of contact since the step was set: that restart was right.
+    if (lead.contactSince && lead.contactSince > find.createdAt) continue;
+    const all = await db.select().from(tasks).where(eq(tasks.leadId, find.leadId));
+    if (all.some((t) => t.step === FIND_NEXT_STEP && !t.doneAt)) continue;
+    // The plan the planner started when it closed the step, at the same moment; none of it done yet.
+    const at = find.doneAt!.getTime();
+    const plan = all.filter((t) => t.id !== find.id && t.followUpRound === 0 && t.caRound === 0 && Math.abs(t.createdAt.getTime() - at) <= 60_000);
+    if (!plan.length || plan.some((t) => t.doneAt)) continue;
+    await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(inArray(tasks.id, plan.map((t) => t.id)));
+    await db.update(tasks).set({ doneAt: null, outcome: '', dueDate: istDay(now) }).where(eq(tasks.id, find.id));
+    await logActivity(
+      db,
+      find.leadId,
+      'note',
+      `Back to "${FIND_NEXT_STEP}": ${lead.contactName} had been ruled out, and the fresh plan for them was started by mistake (fixed on 29 Oct 2026). Name the next person under Edit point of contact.`,
+    );
+    put.push(find.leadId);
+  }
+  return put;
+}
+
+/**
+ * Leads given out with a main contact whose location was never shown (29 Oct 2026: Joey Williams, in Georgia, USA, had
+ * been confirmed by research without one): not confirmed any more, so the next contact check looks them up, and one
+ * based abroad is moved on as the check does. Contacts with a location on file, and CA firms, are left alone.
+ */
+export async function recheckUnplacedContacts(db: Db): Promise<number[]> {
+  const rows = await db.select().from(leads).where(and(isNotNull(leads.ownerId), isNotNull(leads.contactVerifiedAt)));
+  const out: number[] = [];
+  for (const lead of rows) {
+    if (!lead.contactName || lead.status === 'Deleted' || isCaSegment(lead.segment)) continue;
+    const [primary] = await db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, true)));
+    if (primary && (primary.location.trim() || primary.jobLocation.trim() || /^https?:\/\/in\.linkedin\.com\//i.test(primary.linkedin))) continue;
+    await db.update(leads).set({ contactVerifiedAt: null, contactCheckedAt: null }).where(eq(leads.id, lead.id));
+    out.push(lead.id);
+  }
+  return out;
+}
+
+/** Runs recheckUnplacedContacts once per database, and keeps which leads under settings.unplacedContactsV1. */
+export async function recheckUnplacedContactsOnce(db: Db): Promise<void> {
+  const key = 'unplacedContactsV1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const leadIds = await recheckUnplacedContacts(db);
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), leads: leadIds } }).onConflictDoNothing();
+}
+
+/** Runs restoreFindSteps once per database, and keeps what it did under settings.findStepRestoreV1. */
+export async function restoreFindStepsOnce(db: Db): Promise<void> {
+  const key = 'findStepRestoreV1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const put = await restoreFindSteps(db);
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), restored: put } }).onConflictDoNothing();
 }
 
 /** Runs the sweep once per database, and keeps what it did under settings.noContactDeleteV1. */

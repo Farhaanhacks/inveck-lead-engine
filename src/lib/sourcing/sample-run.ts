@@ -75,18 +75,23 @@ export const SAMPLE_RULES = { peopleResults: 10, quietSearches: 60, headroom: 1.
  * the cheaper rules above left its lists short. Its search goes on until 50 searches in a row found no new company, asks
  * for a quarter more than it is short of, and takes up to five rounds; and its company check is strict, as the run's:
  * a company with no LinkedIn page, or whose page doesn't show a 3PL industry, isn't passed to research. Still within
- * the sample's credits. Manufacturing keeps the rules above.
+ * the sample's credits. Manufacturing keeps the rules above. From 29 Oct 2026 (INVECK, after the 9 pm run spent 780 credits
+ * on a round that found one company), the 50 count searches since a company passed the check, not since a new one was
+ * found: most companies 3PL's searches turn up aren't 3PL firms, and each kept the search going. From 30 Oct 2026 (INVECK),
+ * a 3PL company whose industry shows nowhere (no label on its page, or a catch-all one, and nothing on its page or
+ * website) goes to research, as Manufacturing's does, approved only if research confirms the industry.
  */
-export const SAMPLE_3PL_RULES = { quietSearches: 50, headroom: 1.25, rounds: 5, lenientScreen: false } as const;
+export const SAMPLE_3PL_RULES = { quietSearches: 50, headroom: 1.25, rounds: 5, lenientScreen: false, quietCountsPassed: true, unclearIndustry: true } as const;
 const headroomFor = (s: string) => (s === LOGISTICS ? SAMPLE_3PL_RULES.headroom : SAMPLE_RULES.headroom);
 
 /**
  * The segments still short that a sample searches again after research, `round` rounds in: the run's three rounds, and
  * for 3PL & Logistics up to five, each only while its own last round found companies (one that found nobody in 50
- * searches isn't searched again).
+ * searches isn't searched again) and, from 30 Oct 2026, research approved one of them (`approved`, when known): on 30
+ * Oct research ruled out or failed on 66 of 67 and each shortfall started another round, 1,209 credits for one lead.
  */
-export function segmentsToSearchAgain(short: Record<DrawSegment, number>, last: { segment: string; added: number }[], round: number): DrawSegment[] {
-  const foundLast = (s: string) => last.some((h) => h.segment === s && h.added > 0) || !last.some((h) => h.segment === s);
+export function segmentsToSearchAgain(short: Record<DrawSegment, number>, last: { segment: string; added: number; approved?: number }[], round: number): DrawSegment[] {
+  const foundLast = (s: string) => last.some((h) => h.segment === s && h.added > 0 && (h.approved ?? h.added) > 0) || !last.some((h) => h.segment === s);
   return DRAW_SEGMENTS.filter((s) => short[s] > 0 && (s === LOGISTICS ? round < SAMPLE_3PL_RULES.rounds && foundLast(s) : round < MORNING_LIMITS.rounds));
 }
 
@@ -374,12 +379,18 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           deadGround: async (segment) => new DeadGround(await searchMemory(db, segment, new Date())),
           rememberRuledOut: true,
           lenientScreen: true,
+          // A company with no LinkedIn page found isn't ruled out (INVECK, 30 Oct 2026): kept aside, and researched when
+          // its segment would otherwise end up short (approved only if research confirms its industry).
+          keepPageless: true,
           // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
           // whose page doesn't show an ICP industry, isn't researched (and paid for) only to be ruled out.
-          // Manufacturing's company whose LinkedIn page shows no industry either way (no label, or a catch-all one) goes to
-          // research when its website doesn't settle it (from 28 Oct 2026), where it's approved only if research confirms
-          // the industry (see industryConfirmed); one with no LinkedIn page still isn't (nothing shows its size).
-          segmentRules: { [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen }, [MANUFACTURING]: { lenientScreen: false, unclearIndustry: true } },
+          // A company whose LinkedIn page shows no industry either way (no label, or a catch-all one) goes to research when
+          // its website doesn't settle it (Manufacturing from 28 Oct 2026, 3PL from 30 Oct), where it's approved only if
+          // research confirms the industry (see industryConfirmed).
+          segmentRules: {
+            [LOGISTICS]: { quietSearches: SAMPLE_3PL_RULES.quietSearches, lenientScreen: SAMPLE_3PL_RULES.lenientScreen, quietCountsPassed: SAMPLE_3PL_RULES.quietCountsPassed, unclearIndustry: SAMPLE_3PL_RULES.unclearIndustry },
+            [MANUFACTURING]: { lenientScreen: false, unclearIndustry: true },
+          },
           cheaperChecks: true,
           recent: await recentSearches(db, null),
           // What earlier samples' searches found (before this one started, so the plan stays the same).
@@ -441,7 +452,9 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
         // stopped for the budget goes on too when research cost less than was kept back for it.
         const short = stillShort(r);
         const last = r.search!.history.filter((h) => h.round === r.search!.round);
-        const searchAgain = segmentsToSearchAgain(short, last, r.search!.round);
+        // How many of each segment's companies from this round research approved (they're the segment's latest ones).
+        const approved = (h: (typeof last)[number]) => r.companies.filter((c) => c.segment === h.segment).slice(-h.added).filter((c) => c.outcome === 'approved').length;
+        const searchAgain = segmentsToSearchAgain(short, last.map((h) => ({ ...h, approved: h.added ? approved(h) : 0 })), r.search!.round);
         const again =
           searchAgain.length > 0 &&
           last.some((h) => h.added > 0) &&
@@ -516,6 +529,11 @@ export const TOP_UP_SAMPLES: { at: string; day: string }[] = [
   { at: '2026-10-28T16:45:00Z', day: '2026-10-29' },
   // And at 12:30 am on Thursday 29 October (INVECK, 28 Oct 2026, night), with the new industry words and towns.
   { at: '2026-10-28T19:00:00Z', day: '2026-10-29' },
+  // And from 8:40 am on Friday 30 October (INVECK, that morning): the 6 am run left 12 3PL leads short.
+  { at: '2026-10-30T03:10:00Z', day: '2026-10-30' },
+  // And from 10:25 am (INVECK, that morning), with that morning's changes for 3PL (more words and towns, searches without
+  // a town, companies with no LinkedIn page or no industry shown no longer dropped): the same 12 3PL leads.
+  { at: '2026-10-30T04:55:00Z', day: '2026-10-30' },
 ];
 
 /**

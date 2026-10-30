@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { icps, leads, people, prospectSearches, runs, type Lead, type Run } from '../db/schema';
-import { DEFAULT_ICPS } from '../db/seed';
+import { DEFAULT_ICPS, LOGISTICS } from '../db/seed';
 import { drawPool, handedOut, morningStartsOn, quotaTotal, teamQuotas, teamTotal } from '../draw';
 import { getHolidays } from '../holidays';
 import { normSegment } from '../icp-match';
@@ -13,9 +13,9 @@ import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { contactPriority, titlePhrase } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
-import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
+import { catchAllLabel, factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
 import { websiteWords } from './website-words';
-import { companiesQuery, companyQuery, hintRank, lookupBatch, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
+import { companiesQuery, companyQuery, hintRank, lookupBatch, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, wordTerms, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
 import type { DeadGround } from './search-memory';
 
@@ -54,17 +54,28 @@ export type MorningSegment = {
   /** Companies wanted this round, and added so far. */
   wanted: number;
   added: number;
-  /** Searches made from the plan, and how many in a row found no new company (from 28 Oct 2026; before, nobody new on the lists). */
+  /**
+   * Searches made from the plan, and how many in a row found no new company (from 28 Oct 2026; before, nobody new on the
+   * lists), or, where `quietCountsPassed`, no company that passed the company check.
+   */
   cursor: number;
   quiet: number;
-  /** Why it stopped: it had what was wanted, hit the day's search limit, stopped finding anyone, ran out of searches, or Google failed. */
-  stopped?: 'target' | 'cap' | 'dry' | 'exhausted' | 'failed';
+  /**
+   * Why it stopped: it had what was wanted, hit the day's search limit, stopped finding anyone, stopped finding a company
+   * that passed the check (`quietCountsPassed`), ran out of searches, or Google failed.
+   */
+  stopped?: 'target' | 'cap' | 'dry' | 'nonePassed' | 'exhausted' | 'failed';
   /**
    * Companies found with contacts, not checked yet; `via`, the search that first found them (normalised); `page`, its
    * LinkedIn page when already found (it waited, not needed then); `alone`, not shown by a search for several at once, so
    * looked up on its own.
    */
   pending: { employer: string; contacts: FoundContact[]; via?: string; page?: CompanyPage; alone?: boolean }[];
+  /**
+   * Companies with no LinkedIn page found, kept aside rather than ruled out (`keepPageless`): researched only when the
+   * segment would otherwise stop short.
+   */
+  reserve?: { employer: string; contacts: FoundContact[]; via?: string }[];
   /** Companies already checked this run, by the name their people write. */
   checked: string[];
   ruledOut: number;
@@ -95,6 +106,7 @@ export const DROP_REASONS = {
   name: 'outside the ICP by its name',
   noName: 'no company name (only an industry word)',
   noPage: 'no LinkedIn page found',
+  kept: 'no LinkedIn page found: kept aside, researched only if still short',
   small: 'too small',
   industry: 'industry not on the ICP',
   abroad: 'based abroad',
@@ -122,12 +134,22 @@ export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof sea
     PEOPLE_KEYWORDS[segment].flatMap((k) => SEGMENT_SEARCH[segment].places.map((p) => [k, p] as const)),
     seed,
   );
+  const words = shuffled(PEOPLE_KEYWORDS[segment], seed);
   const out: PeopleQuery[] = [];
   for (const title of titles) {
-    for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
+    // 3PL heads often cover several cities or write a region ("Mumbai Metropolitan Region"): each word is searched with
+    // the title and no town first, in India (without it, people abroad came up), its first hundred people read at once
+    // (INVECK, 30 Oct 2026).
+    if (WITHOUT_TOWN.includes(segment))
+      for (const keyword of words) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, wordTerms(keyword), 'India'].join(' '), form: 'industry', title, keyword, place: '', num: 100, page: 1 });
+    for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, wordTerms(keyword), place].join(' '), form: 'industry', title, keyword, place });
   }
+  for (const pq of out) pq.norm = normQuery(pq.q);
   return out;
 }
+
+/** Segments whose titles are also searched with a word and no town (see morningPlan). */
+const WITHOUT_TOWN: SourcingSegment[] = [LOGISTICS];
 
 /**
  * Whether the 6 am run searches for new prospects today: a working day (Monday to Friday, not a holiday
@@ -191,7 +213,7 @@ export async function recentSearches(db: Db, own: number | null): Promise<Set<st
 export function startRound(prev: MorningSourcing | null, wanted: Record<SourcingSegment, number>): MorningSourcing {
   const segments = SOURCING_SEGMENTS.map((segment): MorningSegment => {
     const before = prev?.segments.find((p) => p.segment === segment);
-    return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
+    return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], reserve: before?.reserve ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
   });
   return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [], drops: prev?.drops ?? {} };
 }
@@ -324,6 +346,13 @@ export type RoundOptions = {
    */
   lenientScreen?: boolean;
   /**
+   * A company with no LinkedIn page found isn't ruled out (INVECK, 30 Oct 2026): it's kept aside, and when the segment
+   * would otherwise stop short it goes to research by its name (its website and research tell its size and industry; a
+   * sample approves it only if research confirms the industry). Not remembered as ruled out, and an earlier "no
+   * LinkedIn page" ruling doesn't keep it out.
+   */
+  keepPageless?: boolean;
+  /**
    * Cheaper company checks, the same companies kept: a company whose name shows it's outside the ICP isn't
    * looked up (LinkedIn's check would only rule it out); companies whose people's own results show another
    * industry are checked last; several companies are looked up in one search, each not found that way on
@@ -332,9 +361,11 @@ export type RoundOptions = {
   cheaperChecks?: boolean;
   /**
    * Per segment, in place of `quietSearches`, and of `lenientScreen` for passing a company with no LinkedIn page or an
-   * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics).
+   * unclear industry to research (the Morning Sample Run's longer, stricter search for 3PL & Logistics). With
+   * `quietCountsPassed`, a search counts as finding something only when a company it found passes the company check: new
+   * companies that are then ruled out (another industry, no LinkedIn page) don't keep the search going.
    */
-  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean; unclearIndustry?: boolean }>>;
+  segmentRules?: Partial<Record<SourcingSegment, { quietSearches?: number; lenientScreen?: boolean; unclearIndustry?: boolean; quietCountsPassed?: boolean }>>;
   /** Reorders or shortens a segment's plan (a sample run's memory of its searches); the same answer on every invocation. */
   plan?: (segment: SourcingSegment, plan: PeopleQuery[]) => Promise<PeopleQuery[]>;
   sink: RoundSink;
@@ -386,9 +417,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const own = o.segmentRules?.[seg.segment];
     const quietLimit = own?.quietSearches ?? o.quietSearches ?? MORNING_LIMITS.quietSearches;
     const lenientScreen = own?.lenientScreen ?? o.lenientScreen;
+    const passedOnly = !!own?.quietCountsPassed;
     // A page that shows no industry either way (no label, or a catch-all one): its website, then research, decides.
     const unclearIndustry = own?.unclearIndustry ?? lenientScreen;
-    const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(normQuery(q.q)));
+    const planned = morningPlan(seg.segment, icp, o.seed).filter((q) => !o.recent.has(q.norm ?? normQuery(q.q)));
     const ground = o.deadGround ? await o.deadGround(seg.segment) : null;
     const plan = o.plan ? await o.plan(seg.segment, planned) : planned;
     const counting: Services = {
@@ -419,7 +451,12 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const ruledOutKey = (employer: string) => `company-check:v1:${seg.segment}:${icp.companySize}:${normCompany(employer)}`;
     const ruledOutBefore = async (employer: string) => {
       if (!o.rememberRuledOut) return false;
-      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string } | null;
+      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string; why?: string } | null;
+      if (o.keepPageless && was?.why === 'no LinkedIn page') return false;
+      // Its industry shown nowhere isn't a wrong industry: where such a company now goes to research (Manufacturing from 28
+      // Oct 2026), a ruling made before doesn't keep it out (30 Oct 2026). One showing another industry still does.
+      const unshown = /^(?:industry not shown on its LinkedIn page|LinkedIn says only "([^"]*)"), and nothing on (?:its page|it) shows it's in the ICP/.exec(was?.why ?? '');
+      if (unclearIndustry && unshown && (unshown[1] == null || catchAllLabel(unshown[1], seg.segment))) return false;
       return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
     };
     const rememberRuledOut = async (employer: string, why: string) => {
@@ -439,7 +476,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     };
     // Checks one company's LinkedIn page (already found, or in `pre`, a search for several at once, when it's there);
     // one that passes goes to the sink with its people.
-    const check = async (c: MorningSegment['pending'][number], pre?: SerperResult[]) => {
+    // `reserved`: a company kept aside with no LinkedIn page, now checked by its name (see keepPageless).
+    const check = async (c: MorningSegment['pending'][number], pre?: SerperResult[], reserved = false) => {
       checked.add(normCompany(c.employer));
       if (await ruledOutBefore(c.employer)) {
         seg.ruledOut++;
@@ -452,10 +490,15 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         drop('noName');
         return;
       }
-      const fromPre = c.page ?? (pre ? matchingPage(pre, c.employer) : null);
-      const got = fromPre ? { results: [] as SerperResult[], error: undefined } : await search(companyQuery(c.employer));
+      const fromPre = reserved ? null : (c.page ?? (pre ? matchingPage(pre, c.employer) : null));
+      const got = fromPre || reserved ? { results: [] as SerperResult[], error: undefined } : await search(companyQuery(c.employer));
       let page: CompanyPage | null = fromPre ?? (got.error ? null : matchingPage(got.results, c.employer));
-      if (!page && !got.error && lenientScreen) page = pagelessCompany(c.employer);
+      if (!page && !got.error && (lenientScreen || reserved)) page = pagelessCompany(c.employer);
+      if (!page && !got.error && o.keepPageless) {
+        (seg.reserve ??= []).push({ employer: c.employer, contacts: c.contacts, ...(c.via ? { via: c.via } : {}) });
+        drop('kept');
+        return;
+      }
       if (!page) {
         seg.noPage++;
         drop('noPage');
@@ -470,7 +513,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       // Its people work in India, so it has a site here whatever its headquarters.
       const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
       let s = screenPage(seenAs, seg.segment, icp.companySize, known);
-      if (unclearIndustry && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+      if ((unclearIndustry || reserved) && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
         const words = await websiteWords(svc, page.website);
         s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
         if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };
@@ -493,9 +536,19 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (domain) known.domains.add(domain);
       seg.added++;
       state.added++;
+      if (passedOnly && !reserved) seg.quiet = 0;
       const best = c.contacts[0];
       const city = page.hq && !hqAbroad(page.hq) ? page.hq.split(',')[0].trim() : placeNamedIn(page.text) || (best.location.split(',')[0] ?? '').trim();
       await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city, ...(c.via ? { via: c.via } : {}) });
+    };
+
+    // About to stop short: companies kept aside with no LinkedIn page, as many as are still wanted (those whose people's
+    // own results show the ICP's industry first), checked by name and passed to research.
+    const fromReserve = async () => {
+      if (!seg.reserve?.length || seg.added >= seg.wanted) return false;
+      seg.reserve.sort((a, b) => hintRank(a.contacts) - hintRank(b.contacts) || rank(a.contacts[0]) - rank(b.contacts[0]));
+      await mapLimit(seg.reserve.splice(0, seg.wanted - seg.added), 4, (c) => check(c, undefined, true));
+      return true;
     };
 
     // One step: check companies already found (their checks may be all that's needed), else search for more people.
@@ -531,7 +584,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return 'more';
       }
       if (seg.quiet >= quietLimit) {
-        seg.stopped = 'dry';
+        if (await fromReserve()) return 'more';
+        seg.stopped = passedOnly ? 'nonePassed' : 'dry';
         return 'stop';
       }
       // The next eight searches, past any on ground this run has found empty.
@@ -541,6 +595,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         if (!ground?.dead(pq)) batch.push(pq);
       }
       if (!batch.length) {
+        if (await fromReserve()) return 'more';
         seg.stopped = 'exhausted';
         return 'stop';
       }
@@ -595,7 +650,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         const { listed, newCompanies } = await absorb(pq, g.results);
         if (!g.error) ground?.note(pq, listed > 0);
         // A new company is what counts (28 Oct 2026): people at companies already known or checked can't become new leads.
-        seg.quiet = newCompanies ? 0 : seg.quiet + 1;
+        // Where only a company that passes counts (3PL, 29 Oct 2026), its check sets this back (companies found are
+        // checked before the next searches).
+        seg.quiet = newCompanies && !passedOnly ? 0 : seg.quiet + 1;
         await o.sink.searched?.(seg.segment, pq, { results: g.results.length, newCompanies, listed, error: g.error, page: g.page, num: g.num });
         return newCompanies;
       };
@@ -625,6 +682,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
             ? " (the day's Google search budget is kept for researching what was found)"
             : w.seg.stopped === 'dry'
               ? ` (the last ${w.seg.quiet} searches found no new company)`
+              : w.seg.stopped === 'nonePassed'
+                ? ` (the last ${w.seg.quiet} searches found no company that passed the check)`
               : ` (every search planned has been made in the last ${MORNING_LIMITS.memoryDays} days)`;
       await o.log(`${w.seg.segment}: ${w.seg.added} of ${w.seg.wanted} new companies with contacts, ${w.seg.searches} Google search credits${why}`, w.seg.added < w.seg.wanted ? 'warn' : 'info');
     }
@@ -805,7 +864,7 @@ export async function morningHealth(db: Db, settings: Services['settings'], holi
   const thin: string[] = [];
   for (const segment of SOURCING_SEGMENTS) {
     const rounds = recent.flatMap((r) => r.history?.filter((h) => h.segment === segment) ?? []);
-    const stoppedShort = rounds.filter((h) => h.added < h.wanted && (h.stopped === 'dry' || h.stopped === 'exhausted'));
+    const stoppedShort = rounds.filter((h) => h.added < h.wanted && (h.stopped === 'dry' || h.stopped === 'nonePassed' || h.stopped === 'exhausted'));
     const searches = rounds.reduce((a, h) => a + h.searches, 0);
     const added = rounds.reduce((a, h) => a + h.added, 0);
     if (stoppedShort.some((h) => h.stopped === 'exhausted')) thin.push(`${segment}: every search planned (titles, industry words, towns) has been made in the last ${MORNING_LIMITS.memoryDays} days. Add titles to the ICP's lists, or more industry words and towns, to find new companies.`);

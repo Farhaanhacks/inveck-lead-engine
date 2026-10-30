@@ -63,6 +63,23 @@ export const SEGMENT_SEARCH: Record<SourcingSegment, { keywords: string[]; place
       'Delhi', 'Greater Noida', 'Ghaziabad', 'Sonipat', 'Kundli', 'Bawal', 'Manesar', 'Jaipur', 'Lucknow', 'Kanpur', 'Indore', 'Nagpur', 'Raipur', 'Patna', 'Guwahati', 'Siliguri',
       'Bhubaneswar', 'Howrah', 'Ludhiana', 'Rajpura', 'Zirakpur', 'Ambala', 'Thane', 'Panvel', 'Taloja', 'Nashik', 'Aurangabad', 'Surat', 'Vapi', 'Rajkot', 'Sanand',
       'Hosur', 'Coimbatore', 'Kochi', 'Madurai', 'Visakhapatnam', 'Vijayawada', 'Hubli', 'Mysuru', 'Mangaluru', 'Bhopal', 'Goa', 'Tirupati', 'Sri City', 'Oragadam',
+      // The same ground as Manufacturing (INVECK, 30 Oct 2026): the industrial belts on its list, where 3PLs run in-plant
+      // and inbound warehouses,
+      'Pimpri-Chinchwad', 'Kolhapur', 'Belagavi', 'Tumakuru', 'Halol', 'Talegaon', 'Ranjangaon', 'Shirwal', 'Satara',
+      'Sangli', 'Sinnar', 'Ahmednagar', 'Jalgaon', 'Butibori', 'Boisar', 'Vasai', 'Ambernath', 'Jamnagar', 'Morbi',
+      'Bharuch', 'Ankleshwar', 'Mehsana', 'Gandhinagar', 'Bhavnagar', 'Bhiwadi', 'Neemrana', 'Alwar', 'Udaipur',
+      'Jodhpur', 'Kota', 'Dharuhera', 'Panipat', 'Rohtak', 'Yamunanagar', 'Jalandhar', 'Mohali', 'Amritsar',
+      'Mandi Gobindgarh', 'Patiala', 'Baddi', 'Parwanoo', 'Rudrapur', 'Pantnagar', 'Haridwar', 'Dehradun', 'Kashipur',
+      'Agra', 'Aligarh', 'Meerut', 'Varanasi', 'Pithampur', 'Dewas', 'Mandideep', 'Jabalpur', 'Gwalior', 'Bhilai',
+      'Jamshedpur', 'Ranchi', 'Bokaro', 'Dhanbad', 'Cuttack', 'Rourkela', 'Durgapur', 'Asansol', 'Haldia', 'Dharwad',
+      'Shivamogga', 'Bidadi', 'Doddaballapur', 'Gummidipoondi', 'Ranipet', 'Tiruchirappalli', 'Salem', 'Erode',
+      'Karur', 'Sangareddy', 'Anantapur', 'Nellore', 'Palakkad',
+      // and the warehousing hubs (NCR's Farrukhnagar-Luhari-Jhajjar belt, Bengaluru's Hoskote and Nelamangala,
+      // Hyderabad's Medchal and Shamshabad, Kolkata's Dankuni and Uluberia, the ports).
+      'Farrukhnagar', 'Luhari', 'Jhajjar', 'Bahadurgarh', 'Taoru', 'Rewari', 'Palwal', 'Dadri', 'Sahibabad', 'Hoskote',
+      'Nelamangala', 'Medchal', 'Shamshabad', 'Kothur', 'Uluberia', 'Dankuni', 'Changodar', 'Aslali', 'Kheda',
+      'Wagholi', 'Khalapur', 'Padgha', 'Kalyan', 'Uran', 'Kalamboli', 'Mundra', 'Gandhidham', 'Hazira', 'Ennore',
+      'Ponneri', 'Kanchipuram', 'Krishnapatnam', 'Thoothukudi', 'Derabassi',
     ],
   },
 };
@@ -236,6 +253,15 @@ const ICP_INDUSTRY: Record<SourcingSegment, RegExp> = {
 /** LinkedIn's catch-all labels: they say nothing of what the company makes. */
 const GENERIC_INDUSTRY = /^(industrial\s+)?manufacturing$/i;
 
+/**
+ * A label that says nothing of the company's industry for this segment: "Manufacturing" only for the Manufacturing ICP.
+ * For 3PL & Logistics it is plainly another industry (30 Oct 2026: manufacturers labelled "Manufacturing" had been
+ * passed to 3PL research as unclear, and research ruled them all out).
+ */
+export function catchAllLabel(label: string, segment: SourcingSegment): boolean {
+  return segment === MANUFACTURING && GENERIC_INDUSTRY.test(label.trim());
+}
+
 /** What a company in the ICP says about itself, for a page with no label or a catch-all one. */
 const ICP_WORDS: Record<SourcingSegment, RegExp> = {
   [MANUFACTURING]:
@@ -290,7 +316,7 @@ export function industryHint(text: string, segment: SourcingSegment): 'icp' | 'o
 /** The industry LinkedIn doesn't settle: no label (or only "Manufacturing"), and nothing in the page's text either way. */
 export function industryUnclear(p: CompanyPage, segment: SourcingSegment): boolean {
   const label = p.industry.trim();
-  if (label && !GENERIC_INDUSTRY.test(label)) return false;
+  if (label && !catchAllLabel(label, segment)) return false;
   const text = `${p.name}. ${p.text}`;
   return !OTHER_WORDS[segment].test(text) && !ICP_WORDS[segment].test(text);
 }
@@ -309,7 +335,7 @@ export function noCompanyName(employer: string): boolean {
 
 export function industryProblem(p: CompanyPage, segment: SourcingSegment): string {
   const label = p.industry.trim();
-  if (label && !GENERIC_INDUSTRY.test(label)) return ICP_INDUSTRY[segment].test(label) ? '' : `industry not in the ICP: ${label}`;
+  if (label && !catchAllLabel(label, segment)) return ICP_INDUSTRY[segment].test(label) ? '' : `industry not in the ICP: ${label}`;
   const text = `${p.name}. ${p.text}`;
   const other = OTHER_WORDS[segment].exec(text)?.[0];
   if (other) return `${label ? `LinkedIn says only "${label}"` : 'industry not shown'}, and its page mentions "${other}"`;

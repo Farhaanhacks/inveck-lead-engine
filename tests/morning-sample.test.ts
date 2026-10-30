@@ -7,7 +7,7 @@ import { activities, enrichmentCache, icps, leads, people, prospectSearches, set
 import { LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema, saveSettings } from '@/lib/settings';
 import { runSourcingTest } from '@/lib/sourcing/test-run';
-import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, spendStep, startProspectSearch, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
+import { cardLead, isMorningSample, rejectionReason, sampleMorning, segmentsToSearchAgain, spendStep, startProspectSearch, SAMPLE_3PL_RULES, SAMPLE_RULES, type MorningSampleReport, type MorningSampleStart } from '@/lib/sourcing/sample-run';
 import { MorningSample } from '@/app/(app)/sourcing/morning-sample';
 import type { FakeLog } from './fake-apis';
 import { morningServices } from './morning-world';
@@ -15,7 +15,7 @@ import { dbSearchMeter, searchesUsed } from '@/lib/search-budget';
 import { verifyContacts } from '@/lib/verify-contacts';
 import { normQuery } from '@/lib/pipeline/query-history';
 import { normCompany } from '@/lib/pipeline/text';
-import { morningPlan, searchRound, startRound } from '@/lib/sourcing/morning';
+import { DROP_REASONS, morningPlan, searchRound, startRound } from '@/lib/sourcing/morning';
 import { companiesQuery, lookupBatch, PAGES_PER_SEARCH, PEOPLE_KEYWORDS } from '@/lib/sourcing/people-first';
 import { rememberKept, rememberSearch } from '@/lib/sourcing/search-memory';
 import { dbEnrichmentCache } from '@/lib/enrichment-cache';
@@ -215,10 +215,11 @@ describe('the Morning Sample Run', () => {
     expect(r.budget).toBe(SAMPLE_RULES.credits);
     expect(SAMPLE_RULES.credits).toBe(4000);
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
-    // People searches ask for ten results.
+    // People searches ask for ten results; 3PL's with no town (in India), a hundred (30 Oct).
     const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
     expect(people.length).toBeGreaterThan(0);
-    expect(people.every((b) => b.num === 10)).toBe(true);
+    expect(people.filter((b) => !b.q.endsWith(' India')).every((b) => b.num === 10)).toBe(true);
+    expect(people.filter((b) => b.q.endsWith(' India')).every((b) => b.num === 100)).toBe(true);
     // Research doesn't look the company's LinkedIn page up again (the search found it), nor its officers in the news and filings.
     expect(sent.some((b) => b.q === 'site:linkedin.com/company "forgeline.in"')).toBe(false);
     expect(sent.some((b) => b.q.includes('"company secretary"'))).toBe(false);
@@ -311,7 +312,7 @@ describe('the Morning Sample Run', () => {
     expect((await peopleFirstContacts(db, fresh)).map((p) => p.name)).toEqual(swift.contacts.map((p) => p.name));
   });
 
-  it('a company with no LinkedIn page is not researched (from 27 Oct; it was before), and an employer that is only an industry word is not looked up', async () => {
+  it('a company with no LinkedIn page is kept aside, not ruled out (30 Oct), and researched when Manufacturing would end short; an employer that is only an industry word is not looked up', async () => {
     // Two more people in the forging search: a plant head at a company with no LinkedIn page, and one whose employer is just "Foundry".
     const extra = [
       { title: 'Kiran Rao - Plant Head - Pageless Forge Works | LinkedIn', link: 'https://in.linkedin.com/in/kiran-rao', subtitle: 'Pune, Maharashtra, India · Plant Head · Pageless Forge Works', snippet: '' },
@@ -337,9 +338,11 @@ describe('the Morning Sample Run', () => {
     const id = await startSample(true);
     await runSourcingTest(db, svc(), id, Number.POSITIVE_INFINITY);
     const r = await reportOf(id);
-    // Checked, not kept: it would be researched (and paid for) only to be ruled out.
-    expect(r.companies.some((c) => c.page.name === 'Pageless Forge Works' || c.employer === 'Pageless Forge Works')).toBe(false);
+    // Checked and kept aside; the made-up world leaves Manufacturing short, so it went to research by its name.
     expect(r.search!.segments.find((x) => x.segment === MANUFACTURING)!.checked).toContain(normCompany('Pageless Forge Works'));
+    expect(r.search!.drops![MANUFACTURING]?.[DROP_REASONS.kept]).toBeGreaterThanOrEqual(1);
+    expect(r.search!.drops![MANUFACTURING]?.[DROP_REASONS.noPage]).toBeUndefined();
+    expect(r.companies.find((c) => c.employer === 'Pageless Forge Works')?.note).toContain('no LinkedIn company page found');
     // "Foundry" has no name to look up: never searched for, never kept.
     expect(asked.some((q) => q === 'site:linkedin.com/company "Foundry"')).toBe(false);
     expect(r.companies.some((c) => c.employer === 'Foundry')).toBe(false);
@@ -366,7 +369,7 @@ describe('the Morning Sample Run', () => {
       };
     };
 
-    it('a 3PL company with no LinkedIn page is not passed to research, and an employer that is only an industry word still is not looked up', async () => {
+    it('a 3PL company with no LinkedIn page is kept aside and researched when 3PL would end short (30 Oct); an employer that is only an industry word still is not looked up', async () => {
       const extra = [
         { title: 'Asha K - Head of Logistics - Pageless Warehousing Co | LinkedIn', link: 'https://in.linkedin.com/in/asha-k', subtitle: 'Pune, Maharashtra, India · Head of Logistics · Pageless Warehousing Co', snippet: '' },
         { title: 'Vivek M - Head of Logistics - Logistics | LinkedIn', link: 'https://in.linkedin.com/in/vivek-m', subtitle: 'Pune, Maharashtra, India · Head of Logistics · Logistics', snippet: '' },
@@ -376,11 +379,23 @@ describe('the Morning Sample Run', () => {
       await runSourcingTest(db, withPeople(asked, TPL, extra), id, Number.POSITIVE_INFINITY);
       const r = await reportOf(id);
       expect(r.phase).toBe('done');
-      expect(r.companies.some((c) => c.employer === 'Pageless Warehousing Co')).toBe(false);
-      // The search did see her: the company was checked and not kept.
+      // The search did see her: the company was checked, kept aside, and (3PL short in the made-up world) researched.
       expect(r.search!.segments.find((x) => x.segment === LOGISTICS)!.checked).toContain(normCompany('Pageless Warehousing Co'));
+      expect(r.companies.find((c) => c.employer === 'Pageless Warehousing Co')?.note).toContain('no LinkedIn company page found');
       // An employer that is only an industry word is still not looked up (no credit spent on it).
       expect(asked.some((q) => q === 'site:linkedin.com/company "Logistics"')).toBe(false);
+    });
+
+    it('a company ruled out before for having no LinkedIn page is no longer kept out by that (30 Oct)', async () => {
+      const extra = [{ title: 'Asha K - Head of Logistics - Pageless Warehousing Co | LinkedIn', link: 'https://in.linkedin.com/in/asha-k', subtitle: 'Pune, Maharashtra, India · Head of Logistics · Pageless Warehousing Co', snippet: '' }];
+      const [icp] = await db.select().from(icps).where(eq(icps.segment, LOGISTICS));
+      const cache = dbEnrichmentCache(db);
+      await cache.set(`company-check:v1:${LOGISTICS}:${icp.companySize}:${normCompany('Pageless Warehousing Co')}`, { at: new Date().toISOString(), why: 'no LinkedIn page' });
+      const id = await startSample(true);
+      await runSourcingTest(db, { ...withPeople([], TPL, extra), cache }, id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      expect(r.search?.drops?.[LOGISTICS]?.['ruled out in the last 90 days']).toBeUndefined();
+      expect(r.companies.find((c) => c.employer === 'Pageless Warehousing Co')?.note).toContain('no LinkedIn company page found');
     });
 
     it('asks for a quarter more 3PL companies than it is short of (Manufacturing 10%), and gives up on 3PL only after 50 searches find nobody new', async () => {
@@ -395,7 +410,124 @@ describe('the Morning Sample Run', () => {
       const tplSearches = asked.filter((q) => TPL.test(q));
       expect(tplSearches.length).toBeGreaterThanOrEqual(50);
       expect(tplSearches.length).toBeLessThan(50 + 8 * 2);
-      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'dry', added: 0 });
+      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'nonePassed', added: 0 });
+    });
+
+    /**
+     * Each 3PL people search finds someone at a new company, `kind(n)` for the n-th search: one whose LinkedIn page shows
+     * another industry ('other', ruled out at its check), a 3PL with its page ('good'), one with no LinkedIn page
+     * ('pageless'), or Swift ('swift', the made-up world's 3PL).
+     */
+    const tplWorld = (asked: string[], kind: (n: number) => 'other' | 'good' | 'pageless' | 'swift' | 'vague') => {
+      const base = morningServices(log);
+      // A different letters-only tag for every n (base 26).
+      const tag = (n: number) => [...n.toString(26)].map((ch) => 'abcdefghijklmnopqrstuvwxyz'['0123456789abcdefghijklmnop'.indexOf(ch)]).join('');
+      const pages = new Map<string, string>();
+      let n = 0;
+      const json = (organic: unknown[]) => new Response(JSON.stringify({ organic }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const body = String(input).includes('google.serper.dev/search') ? JSON.parse(String(init?.body)) : null;
+          if (body) asked.push(body.q);
+          if (body?.q.startsWith('site:linkedin.com/company')) {
+            const shown = [...pages].filter(([word]) => new RegExp(`\\b${word}\\b`).test(body.q));
+            if (shown.length)
+              return json(
+                shown.map(([word, industry]) => ({
+                  title: `${word} Group | LinkedIn`,
+                  link: `https://in.linkedin.com/company/${word.toLowerCase()}`,
+                  snippet: `${word} Group | 1,234 followers on LinkedIn. Website: http://www.${word.toLowerCase()}.in.${industry ? ` Industry: ${industry}.` : ''} Company size: 201-500 employees. Headquarters: Pune, Maharashtra`,
+                })),
+              );
+          }
+          if (!body || !TPL.test(body.q)) return base.fetch(input, init);
+          n++;
+          const k = kind(n);
+          const word = `${k === 'good' ? 'Harbor' : k === 'other' ? 'Mercury' : k === 'vague' ? 'Orbit' : 'Pageless'}${tag(n)}`;
+          if (k === 'good') pages.set(word, 'Warehousing and Storage');
+          if (k === 'vague') pages.set(word, '');
+          if (k === 'other') pages.set(word, 'Retail Apparel and Fashion');
+          const [name, company] = k === 'swift' ? ['Deepak Nair', 'Swift Warehousing Solutions'] : [`Asha ${word}`, `${word} Group`];
+          return json([{ title: `${name} - Head of Logistics - ${company} | LinkedIn`, link: `https://in.linkedin.com/in/${name.toLowerCase().replace(/ /g, '-')}`, subtitle: `Pune, Maharashtra, India · Head of Logistics · ${company}`, snippet: '' }]);
+        }) as typeof fetch,
+      };
+    };
+    const newButRuledOut = (asked: string[], passAt = 0) => tplWorld(asked, (n) => (n === passAt ? 'swift' : 'other'));
+
+    it("3PL: a company whose industry shows nowhere goes to research, as Manufacturing's does (30 Oct)", async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, tplWorld(asked, () => 'vague'), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const vague = r.companies.filter((c) => c.segment === LOGISTICS && c.employer.startsWith('Orbit'));
+      expect(vague.length).toBeGreaterThan(0);
+      // Approved only if research confirms the industry (the same guard as Manufacturing's).
+      expect(vague.every((c) => /industry not shown on LinkedIn or its website: research checks it/.test(c.note))).toBe(true);
+      expect(r.search?.drops?.[LOGISTICS]?.[DROP_REASONS.industry]).toBeUndefined();
+    });
+
+    it('3PL: when research approves none of a round\'s companies (here it fails on every one), no further round is searched (30 Oct)', async () => {
+      const world = tplWorld([], () => 'good');
+      const failing = {
+        ...world,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const host = new URL(String(input instanceof Request ? input.url : input)).host;
+          if (host === 'api.deepseek.com' || host === 'api.anthropic.com') return new Response('{"error":"down"}', { status: 500 });
+          return world.fetch(input, init);
+        }) as typeof fetch,
+      };
+      const id = await startSample(true);
+      await runSourcingTest(db, failing, id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const tpl = r.companies.filter((c) => c.segment === LOGISTICS);
+      expect(tpl.length).toBeGreaterThan(0);
+      expect(tpl.some((c) => c.outcome === 'approved')).toBe(false);
+      expect(r.search!.history.filter((h) => h.segment === LOGISTICS).map((h) => h.round)).toEqual([1]);
+    });
+
+    it('3PL: a company with no LinkedIn page is not researched when the list fills without it (30 Oct)', async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      // The first eight searches (the first batch) find companies with no LinkedIn page: looked up while companies are
+      // still needed, and kept aside; the next ones find 3PLs with their pages, which fill the list.
+      await runSourcingTest(db, tplWorld(asked, (n) => (n <= 8 ? 'pageless' : 'good')), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const tpl = r.search!.history.find((h) => h.segment === LOGISTICS && h.round === 1)!;
+      expect(tpl).toMatchObject({ stopped: 'target' });
+      expect(tpl.added).toBe(tpl.wanted);
+      expect(r.search!.drops![LOGISTICS]?.[DROP_REASONS.kept]).toBeGreaterThanOrEqual(1);
+      expect(r.companies.some((c) => c.employer.startsWith('Pageless'))).toBe(false);
+      expect(r.companies.filter((c) => c.segment === LOGISTICS).every((c) => c.employer.startsWith('Harbor'))).toBe(true);
+    });
+
+    it('3PL: a new company that is then ruled out does not keep the search going; 50 searches with none passing stop it (29 Oct)', async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, newButRuledOut(asked), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      expect(r.phase).toBe('done');
+      const tplSearches = asked.filter((q) => TPL.test(q));
+      expect(tplSearches.length).toBeGreaterThanOrEqual(SAMPLE_3PL_RULES.quietSearches);
+      expect(tplSearches.length).toBeLessThan(SAMPLE_3PL_RULES.quietSearches + 8 * 2);
+      // Nearly every search found a new company (before, each of them started the 50 again).
+      expect(r.search!.segments.find((x) => x.segment === LOGISTICS)!.checked.length).toBeGreaterThanOrEqual(SAMPLE_3PL_RULES.quietSearches - 8);
+      expect(r.search!.history.find((h) => h.segment === LOGISTICS)).toMatchObject({ stopped: 'nonePassed', added: 0 });
+      // Manufacturing keeps its rule: a new company is what counts.
+      expect(r.search!.history.find((h) => h.segment === MANUFACTURING)?.stopped).not.toBe('nonePassed');
+    });
+
+    it('3PL: a company that passes the check starts the 50 again (29 Oct)', async () => {
+      const asked: string[] = [];
+      const id = await startSample(true);
+      await runSourcingTest(db, newButRuledOut(asked, 30), id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const first = r.search!.history.find((h) => h.segment === LOGISTICS && h.round === 1)!;
+      expect(first.added).toBe(1);
+      if (first.wanted > 1) {
+        expect(first.stopped).toBe('nonePassed');
+        expect(asked.filter((q) => TPL.test(q)).length).toBeGreaterThanOrEqual(30 + SAMPLE_3PL_RULES.quietSearches);
+      }
     });
 
     it('3PL gets up to five rounds, each only while its last round found companies; Manufacturing keeps three', async () => {
@@ -405,6 +537,11 @@ describe('the Morning Sample Run', () => {
       expect(segmentsToSearchAgain(short, found, 3)).toEqual([LOGISTICS]);
       expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 1 }], 4)).toEqual([LOGISTICS]);
       expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 1 }], 5)).toEqual([]);
+      // 30 Oct: found companies, but research approved none of them (ruled out, or failed): not searched again.
+      expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 14, approved: 0 }], 2)).toEqual([MANUFACTURING]);
+      expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 14, approved: 1 }], 2)).toEqual([MANUFACTURING, LOGISTICS]);
+      // Manufacturing keeps its rule.
+      expect(segmentsToSearchAgain(short, [{ segment: MANUFACTURING, added: 3, approved: 0 }, { segment: LOGISTICS, added: 14, approved: 0 }], 1)).toEqual([MANUFACTURING]);
       // 3PL found nobody last round: not searched again, whatever Manufacturing found.
       expect(segmentsToSearchAgain(short, [{ segment: MANUFACTURING, added: 1 }, { segment: LOGISTICS, added: 0 }], 1)).toEqual([MANUFACTURING]);
       // Not searched last round (it wasn't short then): searched now.
@@ -516,6 +653,34 @@ describe('the Morning Sample Run', () => {
     const empty = sent.filter(([q]) => !/"forging"/.test(q));
     expect(empty.length).toBeGreaterThan(0);
     expect(empty.every(([, , num]) => num === 10)).toBe(true);
+  });
+
+  it("a company ruled out before because its industry showed nowhere isn't kept out now such companies go to research; one showing another industry still is (30 Oct)", async () => {
+    const base = morningServices(log);
+    let n = 0;
+    const person = (who: string, company: string) => ({ title: `${who} - Plant Head - ${company} | LinkedIn`, subtitle: `Pune, Maharashtra, India · Plant Head · ${company}`, link: `https://in.linkedin.com/in/${who.toLowerCase().replace(/ /g, '-')}`, snippet: '' });
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+        if (String(input).includes('google.serper.dev') && q.startsWith('site:linkedin.com/in "')) {
+          n++;
+          return new Response(JSON.stringify({ organic: [person(`Vague ${n}`, 'Vague Works'), person(`Fashion ${n}`, 'Fashion House')] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const [icp] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const cache = dbEnrichmentCache(db);
+    const key = (c: string) => `company-check:v1:${MANUFACTURING}:${icp.companySize}:${normCompany(c)}`;
+    await cache.set(key('Vague Works'), { at: new Date().toISOString(), why: "industry not shown on its LinkedIn page, and nothing on it shows it's in the ICP" });
+    await cache.set(key('Fashion House'), { at: new Date().toISOString(), why: 'industry not in the ICP: Retail Apparel and Fashion' });
+    const id = await startSample(true);
+    await runSourcingTest(db, { ...svc, cache }, id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    // Fashion House: still ruled out. Vague Works: checked again (no LinkedIn page in this made-up world, so kept aside).
+    expect(r.search?.drops?.[MANUFACTURING]?.['ruled out in the last 90 days']).toBe(1);
+    expect(r.search?.drops?.[MANUFACTURING]?.[DROP_REASONS.kept]).toBe(1);
   });
 
   it('a company ruled out in the last 90 days is not a new company when a search finds it again (28 Oct)', async () => {

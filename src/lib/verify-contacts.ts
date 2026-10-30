@@ -102,7 +102,7 @@ async function checkOthers(db: Db, svc: Services, lead: Lead, now: Date): Promis
     db.select().from(icps),
     db.select().from(people).where(and(eq(people.leadId, lead.id), eq(people.isPrimary, false), isNull(people.checkedAt), isNull(people.passedAt))),
   ]);
-  const icp = icpFor(lead.segment, icpRows);
+  const icp = icpFor(lead, icpRows);
   const next = rankCandidates(found, icp, lead.city).slice(0, OTHERS_PER_LEAD);
   const gone: string[] = [];
   for (const p of next) {
@@ -155,7 +155,7 @@ export async function verifyContact(db: Db, svc: Services, lead: Lead, now = new
 }
 
 async function checkLeadContacts(db: Db, svc: Services, lead: Lead, now: Date, opts: { mainOnly?: boolean }): Promise<CheckResult> {
-  const icp = icpFor(lead.segment, await db.select().from(icps));
+  const icp = icpFor(lead, await db.select().from(icps));
   await learnFirm(svc, lead.company, lead.website);
   // Without any search: drop people whose stored title already shows another employer, and move off a
   // main contact who has left.
@@ -260,7 +260,7 @@ const RECHECK_DAYS = 7;
  * is rewritten for them.
  */
 async function reconfirmSetAside(db: Db, svc: Services, lead: Lead, now: Date): Promise<CheckResult> {
-  const icp = icpFor(lead.segment, await db.select().from(icps));
+  const icp = icpFor(lead, await db.select().from(icps));
   const due = new Date(now.getTime() - RECHECK_DAYS * 86_400_000);
   const aside = (await db.select().from(people).where(eq(people.leadId, lead.id))).filter(
     (p) => setAside(p) && (!p.checkedAt || p.checkedAt < due) && (!icp || contactPriority(p.title, icp) < 99),
@@ -396,7 +396,7 @@ export async function purgeUnwanted(db: Db, scope: Scope = {}): Promise<number> 
   const verdict = ({ person: p, lead: l }: (typeof rows)[number]): string => {
     if (p.source === 'Sales team' || p.source === 'Added by the team' || p.passedReason === 'excluded') return '';
     if (p.location && basedAbroad(p.location, '', p.linkedin)) return `based in ${p.location}, outside India`;
-    const icp = icpFor(l.segment, icpRows);
+    const icp = icpFor(l, icpRows);
     if (icp && p.title.trim() && contactPriority(p.title, icp) >= 99) return `${p.title}: not on the ICP's contact lists (directors, HR, admin and IT aren't contacted)`;
     return '';
   };
@@ -460,7 +460,7 @@ export async function promoteBetterContacts(db: Db, scope: Scope = {}): Promise<
   }
   const changed: number[] = [];
   for (const { lead, list } of byLead.values()) {
-    const icp = icpFor(lead.segment, icpRows);
+    const icp = icpFor(lead, icpRows);
     if (!icp) continue;
     // The main contact is ranked the same way as everyone else, with where they are based (from their
     // People record), so two people equally placed at this site never look like a step up.

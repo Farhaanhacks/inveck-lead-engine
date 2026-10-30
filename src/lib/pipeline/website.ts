@@ -85,6 +85,19 @@ export function pickOfficialDomain(company: string, results: SerperResult[]): st
   return best;
 }
 
+/**
+ * The site's own text names the company: its name as written, without "Pvt Ltd", "LLC" and the like (a word it shares
+ * with another company isn't enough: Nordic Shipping's site doesn't name Nordic Logistics and Warehousing).
+ */
+export function siteNamesCompany(text: string, company: string): boolean {
+  const clean = (s: string) => s.toLowerCase().replace(/\./g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+  const name = clean(company)
+    .replace(/\b(private|pvt|limited|ltd|llp|llc|inc|incorporated|india|co|company|corporation|corp)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return name.length >= 3 && ` ${clean(text)} `.includes(` ${name} `);
+}
+
 /** Looks the company's website up on Google. Returns '' when nothing convincing turns up. */
 export async function findOfficialWebsite(svc: Services, company: string, city: string): Promise<string> {
   try {

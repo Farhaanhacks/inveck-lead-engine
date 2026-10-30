@@ -31,6 +31,12 @@ export const PEOPLE_KEYWORDS: Record<SourcingSegment, string[]> = {
     '3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain',
     // More words for the same ICP industries (INVECK, 28 Oct 2026).
     'warehousing and distribution', 'distribution centre', 'logistics park', 'integrated logistics', 'cold storage', 'fulfilment centre', 'in-plant logistics', 'temperature controlled logistics',
+    // What 3PL staff write on their profiles (INVECK, 30 Oct 2026); no freight or transport words (a freight broker with
+    // no warehousing is a deal-breaker).
+    'warehouse operations', 'multi-client warehouse', 'bonded warehouse', 'FTWZ', 'free trade warehousing zone', 'contract warehousing', 'warehousing services',
+    'logistics service provider', 'supply chain services', 'cross docking', 'distribution center', 'temperature controlled warehousing', 'value added logistics',
+    // A sector only with "3PL" too (INVECK, 30 Oct 2026): "pharma logistics" alone found pharma manufacturers' people.
+    'pharma + 3PL', 'automotive + 3PL', 'FMCG + 3PL', 'healthcare + 3PL', 'spare parts + 3PL', 'inbound logistics + 3PL',
   ],
 };
 
@@ -58,6 +64,8 @@ export type PeopleQuery = {
   num?: number;
   /** The page of ten to read instead, when Serper refuses a hundred results. */
   fallbackPage?: number;
+  /** `q` normalised (normQuery), worked out once with the plan: the plan is checked against what was searched before. */
+  norm?: string;
 };
 
 /**
@@ -74,10 +82,18 @@ export function planPeopleQueries(segment: SourcingSegment, icp: TitleIcp, count
     const title = titles[i % titles.length];
     const keyword = ks[i % ks.length];
     const place = ps[(i + Math.floor(i / ps.length)) % ps.length];
-    const q = ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' ');
+    const q = ['site:linkedin.com/in', `"${titlePhrase(title)}"`, wordTerms(keyword), place].join(' ');
     if (!out.some((o) => o.q === q)) out.push({ q, form: 'industry', title, keyword, place });
   }
   return out;
+}
+
+/** A search word as Google is asked for it: "pharma + 3PL" is both, `"pharma" "3PL"`. */
+export function wordTerms(keyword: string): string {
+  return keyword
+    .split(' + ')
+    .map((w) => `"${w.trim()}"`)
+    .join(' ');
 }
 
 /** Someone found, and what was made of them. */

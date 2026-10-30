@@ -813,7 +813,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   };
   const replyRows = byNumber(replies, (r) => r.m.waId).map(({ first, waiting }) => ({ ...first, waiting }));
   const strangerRows = byNumber(strangers, (m) => m.waId).map(({ first, waiting }) => ({ m: first, waiting }));
-  const icpOf = (l: Lead) => icpFor(l.segment, icpRows);
+  const icpOf = (l: Lead) => icpFor(l, icpRows);
   // Best first by INVECK's contact priority; people already tried go last.
   const othersOf = (l: Lead) =>
     peopleRows

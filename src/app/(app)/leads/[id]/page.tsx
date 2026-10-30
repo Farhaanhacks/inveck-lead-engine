@@ -506,7 +506,7 @@ export default async function LeadPage({ params }: PageProps<'/leads/[id]'>) {
     db.select().from(people).where(eq(people.leadId, id)).orderBy(desc(people.isPrimary), asc(people.id)),
   ]);
   const segments = segmentRows.map((s) => s.segment);
-  const icp = icpFor(lead.segment, segmentRows);
+  const icp = icpFor(lead, segmentRows);
   // Main contact first, then everyone else best first; people set aside after them, and people found
   // at the company who aren't contacts for this site last (shown with the reason, never contacted).
   // Only people INVECK contacts: on the ICP's lists (never directors, HR, admin or IT) and based in

@@ -20,7 +20,8 @@ import { processLead } from '@/lib/pipeline/process-lead';
 import { verifyContacts } from '@/lib/verify-contacts';
 import { sampleLead } from '@/lib/sourcing/sample-run';
 import { asLinkedInFinds } from '@/lib/sourcing/morning';
-import { PEOPLE_KEYWORDS } from '@/lib/sourcing/people-first';
+import { PEOPLE_KEYWORDS, wordTerms } from '@/lib/sourcing/people-first';
+import { SEGMENT_SEARCH } from '@/lib/sourcing/linkedin-pages';
 import { icps, runEvents } from '@/lib/db/schema';
 import { morningServices } from './morning-world';
 
@@ -199,6 +200,38 @@ describe('the search plan', () => {
     expect(morningPlan(LOGISTICS, tpl, 7)[0].title).toBe('Warehouse Manager');
   });
 
+  it('3PL: the same ground as Manufacturing, and each title also searched with a word and no town, a hundred at once (30 Oct)', () => {
+    const words = PEOPLE_KEYWORDS[LOGISTICS];
+    for (const w of ['warehouse operations', 'multi-client warehouse', 'bonded warehouse', 'FTWZ']) expect(words).toContain(w);
+    // A sector only with "3PL" too: "pharma" and "3PL" both on the profile.
+    for (const w of ['pharma + 3PL', 'automotive + 3PL', 'inbound logistics + 3PL']) expect(words).toContain(w);
+    expect(words.some((w) => /^(pharma|automotive|inbound|healthcare|fmcg|spare parts|industrial)\b[^+]*$/i.test(w))).toBe(false);
+    expect(wordTerms('pharma + 3PL')).toBe('"pharma" "3PL"');
+    expect(wordTerms('bonded warehouse')).toBe('"bonded warehouse"');
+    // No freight or transport words (a freight broker with no warehousing is a deal-breaker).
+    expect(words.some((w) => /freight|transport|truck|cargo|courier|shipping|forward/i.test(w))).toBe(false);
+    expect(new Set(words).size).toBe(words.length);
+    expect(words.length).toBeGreaterThanOrEqual(PEOPLE_KEYWORDS[MANUFACTURING].length - 6);
+    const towns = SEGMENT_SEARCH[LOGISTICS].places;
+    expect(new Set(towns).size).toBe(towns.length);
+    expect(towns.length).toBeGreaterThanOrEqual(SEGMENT_SEARCH[MANUFACTURING].places.length);
+    for (const t of ['Farrukhnagar', 'Hoskote', 'Dankuni', 'Pithampur', 'Neemrana']) expect(towns).toContain(t);
+    const tpl = { ...DEFAULT_ICPS.find((i) => i.segment === LOGISTICS)!, targetTitles: 'National Head – Operations, Head of Supply Chain', p2Titles: '', p3Titles: '' };
+    const plan = morningPlan(LOGISTICS, tpl, 7);
+    expect(new Set(plan.map((q) => q.q)).size).toBe(plan.length);
+    // The first title: its word-only searches first, then every word and town.
+    const first = plan.filter((q) => q.title === plan[0].title);
+    const noTown = first.filter((q) => !q.place);
+    expect(noTown).toHaveLength(words.length);
+    expect(first.slice(0, words.length)).toEqual(noTown);
+    // In India: without it, people abroad came up.
+    expect(noTown.every((q) => q.num === 100 && q.q === `site:linkedin.com/in "Head of Supply Chain" ${wordTerms(q.keyword)} India`)).toBe(true);
+    expect(plan.some((q) => q.q.includes('"pharma" "3PL"'))).toBe(true);
+    expect(first.length).toBe(words.length + words.length * towns.length);
+    // Manufacturing: always a town.
+    expect(morningPlan(MANUFACTURING, DEFAULT_ICPS.find((i) => i.segment === MANUFACTURING)!, 7).every((q) => q.place && !q.num)).toBe(true);
+  });
+
   it('skips ground this run has found empty: no search in a dead town (28 Oct)', async () => {
     const asked: string[] = [];
     const base = services();
@@ -287,7 +320,7 @@ describe('the day the morning search and draw start', () => {
 
 
 describe("the day's Google search budget", () => {
-  it('people searches ask for ten results at a time (1 credit)', async () => {
+  it("people searches ask for ten results at a time (1 credit); 3PL's word-only searches a hundred (30 Oct)", async () => {
     const bodies: { q: string; num: number }[] = [];
     const base = services();
     const svc = {
@@ -303,7 +336,11 @@ describe("the day's Google search budget", () => {
     const words = Object.values(PEOPLE_KEYWORDS).flat();
     const people = bodies.filter((b) => b.q.startsWith('site:linkedin.com/in ') && words.some((w) => b.q.includes(`"${w}"`)));
     expect(people.length).toBeGreaterThan(0);
-    expect(people.every((b) => b.num === 10)).toBe(true);
+    // With a town: ten. 3PL's title-and-word searches with no town: their first hundred at once (2 credits).
+    const places = Object.values(SEGMENT_SEARCH).flatMap((s) => s.places);
+    const withTown = (q: string) => places.some((p) => q.endsWith(` ${p}`));
+    expect(people.filter((b) => withTown(b.q)).every((b) => b.num === 10)).toBe(true);
+    expect(people.filter((b) => !withTown(b.q)).every((b) => b.num === 100 && b.q.endsWith(' India'))).toBe(true);
   });
 
   it('a company found people first still gets the search for its people, the people found counting towards the contacts it looks for', async () => {

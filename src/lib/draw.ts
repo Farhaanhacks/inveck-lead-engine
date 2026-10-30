@@ -182,9 +182,9 @@ export const TOP_CONTACT_SHARE = 0.1;
 /** How many leads with the head of the company as the main contact an associate may get in a day. */
 export const topAllowance = (quota: Quota) => Math.floor(quotaTotal(quota) * TOP_CONTACT_SHARE);
 /** The lead's main contact is the head of the company (MD, CEO, owner, founder): a tier set on the lead decides, else the title against its ICP. */
-export function isTopContact(l: Pick<Lead, 'contactTier' | 'contactTitle' | 'segment'>, icpList: Pick<Icp, 'segment' | 'active' | 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'>[]): boolean {
+export function isTopContact(l: Pick<Lead, 'contactTier' | 'contactTitle' | 'segment'> & Partial<Pick<Lead, 'createdAt'>>, icpList: Pick<Icp, 'segment' | 'active' | 'targetTitles' | 'p2Titles' | 'p3Titles' | 'avoidTitles'>[]): boolean {
   if (['P1', 'P2', 'P3'].includes(l.contactTier)) return false;
-  return tierOf(l.contactTitle, icpFor(l.segment, icpList)) === 'Top';
+  return tierOf(l.contactTitle, icpFor(l, icpList)) === 'Top';
 }
 
 /**

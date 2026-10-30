@@ -255,13 +255,31 @@ export function contactPriority(title: string, icp: (Pick<Icp, 'targetTitles' | 
  * The lead's own ICP, for ranking its contacts: the one whose name is the lead's segment (ignoring
  * case, spacing and punctuation). A switched-off ICP still ranks the contacts of leads already being
  * worked. None, or several with that name, gives undefined: never another segment's ICP. (Whether a
- * company fits is checked with resolveIcp, which also needs the ICP to be active.)
+ * company fits is checked with resolveIcp, which also needs the ICP to be active.) Given the lead itself, a 3PL &
+ * Logistics lead made before INVECK's new P1 list keeps the contacts it was given (see LOGISTICS_P1_SINCE).
  */
-export function icpFor<T extends Pick<Icp, 'segment'> & Partial<Pick<Icp, 'active'>>>(segment: string, icps: T[]): T | undefined {
-  const want = normSegment(segment);
+export function icpFor<T extends Pick<Icp, 'segment'> & Partial<Pick<Icp, 'active'>>>(of: string | MadeLead, icps: T[]): T | undefined {
+  const want = normSegment(typeof of === 'string' ? of : of.segment);
   if (!want) return undefined;
   const same = icps.filter((i) => normSegment(i.segment) === want);
   const active = same.filter((i) => i.active !== false);
-  if (active.length) return active.length === 1 ? active[0] : undefined;
-  return same.length === 1 ? same[0] : undefined;
+  const icp = active.length ? (active.length === 1 ? active[0] : undefined) : same.length === 1 ? same[0] : undefined;
+  return typeof of === 'string' ? icp : asMadeWith(of, icp);
+}
+
+/**
+ * INVECK's new 3PL & Logistics P1 list (29 Oct 2026) is for new leads: a lead made before it keeps the contacts it
+ * was given (Warehouse Managers, Operations Managers), so its people are still ranked with the designations that list
+ * replaced as well. Searches, and research for new leads, use the new list.
+ */
+export const LOGISTICS_P1_SINCE = new Date('2026-10-29T14:30:00Z');
+export const LOGISTICS_P1_BEFORE =
+  'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Warehouse Operations, Warehouse Manager, Head of Procurement & Supply Chain';
+type MadeLead = { segment: string; createdAt?: Date | string | null };
+
+function asMadeWith<T>(lead: MadeLead, icp: T | undefined): T | undefined {
+  if (!icp || !lead.createdAt || !/\b3pl\b|logistic/i.test(lead.segment)) return icp;
+  if (!(new Date(lead.createdAt).getTime() < LOGISTICS_P1_SINCE.getTime())) return icp;
+  const titles = String((icp as { targetTitles?: string }).targetTitles ?? '');
+  return { ...icp, targetTitles: [titles, LOGISTICS_P1_BEFORE].filter(Boolean).join(', ') };
 }

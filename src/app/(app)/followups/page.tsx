@@ -147,7 +147,7 @@ export default async function FollowUpsPage({ searchParams }: PageProps<'/follow
     return `/today?${p}`;
   };
   const tierFor = (c: FunnelCard): Tier =>
-    (['P1', 'P2', 'P3'].includes(c.lead.contactTier) ? c.lead.contactTier : tierOf(c.lead.contactTitle, icpFor(c.lead.segment, icpRows))) as Tier;
+    (['P1', 'P2', 'P3'].includes(c.lead.contactTier) ? c.lead.contactTier : tierOf(c.lead.contactTitle, icpFor(c.lead, icpRows))) as Tier;
 
   return (
     <>

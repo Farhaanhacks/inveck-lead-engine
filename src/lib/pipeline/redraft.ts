@@ -12,7 +12,7 @@ import { icpFor } from '../tiers';
 export async function redraftForContact(db: Db, svc: Services, leadId: number): Promise<boolean> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   if (!lead) return false;
-  const icp = icpFor(lead.segment, await db.select().from(icps));
+  const icp = icpFor(lead, await db.select().from(icps));
   if (!icp) return false;
   // The stored research summary stands in for the full research; the draft only needs its text.
   const research = { text: [lead.researchSummary, lead.fitReason && `Why they fit: ${lead.fitReason}`].filter(Boolean).join('\n') } as Research;
@@ -55,7 +55,7 @@ export async function fillMissingDrafts(db: Db, svc: Services, opts: { leadId?: 
       if (await redraftForContact(db, svc, lead.id)) filled++;
       continue;
     }
-    const icp = icpFor(lead.segment, all);
+    const icp = icpFor(lead, all);
     if (!icp) continue;
     const research = { text: [lead.researchSummary, lead.fitReason && `Why they fit: ${lead.fitReason}`].filter(Boolean).join('\n') } as Research;
     const text = await writeLinkedinMessage(svc, { company: lead.company, city: lead.city, segment: icp.segment }, research, icp, { name: lead.contactName, title: lead.contactTitle }, { subject: lead.emailSubject, body: lead.emailBody });

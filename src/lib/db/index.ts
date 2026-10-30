@@ -10,7 +10,7 @@ import { ensureBlogsUser, ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
 import { migrateEmailTemplatesOnce, seedConfiguration } from '../config';
 import { backfillSignatureDetails } from '../mail/signature';
-import { retireWithoutContactOnce } from '../escalate';
+import { recheckUnplacedContactsOnce, restoreFindStepsOnce, retireWithoutContactOnce } from '../escalate';
 import { approveSheetLeadsOnce } from '../ca-sheet';
 import { retireRemovedStatuses } from '../retired-statuses';
 
@@ -74,6 +74,8 @@ async function connect(): Promise<Db> {
     await ensureMarketingUser(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);
+    await restoreFindStepsOnce(db);
+    await recheckUnplacedContactsOnce(db);
     await approveSheetLeadsOnce(db);
     await retireRemovedStatuses(db);
   } catch (e) {

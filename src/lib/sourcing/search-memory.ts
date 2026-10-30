@@ -72,7 +72,8 @@ export class DeadGround {
   }
 
   dead(q: { keyword: string; place: string }): boolean {
-    const t = this.towns.get(q.place.toLowerCase());
+    // A search with no town (3PL's, 30 Oct 2026) isn't in a town: the town rule never stops those.
+    const t = q.place ? this.towns.get(q.place.toLowerCase()) : undefined;
     if (t && !t.listed && t.empty.size >= SEARCH_MEMORY.deadTownWords) return true;
     const w = this.words.get(q.keyword.toLowerCase());
     if (w && !w.listed && w.empty.size >= SEARCH_MEMORY.deadWordTowns) return true;
@@ -94,7 +95,7 @@ export class DeadGround {
       t.empty.add(word);
       w.empty.add(town);
     }
-    this.towns.set(town, t);
+    if (town) this.towns.set(town, t);
     this.words.set(word, w);
   }
 }
@@ -109,19 +110,16 @@ export function planFromMemory(plan: PeopleQuery[], memory: Map<string, SearchMe
     pairs.set(pairOf(e), t);
   }
   const ground = new DeadGround(memory);
-  const dead = (pq: PeopleQuery) => {
-    const own = memory.get(normQuery(pq.q));
-    if (own && own.outcomes[own.outcomes.length - 1].fresh === 0) return true;
-    return ground.dead(pq);
-  };
   const kept = (pq: PeopleQuery) => pairs.get(pairOf(pq))?.kept ?? 0;
   // Made in the last few days (before `at`, when the sample started): its next page, or nothing when there is none (a
   // page that wasn't full was the last).
   const recently = at.getTime() - SEARCH_MEMORY.nextPageDays * 86_400_000;
+  // Each search's own memory looked up once (normalising tens of thousands of searches is most of this function's time).
   const live = plan.flatMap((pq): PeopleQuery[] => {
-    if (dead(pq)) return [];
-    const own = memory.get(normQuery(pq.q));
+    const own = memory.get(pq.norm ?? normQuery(pq.q));
     const last = own?.outcomes[own.outcomes.length - 1];
+    // One that found no new company isn't made again, nor one on ground found empty (see DeadGround).
+    if (last?.fresh === 0 || ground.dead(pq)) return [];
     if (!last || Date.parse(last.at) < recently) return [pq];
     const num = last.num ?? 10;
     if (last.results != null && last.results < num) return [];

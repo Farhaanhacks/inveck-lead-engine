@@ -33,7 +33,13 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
   company's own LinkedIn page (found once by the website it lists, so a similarly named company never
   counts). The search uses these names too.
 - **Based in India**: any Indian city counts; the lead's own city is no longer required. People whose profile
-  places them abroad are left out, and someone at the lead's city is ranked ahead within the same tier.
+  places them abroad are left out, and someone at the lead's city is ranked ahead within the same tier. The main
+  contact must be shown in India (from 29 Oct 2026): one whose result shows no location is looked up, and isn't the
+  contact when that shows them abroad or still nowhere. Leads given out before with a contact never placed were
+  checked on LinkedIn again, once.
+- **The company's website**: the one its own LinkedIn page lists is kept, even when it can't be read (from 29 Oct
+  2026); one found by a search for the name is used only when its pages name the company (a shared word isn't
+  enough: nordicglobal.net, Nordic Shipping's, had been taken for Nordic Logistics and Warehousing's).
 - **A role the ICP wants**: a title on the ICP's lists, or one in a function the lists name
   (operations, supply chain, finance) at head, manager or lead level ("Senior Manager, Site
   Operations"). Engineers, associates, analysts and HR are left out; someone whose profile names no
@@ -41,9 +47,21 @@ A person found on LinkedIn (via Google) is a candidate only when all three hold:
 
 Among the candidates, each segment's most wanted contact comes first (from 28 Oct 2026, `contactPriority` in
 `tiers.ts`): the plant head for Manufacturing (plant, factory and works managers count as plant heads), the warehouse
-manager for 3PL & Logistics (not an assistant or deputy one); then plant heads and supply chain heads and managers,
-regional, national and warehouse heads, the other heads, the COO and finance. A lead nobody has started on gets that
-contact as its main contact when they are on file at the site and the current one ranks well below.
+manager for 3PL & Logistics (not an assistant or deputy one; on 3PL leads made before 29 Oct 2026); then plant heads
+and supply chain heads and managers, regional, national and warehouse heads, the other heads, the COO and finance. A
+lead nobody has started on gets that contact as its main contact when they are on file at the site and the current one
+ranks well below.
+
+The 3PL & Logistics P1 list is INVECK's from 30 Oct 2026: National Head – Operations, Regional Head – Operations,
+Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager,
+General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO) and Head of Procurement &
+Supply Chain (the list before 29 Oct without Warehouse Manager and Head of Warehouse Operations; from 29 Oct 8 pm to
+30 Oct it was National Head – Operations, Regional Head – Warehouse Operations, Head – Supply Chain, VP – Operations,
+VP – Logistics, Logistics Head and Head – Contract Logistics). Each was set once on the live database; Configuration
+can change it. Heads in operations, warehousing, logistics and supply chain written other ways are still P1, so the
+contacts on leads made under the 29 Oct list still are; warehouse managers aren't contacts for new 3PL leads. 3PL leads
+made before 29 Oct 8 pm keep the contacts they were given: their people are ranked with the list before 29 Oct as well
+(`LOGISTICS_P1_SINCE` in `tiers.ts`).
 
 ### Emails and phone numbers
 
@@ -302,7 +320,8 @@ CA firms aren't part of it. The sample is also where cheaper rules are tried bef
 (`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 60 searches in a row
 find no new company (from 28 Oct 2026, 15 that morning; before, nobody new on the lists, so people at companies INVECK
 already has kept it searching; a company ruled out in the last 90 days, or outside the ICP by its name, isn't a new
-company), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
+company), companies ruled out remembered for 90 days (a wrong industry or too small; from 30 Oct 2026 not "no LinkedIn
+page", and not "industry shown nowhere" where such companies now go to research, Manufacturing's since 28 Oct), companies outside the ICP by name not looked up and
 up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
 company's size checked only while companies are still needed, the sample's own memory of its people searches
 (`search-memory.ts`; and from 28 Oct 2026 a people search whose first page of ten was full and found new companies is
@@ -313,13 +332,17 @@ credits; its next ten if Serper refuses a hundred), then the next hundred, to 30
 town where two searches found nobody isn't searched with other titles, a town where three industry words found nobody
 and a word that found nobody in five towns aren't searched again (from 28 Oct 2026; and from 29 Oct during the run
 itself, not only from the next one), and the pairs that found companies that passed go first; and the most wanted
-title first, every word and town with the plant head (the warehouse manager for 3PL) before the next title, so new
-ground is tried with the titles likeliest to find someone), two contacts a company with the hunt for a P1 kept (the staff search
+title first, every word and town with the plant head (for 3PL, the head of supply chain from 29 Oct 2026) before the next title, so new
+ground is tried with the titles likeliest to find someone; and from 30 Oct 2026, for 3PL, each title searched first
+with each industry word and no town, in India, its first hundred results at once, since 3PL heads often cover several
+cities or write a region, and 3PL given Manufacturing's ground: 33 words its staff write, no freight or transport ones,
+a sector only together with "3PL" ("pharma" and "3PL", not "pharma logistics", which found pharma manufacturers), and
+173 towns, Manufacturing's industrial belts and the warehousing hubs), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
 then three P1 designations one at a time when the contacts are still short (Plant Head, Plant Manager and Head of
-Supply Chain for Manufacturing; Warehouse Manager, Head of Warehouse Operations and Head of Supply Chain for 3PL): at most 12 designation searches
+Supply Chain for Manufacturing; for 3PL, the first three in the contact priority from 29 Oct 2026): at most 12 designation searches
 a company instead of 28 for Manufacturing, plus any second pages), no repeat lookup of the company's LinkedIn page or of its officers in the
 news and filings, a person's profile looked up in the last 14 days or the company's news checked in the last 7
 not searched again, the people research found counted as checked on LinkedIn when a company is pushed into the
@@ -327,11 +350,18 @@ pipeline, 10% extra companies, 25 credits kept back for researching each company
 credits at most for a new sample (3,000 until 27 Oct 2026), a hard limit (a search that would go over it isn't made;
 a company whose research reaches it is left for the next day). A company with no LinkedIn page, or whose page
 doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
-would only be ruled out. From 28 Oct 2026 a Manufacturing company whose page shows no industry either way (no label,
+would only be ruled out. From 28 Oct 2026 a Manufacturing company (a 3PL one from 30 Oct) whose page shows no industry either way (no label,
 or a catch-all one, and nothing on its page or website) is researched, and approved only if research confirms its
-industry (`industryConfirmed`); one with no LinkedIn page still isn't (nothing shows its size). 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
-(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no new company, asks for 25% extra and takes up
-to five rounds (each only while its last one found companies). The report tallies why the companies it checked
+industry (`industryConfirmed`); one with no LinkedIn page isn't ruled out (from 30 Oct 2026, INVECK; from 26-27 Oct it was): it's kept aside
+(`keepPageless`), and researched by its name only when its segment would otherwise end up short, where research
+checks its size and industry from its website (and the industry guard above applies); an earlier "no LinkedIn page"
+ruling no longer keeps it out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
+(`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no company that passes the company check (from
+29 Oct 2026, `quietCountsPassed`; before, no new company: most companies its searches turn up aren't 3PL firms, and each
+kept the search going, so the 9 pm run of 29 Oct spent 780 credits on a round that found one), asks for 25% extra and
+takes up to five rounds (each only while its last one found companies and, from 30 Oct 2026, research approved one
+of them: that morning research ruled out or failed on 66 of 67 and each shortfall started another round, 1,209 credits
+for one lead). For 3PL a LinkedIn label of "Manufacturing" is another industry, not a catch-all (from 30 Oct 2026). The report tallies why the companies it checked
 weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
 contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company,
 and (from 28 Oct 2026) how many of each segment's people searches found a new company, and what the company check did
@@ -427,7 +457,7 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   right person", the lead switches to the next person already found at the company (a P2 process owner
   after a P1, then P3; never HR, admin or quality), shown with a P2 badge, with a fresh plan from that day
   and the email rewritten for them. When nobody else is on file, Today asks for the next contact; naming
-  them under Edit point of contact starts their plan.
+  them under Edit point of contact starts their plan. When nobody else is on file, the lead waits on its find step until someone is named: the person just ruled out never comes back as a fresh lead (fixed on 29 Oct 2026; leads that had, with nothing done on them since, were put back on the find step once, with a note).
 - **Team** (administrators): companies completed, calls, connect rate, messages, LinkedIn requests,
   meetings and attendance per person, for today, yesterday, 7 or 30 days, plus the morning draw.
 - **Attendance**: first and last time seen each day, plus Clock in and Clock out. Administrators can read
