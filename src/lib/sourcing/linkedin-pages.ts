@@ -63,6 +63,23 @@ export const SEGMENT_SEARCH: Record<SourcingSegment, { keywords: string[]; place
       'Delhi', 'Greater Noida', 'Ghaziabad', 'Sonipat', 'Kundli', 'Bawal', 'Manesar', 'Jaipur', 'Lucknow', 'Kanpur', 'Indore', 'Nagpur', 'Raipur', 'Patna', 'Guwahati', 'Siliguri',
       'Bhubaneswar', 'Howrah', 'Ludhiana', 'Rajpura', 'Zirakpur', 'Ambala', 'Thane', 'Panvel', 'Taloja', 'Nashik', 'Aurangabad', 'Surat', 'Vapi', 'Rajkot', 'Sanand',
       'Hosur', 'Coimbatore', 'Kochi', 'Madurai', 'Visakhapatnam', 'Vijayawada', 'Hubli', 'Mysuru', 'Mangaluru', 'Bhopal', 'Goa', 'Tirupati', 'Sri City', 'Oragadam',
+      // The same ground as Manufacturing (INVECK, 30 Oct 2026): the industrial belts on its list, where 3PLs run in-plant
+      // and inbound warehouses,
+      'Pimpri-Chinchwad', 'Kolhapur', 'Belagavi', 'Tumakuru', 'Halol', 'Talegaon', 'Ranjangaon', 'Shirwal', 'Satara',
+      'Sangli', 'Sinnar', 'Ahmednagar', 'Jalgaon', 'Butibori', 'Boisar', 'Vasai', 'Ambernath', 'Jamnagar', 'Morbi',
+      'Bharuch', 'Ankleshwar', 'Mehsana', 'Gandhinagar', 'Bhavnagar', 'Bhiwadi', 'Neemrana', 'Alwar', 'Udaipur',
+      'Jodhpur', 'Kota', 'Dharuhera', 'Panipat', 'Rohtak', 'Yamunanagar', 'Jalandhar', 'Mohali', 'Amritsar',
+      'Mandi Gobindgarh', 'Patiala', 'Baddi', 'Parwanoo', 'Rudrapur', 'Pantnagar', 'Haridwar', 'Dehradun', 'Kashipur',
+      'Agra', 'Aligarh', 'Meerut', 'Varanasi', 'Pithampur', 'Dewas', 'Mandideep', 'Jabalpur', 'Gwalior', 'Bhilai',
+      'Jamshedpur', 'Ranchi', 'Bokaro', 'Dhanbad', 'Cuttack', 'Rourkela', 'Durgapur', 'Asansol', 'Haldia', 'Dharwad',
+      'Shivamogga', 'Bidadi', 'Doddaballapur', 'Gummidipoondi', 'Ranipet', 'Tiruchirappalli', 'Salem', 'Erode',
+      'Karur', 'Sangareddy', 'Anantapur', 'Nellore', 'Palakkad',
+      // and the warehousing hubs (NCR's Farrukhnagar-Luhari-Jhajjar belt, Bengaluru's Hoskote and Nelamangala,
+      // Hyderabad's Medchal and Shamshabad, Kolkata's Dankuni and Uluberia, the ports).
+      'Farrukhnagar', 'Luhari', 'Jhajjar', 'Bahadurgarh', 'Taoru', 'Rewari', 'Palwal', 'Dadri', 'Sahibabad', 'Hoskote',
+      'Nelamangala', 'Medchal', 'Shamshabad', 'Kothur', 'Uluberia', 'Dankuni', 'Changodar', 'Aslali', 'Kheda',
+      'Wagholi', 'Khalapur', 'Padgha', 'Kalyan', 'Uran', 'Kalamboli', 'Mundra', 'Gandhidham', 'Hazira', 'Ennore',
+      'Ponneri', 'Kanchipuram', 'Krishnapatnam', 'Thoothukudi', 'Derabassi',
     ],
   },
 };

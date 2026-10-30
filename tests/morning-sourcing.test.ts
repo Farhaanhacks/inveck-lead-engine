@@ -21,6 +21,7 @@ import { verifyContacts } from '@/lib/verify-contacts';
 import { sampleLead } from '@/lib/sourcing/sample-run';
 import { asLinkedInFinds } from '@/lib/sourcing/morning';
 import { PEOPLE_KEYWORDS } from '@/lib/sourcing/people-first';
+import { SEGMENT_SEARCH } from '@/lib/sourcing/linkedin-pages';
 import { icps, runEvents } from '@/lib/db/schema';
 import { morningServices } from './morning-world';
 
@@ -197,6 +198,31 @@ describe('the search plan', () => {
     // 3PL: the warehouse manager first.
     const tpl = { ...DEFAULT_ICPS.find((i) => i.segment === LOGISTICS)!, targetTitles: 'National Head – Operations, Head of Operations, Head of Supply Chain, Warehouse Manager', p2Titles: '', p3Titles: '' };
     expect(morningPlan(LOGISTICS, tpl, 7)[0].title).toBe('Warehouse Manager');
+  });
+
+  it('3PL: the same ground as Manufacturing, and each title also searched with a word and no town, a hundred at once (30 Oct)', () => {
+    const words = PEOPLE_KEYWORDS[LOGISTICS];
+    for (const w of ['warehouse operations', 'multi-client warehouse', 'bonded warehouse', 'FTWZ', 'pharma logistics', 'automotive logistics', 'inbound logistics']) expect(words).toContain(w);
+    // No freight or transport words (a freight broker with no warehousing is a deal-breaker).
+    expect(words.some((w) => /freight|transport|truck|cargo|courier|shipping|forward/i.test(w))).toBe(false);
+    expect(new Set(words).size).toBe(words.length);
+    expect(words.length).toBeGreaterThanOrEqual(PEOPLE_KEYWORDS[MANUFACTURING].length - 5);
+    const towns = SEGMENT_SEARCH[LOGISTICS].places;
+    expect(new Set(towns).size).toBe(towns.length);
+    expect(towns.length).toBeGreaterThanOrEqual(SEGMENT_SEARCH[MANUFACTURING].places.length);
+    for (const t of ['Farrukhnagar', 'Hoskote', 'Dankuni', 'Pithampur', 'Neemrana']) expect(towns).toContain(t);
+    const tpl = { ...DEFAULT_ICPS.find((i) => i.segment === LOGISTICS)!, targetTitles: 'National Head – Operations, Head of Supply Chain', p2Titles: '', p3Titles: '' };
+    const plan = morningPlan(LOGISTICS, tpl, 7);
+    expect(new Set(plan.map((q) => q.q)).size).toBe(plan.length);
+    // The first title: its word-only searches first, then every word and town.
+    const first = plan.filter((q) => q.title === plan[0].title);
+    const noTown = first.filter((q) => !q.place);
+    expect(noTown).toHaveLength(words.length);
+    expect(first.slice(0, words.length)).toEqual(noTown);
+    expect(noTown.every((q) => q.num === 100 && q.q === `site:linkedin.com/in "Head of Supply Chain" "${q.keyword}"`)).toBe(true);
+    expect(first.length).toBe(words.length + words.length * towns.length);
+    // Manufacturing: always a town.
+    expect(morningPlan(MANUFACTURING, DEFAULT_ICPS.find((i) => i.segment === MANUFACTURING)!, 7).every((q) => q.place && !q.num)).toBe(true);
   });
 
   it('skips ground this run has found empty: no search in a dead town (28 Oct)', async () => {

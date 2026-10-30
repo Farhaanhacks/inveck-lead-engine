@@ -31,6 +31,11 @@ export const PEOPLE_KEYWORDS: Record<SourcingSegment, string[]> = {
     '3PL', 'warehousing', 'contract logistics', 'third party logistics', 'supply chain solutions', 'cold chain',
     // More words for the same ICP industries (INVECK, 28 Oct 2026).
     'warehousing and distribution', 'distribution centre', 'logistics park', 'integrated logistics', 'cold storage', 'fulfilment centre', 'in-plant logistics', 'temperature controlled logistics',
+    // What 3PL staff write on their profiles (INVECK, 30 Oct 2026); no freight or transport words (a freight broker with
+    // no warehousing is a deal-breaker).
+    'warehouse operations', 'multi-client warehouse', 'bonded warehouse', 'FTWZ', 'free trade warehousing zone', 'pharma logistics', 'pharma warehousing', 'automotive logistics',
+    'inbound logistics', 'contract warehousing', 'warehousing services', 'logistics service provider', 'supply chain services', 'cross docking', 'distribution center',
+    'FMCG logistics', 'healthcare logistics', 'spare parts logistics', 'industrial logistics', 'temperature controlled warehousing', 'value added logistics',
   ],
 };
 

@@ -320,7 +320,8 @@ CA firms aren't part of it. The sample is also where cheaper rules are tried bef
 (`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 60 searches in a row
 find no new company (from 28 Oct 2026, 15 that morning; before, nobody new on the lists, so people at companies INVECK
 already has kept it searching; a company ruled out in the last 90 days, or outside the ICP by its name, isn't a new
-company), companies ruled out remembered for 90 days, companies outside the ICP by name not looked up and
+company), companies ruled out remembered for 90 days (a wrong industry or too small; from 30 Oct 2026 not "no LinkedIn
+page", and not "industry shown nowhere" where such companies now go to research, Manufacturing's since 28 Oct), companies outside the ICP by name not looked up and
 up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
 company's size checked only while companies are still needed, the sample's own memory of its people searches
 (`search-memory.ts`; and from 28 Oct 2026 a people search whose first page of ten was full and found new companies is
@@ -332,7 +333,10 @@ town where two searches found nobody isn't searched with other titles, a town wh
 and a word that found nobody in five towns aren't searched again (from 28 Oct 2026; and from 29 Oct during the run
 itself, not only from the next one), and the pairs that found companies that passed go first; and the most wanted
 title first, every word and town with the plant head (for 3PL, the head of supply chain from 29 Oct 2026) before the next title, so new
-ground is tried with the titles likeliest to find someone), two contacts a company with the hunt for a P1 kept (the staff search
+ground is tried with the titles likeliest to find someone; and from 30 Oct 2026, for 3PL, each title searched first
+with each industry word and no town, its first hundred results at once, since 3PL heads often cover several cities or
+write a region, and 3PL given Manufacturing's ground: 35 words its staff write, no freight or transport ones, and 173
+towns, Manufacturing's industrial belts and the warehousing hubs), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,

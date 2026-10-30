@@ -617,6 +617,34 @@ describe('the Morning Sample Run', () => {
     expect(empty.every(([, , num]) => num === 10)).toBe(true);
   });
 
+  it("a company ruled out before because its industry showed nowhere isn't kept out now such companies go to research; one showing another industry still is (30 Oct)", async () => {
+    const base = morningServices(log);
+    let n = 0;
+    const person = (who: string, company: string) => ({ title: `${who} - Plant Head - ${company} | LinkedIn`, subtitle: `Pune, Maharashtra, India · Plant Head · ${company}`, link: `https://in.linkedin.com/in/${who.toLowerCase().replace(/ /g, '-')}`, snippet: '' });
+    const svc = {
+      ...base,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const q = String(JSON.parse(String(init?.body ?? '{}')).q ?? '');
+        if (String(input).includes('google.serper.dev') && q.startsWith('site:linkedin.com/in "')) {
+          n++;
+          return new Response(JSON.stringify({ organic: [person(`Vague ${n}`, 'Vague Works'), person(`Fashion ${n}`, 'Fashion House')] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return base.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const [icp] = await db.select().from(icps).where(eq(icps.segment, MANUFACTURING));
+    const cache = dbEnrichmentCache(db);
+    const key = (c: string) => `company-check:v1:${MANUFACTURING}:${icp.companySize}:${normCompany(c)}`;
+    await cache.set(key('Vague Works'), { at: new Date().toISOString(), why: "industry not shown on its LinkedIn page, and nothing on it shows it's in the ICP" });
+    await cache.set(key('Fashion House'), { at: new Date().toISOString(), why: 'industry not in the ICP: Retail Apparel and Fashion' });
+    const id = await startSample(true);
+    await runSourcingTest(db, { ...svc, cache }, id, Number.POSITIVE_INFINITY);
+    const r = await reportOf(id);
+    // Fashion House: still ruled out. Vague Works: checked again (no LinkedIn page in this made-up world, so kept aside).
+    expect(r.search?.drops?.[MANUFACTURING]?.['ruled out in the last 90 days']).toBe(1);
+    expect(r.search?.drops?.[MANUFACTURING]?.[DROP_REASONS.kept]).toBe(1);
+  });
+
   it('a company ruled out in the last 90 days is not a new company when a search finds it again (28 Oct)', async () => {
     const base = morningServices(log);
     let n = 0;

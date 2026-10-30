@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db';
 import { icps, leads, people, prospectSearches, runs, type Lead, type Run } from '../db/schema';
-import { DEFAULT_ICPS } from '../db/seed';
+import { DEFAULT_ICPS, LOGISTICS } from '../db/seed';
 import { drawPool, handedOut, morningStartsOn, quotaTotal, teamQuotas, teamTotal } from '../draw';
 import { getHolidays } from '../holidays';
 import { normSegment } from '../icp-match';
@@ -134,12 +134,20 @@ export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof sea
     PEOPLE_KEYWORDS[segment].flatMap((k) => SEGMENT_SEARCH[segment].places.map((p) => [k, p] as const)),
     seed,
   );
+  const words = shuffled(PEOPLE_KEYWORDS[segment], seed);
   const out: PeopleQuery[] = [];
   for (const title of titles) {
+    // 3PL heads often cover several cities or write a region ("Mumbai Metropolitan Region"): each word is searched with
+    // the title and no town first, its first hundred people read at once (INVECK, 30 Oct 2026).
+    if (WITHOUT_TOWN.includes(segment))
+      for (const keyword of words) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`].join(' '), form: 'industry', title, keyword, place: '', num: 100, page: 1 });
     for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
   }
   return out;
 }
+
+/** Segments whose titles are also searched with a word and no town (see morningPlan). */
+const WITHOUT_TOWN: SourcingSegment[] = [LOGISTICS];
 
 /**
  * Whether the 6 am run searches for new prospects today: a working day (Monday to Friday, not a holiday
@@ -443,6 +451,9 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (!o.rememberRuledOut) return false;
       const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string; why?: string } | null;
       if (o.keepPageless && was?.why === 'no LinkedIn page') return false;
+      // Its industry shown nowhere isn't a wrong industry: where such a company now goes to research (Manufacturing from 28
+      // Oct 2026), a ruling made before doesn't keep it out (30 Oct 2026). One showing another industry still does.
+      if (unclearIndustry && /nothing on (?:its page|it) shows it's in the ICP/.test(was?.why ?? '')) return false;
       return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
     };
     const rememberRuledOut = async (employer: string, why: string) => {
