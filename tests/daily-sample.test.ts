@@ -115,7 +115,17 @@ describe('the one-off top-up (28 Oct, 10:15 pm)', () => {
     const [second] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, again));
     expect(second.report).toMatchObject({ mode: 'morning', assign: true, day: '2026-10-29' });
     expect(await startScheduledSample(db, ist('2026-10-29', '00:40'))).toBeNull();
-    expect(TOP_UP_SAMPLES.every(({ at }) => Date.parse(at) + 3 * 3600_000 < Date.parse(ist('2026-10-29', '06:00').toISOString()))).toBe(true);
+    expect(TOP_UP_SAMPLES.filter(({ day }) => day === '2026-10-29').every(({ at }) => Date.parse(at) + 3 * 3600_000 < Date.parse(ist('2026-10-29', '06:00').toISOString()))).toBe(true);
+  });
+
+  it("30 Oct: starts once from 8:40 am India time, for Friday 30 October's lists, after the 6 am run", async () => {
+    await db.insert(settings).values({ key: 'scheduledSample:daily:2026-10-30', value: { claimedAt: ist('2026-10-30', '06:00').toISOString(), testId: 1 } });
+    expect(await startScheduledSample(db, ist('2026-10-30', '08:35'))).toBeNull();
+    const id = (await startScheduledSample(db, ist('2026-10-30', '08:41')))!;
+    expect(id).toBeGreaterThan(0);
+    const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    expect(row.report).toMatchObject({ mode: 'morning', phase: 'init', fresh: false, assign: true, day: '2026-10-30' });
+    expect(await startScheduledSample(db, ist('2026-10-30', '09:00'))).toBeNull();
   });
 });
 

@@ -518,6 +518,8 @@ export const TOP_UP_SAMPLES: { at: string; day: string }[] = [
   { at: '2026-10-28T16:45:00Z', day: '2026-10-29' },
   // And at 12:30 am on Thursday 29 October (INVECK, 28 Oct 2026, night), with the new industry words and towns.
   { at: '2026-10-28T19:00:00Z', day: '2026-10-29' },
+  // And from 8:40 am on Friday 30 October (INVECK, that morning): the 6 am run left 12 3PL leads short.
+  { at: '2026-10-30T03:10:00Z', day: '2026-10-30' },
 ];
 
 /**
