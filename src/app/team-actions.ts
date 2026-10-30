@@ -450,7 +450,7 @@ export async function resetTodayLogAction(form: FormData) {
   await db.delete(tasks).where(eq(tasks.ownerId, id));
   await db.delete(attendance).where(eq(attendance.userId, id));
   // The tracker's outcome columns start empty again too.
-  await db.update(leads).set({ callFeedback: '', callRemark: '', mailOutcome: '', linkedinOutcome: '' }).where(eq(leads.ownerId, id));
+  await db.update(leads).set({ callFeedback: '', callStatus: '', callRemark: '', mailOutcome: '', linkedinOutcome: '' }).where(eq(leads.ownerId, id));
   revalidatePath('/today');
   revalidatePath('/followups');
   revalidatePath('/tracker');
@@ -529,9 +529,9 @@ export async function undoTaskAction(form: FormData) {
   revalidatePath(`/leads/${task.leadId}`);
 }
 
-/** A cell on the tracker sheet: call outcome, mail outcome, LinkedIn outcome or remark. */
+/** A cell on the tracker sheet: call status, call outcome, mail outcome, LinkedIn outcome or remark. */
 export async function updateTrackerFieldAction(id: number, field: TrackerField, value: string): Promise<{ ok: boolean }> {
-  if (!['callFeedback', 'contactChannel', 'mailOutcome', 'linkedinOutcome', 'remark', 'callRemark'].includes(field)) return { ok: false };
+  if (!['callFeedback', 'callStatus', 'contactChannel', 'mailOutcome', 'linkedinOutcome', 'remark', 'callRemark'].includes(field)) return { ok: false };
   const clean = String(value ?? '').trim();
   if (!validTrackerValue(field, clean) || !(await mayActOn(id))) return { ok: false };
   const db = await getDb();
@@ -539,7 +539,7 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
   if (field === 'contactChannel') {
     await logActivity(db, id, 'note', clean ? `Point of contact: ${clean}` : 'Point of contact back to automatic (from what was logged)');
   } else if (field !== 'remark' && field !== 'callRemark' && clean) {
-    const label = field === 'callFeedback' ? 'Call outcome' : field === 'mailOutcome' ? 'Mail outcome' : 'LinkedIn outcome';
+    const label = field === 'callStatus' ? 'Call status' : field === 'callFeedback' ? 'Call outcome' : field === 'mailOutcome' ? 'Mail outcome' : 'LinkedIn outcome';
     await logActivity(db, id, 'note', `${label}: ${clean}`);
   }
   revalidatePath('/tracker');
