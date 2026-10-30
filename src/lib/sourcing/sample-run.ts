@@ -528,6 +528,9 @@ export const TOP_UP_SAMPLES: { at: string; day: string }[] = [
   { at: '2026-10-28T19:00:00Z', day: '2026-10-29' },
   // And from 8:40 am on Friday 30 October (INVECK, that morning): the 6 am run left 12 3PL leads short.
   { at: '2026-10-30T03:10:00Z', day: '2026-10-30' },
+  // And from 10:25 am (INVECK, that morning), with that morning's changes for 3PL (more words and towns, searches without
+  // a town, companies with no LinkedIn page or no industry shown no longer dropped): the same 12 3PL leads.
+  { at: '2026-10-30T04:55:00Z', day: '2026-10-30' },
 ];
 
 /**

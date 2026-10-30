@@ -126,6 +126,12 @@ describe('the one-off top-up (28 Oct, 10:15 pm)', () => {
     const [row] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
     expect(row.report).toMatchObject({ mode: 'morning', phase: 'init', fresh: false, assign: true, day: '2026-10-30' });
     expect(await startScheduledSample(db, ist('2026-10-30', '09:00'))).toBeNull();
+    // And again from 10:25 am, for the same lists.
+    const again = (await startScheduledSample(db, ist('2026-10-30', '10:26')))!;
+    expect(again).toBeGreaterThan(id);
+    const [second] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, again));
+    expect(second.report).toMatchObject({ mode: 'morning', assign: true, day: '2026-10-30' });
+    expect(await startScheduledSample(db, ist('2026-10-30', '10:40'))).toBeNull();
   });
 });
 
