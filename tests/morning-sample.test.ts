@@ -215,10 +215,11 @@ describe('the Morning Sample Run', () => {
     expect(r.budget).toBe(SAMPLE_RULES.credits);
     expect(SAMPLE_RULES.credits).toBe(4000);
     expect(r.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
-    // People searches ask for ten results.
+    // People searches ask for ten results; 3PL's with no town (in India), a hundred (30 Oct).
     const people = sent.filter((b) => b.q.startsWith('site:linkedin.com/in ') && /"(forging|warehousing)"/.test(b.q));
     expect(people.length).toBeGreaterThan(0);
-    expect(people.every((b) => b.num === 10)).toBe(true);
+    expect(people.filter((b) => !b.q.endsWith(' India')).every((b) => b.num === 10)).toBe(true);
+    expect(people.filter((b) => b.q.endsWith(' India')).every((b) => b.num === 100)).toBe(true);
     // Research doesn't look the company's LinkedIn page up again (the search found it), nor its officers in the news and filings.
     expect(sent.some((b) => b.q === 'site:linkedin.com/company "forgeline.in"')).toBe(false);
     expect(sent.some((b) => b.q.includes('"company secretary"'))).toBe(false);

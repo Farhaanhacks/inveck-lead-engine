@@ -72,7 +72,8 @@ export class DeadGround {
   }
 
   dead(q: { keyword: string; place: string }): boolean {
-    const t = this.towns.get(q.place.toLowerCase());
+    // A search with no town (3PL's, 30 Oct 2026) isn't in a town: the town rule never stops those.
+    const t = q.place ? this.towns.get(q.place.toLowerCase()) : undefined;
     if (t && !t.listed && t.empty.size >= SEARCH_MEMORY.deadTownWords) return true;
     const w = this.words.get(q.keyword.toLowerCase());
     if (w && !w.listed && w.empty.size >= SEARCH_MEMORY.deadWordTowns) return true;
@@ -94,7 +95,7 @@ export class DeadGround {
       t.empty.add(word);
       w.empty.add(town);
     }
-    this.towns.set(town, t);
+    if (town) this.towns.set(town, t);
     this.words.set(word, w);
   }
 }

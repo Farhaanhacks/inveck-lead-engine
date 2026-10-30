@@ -105,6 +105,16 @@ describe('the sample plan from what earlier searches found', () => {
     expect(lively.dead(query('Plant Manager', 'castings', 'Pune'))).toBe(false);
   });
 
+  it('a search with no town is never stopped by the town rule: three empty ones leave the rest to be made (30 Oct)', () => {
+    const ground = new DeadGround();
+    const anywhere = (keyword: string) => ({ ...query('Head of Logistics', keyword, ''), place: '' });
+    for (const k of ['cold storage', 'bonded warehouse', 'FTWZ', 'cross docking']) ground.note(anywhere(k), false);
+    expect(ground.dead(anywhere('warehousing'))).toBe(false);
+    // Each word still counts it: an empty search with no town is one of the places it found nobody.
+    for (const town of ['Pune', 'Chennai', 'Nagpur', 'Indore']) ground.note({ ...query('Head of Logistics', 'FTWZ', town) }, false);
+    expect(ground.dead({ ...query('Head of Logistics', 'FTWZ', 'Surat') })).toBe(true);
+  });
+
   it(`leaves out an industry word and town once ${SEARCH_MEMORY.deadAfter} searches there found nobody on the lists, and none found anyone`, () => {
     // Two titles found nobody making machined parts in Rajkot: the third isn't searched.
     const dead = new Map([entry(plan[4], [{ listed: 0 }]), entry(plan[5], [{ listed: 0 }])]);
