@@ -5,7 +5,7 @@ import { leads, prospectResults, sourcingTests } from '@/lib/db/schema';
 import { DEFAULT_ICPS, LOGISTICS, MANUFACTURING } from '@/lib/db/seed';
 import { settingsSchema } from '@/lib/settings';
 import type { Services } from '@/lib/pipeline/services';
-import { bandsFor, companyPageUrl, factsQuery, hqAbroad, pageName, planQueries, readCompanyPage, screenPage, withFacts, type Known } from '@/lib/sourcing/linkedin-pages';
+import { bandsFor, companyPageUrl, factsQuery, hqAbroad, industryUnclear, pageName, planQueries, readCompanyPage, screenPage, withFacts, type Known } from '@/lib/sourcing/linkedin-pages';
 import { activeSourcingTest, funnelOf, isPeopleReport, peopleFunnelOf, runSourcingTest, type PeopleReport, type SourcingReport } from '@/lib/sourcing/test-run';
 import { companyQuery, matchingPage, planPeopleQueries, readPerson, searchTitles } from '@/lib/sourcing/people-first';
 import { employeeTarget } from '@/lib/pipeline/fit';
@@ -96,6 +96,18 @@ describe('the searches', () => {
 
 describe('the screen', () => {
   const p = (facts: string, name = 'Acme Forgings') => readCompanyPage(page('acme', name, facts))!;
+
+  it('a "Manufacturing" label says nothing for Manufacturing, but for 3PL it is another industry (30 Oct)', () => {
+    for (const label of ['Manufacturing', 'Industrial Manufacturing']) {
+      const page = p(`Industry: ${label}. Company size: 501-1,000 employees. Headquarters: Pune, Maharashtra`, 'Acme Group');
+      expect(industryUnclear(page, MANUFACTURING)).toBe(true);
+      expect(industryUnclear(page, LOGISTICS)).toBe(false);
+      expect(screenPage(page, LOGISTICS, LOG_SIZE, { names: new Set(), domains: new Set() })).toMatchObject({ pass: false, reason: 'industry', note: `industry not in the ICP: ${label}` });
+    }
+    // No label at all is still unclear for both.
+    const bare = p('Company size: 501-1,000 employees. Headquarters: Pune, Maharashtra', 'Acme Group');
+    expect(industryUnclear(bare, LOGISTICS)).toBe(true);
+  });
 
   it('rules out a company abroad, one far too small, and one outside the industries; keeps a borderline one', () => {
     expect(screenPage(p('Company size: 1,001-5,000 employees. Headquarters: Gothenburg, Sweden'), MANUFACTURING, MFG_SIZE, none)).toMatchObject({ pass: false, reason: 'abroad' });

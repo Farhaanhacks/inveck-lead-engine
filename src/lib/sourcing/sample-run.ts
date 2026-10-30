@@ -87,10 +87,11 @@ const headroomFor = (s: string) => (s === LOGISTICS ? SAMPLE_3PL_RULES.headroom 
 /**
  * The segments still short that a sample searches again after research, `round` rounds in: the run's three rounds, and
  * for 3PL & Logistics up to five, each only while its own last round found companies (one that found nobody in 50
- * searches isn't searched again).
+ * searches isn't searched again) and, from 30 Oct 2026, research approved one of them (`approved`, when known): on 30
+ * Oct research ruled out or failed on 66 of 67 and each shortfall started another round, 1,209 credits for one lead.
  */
-export function segmentsToSearchAgain(short: Record<DrawSegment, number>, last: { segment: string; added: number }[], round: number): DrawSegment[] {
-  const foundLast = (s: string) => last.some((h) => h.segment === s && h.added > 0) || !last.some((h) => h.segment === s);
+export function segmentsToSearchAgain(short: Record<DrawSegment, number>, last: { segment: string; added: number; approved?: number }[], round: number): DrawSegment[] {
+  const foundLast = (s: string) => last.some((h) => h.segment === s && h.added > 0 && (h.approved ?? h.added) > 0) || !last.some((h) => h.segment === s);
   return DRAW_SEGMENTS.filter((s) => short[s] > 0 && (s === LOGISTICS ? round < SAMPLE_3PL_RULES.rounds && foundLast(s) : round < MORNING_LIMITS.rounds));
 }
 
@@ -451,7 +452,9 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
         // stopped for the budget goes on too when research cost less than was kept back for it.
         const short = stillShort(r);
         const last = r.search!.history.filter((h) => h.round === r.search!.round);
-        const searchAgain = segmentsToSearchAgain(short, last, r.search!.round);
+        // How many of each segment's companies from this round research approved (they're the segment's latest ones).
+        const approved = (h: (typeof last)[number]) => r.companies.filter((c) => c.segment === h.segment).slice(-h.added).filter((c) => c.outcome === 'approved').length;
+        const searchAgain = segmentsToSearchAgain(short, last.map((h) => ({ ...h, approved: h.added ? approved(h) : 0 })), r.search!.round);
         const again =
           searchAgain.length > 0 &&
           last.some((h) => h.added > 0) &&

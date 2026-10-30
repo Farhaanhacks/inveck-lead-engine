@@ -13,9 +13,9 @@ import { googleSearch, mapLimit, searchCredits, type SerperResult, type Services
 import { errorMessage, normCompany, rootDomain } from '../pipeline/text';
 import { contactPriority, titlePhrase } from '../tiers';
 import { istDay, istDayBounds } from '../tasks';
-import { factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
+import { catchAllLabel, factsQuery, hqAbroad, industryHint, industryUnclear, needsFacts, noCompanyName, outsideIcpByName, pagelessCompany, screenPage, SEGMENT_SEARCH, shuffled, SOURCING_SEGMENTS, withFacts, type CompanyPage, type SourcingSegment } from './linkedin-pages';
 import { websiteWords } from './website-words';
-import { companiesQuery, companyQuery, hintRank, lookupBatch, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, type FoundContact, type PeopleQuery } from './people-first';
+import { companiesQuery, companyQuery, hintRank, lookupBatch, matchingPage, PEOPLE_KEYWORDS, readPerson, searchTitles, wordTerms, type FoundContact, type PeopleQuery } from './people-first';
 import { knownToInveck } from './test-run';
 import type { DeadGround } from './search-memory';
 
@@ -138,10 +138,11 @@ export function morningPlan(segment: SourcingSegment, icp: Parameters<typeof sea
   const out: PeopleQuery[] = [];
   for (const title of titles) {
     // 3PL heads often cover several cities or write a region ("Mumbai Metropolitan Region"): each word is searched with
-    // the title and no town first, its first hundred people read at once (INVECK, 30 Oct 2026).
+    // the title and no town first, in India (without it, people abroad came up), its first hundred people read at once
+    // (INVECK, 30 Oct 2026).
     if (WITHOUT_TOWN.includes(segment))
-      for (const keyword of words) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`].join(' '), form: 'industry', title, keyword, place: '', num: 100, page: 1 });
-    for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, `"${keyword}"`, place].join(' '), form: 'industry', title, keyword, place });
+      for (const keyword of words) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, wordTerms(keyword), 'India'].join(' '), form: 'industry', title, keyword, place: '', num: 100, page: 1 });
+    for (const [keyword, place] of pairs) out.push({ q: ['site:linkedin.com/in', `"${titlePhrase(title)}"`, wordTerms(keyword), place].join(' '), form: 'industry', title, keyword, place });
   }
   for (const pq of out) pq.norm = normQuery(pq.q);
   return out;
@@ -454,7 +455,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (o.keepPageless && was?.why === 'no LinkedIn page') return false;
       // Its industry shown nowhere isn't a wrong industry: where such a company now goes to research (Manufacturing from 28
       // Oct 2026), a ruling made before doesn't keep it out (30 Oct 2026). One showing another industry still does.
-      if (unclearIndustry && /nothing on (?:its page|it) shows it's in the ICP/.test(was?.why ?? '')) return false;
+      const unshown = /^(?:industry not shown on its LinkedIn page|LinkedIn says only "([^"]*)"), and nothing on (?:its page|it) shows it's in the ICP/.exec(was?.why ?? '');
+      if (unclearIndustry && unshown && (unshown[1] == null || catchAllLabel(unshown[1], seg.segment))) return false;
       return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
     };
     const rememberRuledOut = async (employer: string, why: string) => {

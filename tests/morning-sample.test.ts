@@ -466,6 +466,25 @@ describe('the Morning Sample Run', () => {
       expect(r.search?.drops?.[LOGISTICS]?.[DROP_REASONS.industry]).toBeUndefined();
     });
 
+    it('3PL: when research approves none of a round\'s companies (here it fails on every one), no further round is searched (30 Oct)', async () => {
+      const world = tplWorld([], () => 'good');
+      const failing = {
+        ...world,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const host = new URL(String(input instanceof Request ? input.url : input)).host;
+          if (host === 'api.deepseek.com' || host === 'api.anthropic.com') return new Response('{"error":"down"}', { status: 500 });
+          return world.fetch(input, init);
+        }) as typeof fetch,
+      };
+      const id = await startSample(true);
+      await runSourcingTest(db, failing, id, Number.POSITIVE_INFINITY);
+      const r = await reportOf(id);
+      const tpl = r.companies.filter((c) => c.segment === LOGISTICS);
+      expect(tpl.length).toBeGreaterThan(0);
+      expect(tpl.some((c) => c.outcome === 'approved')).toBe(false);
+      expect(r.search!.history.filter((h) => h.segment === LOGISTICS).map((h) => h.round)).toEqual([1]);
+    });
+
     it('3PL: a company with no LinkedIn page is not researched when the list fills without it (30 Oct)', async () => {
       const asked: string[] = [];
       const id = await startSample(true);
@@ -517,6 +536,11 @@ describe('the Morning Sample Run', () => {
       expect(segmentsToSearchAgain(short, found, 3)).toEqual([LOGISTICS]);
       expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 1 }], 4)).toEqual([LOGISTICS]);
       expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 1 }], 5)).toEqual([]);
+      // 30 Oct: found companies, but research approved none of them (ruled out, or failed): not searched again.
+      expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 14, approved: 0 }], 2)).toEqual([MANUFACTURING]);
+      expect(segmentsToSearchAgain(short, [{ segment: LOGISTICS, added: 14, approved: 1 }], 2)).toEqual([MANUFACTURING, LOGISTICS]);
+      // Manufacturing keeps its rule.
+      expect(segmentsToSearchAgain(short, [{ segment: MANUFACTURING, added: 3, approved: 0 }, { segment: LOGISTICS, added: 14, approved: 0 }], 1)).toEqual([MANUFACTURING]);
       // 3PL found nobody last round: not searched again, whatever Manufacturing found.
       expect(segmentsToSearchAgain(short, [{ segment: MANUFACTURING, added: 1 }, { segment: LOGISTICS, added: 0 }], 1)).toEqual([MANUFACTURING]);
       // Not searched last round (it wasn't short then): searched now.

@@ -334,9 +334,10 @@ and a word that found nobody in five towns aren't searched again (from 28 Oct 20
 itself, not only from the next one), and the pairs that found companies that passed go first; and the most wanted
 title first, every word and town with the plant head (for 3PL, the head of supply chain from 29 Oct 2026) before the next title, so new
 ground is tried with the titles likeliest to find someone; and from 30 Oct 2026, for 3PL, each title searched first
-with each industry word and no town, its first hundred results at once, since 3PL heads often cover several cities or
-write a region, and 3PL given Manufacturing's ground: 35 words its staff write, no freight or transport ones, and 173
-towns, Manufacturing's industrial belts and the warehousing hubs), two contacts a company with the hunt for a P1 kept (the staff search
+with each industry word and no town, in India, its first hundred results at once, since 3PL heads often cover several
+cities or write a region, and 3PL given Manufacturing's ground: 33 words its staff write, no freight or transport ones,
+a sector only together with "3PL" ("pharma" and "3PL", not "pharma logistics", which found pharma manufacturers), and
+173 towns, Manufacturing's industrial belts and the warehousing hubs), two contacts a company with the hunt for a P1 kept (the staff search
 stops once two with a P1 are in hand), the designations searched in groups (from 28 Oct 2026, to spend fewer
 credits: `groupedSearchPlan` in `contacts.ts`; up to five a search, `"Company" ("Plant Head" OR "Plant Manager" OR
 ...) Town`, every P1 designation still searched, a full page of ten followed by its second page while still short,
@@ -358,7 +359,9 @@ ruling no longer keeps it out. 3PL & Logistics, with fewer companies to find and
 (`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no company that passes the company check (from
 29 Oct 2026, `quietCountsPassed`; before, no new company: most companies its searches turn up aren't 3PL firms, and each
 kept the search going, so the 9 pm run of 29 Oct spent 780 credits on a round that found one), asks for 25% extra and
-takes up to five rounds (each only while its last one found companies). The report tallies why the companies it checked
+takes up to five rounds (each only while its last one found companies and, from 30 Oct 2026, research approved one
+of them: that morning research ruled out or failed on 66 of 67 and each shortfall started another round, 1,209 credits
+for one lead). For 3PL a LinkedIn label of "Manufacturing" is another industry, not a catch-all (from 30 Oct 2026). The report tallies why the companies it checked
 weren't approved, per segment, and (from 27 Oct 2026) where its credits went: per step (finding companies, website,
 contact search, contact checks, news, must-have checks and so on) and per company researched and per approved company,
 and (from 28 Oct 2026) how many of each segment's people searches found a new company, and what the company check did
