@@ -52,13 +52,16 @@ and supply chain heads and managers, regional, national and warehouse heads, the
 lead nobody has started on gets that contact as its main contact when they are on file at the site and the current one
 ranks well below.
 
-The 3PL & Logistics P1 list is INVECK's new one from 29 Oct 2026 (their requirement): National Head – Operations,
-Regional Head – Warehouse Operations, Head – Supply Chain, VP – Operations, VP – Logistics (their "VP – Operations /
-Logistics", searched as two designations), Logistics Head and Head – Contract Logistics. It was set once on the live
-database; Configuration can change it. Heads in operations, warehousing, logistics and supply chain written other ways
-are still P1; managers (warehouse and operations managers) aren't contacts for new 3PL leads, and the COO is the last
-resort. 3PL leads made before it keep the contacts they were given: their people are ranked with the list it replaced
-as well (`LOGISTICS_P1_SINCE` in `tiers.ts`).
+The 3PL & Logistics P1 list is INVECK's from 30 Oct 2026: National Head – Operations, Regional Head – Operations,
+Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager,
+General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO) and Head of Procurement &
+Supply Chain (the list before 29 Oct without Warehouse Manager and Head of Warehouse Operations; from 29 Oct 8 pm to
+30 Oct it was National Head – Operations, Regional Head – Warehouse Operations, Head – Supply Chain, VP – Operations,
+VP – Logistics, Logistics Head and Head – Contract Logistics). Each was set once on the live database; Configuration
+can change it. Heads in operations, warehousing, logistics and supply chain written other ways are still P1, so the
+contacts on leads made under the 29 Oct list still are; warehouse managers aren't contacts for new 3PL leads. 3PL leads
+made before 29 Oct 8 pm keep the contacts they were given: their people are ranked with the list before 29 Oct as well
+(`LOGISTICS_P1_SINCE` in `tiers.ts`).
 
 ### Emails and phone numbers
 

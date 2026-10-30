@@ -823,4 +823,13 @@ export const SCHEMA_STATEMENTS = [
    WHERE id IN (SELECT product_id FROM icps WHERE lower(segment) = '3pl & logistics')
    AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icp3plP1V2')`,
   `INSERT INTO settings (key, value) SELECT 'icp3plP1V2', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
+  // INVECK, 30 Oct 2026: the 3PL & Logistics P1 list becomes this one (the list before 29 Oct, without Warehouse Manager
+  // and Head of Warehouse Operations). Set once as above. Contacts on leads made under the 29 Oct list (heads and VPs of
+  // operations, logistics and supply chain) are still P1 under it, by their function.
+  `UPDATE icps SET target_titles = 'National Head – Operations, Regional Head – Operations, Head of Operations, Head of Logistics, Head of Supply Chain, National Operations Manager, Regional Operations Manager, General Manager – Operations, General Manager – Logistics, Chief Operating Officer (COO), Head of Procurement & Supply Chain'
+   WHERE lower(segment) = '3pl & logistics' AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icp3plP1V3')`,
+  `UPDATE products SET config_version = config_version + 1
+   WHERE id IN (SELECT product_id FROM icps WHERE lower(segment) = '3pl & logistics')
+   AND EXISTS (SELECT 1 FROM users) AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'icp3plP1V3')`,
+  `INSERT INTO settings (key, value) SELECT 'icp3plP1V3', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
 ];
