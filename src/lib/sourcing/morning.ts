@@ -71,6 +71,11 @@ export type MorningSegment = {
    * looked up on its own.
    */
   pending: { employer: string; contacts: FoundContact[]; via?: string; page?: CompanyPage; alone?: boolean }[];
+  /**
+   * Companies with no LinkedIn page found, kept aside rather than ruled out (`keepPageless`): researched only when the
+   * segment would otherwise stop short.
+   */
+  reserve?: { employer: string; contacts: FoundContact[]; via?: string }[];
   /** Companies already checked this run, by the name their people write. */
   checked: string[];
   ruledOut: number;
@@ -101,6 +106,7 @@ export const DROP_REASONS = {
   name: 'outside the ICP by its name',
   noName: 'no company name (only an industry word)',
   noPage: 'no LinkedIn page found',
+  kept: 'no LinkedIn page found: kept aside, researched only if still short',
   small: 'too small',
   industry: 'industry not on the ICP',
   abroad: 'based abroad',
@@ -197,7 +203,7 @@ export async function recentSearches(db: Db, own: number | null): Promise<Set<st
 export function startRound(prev: MorningSourcing | null, wanted: Record<SourcingSegment, number>): MorningSourcing {
   const segments = SOURCING_SEGMENTS.map((segment): MorningSegment => {
     const before = prev?.segments.find((p) => p.segment === segment);
-    return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
+    return { segment, wanted: wanted[segment], added: 0, cursor: before?.cursor ?? 0, quiet: 0, pending: before?.pending ?? [], reserve: before?.reserve ?? [], checked: before?.checked ?? [], ruledOut: 0, noPage: 0, searches: 0 };
   });
   return { round: (prev?.round ?? 0) + 1, roundDone: false, segments, seen: prev?.seen ?? [], searches: prev?.searches ?? 0, added: prev?.added ?? 0, history: prev?.history ?? [], addedIds: prev?.addedIds ?? [], drops: prev?.drops ?? {} };
 }
@@ -330,6 +336,13 @@ export type RoundOptions = {
    */
   lenientScreen?: boolean;
   /**
+   * A company with no LinkedIn page found isn't ruled out (INVECK, 30 Oct 2026): it's kept aside, and when the segment
+   * would otherwise stop short it goes to research by its name (its website and research tell its size and industry; a
+   * sample approves it only if research confirms the industry). Not remembered as ruled out, and an earlier "no
+   * LinkedIn page" ruling doesn't keep it out.
+   */
+  keepPageless?: boolean;
+  /**
    * Cheaper company checks, the same companies kept: a company whose name shows it's outside the ICP isn't
    * looked up (LinkedIn's check would only rule it out); companies whose people's own results show another
    * industry are checked last; several companies are looked up in one search, each not found that way on
@@ -428,7 +441,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     const ruledOutKey = (employer: string) => `company-check:v1:${seg.segment}:${icp.companySize}:${normCompany(employer)}`;
     const ruledOutBefore = async (employer: string) => {
       if (!o.rememberRuledOut) return false;
-      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string } | null;
+      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string; why?: string } | null;
+      if (o.keepPageless && was?.why === 'no LinkedIn page') return false;
       return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
     };
     const rememberRuledOut = async (employer: string, why: string) => {
@@ -448,7 +462,8 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
     };
     // Checks one company's LinkedIn page (already found, or in `pre`, a search for several at once, when it's there);
     // one that passes goes to the sink with its people.
-    const check = async (c: MorningSegment['pending'][number], pre?: SerperResult[]) => {
+    // `reserved`: a company kept aside with no LinkedIn page, now checked by its name (see keepPageless).
+    const check = async (c: MorningSegment['pending'][number], pre?: SerperResult[], reserved = false) => {
       checked.add(normCompany(c.employer));
       if (await ruledOutBefore(c.employer)) {
         seg.ruledOut++;
@@ -461,10 +476,15 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         drop('noName');
         return;
       }
-      const fromPre = c.page ?? (pre ? matchingPage(pre, c.employer) : null);
-      const got = fromPre ? { results: [] as SerperResult[], error: undefined } : await search(companyQuery(c.employer));
+      const fromPre = reserved ? null : (c.page ?? (pre ? matchingPage(pre, c.employer) : null));
+      const got = fromPre || reserved ? { results: [] as SerperResult[], error: undefined } : await search(companyQuery(c.employer));
       let page: CompanyPage | null = fromPre ?? (got.error ? null : matchingPage(got.results, c.employer));
-      if (!page && !got.error && lenientScreen) page = pagelessCompany(c.employer);
+      if (!page && !got.error && (lenientScreen || reserved)) page = pagelessCompany(c.employer);
+      if (!page && !got.error && o.keepPageless) {
+        (seg.reserve ??= []).push({ employer: c.employer, contacts: c.contacts, ...(c.via ? { via: c.via } : {}) });
+        drop('kept');
+        return;
+      }
       if (!page) {
         seg.noPage++;
         drop('noPage');
@@ -479,7 +499,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       // Its people work in India, so it has a site here whatever its headquarters.
       const seenAs = { ...page, text: `${page.text}\n${c.contacts.map((p) => p.location).join('; ')}` };
       let s = screenPage(seenAs, seg.segment, icp.companySize, known);
-      if (unclearIndustry && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
+      if ((unclearIndustry || reserved) && !s.pass && s.reason === 'industry' && industryUnclear(page, seg.segment)) {
         const words = await websiteWords(svc, page.website);
         s = screenPage({ ...seenAs, text: `${seenAs.text}\n${words}` }, seg.segment, icp.companySize, known, { passUnclearIndustry: true });
         if (s.pass && words && !s.note.includes('research checks it')) s = { ...s, note: `${s.note}; industry from its website` };
@@ -502,10 +522,19 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       if (domain) known.domains.add(domain);
       seg.added++;
       state.added++;
-      if (passedOnly) seg.quiet = 0;
+      if (passedOnly && !reserved) seg.quiet = 0;
       const best = c.contacts[0];
       const city = page.hq && !hqAbroad(page.hq) ? page.hq.split(',')[0].trim() : placeNamedIn(page.text) || (best.location.split(',')[0] ?? '').trim();
       await o.sink.add({ segment: seg.segment, name, employer: c.employer, page, contacts: c.contacts.slice(0, MORNING_LIMITS.contactsPerCompany), note: s.note, city, ...(c.via ? { via: c.via } : {}) });
+    };
+
+    // About to stop short: companies kept aside with no LinkedIn page, as many as are still wanted (those whose people's
+    // own results show the ICP's industry first), checked by name and passed to research.
+    const fromReserve = async () => {
+      if (!seg.reserve?.length || seg.added >= seg.wanted) return false;
+      seg.reserve.sort((a, b) => hintRank(a.contacts) - hintRank(b.contacts) || rank(a.contacts[0]) - rank(b.contacts[0]));
+      await mapLimit(seg.reserve.splice(0, seg.wanted - seg.added), 4, (c) => check(c, undefined, true));
+      return true;
     };
 
     // One step: check companies already found (their checks may be all that's needed), else search for more people.
@@ -541,6 +570,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         return 'more';
       }
       if (seg.quiet >= quietLimit) {
+        if (await fromReserve()) return 'more';
         seg.stopped = passedOnly ? 'nonePassed' : 'dry';
         return 'stop';
       }
@@ -551,6 +581,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
         if (!ground?.dead(pq)) batch.push(pq);
       }
       if (!batch.length) {
+        if (await fromReserve()) return 'more';
         seg.stopped = 'exhausted';
         return 'stop';
       }

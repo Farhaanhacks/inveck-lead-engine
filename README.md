@@ -344,7 +344,10 @@ a company whose research reaches it is left for the next day). A company with no
 doesn't show an ICP industry, isn't researched (from 27 Oct 2026 in both segments): research costs credits and it
 would only be ruled out. From 28 Oct 2026 a Manufacturing company whose page shows no industry either way (no label,
 or a catch-all one, and nothing on its page or website) is researched, and approved only if research confirms its
-industry (`industryConfirmed`); one with no LinkedIn page still isn't (nothing shows its size). 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
+industry (`industryConfirmed`); one with no LinkedIn page isn't ruled out (from 30 Oct 2026, INVECK; from 26-27 Oct it was): it's kept aside
+(`keepPageless`), and researched by its name only when its segment would otherwise end up short, where research
+checks its size and industry from its website (and the industry guard above applies); an earlier "no LinkedIn page"
+ruling no longer keeps it out. 3PL & Logistics, with fewer companies to find and more ruled out, searches longer
 (`SAMPLE_3PL_RULES`): it gives up only after 50 searches in a row find no company that passes the company check (from
 29 Oct 2026, `quietCountsPassed`; before, no new company: most companies its searches turn up aren't 3PL firms, and each
 kept the search going, so the 9 pm run of 29 Oct spent 780 credits on a round that found one), asks for 25% extra and

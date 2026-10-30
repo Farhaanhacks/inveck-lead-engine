@@ -376,6 +376,9 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
           deadGround: async (segment) => new DeadGround(await searchMemory(db, segment, new Date())),
           rememberRuledOut: true,
           lenientScreen: true,
+          // A company with no LinkedIn page found isn't ruled out (INVECK, 30 Oct 2026): kept aside, and researched when
+          // its segment would otherwise end up short (approved only if research confirms its industry).
+          keepPageless: true,
           // Both segments' company checks are strict (Manufacturing's from 27 Oct 2026): a company with no LinkedIn page, or
           // whose page doesn't show an ICP industry, isn't researched (and paid for) only to be ruled out.
           // Manufacturing's company whose LinkedIn page shows no industry either way (no label, or a catch-all one) goes to
