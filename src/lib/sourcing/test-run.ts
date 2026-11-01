@@ -220,7 +220,7 @@ export async function activeSourcingTest(db: Db, kind: 'test' | 'morning' = 'tes
 }
 
 /** Messages a test stops with when it couldn't carry on in a new invocation: what it got to is saved. */
-const STOPPED_FOR_TIME = [/^Could not carry on after the server's time limit/, /^Stopped before finishing \(the server's time limit\)/];
+const STOPPED_FOR_TIME = [/^Could not carry on after the server's time limit/, /^Stopped before finishing \(the server's time limit\)/, /^Stopped: the AI \(DeepSeek\) is out of credits/];
 
 /** Whether a stopped test can carry on from where it got to (it stopped for the server's time, not an error of its own). */
 export function canCarryOn(t: Pick<SourcingTest, 'status' | 'error'>): boolean {

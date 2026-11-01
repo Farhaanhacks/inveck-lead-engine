@@ -19,7 +19,7 @@ import { tierOf } from '../tiers';
 import { firstWorkingDay, istDay, loadTodayTasks, nextWorkingDay, planSequence, worksCaFirms, type Holidays } from '../tasks';
 import { CA_PER_ASSOCIATE } from '../ca-sheet';
 import { LOGISTICS, MANUFACTURING } from '../db/seed';
-import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, searchesThisMorning, searchRound, startRound, type MorningSourcing } from './morning';
+import { PEOPLE_FIRST_EVIDENCE, PEOPLE_FIRST_SOURCE, MORNING_LIMITS, asLinkedInFinds, creditsOf, recentSearches, ruledOutKey, searchesThisMorning, searchRound, startRound, type MorningSourcing } from './morning';
 import { pausedToday } from '../pause';
 import { getSettings } from '../settings';
 import { DeadGround, planFromMemory, rememberKept, rememberSearch, searchMemory } from './search-memory';
@@ -444,6 +444,16 @@ export async function runMorningSample(db: Db, svc: Services, test: SourcingTest
         if (waiting.length) {
           if (step > 0 && outOfTime(0.5)) break;
           await research(db, metered, waiting.slice(0, Math.min(CONCURRENCY, room)));
+          // The AI account is out of credits: every company would fail the same way, after the searches that find it. The
+          // run stops here; those it couldn't check wait to be researched, and Carry on (once it's topped up) goes on from
+          // here (1 Nov 2026: on 30 Oct research failed on 45 companies this way, their finding credits wasted).
+          const unpaid = r.companies.filter((c) => c.outcome === 'error' && AI_OUT_OF_CREDITS.test(c.why ?? ''));
+          if (unpaid.length) {
+            for (const c of unpaid) Object.assign(c, { outcome: undefined, why: undefined, lead: undefined, people: undefined, researchedAt: undefined });
+            r.researched = r.companies.filter((c) => c.outcome).length;
+            await save({ progress: progressOf(r) });
+            throw new Error(AI_STOPPED);
+          }
           r.researched = r.companies.filter((c) => c.outcome).length;
           await save({ progress: progressOf(r) });
           continue;
@@ -874,6 +884,10 @@ const OVER_BUDGET_WHY = 'Over the Google search budget: the run would research i
  * the result in the report. One whose research reached the budget's ceiling (a search it needed wasn't made)
  * is left for the next day, as the run would leave it, rather than kept half researched.
  */
+/** The AI refused a call for want of credit (DeepSeek's 402 "Insufficient Balance", Anthropic's "credit balance is too low"). */
+const AI_OUT_OF_CREDITS = /AI call failed: (?:402\b|.*insufficient balance|.*credit balance is too low)/i;
+export const AI_STOPPED = 'Stopped: the AI (DeepSeek) is out of credits. Top it up, then press Carry on: the companies it could not check are researched then.';
+
 async function research(db: Db, svc: Services, batch: SampleCompany[]) {
   const [allIcps, clientList, taken, known] = await Promise.all([
     db.select().from(icps).orderBy(asc(icps.id)),
@@ -931,6 +945,13 @@ async function research(db: Db, svc: Services, batch: SampleCompany[]) {
       if (c.outcome === 'approved' && !releasable(c)) c.why = `Approved, but the contact isn't confirmed on LinkedIn yet, so the draw would hold it back`;
       c.topContact = !!c.lead.contactName && isTopContact(c.lead, allIcps);
       c.researchedAt = new Date().toISOString();
+      // Ruled out by research: remembered as the company check's rule-outs are, so a later sample that finds it again drops
+      // it with no lookup or research (1 Nov 2026: each night researched again companies it had ruled out before). Not one
+      // research failed on, nor one with no acceptable contact (another may be found later).
+      if (c.outcome === 'ruled_out' && icp) {
+        const why = { at: c.researchedAt, why: `research: ${c.why ?? ''}`.slice(0, 300) };
+        for (const name of new Set([c.employer, c.page.name].filter(Boolean))) await own.cache?.set(ruledOutKey(c.segment, icp.companySize, name), why).catch(() => {});
+      }
     } catch (e) {
       c.outcome = 'error';
       c.why = errorMessage(e);

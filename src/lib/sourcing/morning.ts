@@ -376,6 +376,13 @@ export const PEOPLE_RESULTS = 10;
 /** A company ruled out (or with no LinkedIn page) isn't checked again for this long, where that's asked for. */
 const RULED_OUT_DAYS = 90;
 
+/**
+ * Where a company ruled out is remembered (enrichment cache), per segment and the ICP's size target: by the company check
+ * (too small, the wrong industry), and from 1 Nov 2026 by research (see sample-run's research), so a later search that
+ * finds it again drops it with no lookup.
+ */
+export const ruledOutKey = (segment: string, companySize: string, employer: string) => `company-check:v1:${segment}:${companySize}:${normCompany(employer)}`;
+
 /** The credits a request to Serper costs, from the number of results it asks for. */
 export function creditsOf(input: RequestInfo | URL, init?: RequestInit): number {
   if (!isSerper(input)) return 0;
@@ -448,10 +455,10 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       }
     };
     // Companies ruled out earlier for this segment and size (when asked): not checked (searched) again.
-    const ruledOutKey = (employer: string) => `company-check:v1:${seg.segment}:${icp.companySize}:${normCompany(employer)}`;
+    const ruledOutKeyOf = (employer: string) => ruledOutKey(seg.segment, icp.companySize, employer);
     const ruledOutBefore = async (employer: string) => {
       if (!o.rememberRuledOut) return false;
-      const was = (await svc.cache?.get(ruledOutKey(employer)).catch(() => null)) as { at?: string; why?: string } | null;
+      const was = (await svc.cache?.get(ruledOutKeyOf(employer)).catch(() => null)) as { at?: string; why?: string } | null;
       if (o.keepPageless && was?.why === 'no LinkedIn page') return false;
       // Its industry shown nowhere isn't a wrong industry: where such a company now goes to research (Manufacturing from 28
       // Oct 2026), a ruling made before doesn't keep it out (30 Oct 2026). One showing another industry still does.
@@ -460,7 +467,7 @@ export async function searchRound(db: Db, svc: Services, state: MorningSourcing,
       return !!was?.at && Date.now() - new Date(was.at).getTime() < RULED_OUT_DAYS * 86_400_000;
     };
     const rememberRuledOut = async (employer: string, why: string) => {
-      if (o.rememberRuledOut) await svc.cache?.set(ruledOutKey(employer), { at: new Date().toISOString(), why }).catch(() => {});
+      if (o.rememberRuledOut) await svc.cache?.set(ruledOutKeyOf(employer), { at: new Date().toISOString(), why }).catch(() => {});
     };
     const rank = (p: FoundContact) => contactPriority(p.title, icp);
     const checked = new Set(seg.checked);

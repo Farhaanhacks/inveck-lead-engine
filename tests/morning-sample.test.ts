@@ -683,6 +683,91 @@ describe('the Morning Sample Run', () => {
     expect(r.search?.drops?.[MANUFACTURING]?.[DROP_REASONS.kept]).toBe(1);
   });
 
+  /** The world, with the AI's answer for each company's fit rewritten by `answer` (the text of its reply). */
+  const withAi = (base: ReturnType<typeof morningServices>, answer: (text: string, res: Response) => Response | string) => ({
+    ...base,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await base.fetch(input, init);
+      const host = new URL(String(input instanceof Request ? input.url : input)).host;
+      if (host !== 'api.deepseek.com' && host !== 'api.anthropic.com') return res;
+      const out = answer(await res.clone().text(), res);
+      return typeof out === 'string' ? new Response(out, { status: res.status, headers: { 'content-type': 'application/json' } }) : out;
+    }) as typeof fetch,
+  });
+
+  it('a company research rules out is remembered: a later sample that finds it again drops it, with no research (1 Nov)', async () => {
+    const cache = dbEnrichmentCache(db);
+    // The first sample: research finds its must-haves aren't met (shown on its own pages).
+    const notIndustry = (text: string) => {
+      const body = JSON.parse(text);
+      const rewrite = (t: string) => {
+        try {
+          const a = JSON.parse(t);
+          if (!Array.isArray(a.criteria)) return t;
+          type C = { id: string; status: string; evidence: string; source: string };
+          const quoted = (a.criteria as C[]).find((x) => x.status === 'met' && x.source !== 'K');
+          if (!quoted) return t;
+          return JSON.stringify({ ...a, criteria: (a.criteria as C[]).map((x) => (/^(IND|SIZE|D)/.test(x.id) ? x : { ...x, status: 'not_met', evidence: quoted.evidence, source: quoted.source })) });
+        } catch {
+          return t;
+        }
+      };
+      for (const m of body.choices ?? []) m.message.content = rewrite(m.message.content);
+      for (const m of body.content ?? []) if (m.type === 'text') m.text = rewrite(m.text);
+      return JSON.stringify(body);
+    };
+    const first = await startSample(true);
+    await runSourcingTest(db, { ...withAi(morningServices(log), notIndustry), cache }, first, Number.POSITIVE_INFINITY);
+    const r1 = await reportOf(first);
+    expect(r1.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('ruled_out');
+    // The next sample finds Forgeline again: dropped as ruled out before, never looked up or researched.
+    const asked: string[] = [];
+    const second = await startSample(true);
+    await runSourcingTest(db, { ...recording(morningServices(log), asked), cache }, second, Number.POSITIVE_INFINITY);
+    const r2 = await reportOf(second);
+    expect(r2.companies.some((c) => c.page.name === 'Forgeline Components' || c.employer === 'Forgeline Components')).toBe(false);
+    expect(r2.search?.drops?.[MANUFACTURING]?.['ruled out in the last 90 days']).toBeGreaterThan(0);
+    expect(asked.some((q) => q.includes('Forgeline'))).toBe(false);
+  });
+
+  it("the AI out of credits stops the run at once; Carry on, once it's topped up, researches the companies it couldn't check (1 Nov)", async () => {
+    const { AI_STOPPED } = await import('@/lib/sourcing/sample-run');
+    const { canCarryOn, reopenTest } = await import('@/lib/sourcing/test-run');
+    let searches = 0;
+    let afterRefusal = 0;
+    let refused = false;
+    const broke = withAi(morningServices(log), () => {
+      refused = true;
+      return new Response(JSON.stringify({ error: { message: 'Insufficient Balance', type: 'unknown_error' } }), { status: 402, headers: { 'content-type': 'application/json' } });
+    });
+    const counting = {
+      ...broke,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('google.serper.dev')) {
+          searches++;
+          if (refused) afterRefusal++;
+        }
+        return broke.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const id = await startSample(true);
+    await runSourcingTest(db, counting, id, Number.POSITIVE_INFINITY);
+    const [stopped] = await db.select().from(sourcingTests).where(eq(sourcingTests.id, id));
+    expect(stopped).toMatchObject({ status: 'failed', error: AI_STOPPED });
+    expect(canCarryOn(stopped)).toBe(true);
+    const r = stopped.report as MorningSampleReport;
+    expect(r.companies.some((c) => c.outcome === 'error')).toBe(false);
+    expect(r.companies.filter((c) => !c.outcome).length).toBeGreaterThan(0);
+    // Nothing more was searched for once the batch it refused was done (only that batch's research searches).
+    expect(afterRefusal).toBeLessThan(searches);
+    // Topped up: carried on, the companies are researched.
+    expect(await reopenTest(db, id)).toBe(true);
+    await runSourcingTest(db, morningServices(log), id, Number.POSITIVE_INFINITY);
+    const done = await reportOf(id);
+    expect(done.phase).toBe('done');
+    expect(done.companies.find((c) => c.page.name === 'Forgeline Components')?.outcome).toBe('approved');
+  });
+
   it('a company ruled out in the last 90 days is not a new company when a search finds it again (28 Oct)', async () => {
     const base = morningServices(log);
     let n = 0;

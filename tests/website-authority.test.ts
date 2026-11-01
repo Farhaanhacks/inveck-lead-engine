@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveWebsite } from '@/lib/pipeline/process-lead';
-import { knowFirmPage } from '@/lib/pipeline/firm-identity';
+import { knowFirmPage, learnFirm } from '@/lib/pipeline/firm-identity';
 import { pickOfficialDomain, siteNamesCompany } from '@/lib/pipeline/website';
 import type { Services } from '@/lib/pipeline/services';
 import { settingsSchema } from '@/lib/settings';
@@ -34,6 +34,21 @@ function services(searched: string[]): Services {
   }) as typeof fetch;
   return { fetch: fetchFn, keys: { deepseek: '', anthropic: '', serper: 'serper-test', jina: '' }, settings: settingsSchema.parse({}) };
 }
+
+describe("the company's LinkedIn page, found by the search", () => {
+  it('research does not look it up again under the website it settles on (1 Nov)', async () => {
+    const searched: string[] = [];
+    const svc = services(searched);
+    const found = { name: 'Harbor Freight Warehousing', url: 'https://in.linkedin.com/company/harbor-wh', size: '201-500 employees', followers: 900, text: 'Harbor Freight Warehousing. 201-500 employees' };
+    // The page the search found lists no website; research then settles on one found by the name.
+    await knowFirmPage(svc, 'Harbor Freight Warehousing', '', found);
+    expect(await learnFirm(svc, 'Harbor Freight Warehousing', 'https://www.harborwh.in', { city: 'Pune' })).toEqual(found);
+    expect(searched).toEqual([]);
+    // A company nobody found yet is still looked up.
+    await learnFirm(svc, 'Unknown Depot Co', 'https://www.unknowndepot.in', { city: 'Pune' });
+    expect(searched.length).toBeGreaterThan(0);
+  });
+});
 
 describe("the company's website", () => {
   it('a site found by the name must name the company: a shared word is not enough', () => {

@@ -320,7 +320,9 @@ CA firms aren't part of it. The sample is also where cheaper rules are tried bef
 (`SAMPLE_RULES` in `sample-run.ts`): people searches of 10 results, a segment giving up after 60 searches in a row
 find no new company (from 28 Oct 2026, 15 that morning; before, nobody new on the lists, so people at companies INVECK
 already has kept it searching; a company ruled out in the last 90 days, or outside the ICP by its name, isn't a new
-company), companies ruled out remembered for 90 days (a wrong industry or too small; from 30 Oct 2026 not "no LinkedIn
+company), companies ruled out remembered for 90 days (by research too from 1 Nov 2026, a deal-breaker or a must-have not
+met, so a later sample doesn't find and research them again; not those research failed on, nor those with no acceptable
+contact; a wrong industry or too small at the check; from 30 Oct 2026 not "no LinkedIn
 page", and not "industry shown nowhere" where such companies now go to research, Manufacturing's since 28 Oct), companies outside the ICP by name not looked up and
 up to six looked up in one search (from 28 Oct 2026), one that search doesn't show looked up on its own and a
 company's size checked only while companies are still needed, the sample's own memory of its people searches
@@ -367,7 +369,10 @@ contact search, contact checks, news, must-have checks and so on) and per compan
 and (from 28 Oct 2026) how many of each segment's people searches found a new company, and what the company check did
 before research: how many passed, how many it dropped and why (no LinkedIn page, industry not on the ICP, too small,
 already known and so on), and why each round stopped searching.
-A sample carried on from where it stopped uses them too.
+A sample carried on from where it stopped uses them too. When the AI is out of credits (DeepSeek's "Insufficient Balance"), a sample stops at once rather than finding and
+reading more companies it can't assess (from 1 Nov 2026): the companies it couldn't check wait, and Carry on, once it's
+topped up, researches them. Research reuses the LinkedIn page the search found, also when it settles on a website the
+page doesn't list (it had looked such pages up again).
 
 **One capped engine wherever leads are found or researched** (INVECK's decision, 26 Oct 2026). Find new prospects on
 the Dashboard (leads per segment, and who gets them) and the Configuration page's run start a prospect search on the

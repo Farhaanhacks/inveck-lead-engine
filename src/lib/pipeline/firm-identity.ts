@@ -113,6 +113,14 @@ export async function learnFirm(svc: Services, company: string, website: string 
   if ((await recallFirm(svc.cache, company, website)) || opts.cacheOnly || !svc.keys.serper) return firmPageOf(company);
   const domain = rootDomain(website);
   if (!domain || !company.trim()) return null;
+  // Found already this run (the people-first search found the page, see knowFirmPage, when it lists no website or another
+  // one): no search, and remembered under this website too (1 Nov 2026: research had looked such pages up again).
+  const found = firmPageOf(company);
+  if (found?.url) {
+    const known: Known = { names: [found.name], page: found, at: new Date().toISOString() };
+    await svc.cache?.set(`linkedin-page:v2:${domain}`, known).catch(() => {});
+    return found;
+  }
   try {
     // Google's first page that lists the website is the company's own (a joint venture or a
     // reseller may list it too, further down).
