@@ -85,6 +85,8 @@ export const leads = pgTable('leads', {
   ownerId: integer('owner_id'),
   /** Tracker sheet: what the last conversation came to, a free remark, and how email and LinkedIn outreach went. */
   callFeedback: text('call_feedback').notNull().default(''),
+  /** Tracker "Call Status" picked by hand; empty: it follows the last call logged. */
+  callStatus: text('call_status').notNull().default(''),
   remark: text('remark').notNull().default(''),
   /** What was said on the last call; filled from a connected call's note and editable on the tracker. */
   callRemark: text('call_remark').notNull().default(''),

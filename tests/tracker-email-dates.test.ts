@@ -87,3 +87,43 @@ describe('the Email cell on the tracker', () => {
     expect(open.map((t) => t.kind).sort()).toEqual(['call', 'email']);
   });
 });
+
+describe('the Call Status cell on the tracker', () => {
+  let db: Db;
+  beforeEach(async () => {
+    process.env.DATABASE_URL = 'memory://';
+    resetDbForTests();
+    db = await getDb();
+    me.id = (await db.select().from(users).where(eq(users.role, 'bda')).limit(1))[0].id;
+  });
+
+  it('follows the last logged call until someone picks a status; picking one is kept, and "Auto" goes back to following the log', async () => {
+    const { updateTrackerFieldAction } = await import('@/app/team-actions');
+    const { loadTracker, CALL_STATUSES } = await import('@/lib/tracker');
+    const [l] = await db.insert(leads).values({ company: 'Hosur Gears', segment: 'Manufacturing', status: 'Approved', ownerId: me.id, contactName: 'Ravi' }).returning();
+    const row = async () => (await loadTracker(db, me.id)).find((r) => r.lead.id === l.id)!;
+    expect(await row()).toMatchObject({ callStatus: 'Not called yet', autoCallStatus: 'Not called yet' });
+    await db.insert(tasks).values({ leadId: l.id, ownerId: me.id, kind: 'call', step: 'Day 1', title: 'Day 1: call', dueDate: istDay(), slot: 'day', doneAt: new Date(), outcome: 'busy' });
+    expect(await row()).toMatchObject({ callStatus: 'Not connected: busy', autoCallStatus: 'Not connected: busy' });
+    // A status picked by hand shows instead, and the logged one stays as the automatic choice.
+    expect(CALL_STATUSES).toContain('Connected');
+    expect(await updateTrackerFieldAction(l.id, 'callStatus', 'Connected')).toEqual({ ok: true });
+    expect(await row()).toMatchObject({ callStatus: 'Connected', autoCallStatus: 'Not connected: busy' });
+    expect((await db.select().from(activities).where(eq(activities.leadId, l.id))).some((a) => a.text === 'Call status: Connected')).toBe(true);
+    // Nothing else moves: no tasks added or closed, the lead's stage and call outcome are as they were.
+    expect((await db.select().from(tasks).where(eq(tasks.leadId, l.id))).length).toBe(1);
+    expect((await db.select().from(leads).where(eq(leads.id, l.id)))[0]).toMatchObject({ status: 'Approved', callFeedback: '' });
+    // Back to automatic.
+    expect(await updateTrackerFieldAction(l.id, 'callStatus', '')).toEqual({ ok: true });
+    expect(await row()).toMatchObject({ callStatus: 'Not connected: busy' });
+  });
+
+  it('refuses a status that is not one of the choices, and a lead that is not yours', async () => {
+    const { updateTrackerFieldAction } = await import('@/app/team-actions');
+    const [mine] = await db.insert(leads).values({ company: 'A', segment: 'Manufacturing', status: 'Approved', ownerId: me.id }).returning();
+    const [theirs] = await db.insert(leads).values({ company: 'B', segment: 'Manufacturing', status: 'Approved', ownerId: me.id + 1 }).returning();
+    expect((await updateTrackerFieldAction(mine.id, 'callStatus', 'Maybe later')).ok).toBe(false);
+    expect((await updateTrackerFieldAction(theirs.id, 'callStatus', 'Connected')).ok).toBe(false);
+    expect((await db.select().from(leads).where(eq(leads.id, theirs.id)))[0].callStatus).toBe('');
+  });
+});

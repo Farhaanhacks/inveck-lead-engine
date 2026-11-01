@@ -3,7 +3,7 @@ import { getCurrentUser } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { runDailyDraw } from '@/lib/draw';
 import { ownerScope } from '@/lib/access';
-import { CALL_FEEDBACK, cleanDay, CONTACT_CHANNELS, DATE_FILTERS, inDayRange, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCells } from '@/lib/tracker';
+import { CALL_FEEDBACK, CALL_STATUSES, cleanDay, CONTACT_CHANNELS, DATE_FILTERS, inDayRange, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCells } from '@/lib/tracker';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TrackerTable, type TrackerViewRow } from './tracker-table';
@@ -51,6 +51,8 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
         date: c[18],
         owner: c[19],
       },
+      callStatus: r.lead.callStatus,
+      autoCallStatus: r.autoCallStatus,
       callFeedback: r.lead.callFeedback,
       contactChannel: r.lead.contactChannel,
       autoChannel: r.autoChannel,
@@ -100,7 +102,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
           {dateBy === 'call' ? ' Leads not called yet are left out.' : ''}
         </p>
       )}
-      <TrackerTable rows={view} options={{ contactChannel: CONTACT_CHANNELS, callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} segments={segments} />
+      <TrackerTable rows={view} options={{ contactChannel: CONTACT_CHANNELS, callStatus: CALL_STATUSES, callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} segments={segments} />
     </>
   );
 }

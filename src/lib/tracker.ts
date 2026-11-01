@@ -29,12 +29,16 @@ export const CLIENT_OUTCOMES = ['Client onboarded', 'Already a client'] as const
 export const MAIL_OUTCOMES = ['Not sent', 'Sent', 'No reply', 'Replied: interested', 'Replied: not interested', 'Bounced'] as const;
 export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', 'Replied', 'No response', 'Not on LinkedIn'] as const;
 
+/** The tracker's "Call Status" dropdown: what the calls came to, the same words the logged calls show. */
+export const CALL_STATUSES = ['Connected', 'Not connected: no answer', 'Not connected: busy', 'Wrong number', 'No contact found'] as const;
+
 export const CONTACT_TIERS = ['P1', 'P2', 'P3'] as const;
 /** Tracker "Point of Contact": where the conversation happened. */
 export const CONTACT_CHANNELS = ['Phone', 'WhatsApp', 'Email', 'LinkedIn', 'Referral', 'Other'] as const;
 
 export const TRACKER_FIELDS = {
   callFeedback: CALL_FEEDBACK,
+  callStatus: CALL_STATUSES,
   contactTier: CONTACT_TIERS,
   contactChannel: CONTACT_CHANNELS,
   mailOutcome: MAIL_OUTCOMES,
@@ -91,7 +95,10 @@ const CALL_STATUS: Record<string, string> = {
 export type TrackerRow = {
   lead: Lead;
   owner: string;
+  /** Picked by hand, else what the last logged call says ("Not called yet" with none). */
   callStatus: string;
+  /** What the logged calls say, shown as the automatic choice. */
+  autoCallStatus: string;
   callRemark: string;
   callsDone: number;
   lastCallAt: Date | null;
@@ -143,7 +150,8 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
     return {
       lead,
       owner: lead.ownerId ? names.get(lead.ownerId) ?? '' : '',
-      callStatus: last ? CALL_STATUS[last.outcome] : 'Not called yet',
+      callStatus: lead.callStatus || (last ? CALL_STATUS[last.outcome] : 'Not called yet'),
+      autoCallStatus: last ? CALL_STATUS[last.outcome] : 'Not called yet',
       callRemark: lead.callRemark,
       // Calls actually dialled (a "No contact found" isn't one).
       callsDone: mine.filter((c) => c.outcome !== 'no_contact').length,

@@ -7,6 +7,8 @@ import { AddLeadRow } from './add-lead';
 export type TrackerViewRow = {
   id: number;
   cells: Record<string, string>;
+  callStatus: string;
+  autoCallStatus: string;
   callFeedback: string;
   contactChannel: string;
   autoChannel: string;
@@ -17,7 +19,7 @@ export type TrackerViewRow = {
   website: string;
 };
 
-type Field = 'callFeedback' | 'contactChannel' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
+type Field = 'callFeedback' | 'callStatus' | 'contactChannel' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
 
 const CELL = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink hover:border-line focus:border-accent focus:outline-none';
 
@@ -152,7 +154,7 @@ export function TrackerTable({
 }: {
   segments: string[];
   rows: TrackerViewRow[];
-  options: { contactChannel: readonly string[]; callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
+  options: { contactChannel: readonly string[]; callStatus: readonly string[]; callFeedback: readonly string[]; mailOutcome: readonly string[]; linkedinOutcome: readonly string[] };
   showOwner: boolean;
 }) {
   const th = 'border-b border-r border-line px-2 py-2 text-left font-medium whitespace-nowrap';
@@ -212,7 +214,9 @@ export function TrackerTable({
               </td>
               <td className={`${td} p-1`}><Phone id={r.id} value={r.cells.phone} label={`${r.cells.company}: contact number`} /></td>
               <td className={`${td} p-1`}><Email id={r.id} value={r.cells.email} label={`${r.cells.company}: email`} /></td>
-              <td className={`${td} whitespace-nowrap`}>{r.cells.callStatus}</td>
+              <td className={`${td} p-1`}>
+                <Choice id={r.id} field="callStatus" value={r.callStatus} options={options.callStatus} empty={`Auto: ${r.autoCallStatus}`} label={`${r.cells.company}: call status`} />
+              </td>
               <td className={`${td} p-1`}><Choice id={r.id} field="callFeedback" value={r.callFeedback} options={options.callFeedback} label={`${r.cells.company}: call outcome`} /></td>
               <td className={`${td} p-1`}><Remark id={r.id} field="callRemark" value={r.cells.callRemark} placeholder="Add a call remark" label={`${r.cells.company}: call remark`} /></td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callsDone}</td>
