@@ -13,7 +13,8 @@ import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
 import { emailedAlready } from '@/lib/mail/plan';
 import { getHolidays } from '@/lib/holidays';
-import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence } from '@/lib/follow-up-sequence';
+import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence, stopFollowUpsAfterNegativeLinkedin } from '@/lib/follow-up-sequence';
+import { isLinkedinNegative } from '@/lib/linkedin-outcomes';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
@@ -327,6 +328,9 @@ async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks
 async function caNextSteps(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, outcome: string, now: Date) {
   if (task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && (outcome === 'sent' || outcome === 'skipped' || outcome === 'already_sent')) {
     const today = istDay();
+    // A negative LinkedIn response ends the follow-ups: no rounds are planned for this firm.
+    const [li] = await db.select({ outcome: leads.linkedinOutcome }).from(leads).where(eq(leads.id, task.leadId));
+    if (isLinkedinNegative(li?.outcome)) return;
     // Never twice, not even on a repeated click: what this step set up is set up once.
     const [already] = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.note, `${CA_AFTER_NOTE}${task.id}`))).limit(1);
     if (already) return;
@@ -340,7 +344,8 @@ async function caNextSteps(db: Awaited<ReturnType<typeof getDb>>, task: typeof t
   }
   if (outcome === 'accepted') {
     await db.update(tasks).set({ doneAt: now, outcome: 'closed' }).where(and(eq(tasks.leadId, task.leadId), isNull(tasks.doneAt), eq(tasks.priority, false)));
-    await db.update(leads).set({ linkedinOutcome: 'Accepted' }).where(eq(leads.id, task.leadId));
+    // Acceptance never overwrites a response already recorded (positive, negative, neutral).
+    await db.update(leads).set({ linkedinOutcome: 'Accepted' }).where(and(eq(leads.id, task.leadId), inArray(leads.linkedinOutcome, ['', 'Not sent', 'Request sent'])));
     return;
   }
   if (task.step === CA_FALLBACK_STEP) {
@@ -536,6 +541,12 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
   if (!validTrackerValue(field, clean) || !(await mayActOn(id))) return { ok: false };
   const db = await getDb();
   await db.update(leads).set({ [field]: clean, updatedAt: new Date() }).where(eq(leads.id, id));
+  // A negative response on LinkedIn ends the follow-ups: its open steps are cancelled and nothing more is scheduled.
+  if (field === 'linkedinOutcome' && isLinkedinNegative(clean)) {
+    await stopFollowUpsAfterNegativeLinkedin(db, id);
+    revalidatePath('/today');
+    revalidatePath('/followups');
+  }
   if (field === 'contactChannel') {
     await logActivity(db, id, 'note', clean ? `Point of contact: ${clean}` : 'Point of contact back to automatic (from what was logged)');
   } else if (field !== 'remark' && field !== 'callRemark' && clean) {

@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, ne, notInArray } from 'drizzle-orm';
 import { INBOUND_SOURCE } from './inbound-source';
 import type { Db } from './db';
 import { leads, tasks, users, type Lead } from './db/schema';
+import { isLinkedinResponse, linkedinOutcomeLabel, LI_NEGATIVE, LI_NEUTRAL, LI_NOT_ACTIVE, LI_POSITIVE, LI_REPLIED_LEGACY } from './linkedin-outcomes';
 
 /** What a connected (or attempted) call came to: the "Call Outcome / Feedback" dropdown. */
 export const CALL_FEEDBACK = [
@@ -27,7 +28,10 @@ export const NOT_INTERESTED = ['Not interested', 'No requirement right now', 'Al
 export const CLIENT_OUTCOMES = ['Client onboarded', 'Already a client'] as const;
 
 export const MAIL_OUTCOMES = ['Not sent', 'Sent', 'No reply', 'Replied: interested', 'Replied: not interested', 'Bounced'] as const;
-export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', 'Replied', 'No response', 'Not on LinkedIn'] as const;
+/** What a person can pick. The old single "Replied" is gone from the choices (see linkedin-outcomes.ts for what happens to saved ones). */
+export const LINKEDIN_OUTCOMES = ['Not sent', 'Request sent', 'Accepted', LI_POSITIVE, LI_NEGATIVE, LI_NEUTRAL, 'No response', LI_NOT_ACTIVE] as const;
+/** What the LinkedIn filter offers: the same, plus the saved "Replied" that has not been classified yet. */
+export const LINKEDIN_FILTER_OUTCOMES: readonly string[] = [...LINKEDIN_OUTCOMES, LI_REPLIED_LEGACY];
 
 /** The tracker's "Call Status" dropdown: what the calls came to, the same words the logged calls show. */
 export const CALL_STATUSES = ['Connected', 'Not connected: no answer', 'Not connected: busy', 'Wrong number', 'No contact found'] as const;
@@ -79,6 +83,34 @@ export function inDayRange(at: Date | null, from: string, to: string): boolean {
   return (!from || day >= from) && (!to || day <= to);
 }
 
+/** The two connected tracker filters: a medium, then an outcome of that medium only. */
+export const MEDIUMS = [
+  { value: 'call', label: 'Call' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'email', label: 'Email' },
+] as const;
+export type Medium = (typeof MEDIUMS)[number]['value'];
+export type OutcomeOption = { value: string; label: string };
+
+/** The outcomes each medium can be filtered by: call, the existing ones (and "No outcome yet"); LinkedIn, the LinkedIn ones; email, the mail ones. */
+export const OUTCOMES_BY_MEDIUM: Record<Medium, OutcomeOption[]> = {
+  call: [{ value: 'none', label: 'No outcome yet' }, ...CALL_FEEDBACK.map((f) => ({ value: f, label: f }))],
+  linkedin: LINKEDIN_FILTER_OUTCOMES.map((o) => ({ value: o, label: linkedinOutcomeLabel(o) })),
+  email: MAIL_OUTCOMES.map((o) => ({ value: o, label: o })),
+};
+
+export const cleanMedium = (v: unknown): Medium | '' => (MEDIUMS.some((m) => m.value === v) ? (v as Medium) : '');
+/** An outcome belongs only to its own medium: one that doesn't is dropped (what happens when the medium changes). */
+export const cleanOutcome = (medium: Medium | '', v: unknown): string => (medium && typeof v === 'string' && OUTCOMES_BY_MEDIUM[medium].some((o) => o.value === v) ? v : '');
+
+/** Whether a tracker row has this outcome for the medium, from what is saved on the lead and logged for it (the same values the table shows). */
+export function matchesOutcome(r: Pick<TrackerRow, 'lead' | 'mailOutcome' | 'linkedinOutcome'>, medium: Medium | '', outcome: string): boolean {
+  if (!medium || !outcome) return true;
+  if (medium === 'call') return outcome === 'none' ? !r.lead.callFeedback : r.lead.callFeedback === outcome;
+  if (medium === 'email') return r.mailOutcome === outcome;
+  return r.linkedinOutcome === outcome;
+}
+
 export function validTrackerValue(field: TrackerField, value: string): boolean {
   if (field === 'remark' || field === 'callRemark') return value.length <= 1000;
   return value === '' || (TRACKER_FIELDS[field] as readonly string[]).includes(value);
@@ -114,7 +146,7 @@ export type TrackerRow = {
 function channelFromLog(lead: Lead, calls: { outcome: string }[]): string {
   if (calls.some((c) => c.outcome === 'connected')) return 'Phone';
   if (lead.mailOutcome.startsWith('Replied')) return 'Email';
-  if (lead.linkedinOutcome === 'Accepted' || lead.linkedinOutcome === 'Replied') return 'LinkedIn';
+  if (lead.linkedinOutcome === 'Accepted' || isLinkedinResponse(lead.linkedinOutcome)) return 'LinkedIn';
   return '';
 }
 
@@ -160,7 +192,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       autoChannel: channelFromLog(lead, mine),
       // Logged sends fill these in until someone picks an outcome by hand.
       mailOutcome: lead.mailOutcome || (emailed.has(lead.id) || lead.sentAt ? 'Sent' : ''),
-      linkedinOutcome: lead.linkedinOutcome || (linked.has(lead.id) ? 'Request sent' : lead.contactLinkedin ? 'Not sent' : 'Not on LinkedIn'),
+      linkedinOutcome: lead.linkedinOutcome || (linked.has(lead.id) ? 'Request sent' : lead.contactLinkedin ? 'Not sent' : LI_NOT_ACTIVE),
     };
   });
 }

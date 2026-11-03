@@ -1,5 +1,6 @@
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { INBOUND_SOURCE } from './inbound-source';
+import { LI_NEGATIVE } from './linkedin-outcomes';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
 import { CA_FALLBACK_STEP, CA_ROUNDS, caRoundsOf, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
@@ -64,7 +65,7 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
   const rows = await db
     .select()
     .from(leads)
-    .where(and(inArray(leads.status, IN_OUTREACH), ne(leads.source, INBOUND_SOURCE), ownerId === null ? undefined : eq(leads.ownerId, ownerId)));
+    .where(and(inArray(leads.status, IN_OUTREACH), ne(leads.source, INBOUND_SOURCE), ne(leads.linkedinOutcome, LI_NEGATIVE), ownerId === null ? undefined : eq(leads.ownerId, ownerId)));
   if (!rows.length) return [];
   const all = await db.select().from(tasks).where(inArray(tasks.leadId, rows.map((l) => l.id)));
   const byLead = new Map<number, Task[]>();

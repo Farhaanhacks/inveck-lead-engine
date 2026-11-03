@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { updateTrackerEmailAction, updateTrackerFieldAction, updateTrackerPhoneAction } from '../../team-actions';
 import { AddLeadRow } from './add-lead';
+import { LI_REPLIED_LEGACY, linkedinOutcomeLabel } from '@/lib/linkedin-outcomes';
 
 export type TrackerViewRow = {
   id: number;
@@ -23,7 +24,7 @@ type Field = 'callFeedback' | 'callStatus' | 'contactChannel' | 'mailOutcome' | 
 
 const CELL = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink hover:border-line focus:border-accent focus:outline-none';
 
-function Choice({ id, field, value, options, label, empty = '—', narrow = false }: { id: number; field: Field; value: string; options: readonly string[]; label: string; empty?: string; narrow?: boolean }) {
+function Choice({ id, field, value, options, label, empty = '—', narrow = false, labels = {} }: { id: number; field: Field; value: string; options: readonly string[]; label: string; empty?: string; narrow?: boolean; labels?: Record<string, string> }) {
   const [v, setV] = useState(value);
   const [state, setState] = useState<'' | 'saving' | 'error'>('');
   const [, start] = useTransition();
@@ -44,7 +45,7 @@ function Choice({ id, field, value, options, label, empty = '—', narrow = fals
       className={`${CELL} ${narrow ? 'min-w-[7.5rem]' : 'min-w-[9rem]'} border-line bg-surface ${state === 'error' ? 'border-critical-ink' : ''} ${state === 'saving' ? 'opacity-60' : ''}`}
     >
       <option value="">{empty}</option>
-      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      {options.map((o) => <option key={o} value={o}>{labels[o] ?? o}</option>)}
     </select>
   );
 }
@@ -222,7 +223,7 @@ export function TrackerTable({
               <td className={`${td} whitespace-nowrap`}>{r.cells.callsDone}</td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.callDate}</td>
               <td className={`${td} p-1`}><Choice id={r.id} field="mailOutcome" value={r.mailOutcome} options={options.mailOutcome} label={`${r.cells.company}: mail outcome`} /></td>
-              <td className={`${td} p-1`}><Choice id={r.id} field="linkedinOutcome" value={r.linkedinOutcome} options={options.linkedinOutcome} label={`${r.cells.company}: LinkedIn outcome`} /></td>
+              <td className={`${td} p-1`}><Choice id={r.id} field="linkedinOutcome" value={r.linkedinOutcome} options={r.linkedinOutcome === LI_REPLIED_LEGACY ? [...options.linkedinOutcome, LI_REPLIED_LEGACY] : options.linkedinOutcome} labels={{ [LI_REPLIED_LEGACY]: linkedinOutcomeLabel(LI_REPLIED_LEGACY) }} label={`${r.cells.company}: LinkedIn outcome`} /></td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.status}</td>
               <td className={`${td} p-1`}><Remark id={r.id} value={r.remark} label={`${r.cells.company}: remark`} /></td>
               <td className={`${td} whitespace-nowrap`}>{r.cells.segment}</td>

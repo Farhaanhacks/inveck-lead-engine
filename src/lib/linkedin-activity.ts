@@ -1,6 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { contactLinkedin, leads, people, type ContactLinkedin } from './db/schema';
+import { isLinkedinResponse } from './linkedin-outcomes';
 
 /** The LinkedIn steps a BDA tracks for one contact on Today. */
 export const LINKEDIN_STATUSES = ['not_started', 'request_sent', 'accepted', 'message_sent', 'follow_up_sent', 'response_received'] as const;
@@ -22,7 +23,8 @@ export const MAX_REMARKS = 1000;
 export function statusFromOutcome(outcome: string): LinkedinStatus {
   if (outcome === 'Request sent') return 'request_sent';
   if (outcome === 'Accepted') return 'accepted';
-  if (outcome === 'Replied') return 'response_received';
+  // Any response counts as one (the old unclassified "Replied" too).
+  if (isLinkedinResponse(outcome)) return 'response_received';
   return 'not_started';
 }
 

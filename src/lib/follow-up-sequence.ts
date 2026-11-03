@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lte, notInArray } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, ne, notInArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
 import { logActivity } from './activity';
@@ -8,6 +8,7 @@ import { addWorkingDays, firstWorkingDay, isCaSegment, istDay, type Holidays } f
 import { defaultProduct, followupRuleFor, listIcps } from './config';
 import { DEFAULT_FOLLOWUP, scheduleFor, type FollowupRule } from './config-rules';
 import { normSegment } from './icp-match';
+import { isLinkedinNegative, LI_NEGATIVE } from './linkedin-outcomes';
 
 /**
  * The follow-up sequence: the one source of truth for who is in it, where they are in it and when the
@@ -85,6 +86,8 @@ export async function startFollowUpSequence(db: Db, leadId: number, now = new Da
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   // CA firms have their own three rounds after the LinkedIn request: never this sequence.
   if (!lead?.ownerId || lead.followUpStartedOn || isCaSegment(lead.segment)) return null;
+  // A negative LinkedIn response ends the follow-ups for good: nothing more is scheduled for this lead.
+  if (isLinkedinNegative(lead.linkedinOutcome)) return null;
   if (!ENROLLABLE.includes(lead.status) || (await hasConnectedCall(db, lead))) return null;
   const day1 = istDay(now);
   const holidays = await getHolidays(db);
@@ -115,6 +118,26 @@ export async function cancelFollowUpSequence(db: Db, leadId: number, why: string
     .set({ followUpSubject: '', followUpBody: '', nextFollowUpAt: null, ...(opts.reset ? { followUpStartedOn: '' } : {}), updatedAt: now })
     .where(eq(leads.id, leadId));
   if (closed.length) await logActivity(db, leadId, 'note', `Follow-up sequence stopped (${why}); ${closed.length} open follow-up step${closed.length === 1 ? '' : 's'} cancelled`);
+  return closed.length;
+}
+
+/**
+ * A lead's LinkedIn outcome was set to "LinkedIn – Negative Response": its open steps are ticked off ("closed", like a Not
+ * interested call), its follow-up draft dropped, and the sequence marked as started so it can't be enrolled again; every place
+ * that schedules work also checks the outcome. A promised callback (a person's own promise) is left. Returns how many steps closed.
+ */
+export async function stopFollowUpsAfterNegativeLinkedin(db: Db, leadId: number, now = new Date()): Promise<number> {
+  const closed = await db
+    .update(tasks)
+    .set({ doneAt: now, outcome: 'closed' })
+    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), eq(tasks.priority, false)))
+    .returning({ id: tasks.id });
+  const [lead] = await db.select({ started: leads.followUpStartedOn }).from(leads).where(eq(leads.id, leadId));
+  await db
+    .update(leads)
+    .set({ followUpSubject: '', followUpBody: '', nextFollowUpAt: null, ...(lead && !lead.started ? { followUpStartedOn: istDay(now) } : {}), updatedAt: now })
+    .where(eq(leads.id, leadId));
+  await logActivity(db, leadId, 'note', `Negative response on LinkedIn: removed from follow-ups${closed.length ? `; ${closed.length} open step${closed.length === 1 ? '' : 's'} cancelled` : ''}. Nothing more is scheduled for this lead.`);
   return closed.length;
 }
 
@@ -193,7 +216,7 @@ export async function followUpsDue(db: Db, today = istDay(), limit = 8): Promise
     .select({ lead: leads, round: tasks.followUpRound, dueDate: tasks.dueDate })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
-    .where(and(gt(tasks.followUpRound, 0), isNull(tasks.doneAt), lte(tasks.dueDate, today), notInArray(leads.status, ['Deleted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client'])))
+    .where(and(gt(tasks.followUpRound, 0), isNull(tasks.doneAt), lte(tasks.dueDate, today), ne(leads.linkedinOutcome, LI_NEGATIVE), notInArray(leads.status, ['Deleted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client'])))
     .orderBy(asc(tasks.dueDate), asc(tasks.followUpRound));
   const seen = new Set<number>();
   const out: { lead: Lead; round: number; dueDate: string }[] = [];

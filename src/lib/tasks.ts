@@ -1,6 +1,7 @@
 import { and, eq, exists, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from './db';
 import { getHolidays } from './holidays';
+import { LI_NEGATIVE } from './linkedin-outcomes';
 import { icpFor } from './tiers';
 import { activities, companyDays, icps, leads, people, tasks, type Lead, type Task, type TaskKind } from './db/schema';
 
@@ -141,7 +142,8 @@ const STOPPED_STATUSES = ['Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualif
 const HIDDEN_STATUSES = STOPPED_STATUSES.filter((s) => s !== 'Replied' && s !== 'Meeting Booked');
 
 /** The steps Today shows: those of a lead being worked, and promised callbacks always. (Used with tasks joined to their lead.) */
-const SHOWN_ON_TODAY = or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES));
+// A promised callback always shows; any other step not for a lead past outreach or one with a negative LinkedIn response.
+const SHOWN_ON_TODAY = or(eq(tasks.priority, true), and(notInArray(leads.status, HIDDEN_STATUSES), ne(leads.linkedinOutcome, LI_NEGATIVE)));
 
 /**
  * Puts every owned lead on its owner's Today list. Safe to call repeatedly.
@@ -169,6 +171,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
     .where(
       and(
         isNotNull(leads.ownerId),
+        ne(leads.linkedinOutcome, LI_NEGATIVE),
         inArray(leads.status, [...WORKING_STATUSES]),
         // A CA firm from the database has no person named, only the firm's own phone or email: that is its contact.
         or(ne(leads.contactName, ''), and(caFirmSql, or(ne(leads.contactPhone, ''), ne(leads.contactEmail, '')))),
@@ -192,6 +195,7 @@ export async function ensureSequences(db: Db, today = istDay()): Promise<number>
     .where(
       and(
         isNotNull(leads.ownerId),
+        ne(leads.linkedinOutcome, LI_NEGATIVE),
         eq(leads.status, 'Approved'),
         eq(leads.contactName, ''),
         sql`NOT (${caFirmSql})`,
@@ -250,7 +254,7 @@ export async function ensureLinkedinSteps(db: Db, ownerId: number, today = istDa
     .select({ task: tasks, lead: leads })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
-    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), lte(tasks.dueDate, today), eq(tasks.priority, false), inArray(leads.status, [...WORKING_STATUSES]), ne(leads.contactLinkedin, '')));
+    .where(and(eq(tasks.ownerId, ownerId), isNull(tasks.doneAt), lte(tasks.dueDate, today), eq(tasks.priority, false), inArray(leads.status, [...WORKING_STATUSES]), ne(leads.contactLinkedin, ''), ne(leads.linkedinOutcome, LI_NEGATIVE)));
   const byLead = new Map<number, { lead: Lead; step: string }>();
   for (const r of working) if (!isCaSegment(r.lead.segment) && r.task.step !== FIND_NEXT_STEP && !byLead.has(r.lead.id)) byLead.set(r.lead.id, { lead: r.lead, step: r.task.step });
   if (!byLead.size) return 0;
@@ -397,7 +401,7 @@ async function openStepsFor(db: Db, leadId: number, day: string): Promise<number
     .select({ id: tasks.id, note: tasks.note, slot: tasks.slot, title: tasks.title })
     .from(tasks)
     .innerJoin(leads, eq(tasks.leadId, leads.id))
-    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), ne(tasks.step, CA_WAITING_STEP), or(eq(tasks.priority, true), notInArray(leads.status, HIDDEN_STATUSES))));
+    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), lte(tasks.dueDate, day), ne(tasks.step, CA_WAITING_STEP), or(eq(tasks.priority, true), and(notInArray(leads.status, HIDDEN_STATUSES), ne(leads.linkedinOutcome, LI_NEGATIVE)))));
   return rows.filter((r) => !isSameDayRetry(r)).length;
 }
 

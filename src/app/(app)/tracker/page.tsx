@@ -3,7 +3,8 @@ import { getCurrentUser } from '@/lib/users';
 import { assignUnowned } from '@/lib/assign';
 import { runDailyDraw } from '@/lib/draw';
 import { ownerScope } from '@/lib/access';
-import { CALL_FEEDBACK, CALL_STATUSES, cleanDay, CONTACT_CHANNELS, DATE_FILTERS, inDayRange, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, trackerCells } from '@/lib/tracker';
+import { CALL_FEEDBACK, CALL_STATUSES, cleanDay, cleanMedium, cleanOutcome, CONTACT_CHANNELS, DATE_FILTERS, inDayRange, LINKEDIN_OUTCOMES, loadTracker, MAIL_OUTCOMES, matchesOutcome, trackerCells } from '@/lib/tracker';
+import { OutcomeFilter } from './outcome-filter';
 import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TrackerTable, type TrackerViewRow } from './tracker-table';
@@ -16,7 +17,10 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   await runDailyDraw(db);
   const sp = await searchParams;
   const q = typeof sp.q === 'string' ? sp.q.trim().toLowerCase() : '';
-  const feedback = typeof sp.feedback === 'string' ? sp.feedback : '';
+  // Medium and its outcome. An old link with ?feedback=… still works: it is a call outcome.
+  const legacyCall = typeof sp.feedback === 'string' && sp.feedback !== '';
+  const medium = legacyCall ? 'call' : cleanMedium(sp.medium);
+  const outcome = cleanOutcome(medium, legacyCall ? sp.feedback : sp.outcome);
   // A date, or a range of dates (start and end), on the day the lead was added or last called.
   const dateBy = DATE_FILTERS.some((d) => d.value === sp.dateBy) ? (sp.dateBy as 'added' | 'call') : 'added';
   const from = cleanDay(sp.from);
@@ -27,7 +31,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   const rows = all.filter(
     (r) =>
       (!q || [r.lead.company, r.lead.contactName, r.lead.city].some((v) => v.toLowerCase().includes(q))) &&
-      (!feedback || (feedback === 'none' ? !r.lead.callFeedback : r.lead.callFeedback === feedback)) &&
+      matchesOutcome(r, medium, outcome) &&
       (backwards || inDayRange(dateBy === 'call' ? r.lastCallAt : r.lead.createdAt, from, to)),
   );
   const view: TrackerViewRow[] = rows.map((r) => {
@@ -71,11 +75,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       </PageHeader>
       <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-3 text-sm">
         <input type="search" name="q" defaultValue={q} aria-label="Search company, person or city" placeholder="Search company, person or city" className="field h-9 max-w-xs py-1.5" />
-        <select name="feedback" defaultValue={feedback} aria-label="Call outcome" className="field h-9 w-auto py-1.5">
-          <option value="">Any call outcome</option>
-          <option value="none">No outcome yet</option>
-          {CALL_FEEDBACK.map((f) => <option key={f} value={f}>{f}</option>)}
-        </select>
+        <OutcomeFilter medium={medium} outcome={outcome} />
         <fieldset className="flex flex-wrap items-center gap-2">
           <legend className="sr-only">Filter by date</legend>
           <select name="dateBy" defaultValue={dateBy} aria-label="Which date to filter on" className="field h-9 w-auto py-1.5">
@@ -90,7 +90,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
             <input type="date" name="to" defaultValue={to} min={from || undefined} aria-label="To date" className="field h-9 w-auto py-1.5" />
           </label>
           {(from || to) && (
-            <a href={`/tracker?${new URLSearchParams({ ...(q ? { q } : {}), ...(feedback ? { feedback } : {}) })}`} className="text-xs font-medium text-accent hover:underline">Clear dates</a>
+            <a href={`/tracker?${new URLSearchParams({ ...(q ? { q } : {}), ...(medium ? { medium } : {}), ...(outcome ? { outcome } : {}) })}`} className="text-xs font-medium text-accent hover:underline">Clear dates</a>
           )}
         </fieldset>
         <span className="ml-auto text-xs text-muted tabular-nums">{rows.length} of {all.length} leads</span>

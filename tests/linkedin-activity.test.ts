@@ -56,7 +56,9 @@ describe('LinkedIn activity per contact', () => {
     expect(statusFromOutcome('Request sent')).toBe('request_sent');
     expect(statusFromOutcome('Accepted')).toBe('accepted');
     expect(statusFromOutcome('Replied')).toBe('response_received');
-    for (const o of ['', 'Not sent', 'No response', 'Not on LinkedIn']) expect(statusFromOutcome(o)).toBe('not_started');
+    for (const o of ['', 'Not sent', 'No response', 'Not Active on LinkedIn']) expect(statusFromOutcome(o)).toBe('not_started');
+    // Every kind of response counts as a response received (the old unclassified Replied too).
+    for (const o of ['LinkedIn – Positive Response', 'LinkedIn – Negative Response', 'Neutral']) expect(statusFromOutcome(o)).toBe('response_received');
   });
 
   it("only the company's owner (or an administrator) can save", async () => {

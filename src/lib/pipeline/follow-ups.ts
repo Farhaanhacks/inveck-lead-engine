@@ -1,8 +1,9 @@
-import { and, asc, eq, gt, isNull, lte, notInArray } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lte, ne, notInArray } from 'drizzle-orm';
 import type { Db } from '../db';
 import { leads, tasks, type Lead } from '../db/schema';
 import { logActivity } from '../activity';
 import { FOLLOW_UP_ROUNDS, nextEmailRound, ruleForLead } from '../follow-up-sequence';
+import { LI_NEGATIVE } from '../linkedin-outcomes';
 import { emailedAlready } from '../mail/plan';
 import { istDay } from '../tasks';
 import { askJson } from './ai';
@@ -84,6 +85,7 @@ export async function draftDueFollowUps(db: Db, svc: Services, log: (m: string, 
         isNull(tasks.doneAt),
         lte(tasks.dueDate, istDay()),
         eq(leads.followUpBody, ''),
+        ne(leads.linkedinOutcome, LI_NEGATIVE),
         notInArray(leads.status, ['Deleted', 'Replied', 'Meeting Booked', 'Won', 'Lost', 'Disqualified', 'Rejected', 'Existing Client']),
       ),
     )

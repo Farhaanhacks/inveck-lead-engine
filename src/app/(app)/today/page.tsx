@@ -308,7 +308,7 @@ function Step({
               ) : (
                 <>
                   {lead.contactLinkedin ? <a href={lead.contactLinkedin} target="_blank" rel="noreferrer" className={SMALL}>Open LinkedIn profile</a> : null}
-                  <Outcome id={task.id} buttons={isCaSegment(lead.segment) ? [['sent', 'Request sent'], ['already_sent', 'Already sent a request'], ['skipped', 'Not on LinkedIn: call instead']] : [['sent', 'Request sent'], ['skipped', 'Skip']]} />
+                  <Outcome id={task.id} buttons={isCaSegment(lead.segment) ? [['sent', 'Request sent'], ['already_sent', 'Already sent a request'], ['skipped', 'Not Active on LinkedIn: call instead']] : [['sent', 'Request sent'], ['skipped', 'Skip']]} />
                 </>
               ))}
           </StepActions>

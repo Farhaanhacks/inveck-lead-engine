@@ -418,7 +418,7 @@ Setup: share the sheet with the service account as Viewer, then add the key on t
 - Optional: `CA_SHEET_ID` and `CA_SHEET_TAB` (default to the master sheet and `Firms`).
 
 A CA firm starts with a LinkedIn request on day 1: **Request sent**, **Already sent a request** (no new request; the
-wait for acceptance starts and round 1 shows today), or **Not on LinkedIn: call instead**. Then three follow-up
+wait for acceptance starts and round 1 shows today), or **Not Active on LinkedIn: call instead**. Then three follow-up
 rounds, each a call, a WhatsApp and an email, on consecutive working days (round 1 the next working day after a
 request sent now, or today otherwise); weekends and the holidays in Settings are skipped. Accepted ends it; when all
 three rounds are done the firm is done.
