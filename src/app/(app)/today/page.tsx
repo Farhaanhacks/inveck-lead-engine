@@ -68,6 +68,7 @@ import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { PhoneLinks } from '@/components/phone-links';
 import { loadFunnel } from '@/lib/followups';
+import { SavedRemarks } from '@/components/saved-remarks';
 import { SendMail } from '@/components/send-mail';
 import { getMailbox, mailConfig } from '@/lib/mail/outlook';
 import { emailedAlready, emailStepOf, lastSentTo, leadAddresses, planEmail, sentByLead } from '@/lib/mail/plan';
@@ -536,6 +537,7 @@ function CompanyCard({
             {lead.contactName ? <TierBadge tier={tier} /> : null}
           </div>
           <Reach lead={lead} emails={emails} />
+          <SavedRemarks lead={lead} />
           {!readOnly && <EditContact lead={lead} others={others} />}
           {others.filter((p) => !p.passedAt).length > 0 && (
             <div className="mt-2 rounded-md border border-line bg-surface-2 px-3 py-2">
