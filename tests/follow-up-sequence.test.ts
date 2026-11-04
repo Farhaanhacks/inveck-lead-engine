@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, asc, eq, gt, isNull } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { activities, leads, people, settings, tasks, users } from '@/lib/db/schema';
-import { ensureSequences, istDay } from '@/lib/tasks';
+import { ensureSequences, istDay, loadTodayTasks } from '@/lib/tasks';
 import {
   followUpDates,
   hasConnectedCall,
@@ -74,7 +74,7 @@ describe('the dates: every other working day', () => {
 });
 
 describe('what starts the sequence', () => {
-  it.each(['no_answer', 'busy', 'wrong_number'])('a call saved as %s starts it at once, with no separate action', async (outcome) => {
+  it.each(['no_answer', 'busy'])('a call saved as %s starts it at once, with no separate action', async (outcome) => {
     const { completeTaskAction } = await import('@/app/team-actions');
     const l = await mk();
     await completeTaskAction(form({ id: (await dayOne(l.id, 'call')).id, outcome }));
@@ -175,7 +175,9 @@ describe('what starts the sequence', () => {
     const left = await openTasks(l.id);
     expect(left.filter((t) => t.title === 'Call the next number')).toHaveLength(1);
     expect(left.find((t) => t.title === 'Call the next number')!.followUpRound).toBe(0);
-    expect(await rounds(l.id)).toHaveLength(15);
+    // A wrong number never starts the sequence: only what the next number's call comes to can.
+    expect(await rounds(l.id)).toHaveLength(0);
+    expect((await leadOf(l.id)).followUpStartedOn).toBe('');
     expect((await leadOf(l.id)).contactPhone).toBe('9800000002');
   });
 });
@@ -193,7 +195,8 @@ describe('a connected call', () => {
     expect((await rounds(l.id)).filter((t) => t.outcome === 'closed').length).toBeGreaterThan(0);
     const after = await leadOf(l.id);
     expect(after.followUpBody).toBe('');
-    expect((await loadFunnel(db, me.id, today())).find((c) => c.lead.id === l.id)?.stage).not.toBe('today');
+    // Only its same-day first steps (not a follow-up round) can still be on the list.
+    expect((await loadFunnel(db, me.id, today())).find((c) => c.lead.id === l.id)?.next?.followUpRound ?? 0).toBe(0);
     // Undo puts the cancelled rounds back.
     await undoTaskAction(form({ id: call.id }));
     expect((await openTasks(l.id)).filter((t) => t.followUpRound > 0).length).toBeGreaterThan(0);
@@ -363,5 +366,67 @@ describe('existing records', () => {
     expect(again.enrolled).toBe(0);
     expect((await db.select().from(tasks)).length).toBe(count);
     expect((await db.select().from(settings).where(eq(settings.key, 'followUpSeqV1'))).length).toBe(1);
+  });
+});
+
+describe('a wrong number', () => {
+  it('stays a lead but starts no sequence, and nothing about it comes back on Today', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await mk({ status: 'Contacted', contactPhone: '9800000001' });
+    await completeTaskAction(form({ id: (await dayOne(l.id, 'call')).id, outcome: 'wrong_number' }));
+    const after = await leadOf(l.id);
+    expect(after).toMatchObject({ status: 'Contacted', contactPhone: '', followUpStartedOn: '', callFeedback: 'Wrong number' });
+    expect(await rounds(l.id)).toHaveLength(0);
+    // Any day later, nothing is due for it.
+    expect((await loadTodayTasks(db, me.id, '2099-01-01')).some((t) => t.lead.id === l.id && t.task.followUpRound > 0)).toBe(false);
+  });
+
+  it('an old saved rule that lists wrong_number as a starting outcome is ignored', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { followupRules } = await import('@/lib/db/schema');
+    await db.update(followupRules).set({ outcomes: 'no_answer,busy,wrong_number' });
+    const l = await mk({ contactPhone: '9800000001' });
+    await completeTaskAction(form({ id: (await dayOne(l.id, 'call')).id, outcome: 'wrong_number' }));
+    expect(await rounds(l.id)).toHaveLength(0);
+  });
+
+  it('ends a sequence that is already running: its open rounds are cancelled', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const l = await mk({ contactPhone: '9800000001' });
+    await completeTaskAction(form({ id: (await dayOne(l.id, 'call')).id, outcome: 'no_answer' }));
+    expect(await rounds(l.id)).toHaveLength(15);
+    await db.update(tasks).set({ dueDate: today() }).where(and(eq(tasks.leadId, l.id), eq(tasks.followUpRound, 1)));
+    const call = (await openTasks(l.id)).find((t) => t.kind === 'call' && t.followUpRound === 1)!;
+    await completeTaskAction(form({ id: call.id, outcome: 'wrong_number' }));
+    expect((await openTasks(l.id)).filter((t) => t.followUpRound > 0)).toEqual([]);
+    // Only its same-day first steps (not a follow-up round) can still be on the list.
+    expect((await loadFunnel(db, me.id, today())).find((c) => c.lead.id === l.id)?.next?.followUpRound ?? 0).toBe(0);
+  });
+
+  it('the one-time clean-up ends the sequences a wrong number had already started, and leaves worked or other ones alone', async () => {
+    const { completeTaskAction } = await import('@/app/team-actions');
+    const { endWrongNumberSequencesOnce } = await import('@/lib/follow-up-sequence');
+    const { startFollowUpSequence } = await import('@/lib/follow-up-sequence');
+    // Started the old way: a wrong-number call, then the sequence begun by hand (what the old rule did).
+    const bad = await mk({ contactPhone: '9800000001' });
+    await completeTaskAction(form({ id: (await dayOne(bad.id, 'call')).id, outcome: 'wrong_number' }));
+    await startFollowUpSequence(db, bad.id);
+    expect(await rounds(bad.id)).toHaveLength(15);
+    // A sequence a no-answer started: not touched.
+    const good = await mk({ company: 'Fine Co', contactPhone: '9800000002' });
+    await completeTaskAction(form({ id: (await dayOne(good.id, 'call')).id, outcome: 'no_answer' }));
+    // A sequence a wrong number started where a round has since been worked: not touched.
+    const worked = await mk({ company: 'Worked Co', contactPhone: '9800000003' });
+    await completeTaskAction(form({ id: (await dayOne(worked.id, 'call')).id, outcome: 'wrong_number' }));
+    await startFollowUpSequence(db, worked.id);
+    await db.update(tasks).set({ doneAt: new Date(), outcome: 'sent' }).where(and(eq(tasks.leadId, worked.id), eq(tasks.followUpRound, 1), eq(tasks.kind, 'whatsapp')));
+    await db.delete(settings).where(eq(settings.key, 'wrongNumberSequencesEndedV1'));
+    await endWrongNumberSequencesOnce(db);
+    expect((await openTasks(bad.id)).filter((t) => t.followUpRound > 0)).toEqual([]);
+    expect((await openTasks(good.id)).filter((t) => t.followUpRound > 0)).toHaveLength(15);
+    expect((await openTasks(worked.id)).filter((t) => t.followUpRound > 0).length).toBeGreaterThan(0);
+    // Once: running it again changes nothing.
+    await endWrongNumberSequencesOnce(db);
+    expect((await openTasks(good.id)).filter((t) => t.followUpRound > 0)).toHaveLength(15);
   });
 });

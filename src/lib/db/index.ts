@@ -8,6 +8,7 @@ import { ensureBlogProfile } from '../blogs/seed';
 import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingDealBreakersV5, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
 import { ensureBlogsUser, ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
+import { endWrongNumberSequencesOnce } from '../follow-up-sequence';
 import { migrateEmailTemplatesOnce, seedConfiguration } from '../config';
 import { backfillSignatureDetails } from '../mail/signature';
 import { recheckUnplacedContactsOnce, restoreFindStepsOnce, retireWithoutContactOnce } from '../escalate';
@@ -72,6 +73,7 @@ async function connect(): Promise<Db> {
     await seedConfiguration(db);
     await migrateEmailTemplatesOnce(db);
     await ensureMarketingUser(db);
+    await endWrongNumberSequencesOnce(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);
     await restoreFindStepsOnce(db);

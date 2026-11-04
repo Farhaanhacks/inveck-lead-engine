@@ -453,7 +453,7 @@ the username empty and the `APP_PASSWORD`, and can reset a team member's passwor
   flagged at the top of the owner's Today list.
 - **Today**: each person's work list, one card per company with every step at once: call, WhatsApp,
   email and LinkedIn request on day 1; the follow-up rounds come from the follow-up sequence once a
-  call is saved as no answer, busy or wrong number. Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
+  call is saved as no answer or busy (a wrong number never starts it and ends a running one: the lead stays a lead). Steps already logged today stay on the card, ticked, with Undo. A connected call needs a note and
   an outcome: Not interested, No requirement right now or Already using a solution ticks off everything
   else for that company; any other outcome keeps today's WhatsApp, email and LinkedIn and stops the later
   rounds. When every step is ticked the company is done for the day. Counters show leads assigned (their daily list), companies done (target 20), calls

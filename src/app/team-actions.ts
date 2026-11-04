@@ -13,7 +13,7 @@ import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
 import { emailedAlready } from '@/lib/mail/plan';
 import { getHolidays } from '@/lib/holidays';
-import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence, stopFollowUpsAfterNegativeLinkedin } from '@/lib/follow-up-sequence';
+import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence, stopFollowUpsAfterNegativeLinkedin, endSequenceAfterWrongNumber } from '@/lib/follow-up-sequence';
 import { isLinkedinNegative } from '@/lib/linkedin-outcomes';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
@@ -236,9 +236,11 @@ export async function completeTaskAction(form: FormData): Promise<TaskResult> {
     const from = await moveAfterOutreach(db, task.leadId, target, now);
     if (from) await db.update(tasks).set({ stageFrom: `${from}>${target}` }).where(eq(tasks.id, task.id));
   }
-  // The follow-up sequence: a call saved as no answer, busy or wrong number starts it right away; a
+  // The follow-up sequence: a call saved as no answer or busy starts it right away; a
   // connected call stops it (and it never starts for a lead that has had one).
   if (task.kind === 'call' && outcome === 'connected') await cancelFollowUpSequence(db, task.leadId, 'a call connected', { now });
+  // A wrong number never starts the sequence and ends a running one: the lead stays a lead, off Today.
+  else if (task.kind === 'call' && outcome === 'wrong_number') await endSequenceAfterWrongNumber(db, task.leadId, now);
   else if (task.kind === 'call' && isQualifyingOutcome(outcome, (await ruleForLeadId(db, task.leadId)).outcomes) && !escalated?.switched && !escalated?.deleted) await startFollowUpSequence(db, task.leadId, now);
   // The last round done (every step done or skipped): the lead goes to Deleted as junk.
   if (task.followUpRound > 0) await junkIfComplete(db, task.leadId, now);

@@ -10,16 +10,15 @@ import { addWorkingDays, type Holidays } from './tasks';
 export const OUTCOME_CHOICES = [
   { value: 'no_answer', label: 'No answer' },
   { value: 'busy', label: 'Busy or voicemail' },
-  { value: 'wrong_number', label: 'Wrong number' },
 ] as const;
 export const MAX_ROUNDS = 10;
 export const MAX_SPACING = 10;
 
 export type FollowupRule = { rounds: number; spacingDays: number; outcomes: string[] };
 /** Today's behaviour for every ICP but CA: five rounds, every other working day, started by an unanswered call. */
-export const DEFAULT_FOLLOWUP: FollowupRule = { rounds: 5, spacingDays: 2, outcomes: ['no_answer', 'busy', 'wrong_number'] };
+export const DEFAULT_FOLLOWUP: FollowupRule = { rounds: 5, spacingDays: 2, outcomes: ['no_answer', 'busy'] };
 /** CA firms: three rounds, one working day apart (after the LinkedIn request, see tasks.ts). */
-export const CA_FOLLOWUP: FollowupRule = { rounds: 3, spacingDays: 1, outcomes: ['no_answer', 'busy', 'wrong_number'] };
+export const CA_FOLLOWUP: FollowupRule = { rounds: 3, spacingDays: 1, outcomes: ['no_answer', 'busy'] };
 
 export const parseOutcomes = (text: string) => text.split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -30,7 +29,7 @@ export function validateFollowup(r: FollowupRule): string[] {
   if (!Number.isInteger(r.spacingDays) || r.spacingDays < 1 || r.spacingDays > MAX_SPACING) errors.push(`The gap between follow-ups must be a whole number of working days from 1 to ${MAX_SPACING}.`);
   const allowed = OUTCOME_CHOICES.map((o) => o.value) as string[];
   if (!r.outcomes.length) errors.push('Choose at least one call outcome that starts the follow-ups.');
-  else if (r.outcomes.some((o) => !allowed.includes(o))) errors.push('Only no answer, busy or wrong number can start the follow-ups (a connected call always ends them).');
+  else if (r.outcomes.some((o) => !allowed.includes(o))) errors.push('Only no answer or busy can start the follow-ups (a connected call or a wrong number always ends them).');
   return errors;
 }
 
