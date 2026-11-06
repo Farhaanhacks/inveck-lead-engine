@@ -9,6 +9,7 @@ import { requireAdmin } from '@/lib/access';
 import { assignStepTemplate, deleteStepTemplate, saveAllocation, saveFollowupRule, saveIcp, saveProduct, saveSearchPrompt, saveStepTemplate, setIcpActive, setUserProducts, stepsFor } from '@/lib/config';
 import { createBda, setBdaActive } from '@/lib/config-team';
 import { parseOutcomes } from '@/lib/config-rules';
+import { endWrongNumberSequences } from '@/lib/follow-up-sequence';
 import { driveSourcingTest } from '@/lib/sourcing/drive';
 import { startProspectSearch } from '@/lib/sourcing/sample-run';
 
@@ -136,8 +137,14 @@ export async function saveStepAssignmentsAction(form: FormData) {
 export async function saveFollowupAction(form: FormData) {
   await requireAdmin();
   const productId = num(form, 'productId');
-  const r = await saveFollowupRule(await getDb(), productId, num(form, 'icpId'), { rounds: num(form, 'rounds'), spacingDays: num(form, 'spacing'), outcomes: form.getAll('outcomes').map(String).flatMap(parseOutcomes) });
-  back('followups', productId, r.ok ? { ok: true, notice: 'Follow-up rule saved. It applies to sequences that start from now on.' } : r);
+  const db = await getDb();
+  const icpId = num(form, 'icpId');
+  const r = await saveFollowupRule(db, productId, icpId, { rounds: num(form, 'rounds'), spacingDays: num(form, 'spacing'), outcomes: form.getAll('outcomes').map(String).flatMap(parseOutcomes) });
+  // With "Wrong number" off, a wrong-number lead's running sequence ends now (so nothing already scheduled comes back); on, it is left.
+  const ended = r.ok ? await endWrongNumberSequences(db, { productId, icpId: icpId || undefined }) : 0;
+  revalidatePath('/followups');
+  revalidatePath('/today');
+  back('followups', productId, r.ok ? { ok: true, notice: `Follow-up rule saved. It applies to sequences that start from now on.${ended ? ` ${ended} open follow-up step${ended === 1 ? '' : 's'} of wrong-number leads were cancelled.` : ''}` } : r);
 }
 
 /**

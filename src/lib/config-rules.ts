@@ -10,6 +10,8 @@ import { addWorkingDays, type Holidays } from './tasks';
 export const OUTCOME_CHOICES = [
   { value: 'no_answer', label: 'No answer' },
   { value: 'busy', label: 'Busy or voicemail' },
+  // Off unless an administrator ticks it: a wrong number is a contact that doesn't exist, so by default it ends the follow-ups.
+  { value: 'wrong_number', label: 'Wrong number' },
 ] as const;
 export const MAX_ROUNDS = 10;
 export const MAX_SPACING = 10;
@@ -29,7 +31,7 @@ export function validateFollowup(r: FollowupRule): string[] {
   if (!Number.isInteger(r.spacingDays) || r.spacingDays < 1 || r.spacingDays > MAX_SPACING) errors.push(`The gap between follow-ups must be a whole number of working days from 1 to ${MAX_SPACING}.`);
   const allowed = OUTCOME_CHOICES.map((o) => o.value) as string[];
   if (!r.outcomes.length) errors.push('Choose at least one call outcome that starts the follow-ups.');
-  else if (r.outcomes.some((o) => !allowed.includes(o))) errors.push('Only no answer or busy can start the follow-ups (a connected call or a wrong number always ends them).');
+  else if (r.outcomes.some((o) => !allowed.includes(o))) errors.push('Only no answer, busy or wrong number can start the follow-ups (a connected call always ends them).');
   return errors;
 }
 

@@ -50,6 +50,7 @@ export async function FollowupsTab({ product, sp }: { product: Product; sp: Conf
                 <label key={o.value} className="flex items-center gap-1.5 text-sm"><input type="checkbox" name="outcomes" value={o.value} defaultChecked={rule.outcomes.includes(o.value)} /> {o.label}</label>
               ))}
             </div>
+            <p className="mt-1 text-xs text-muted">Wrong number is off by default: a call saved as a wrong number removes the number, starts no follow-ups and ends any running ones, and the lead stays a lead (off Today and the Follow-ups list). Tick it to treat a wrong number like no answer. A connected call, or a positive outcome by call, email or LinkedIn, always ends the follow-ups.</p>
           </fieldset>
           <div className="flex gap-2">
             <button className="btn-secondary">Preview schedule</button>

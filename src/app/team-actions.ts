@@ -13,8 +13,9 @@ import { getDb } from '@/lib/db';
 import { attendance, leads, people, sentEmails, tasks, users, type LeadStatus, type Task, type TaskKind } from '@/lib/db/schema';
 import { emailedAlready } from '@/lib/mail/plan';
 import { getHolidays } from '@/lib/holidays';
-import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence, stopFollowUpsAfterNegativeLinkedin, endSequenceAfterWrongNumber } from '@/lib/follow-up-sequence';
+import { cancelFollowUpSequence, isJunkReason, isQualifyingOutcome, junkIfComplete, restoreLead, ruleForLeadId, startFollowUpSequence, stopFollowUpsAfterNegativeLinkedin, endSequenceAfterWrongNumber, endFollowUpsAfterPositive } from '@/lib/follow-up-sequence';
 import { isLinkedinNegative } from '@/lib/linkedin-outcomes';
+import { followUpsEnded, isPositiveLead, POSITIVE_CALL_OUTCOMES } from '@/lib/follow-up-eligibility';
 import { moveAfterOutreach, stageAfterOutreach, undoOutreachStage } from '@/lib/stages';
 import { logActivity } from '@/lib/activity';
 import { clockIn, clockOut } from '@/lib/attendance';
@@ -238,9 +239,14 @@ export async function completeTaskAction(form: FormData): Promise<TaskResult> {
   }
   // The follow-up sequence: a call saved as no answer or busy starts it right away; a
   // connected call stops it (and it never starts for a lead that has had one).
-  if (task.kind === 'call' && outcome === 'connected') await cancelFollowUpSequence(db, task.leadId, 'a call connected', { now });
-  // A wrong number never starts the sequence and ends a running one: the lead stays a lead, off Today.
-  else if (task.kind === 'call' && outcome === 'wrong_number') await endSequenceAfterWrongNumber(db, task.leadId, now);
+  if (task.kind === 'call' && outcome === 'connected') {
+    await cancelFollowUpSequence(db, task.leadId, 'a call connected', { now });
+    // A positive result (Interested, a demo, a client) also ends a CA firm's rounds and blocks any later scheduling.
+    if ((POSITIVE_CALL_OUTCOMES as readonly string[]).includes(feedback)) await endFollowUpsAfterPositive(db, task.leadId, now);
+  }
+  // A wrong number with the Configuration box off (the default) starts no sequence and ends a running one: the lead stays a lead. With
+  // the box on it is treated like no answer, by the rule below.
+  else if (task.kind === 'call' && outcome === 'wrong_number' && !isQualifyingOutcome('wrong_number', (await ruleForLeadId(db, task.leadId)).outcomes)) await endSequenceAfterWrongNumber(db, task.leadId, now);
   else if (task.kind === 'call' && isQualifyingOutcome(outcome, (await ruleForLeadId(db, task.leadId)).outcomes) && !escalated?.switched && !escalated?.deleted) await startFollowUpSequence(db, task.leadId, now);
   // The last round done (every step done or skipped): the lead goes to Deleted as junk.
   if (task.followUpRound > 0) await junkIfComplete(db, task.leadId, now);
@@ -330,9 +336,9 @@ async function catchUp(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks
 async function caNextSteps(db: Awaited<ReturnType<typeof getDb>>, task: typeof tasks.$inferSelect, outcome: string, now: Date) {
   if (task.kind === 'linkedin' && task.step !== CA_WAITING_STEP && (outcome === 'sent' || outcome === 'skipped' || outcome === 'already_sent')) {
     const today = istDay();
-    // A negative LinkedIn response ends the follow-ups: no rounds are planned for this firm.
-    const [li] = await db.select({ outcome: leads.linkedinOutcome }).from(leads).where(eq(leads.id, task.leadId));
-    if (isLinkedinNegative(li?.outcome)) return;
+    // A positive outcome or a negative LinkedIn response ends the follow-ups: no rounds are planned for this firm.
+    const [li] = await db.select({ callFeedback: leads.callFeedback, mailOutcome: leads.mailOutcome, linkedinOutcome: leads.linkedinOutcome }).from(leads).where(eq(leads.id, task.leadId));
+    if (li && followUpsEnded(li)) return;
     // Never twice, not even on a repeated click: what this step set up is set up once.
     const [already] = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.leadId, task.leadId), eq(tasks.note, `${CA_AFTER_NOTE}${task.id}`))).limit(1);
     if (already) return;
@@ -548,6 +554,15 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
     await stopFollowUpsAfterNegativeLinkedin(db, id);
     revalidatePath('/today');
     revalidatePath('/followups');
+  }
+  // A positive outcome saved for the lead (call, email or LinkedIn) ends its follow-ups the same way, and blocks any later scheduling.
+  if (field !== 'remark' && field !== 'callRemark' && clean) {
+    const [now] = await db.select({ callFeedback: leads.callFeedback, mailOutcome: leads.mailOutcome, linkedinOutcome: leads.linkedinOutcome }).from(leads).where(eq(leads.id, id));
+    if (now && isPositiveLead(now)) {
+      await endFollowUpsAfterPositive(db, id);
+      revalidatePath('/today');
+      revalidatePath('/followups');
+    }
   }
   if (field === 'contactChannel') {
     await logActivity(db, id, 'note', clean ? `Point of contact: ${clean}` : 'Point of contact back to automatic (from what was logged)');

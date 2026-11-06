@@ -835,4 +835,6 @@ export const SCHEMA_STATEMENTS = [
   `INSERT INTO settings (key, value) SELECT 'icp3plP1V3', jsonb_build_object('at', now()) WHERE EXISTS (SELECT 1 FROM users) ON CONFLICT (key) DO NOTHING`,
   // "Not on LinkedIn" is now "Not Active on LinkedIn" (only that label; the old single "Replied" is deliberately left as it is).
   `UPDATE leads SET linkedin_outcome = 'Not Active on LinkedIn' WHERE linkedin_outcome = 'Not on LinkedIn'`,
+  // A new rule starts without "wrong number" (off by default); stored rules are changed by the one-time start-up step, not here.
+  `ALTER TABLE followup_rules ALTER COLUMN outcomes SET DEFAULT 'no_answer,busy'`,
 ];

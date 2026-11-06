@@ -119,16 +119,25 @@ describe('what each response does to follow-ups', () => {
     expect((await db.select().from(leads).where(eq(leads.id, ca.id)))[0].linkedinOutcome).toBe(LI_NEGATIVE);
   });
 
-  it('Positive, Neutral and the old Replied change nothing about follow-ups: they continue as before', async () => {
-    for (const outcome of [LI_POSITIVE, LI_NEUTRAL, LI_REPLIED_LEGACY]) {
+  it('Neutral and the old Replied change nothing about follow-ups: they continue as before', async () => {
+    for (const outcome of [LI_NEUTRAL, LI_REPLIED_LEGACY]) {
       const l = await lead({ company: `Co ${outcome}`, linkedinOutcome: outcome });
       await step(l.id, 'call');
       await step(l.id, 'email');
-      expect(await setOutcome(l.id, outcome === LI_REPLIED_LEGACY ? LI_POSITIVE : outcome)).toEqual({ ok: true });
+      expect(await setOutcome(l.id, LI_NEUTRAL)).toEqual({ ok: true });
       expect((await open(l.id)).length).toBe(2);
       expect((await loadTodayTasks(db, me.id, istDay())).filter((t) => t.lead.id === l.id).length).toBe(2);
       expect((await loadFunnel(db, me.id)).some((c) => c.lead.id === l.id)).toBe(true);
     }
+  });
+
+  it('Positive is a positive outcome: its follow-up rounds end and it leaves the follow-up list (see follow-up-sequence.test.ts)', async () => {
+    const l = await lead({ company: 'Positive Co' });
+    await step(l.id, 'call');
+    await step(l.id, 'email');
+    expect(await setOutcome(l.id, LI_POSITIVE)).toEqual({ ok: true });
+    expect((await open(l.id)).filter((t) => t.followUpRound > 0)).toEqual([]);
+    expect((await loadFunnel(db, me.id)).some((c) => c.lead.id === l.id)).toBe(false);
   });
 });
 

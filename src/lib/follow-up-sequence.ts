@@ -1,20 +1,22 @@
-import { and, asc, eq, gt, inArray, isNull, lte, ne, notInArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, notInArray, or } from 'drizzle-orm';
 import type { Db } from './db';
-import { leads, settings, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
+import { followupRules, leads, settings, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
 import { logActivity } from './activity';
 import { formatDate } from './dates';
 import { getHolidays } from './holidays';
-import { addWorkingDays, firstWorkingDay, isCaSegment, istDay, type Holidays } from './tasks';
+import { addWorkingDays, CA_FALLBACK_STEP, CA_WAITING_STEP, firstWorkingDay, isCaSegment, istDay, type Holidays } from './tasks';
 import { defaultProduct, followupRuleFor, listIcps } from './config';
 import { DEFAULT_FOLLOWUP, scheduleFor, type FollowupRule } from './config-rules';
 import { normSegment } from './icp-match';
-import { isLinkedinNegative, LI_NEGATIVE } from './linkedin-outcomes';
+import { followUpsEnded } from './follow-up-eligibility';
+import { LI_NEGATIVE } from './linkedin-outcomes';
 
 /**
  * The follow-up sequence: the one source of truth for who is in it, where they are in it and when the
  * next round is due.
  *
- * - It starts only when a call is saved as no answer or busy (QUALIFYING_OUTCOMES). A wrong number never starts it and ends one that is running.
+ * - It starts only when a call is saved with an outcome the rule lists: no answer and busy, and wrong number only when that box is
+ *   ticked (it is off by default, and then a wrong number ends the sequence).
  * - The day of that call is Day 1. Follow-up 1 to 5 fall 2, 4, 6, 8 and 10 working days later (weekends
  *   and the holidays set in Settings never count), so the sequence works every other working day.
  * - Each round is a call, a WhatsApp and an email (no LinkedIn request). They are tasks with
@@ -28,10 +30,10 @@ export const FOLLOW_UP_ROUNDS = DEFAULT_FOLLOWUP.rounds;
 export const FOLLOW_UP_OFFSETS = [2, 4, 6, 8, 10] as const;
 export const QUALIFYING_OUTCOMES = ['no_answer', 'busy'] as const;
 /**
- * Whether a call saved with this outcome starts the sequence. A wrong number never does, whatever an old saved rule says: it is not a
- * contact that went unanswered but one that doesn't exist, so it ends the sequence instead (see endSequenceAfterWrongNumber).
+ * Whether a call saved with this outcome starts the sequence: it is on the rule's list (Configuration → Follow-up Rules). A wrong number
+ * is on it only when an administrator ticked "Wrong number" (off by default); otherwise it ends the sequence (endSequenceAfterWrongNumber).
  */
-export const isQualifyingOutcome = (outcome: string, outcomes: readonly string[] = QUALIFYING_OUTCOMES) => outcome !== 'wrong_number' && outcomes.includes(outcome);
+export const isQualifyingOutcome = (outcome: string, outcomes: readonly string[] = QUALIFYING_OUTCOMES) => outcomes.includes(outcome);
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 /** Why a lead whose follow-ups all went unanswered is moved to Deleted ("five" for the default five rounds). */
 export const junkReason = (rounds: number) => `Junk/Waste: completed ${WORDS[rounds] ?? rounds} unanswered follow-up rounds.`;
@@ -90,8 +92,8 @@ export async function startFollowUpSequence(db: Db, leadId: number, now = new Da
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
   // CA firms have their own three rounds after the LinkedIn request: never this sequence.
   if (!lead?.ownerId || lead.followUpStartedOn || isCaSegment(lead.segment)) return null;
-  // A negative LinkedIn response ends the follow-ups for good: nothing more is scheduled for this lead.
-  if (isLinkedinNegative(lead.linkedinOutcome)) return null;
+  // A positive outcome (call, email or LinkedIn) or a negative LinkedIn response ends the follow-ups for good: nothing is scheduled.
+  if (followUpsEnded(lead)) return null;
   if (!ENROLLABLE.includes(lead.status) || (await hasConnectedCall(db, lead))) return null;
   const day1 = istDay(now);
   const holidays = await getHolidays(db);
@@ -154,22 +156,73 @@ export async function endSequenceAfterWrongNumber(db: Db, leadId: number, now = 
 }
 
 /**
- * Once: sequences that a wrong number had started before this rule (a call saved as wrong number, on the day the sequence began, and
- * no round worked yet) are ended, so those leads leave Today and the funnel's due list. Rounds anyone has worked are left alone.
+ * A positive outcome was saved for the lead (Interested, a demo, a client; an interested email reply; a positive LinkedIn response):
+ * its open follow-up rounds (and a CA firm's waiting step and rounds) are ticked off ("closed"), the draft dropped, and the sequence marked
+ * as started so it can't be enrolled again. First-contact steps and promised callbacks are left. Returns how many steps were cancelled.
+ */
+export async function endFollowUpsAfterPositive(db: Db, leadId: number, now = new Date()): Promise<number> {
+  const closed = await db
+    .update(tasks)
+    .set({ doneAt: now, outcome: 'closed' })
+    .where(and(eq(tasks.leadId, leadId), isNull(tasks.doneAt), eq(tasks.priority, false), or(gt(tasks.followUpRound, 0), gt(tasks.caRound, 0), inArray(tasks.step, [CA_WAITING_STEP, CA_FALLBACK_STEP]))))
+    .returning({ id: tasks.id });
+  const [lead] = await db.select({ started: leads.followUpStartedOn }).from(leads).where(eq(leads.id, leadId));
+  await db
+    .update(leads)
+    .set({ followUpSubject: '', followUpBody: '', nextFollowUpAt: null, ...(lead && !lead.started ? { followUpStartedOn: istDay(now) } : {}), updatedAt: now })
+    .where(eq(leads.id, leadId));
+  if (closed.length) await logActivity(db, leadId, 'note', `Positive outcome: removed from follow-ups; ${closed.length} open follow-up step${closed.length === 1 ? '' : 's'} cancelled. Nothing more is scheduled.`);
+  return closed.length;
+}
+
+const CALL_ATTEMPTS = ['connected', 'no_answer', 'busy', 'wrong_number'];
+
+/** The outcome of the latest call to the lead's current contact (a call before they became the contact doesn't count), or null. */
+export async function latestCallOutcome(db: Db, lead: Pick<Lead, 'id' | 'contactSince'>): Promise<string | null> {
+  const rows = await db
+    .select({ outcome: tasks.outcome, doneAt: tasks.doneAt })
+    .from(tasks)
+    .where(and(eq(tasks.leadId, lead.id), eq(tasks.kind, 'call'), isNotNull(tasks.doneAt), inArray(tasks.outcome, CALL_ATTEMPTS)))
+    .orderBy(desc(tasks.doneAt));
+  const mine = rows.find((r) => !lead.contactSince || (r.doneAt && r.doneAt > lead.contactSince));
+  return mine?.outcome ?? null;
+}
+
+/**
+ * A lead whose latest call was a wrong number, with the wrong-number box off for its rule: it is not in the follow-ups (the list leaves
+ * it out, whatever tasks it still has). With the box on, it is a normal follow-up lead.
+ */
+export async function isWrongNumberOut(db: Db, lead: Pick<Lead, 'id' | 'contactSince' | 'productId' | 'icpId' | 'segment'>): Promise<boolean> {
+  if ((await latestCallOutcome(db, lead)) !== 'wrong_number') return false;
+  return !isQualifyingOutcome('wrong_number', (await ruleForLead(db, lead)).outcomes);
+}
+
+/**
+ * Ends every running sequence of a lead whose latest call was a wrong number, where the wrong-number box is off for its rule: its open
+ * rounds are ticked off, so none of it comes back on Today or in the follow-ups. `scope` limits it to a product (and one ICP) after a rule
+ * was saved. Returns how many steps were cancelled.
+ */
+export async function endWrongNumberSequences(db: Db, scope: { productId?: number; icpId?: number } = {}): Promise<number> {
+  const candidates = await db
+    .selectDistinct({ lead: leads })
+    .from(tasks)
+    .innerJoin(leads, eq(tasks.leadId, leads.id))
+    .where(and(gt(tasks.followUpRound, 0), isNull(tasks.doneAt), scope.productId ? eq(leads.productId, scope.productId) : undefined, scope.icpId ? eq(leads.icpId, scope.icpId) : undefined));
+  let ended = 0;
+  for (const { lead } of candidates) if (await isWrongNumberOut(db, lead)) ended += await cancelFollowUpSequence(db, lead.id, 'wrong number');
+  return ended;
+}
+
+/**
+ * Once: the wrong-number box starts off. Rules still holding the old untouched default (no answer, busy and wrong number) become no
+ * answer and busy (a rule an administrator changed is left as it is), then the running sequences of wrong-number leads end.
  */
 export async function endWrongNumberSequencesOnce(db: Db): Promise<void> {
-  const key = 'wrongNumberSequencesEndedV1';
+  const key = 'wrongNumberSequencesEndedV2';
   if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
-  const started = await db.select({ id: leads.id, on: leads.followUpStartedOn }).from(leads).where(ne(leads.followUpStartedOn, ''));
-  let ended = 0;
-  for (const l of started) {
-    const wrong = await db.select({ doneAt: tasks.doneAt }).from(tasks).where(and(eq(tasks.leadId, l.id), eq(tasks.kind, 'call'), eq(tasks.outcome, 'wrong_number'), eq(tasks.followUpRound, 0)));
-    if (!wrong.some((w) => w.doneAt && istDay(w.doneAt) === l.on)) continue;
-    const rounds = await db.select({ doneAt: tasks.doneAt }).from(tasks).where(and(eq(tasks.leadId, l.id), gt(tasks.followUpRound, 0)));
-    if (!rounds.length || rounds.some((r) => r.doneAt)) continue;
-    ended += await cancelFollowUpSequence(db, l.id, 'a wrong number started it');
-  }
-  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), ended } }).onConflictDoNothing();
+  const reset = await db.update(followupRules).set({ outcomes: 'no_answer,busy', updatedAt: new Date() }).where(eq(followupRules.outcomes, 'no_answer,busy,wrong_number')).returning({ id: followupRules.id });
+  const ended = await endWrongNumberSequences(db);
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), rulesReset: reset.length, ended } }).onConflictDoNothing();
 }
 
 /** All the rounds are planned and every step in them was done or skipped by a person. */
