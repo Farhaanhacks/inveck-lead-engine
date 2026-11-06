@@ -41,6 +41,8 @@ export type FunnelCard = {
   next: Task | null;
   /** The last thing logged (not skips or ticked-off rounds). */
   last: Task | null;
+  /** The latest call actually logged (connected, no answer, busy, wrong number, no contact found), whatever was logged after it. */
+  lastCall: Task | null;
   /** Steps logged so far, and how many were real attempts (a call dialled, a message sent). */
   logged: number;
   attempts: number;
@@ -97,6 +99,7 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
       stage,
       next,
       last: real[0] ?? done[0] ?? null,
+      lastCall: done.find((t) => t.kind === 'call' && t.outcome !== 'skipped') ?? null,
       logged: done.length,
       attempts: real.filter((t) => t.kind !== 'call' || isCallAttempt(t.outcome)).length,
       round: next ? roundOf(next) : reached.length ? (isCaSegment(lead.segment) ? `${new Set(done.filter((t) => t.caRound > 0).map((t) => t.caRound)).size} of ${CA_ROUNDS} follow-up rounds done` : `${reached.length} of ${ROUNDS.length} rounds done`) : roundOf(done[0] ?? null),

@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TierBadge } from '@/components/tier-badge';
 import { PhoneLinks } from '@/components/phone-links';
+import { SavedRemarks } from '@/components/saved-remarks';
 import { formatDate, formatTime } from '@/lib/dates';
 import { normSegment } from '@/lib/icp-match';
 import { icpFor, tierOf, type Tier } from '@/lib/tiers';
@@ -92,6 +93,14 @@ function CardView({ card, today, todayHref, owner, tier }: { card: FunnelCard; t
           Last: {KIND[last.kind]} {OUTCOME[last.outcome] ?? last.outcome}, {formatDate(last.doneAt)} {formatTime(last.doneAt)} · {card.attempts} {card.attempts === 1 ? 'attempt' : 'attempts'}
         </div>
       )}
+      {/* The last call's outcome, when something else (a message, an email) was logged after it. */}
+      {card.lastCall?.doneAt && card.lastCall.id !== last?.id && (
+        <div className="text-xs text-muted">
+          Last call: {OUTCOME[card.lastCall.outcome]?.replace(/^call,? ?/, '') || card.lastCall.outcome}, {formatDate(card.lastCall.doneAt)} {formatTime(card.lastCall.doneAt)}
+        </div>
+      )}
+      {/* What was saved for the company (Tracker Remark and Call Remark): the same fields as on Today and the Tracker. */}
+      <SavedRemarks lead={lead} />
       <div className="flex flex-wrap gap-1.5 pt-1">
         {card.stage === 'today' && <Link href={todayHref} className="btn-primary px-2 py-0.5 text-xs">Work it on Today</Link>}
         {card.stage === 'finished' && (
