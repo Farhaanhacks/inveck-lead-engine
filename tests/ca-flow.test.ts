@@ -481,13 +481,13 @@ describe('the follow-up funnel', () => {
 });
 
 describe('saving the contact form never wipes the saved email', () => {
-  it('the Today and lead-page contact forms have no email field: the email stays (and goes when the person changes)', async () => {
+  it('a contact form posted without an email field leaves the saved email alone (and it goes when the person changes)', async () => {
     const { updateContactAction, saveFoundDetailAction } = await import('@/app/team-actions');
     const l = await caLead({ company: 'Asian Paints', segment: 'Manufacturing', contactName: 'Harish Lade', contactTitle: 'VP Supply Chain' });
     await saveFoundDetailAction(form({ id: l.id, field: 'contactEmail', value: 'harish@asianpaints.com' }));
     const email = async () => (await db.select().from(leads).where(eq(leads.id, l.id)))[0].contactEmail;
     expect(await email()).toBe('harish@asianpaints.com');
-    // Edit point of contact: a new number and a tier, no email field on the form.
+    // A form posted with a new number and a tier, no email field in it.
     await updateContactAction(form({ id: l.id, contactName: 'Harish Lade', contactTitle: 'VP Supply Chain', contactPhone: '9892301071', contactLinkedin: l.contactLinkedin, contactTier: 'P1' }));
     expect(await email()).toBe('harish@asianpaints.com');
     // Someone else named: the previous person's email doesn't carry over.

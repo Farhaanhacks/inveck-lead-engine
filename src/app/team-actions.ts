@@ -5,7 +5,7 @@ import { after } from 'next/server';
 import { escalate, type Escalation } from '@/lib/escalate';
 import { hasScheduledMeeting } from '@/lib/meetings';
 import { setTeamQuota } from '@/lib/config';
-import { contactFields, saveContactEdit, saveContactEmail, teamEmail } from '@/lib/contact-edit';
+import { cleanContact, contactFields, saveContactEdit, saveContactEmail, teamEmail } from '@/lib/contact-edit';
 import { redraftForContact } from '@/lib/pipeline/redraft';
 import { liveServices } from '@/lib/run-driver';
 import { and, eq, gt, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
@@ -602,24 +602,46 @@ export async function updateTrackerEmailAction(id: number, value: string): Promi
   return { ok: true, value: saved };
 }
 
-/** Corrects the point of contact from Today: name, designation, number, email, LinkedIn. */
-export async function updateContactAction(form: FormData) {
+export type ContactFormState = { error: string; saved?: boolean };
+
+/**
+ * Corrects the point of contact from Today: name, designation, number, email, LinkedIn. The email is the lead's one contactEmail (kept in
+ * step with the contact's People row by saveContactEdit), so every page and the email sender read what is saved here. An email that
+ * isn't one is refused with a message; a form without an email field leaves the saved one alone; an emptied field removes it.
+ */
+async function saveContactFromForm(form: FormData): Promise<ContactFormState> {
   const id = Number(str(form, 'id'));
-  if (!(await mayActOn(id))) return;
-  const db = await getDb();
-  // Saved from the contact form itself: the team vouches for this contact even when nothing changed.
-  const saved = await saveContactEdit(db, id, contactFields(form), { force: true });
-  // The tier the team chose (P1, P2, P3), or worked out from the title ('').
-  if (form.has('contactTier')) {
-    const tier = str(form, 'contactTier');
-    await db.update(leads).set({ contactTier: ['P1', 'P2', 'P3'].includes(tier) ? tier : '' }).where(eq(leads.id, id));
+  if (!id || !(await mayActOn(id))) return { error: 'Only the person this company belongs to can change its contact.' };
+  if (!cleanContact(contactFields(form))) return { error: 'That email address is not valid. Use one address like name@company.com, or empty the field to remove it. Nothing was saved.' };
+  try {
+    const db = await getDb();
+    // Saved from the contact form itself: the team vouches for this contact even when nothing changed.
+    const saved = await saveContactEdit(db, id, contactFields(form), { force: true });
+    // The tier the team chose (P1, P2, P3), or worked out from the title ('').
+    if (form.has('contactTier')) {
+      const tier = str(form, 'contactTier');
+      await db.update(leads).set({ contactTier: ['P1', 'P2', 'P3'].includes(tier) ? tier : '' }).where(eq(leads.id, id));
+    }
+    // Someone new gets an email written to them.
+    if (saved?.newPerson) after(async () => redraftForContact(await getDb(), await liveServices(), id));
+  } catch (e) {
+    console.error('[contact] save failed:', e);
+    return { error: "The contact couldn't be saved. Check the details and try again." };
   }
-  // Someone new gets an email written to them.
-  if (saved?.newPerson) after(async () => redraftForContact(await getDb(), await liveServices(), id));
   revalidatePath('/today');
   revalidatePath('/followups');
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
+  return { error: '', saved: true };
+}
+
+export async function updateContactAction(form: FormData) {
+  await saveContactFromForm(form);
+}
+
+/** The Edit point of contact form on Today: the same save, answering with a message for the form to show. */
+export async function saveContactFormAction(_prev: ContactFormState, form: FormData): Promise<ContactFormState> {
+  return saveContactFromForm(form);
 }
 
 /** Runs today's morning draw straight away (administrators), or tops up a short one from companies added since. */

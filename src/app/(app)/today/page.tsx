@@ -63,11 +63,12 @@ import { normSegment } from '@/lib/icp-match';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { CALL_FEEDBACK, CLIENT_OUTCOMES, NOT_INTERESTED } from '@/lib/tracker';
 import { CopyButton } from '@/components/copy-button';
-import { clockInAction, clockOutAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction, updateContactAction } from '../../team-actions';
+import { clockInAction, clockOutAction, resetTodayLogAction, saveFoundDetailAction, undoTaskAction } from '../../team-actions';
 import { makePrimaryAction } from '../../actions';
 import { AddPointOfContact } from '@/components/add-point-of-contact';
 import { PhoneLinks } from '@/components/phone-links';
 import { loadFunnel } from '@/lib/followups';
+import { ContactForm } from '@/components/contact-form';
 import { SavedRemarks } from '@/components/saved-remarks';
 import { SendMail } from '@/components/send-mail';
 import { getMailbox, mailConfig } from '@/lib/mail/outlook';
@@ -387,41 +388,13 @@ function Step({
   );
 }
 
-const CONTACT_FIELDS: [name: keyof Lead, label: string, type?: string][] = [
-  ['contactName', 'Name'],
-  ['contactTitle', 'Designation'],
-  ['contactPhone', 'Contact number', 'tel'],
-  ['contactLinkedin', 'LinkedIn URL', 'url'],
-];
-
 /** Fix or replace the point of contact without leaving Today: the number from ContactOut, a new email, or someone else at the company. */
 function EditContact({ lead, others }: { lead: Lead; others: Person[] }) {
   return (
     <details className="group mt-1.5">
       <summary className="cursor-pointer list-none text-xs font-medium text-accent hover:underline [&::-webkit-details-marker]:hidden">Edit point of contact</summary>
       <div className="mt-2 w-[min(40rem,calc(100vw-5rem))] space-y-3 rounded-lg border border-line bg-surface-2 p-4">
-        <form action={updateContactAction} className="space-y-3">
-          <input type="hidden" name="id" value={lead.id} />
-          <div className="grid gap-2 sm:grid-cols-2">
-            {CONTACT_FIELDS.map(([name, label, type]) => (
-              <div key={name} className={name === 'contactLinkedin' ? 'sm:col-span-2' : ''}>
-                <label htmlFor={`${name}-${lead.id}`} className="label">{label}</label>
-                <input id={`${name}-${lead.id}`} name={name} type={type ?? 'text'} defaultValue={String(lead[name] ?? '')} className="field" />
-              </div>
-            ))}
-          </div>
-          <div className="sm:w-1/2">
-            <label htmlFor={`contactTier-${lead.id}`} className="label">Tier</label>
-            <select id={`contactTier-${lead.id}`} name="contactTier" defaultValue={lead.contactTier} className="field">
-              <option value="">From the designation</option>
-              <option value="P1">P1 decision-maker</option>
-              <option value="P2">P2 process owner</option>
-              <option value="P3">P3 process level</option>
-            </select>
-          </div>
-          <p className="text-xs text-muted">Changing the name to someone else clears the previous person&apos;s number, email and LinkedIn unless you type new ones.</p>
-          <button className="btn-primary px-3 py-1.5 text-sm">Save contact</button>
-        </form>
+        <ContactForm lead={{ id: lead.id, contactName: lead.contactName, contactTitle: lead.contactTitle, contactPhone: lead.contactPhone, contactEmail: lead.contactEmail, contactLinkedin: lead.contactLinkedin, contactTier: lead.contactTier }} />
         <AddPointOfContact leadId={lead.id} company={lead.company} />
         {others.length > 0 && (
           <form action={makePrimaryAction} className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
