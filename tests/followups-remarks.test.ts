@@ -34,7 +34,8 @@ describe('what a follow-up card knows', () => {
   });
 
   it('shows the right outcome for each way a call can end, never a skipped or ticked-off call', async () => {
-    const outcomes = ['busy', 'wrong_number', 'connected', 'no_contact'] as const;
+    // (A wrong number is not listed at all while the Follow-up Rules box for it is off, as it is by default: see follow-up-sequence.test.ts.)
+    const outcomes = ['busy', 'connected', 'no_contact'] as const;
     for (const outcome of outcomes) {
       const [l] = await db.insert(leads).values({ company: `Co ${outcome}`, segment: 'Manufacturing', status: 'Contacted', ownerId: me }).returning();
       await task(l.id, 'call', { doneAt: at('2026-11-02T10:00:00Z'), outcome });
