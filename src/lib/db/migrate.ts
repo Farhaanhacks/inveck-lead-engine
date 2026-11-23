@@ -837,4 +837,15 @@ export const SCHEMA_STATEMENTS = [
   `UPDATE leads SET linkedin_outcome = 'Not Active on LinkedIn' WHERE linkedin_outcome = 'Not on LinkedIn'`,
   // A new rule starts without "wrong number" (off by default); stored rules are changed by the one-time start-up step, not here.
   `ALTER TABLE followup_rules ALTER COLUMN outcomes SET DEFAULT 'no_answer,busy'`,
+  `CREATE TABLE IF NOT EXISTS lead_feed_rows (
+    id SERIAL PRIMARY KEY,
+    row_key TEXT NOT NULL UNIQUE,
+    company TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'skipped',
+    reason TEXT NOT NULL DEFAULT '',
+    lead_id INTEGER,
+    raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
 ];

@@ -845,3 +845,21 @@ export const emailTemplateSteps = pgTable(
   },
   (t) => [uniqueIndex('email_template_steps_v2').on(t.productId, t.icpId, t.channel, t.step)],
 );
+
+/**
+ * One company read from the Instinct + Zintlr lead sheet (see lead-feed.ts), keyed by the company's normalised name (one company is one
+ * lead). state: 'imported' (a lead was made), 'duplicate' (already a lead or a client), 'skipped' (not usable yet: no ICP match, or the
+ * contact lacks a phone or an email; read again at every sync, so a row fixed in the sheet is picked up). `raw` keeps the whole row.
+ */
+export const leadFeedRows = pgTable('lead_feed_rows', {
+  id: serial('id').primaryKey(),
+  rowKey: text('row_key').notNull().unique(),
+  company: text('company').notNull().default(''),
+  state: text('state').notNull().default('skipped'),
+  reason: text('reason').notNull().default(''),
+  leadId: integer('lead_id'),
+  raw: jsonb('raw').$type<Record<string, string>>().notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type LeadFeedRow = typeof leadFeedRows.$inferSelect;

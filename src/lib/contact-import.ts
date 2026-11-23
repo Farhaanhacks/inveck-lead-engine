@@ -91,7 +91,7 @@ export async function importContactSheet(
   db: Db,
   parsed: ContactRow[],
   /** `status`: the lead starts here instead of waiting to be researched (the CA firms database goes straight to Approved). */
-  opts: { segment: string; ownerId: number | null; known: KnownBranches; by: string; status?: LeadStatus },
+  opts: { segment: string; ownerId: number | null; known: KnownBranches; by: string; status?: LeadStatus; /** What the lead's source says (default: the imported-list label; '' says nothing). */ source?: string; /** Already judged a fit by whoever supplied it: it can be drawn without research. */ qualified?: boolean; /** The contact was checked by whoever supplied it: not looked up again at once. */ contactChecked?: boolean },
 ): Promise<{ added: number; skipped: string[]; ids: number[] }> {
   let added = 0;
   const ids: number[] = [];
@@ -111,7 +111,7 @@ export async function importContactSheet(
         website: row.website,
         city: row.city,
         segment: opts.segment,
-        source: IMPORTED_SOURCE,
+        source: opts.source ?? IMPORTED_SOURCE,
         ownerId: opts.ownerId,
         nameEvidence: 'set by the team',
         contactName: main.name,
@@ -122,6 +122,8 @@ export async function importContactSheet(
         contactVerifiedAt: main.name ? now : null,
         remark: row.remark ?? '',
         ...(opts.status ? { status: opts.status } : {}),
+        ...(opts.qualified ? { qualified: true } : {}),
+        ...(opts.contactChecked && main.name ? { contactCheckedAt: now } : {}),
       })
       .returning({ id: leads.id });
     const contacts = [

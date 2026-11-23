@@ -590,3 +590,14 @@ The Gemini, Exa, WaveSpeed and Pollinations keys exist in Article Basket's own `
 
 Vercel calls `/api/cron/blogs` once an hour between 04:45 and 16:45 UTC (one daily entry per hour, because the Hobby plan runs a cron at most once a day; on Pro it can be every few minutes) for discovery, article jobs and publishing and `/api/cron/blogs/analytics` daily; both need `Authorization: Bearer <CRON_SECRET>` (Vercel adds it). Approving a topic also starts its job straight away. Locally, `CRON_SECRET=... npm run blogs:worker` calls the tick every 30 seconds. Featured images are kept in `blog_image_store` (no Supabase Storage) and shown only to Blogs users and the administrator.
 
+
+## Instinct lead feed (Instinct + Zintlr)
+
+Instinct finds companies for the active ICPs and gets each contact's phone and email from Zintlr; it writes one row per company to a Google Sheet. The app reads that sheet (read-only, with the same `GOOGLE_SERVICE_ACCOUNT_JSON` service account as the CA and inbound sheets) before every 8 am draw (`/api/cron/draw`) and when an administrator clicks **Sync now** (Settings → Instinct lead feed).
+
+- **Set up (once):** create the sheet with a tab called `Leads` (or set `LEAD_FEED_SHEET_TAB`) and these headers: `ICP | Company | Website | Location | Contact Name | Designation | LinkedIn URL | Phone | Email`. Share it with the service account's email as **Viewer**, and add its ID as `LEAD_FEED_SHEET_ID` in Vercel. Settings → Instinct lead feed has a **Brief to give Instinct** built from the active ICPs (their P1/P2/P3 titles): paste it into Instinct once.
+- **A row becomes a lead** when its ICP is one of the app's active, drawn ICPs, it has a contact name, and it has BOTH a valid phone number and a valid email. Anything else is listed under "Not usable yet" and read again at the next sync.
+- **One company, one lead:** a company that is already a lead, a client or on the team's own list (same name or website, any city) is never added again, nor twice in the sheet. Contacts are not compared.
+- **The lead** is Approved and qualified (Instinct already judged the fit), shows no source, is not researched, and has its contact taken as checked. The normal 8 am draw deals it by Configuration → Allocation, and it appears on that associate's Today page.
+- **The Serper morning search** is switched off once, the first time the feed brings in leads (Settings can turn it back on).
+- Each sheet row is kept in `lead_feed_rows` (its state and the whole row), so nothing is imported twice.

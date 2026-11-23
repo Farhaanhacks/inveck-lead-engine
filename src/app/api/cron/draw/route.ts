@@ -3,6 +3,7 @@ import { bestEffort } from '@/lib/best-effort';
 import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { getDraw, runDailyDraw, topUpDraw } from '@/lib/draw';
+import { syncLeadFeed } from '@/lib/lead-feed';
 import { runCaDraw } from '@/lib/ca-sheet';
 import { driveRun, resumeStalledRun } from '@/lib/run-driver';
 import { startRun } from '@/lib/runs';
@@ -37,6 +38,8 @@ export async function GET(request: Request) {
   const promoted = await bestEffort('tidying contacts', () => tidyContacts(db), [] as number[]);
   for (const id of promoted) await bestEffort('rewriting a draft', () => redraftForContact(db, svc, id), undefined);
   const checked = await bestEffort('checking contacts on LinkedIn', () => verifyContacts(db, svc, { limit: 200, budgetLeft: () => searchBudgetLeft(db, svc.settings) }), null);
+  // The Instinct lead sheet first, so what it found overnight is in the pool when the draw deals it out.
+  const fed = await bestEffort('the Instinct lead feed', () => syncLeadFeed(db), null);
   const drawn = (await bestEffort('the morning draw', () => runDailyDraw(db), null)) ?? (await bestEffort('topping up the draw', () => topUpDraw(db), null));
   // CA firms: 10 each for Anchal and Puja from the Google Sheet, then researched like any other new lead.
   const ca = await bestEffort('the CA firm draw', () => runCaDraw(db), null);
@@ -48,5 +51,5 @@ export async function GET(request: Request) {
   const planned = await bestEffort('planning Today steps', () => ensureSequences(db), 0);
   // Qualified leads missing an email or LinkedIn draft (none written yet, or the AI dropped one).
   const drafted = await bestEffort('writing missing drafts', () => fillMissingDrafts(db, svc, { limit: 15 }), null);
-  return Response.json({ promoted: promoted.length, checked, drafted, planned, ca: ca ? { drawn: ca.drawn, wanted: ca.wanted, added: ca.added, problem: ca.problem } : null, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
+  return Response.json({ promoted: promoted.length, checked, drafted, planned, fed: fed ? { imported: fed.imported, duplicates: fed.duplicates, skipped: fed.skipped.length, error: fed.error } : null, ca: ca ? { drawn: ca.drawn, wanted: ca.wanted, added: ca.added, problem: ca.problem } : null, drawn: drawn !== null, draw: drawn ?? (await getDraw(db)) });
 }

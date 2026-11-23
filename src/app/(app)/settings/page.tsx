@@ -10,6 +10,9 @@ import { formatDate } from '@/lib/dates';
 import { istDay } from '@/lib/tasks';
 import { lastSyncReport, rotationView, INBOUND_SHEET_ID, INBOUND_SHEET_TAB } from '@/lib/inbound-demo';
 import { syncInboundDemosAction } from '@/app/inbound-demo-actions';
+import { syncLeadFeedAction } from '@/app/lead-feed-actions';
+import { feedConfigured, feedIcps, feedTab, instinctBrief, lastFeedReport, FEED_COLUMNS } from '@/lib/lead-feed';
+import { CopyButton } from '@/components/copy-button';
 
 export default async function SettingsPage() {
   await adminPage();
@@ -19,6 +22,8 @@ export default async function SettingsPage() {
   const url = databaseUrl();
   const holidays = [...(await getHolidays(db))].sort();
   const demoSync = await lastSyncReport(db);
+  const feed = await lastFeedReport(db);
+  const brief = instinctBrief(await feedIcps(db));
   const rotation = await rotationView(db);
   const status = [
     { name: 'DEEPSEEK_API_KEY', ok: !!keys.deepseek, use: 'AI (DeepSeek)', needed: settings.aiProvider === 'deepseek' },
@@ -28,6 +33,7 @@ export default async function SettingsPage() {
     { name: 'INBOUND_DEMO_SHEET_ID', ok: !!process.env.INBOUND_DEMO_SHEET_ID, use: `Optional: the inbound demo sheet's ID (defaults to the website form's sheet); tab name in INBOUND_DEMO_SHEET_TAB (default Leads)`, needed: false },
     { name: 'INBOUND_SYNC_SECRET', ok: (process.env.INBOUND_SYNC_SECRET ?? '').length >= 24, use: 'Optional: a random string (24+ characters) an outside timer (cron-job.org) sends to sync the inbound demo sheet every five minutes', needed: false },
     { name: 'JINA_API_KEY', ok: !!keys.jina, use: 'Optional: higher limits for reading JavaScript-heavy websites', needed: false },
+    { name: 'LEAD_FEED_SHEET_ID', ok: !!process.env.LEAD_FEED_SHEET_ID?.trim(), use: 'Instinct lead feed: the ID of the Google Sheet Instinct writes new companies to (tab name in LEAD_FEED_SHEET_TAB, default Leads)', needed: false },
     { name: 'APP_PASSWORD', ok: !!process.env.APP_PASSWORD, use: 'Team login', needed: true },
     { name: 'CRON_SECRET', ok: !!process.env.CRON_SECRET, use: 'Scheduled runs on Vercel', needed: !!process.env.VERCEL },
     { name: 'MICROSOFT_CLIENT_ID', ok: !!process.env.MICROSOFT_CLIENT_ID, use: "Optional: Send mail from Outlook (the Entra app's client ID)", needed: false },
@@ -69,6 +75,32 @@ export default async function SettingsPage() {
                 </li>
               ))}
             </ul>
+          </section>
+          <section className="card p-5">
+            <h2 className="text-sm font-semibold">Instinct lead feed</h2>
+            <p className="mb-3 text-xs text-muted">
+              New companies found by Instinct and enriched by Zintlr, read from a Google Sheet (tab <code>{feedTab()}</code>, shared with the service account as Viewer). Each company with a phone number AND an email, in an ICP the app draws, becomes a lead that is dealt out by the 8 am draw. A company that is already a lead, a client or on your own list is never added again. It reads the sheet before every morning draw; Sync now reads it at once.
+            </p>
+            {!feedConfigured() && <p className="mb-2 text-xs text-warning-ink">Not set up: add <code>LEAD_FEED_SHEET_ID</code> in Vercel (and <code>LEAD_FEED_SHEET_TAB</code> if the tab isn&apos;t called Leads).</p>}
+            <form action={syncLeadFeedAction}><button className="btn-secondary">Sync now</button></form>
+            {feed ? (
+              <div className="mt-3 space-y-2 text-xs">
+                <p className="text-muted">Last sync {formatDate(new Date(feed.at))}: {feed.read} rows read, {feed.imported} new leads, {feed.duplicates} already known.</p>
+                {feed.searchSwitchedOff && <p className="text-ink-2">The morning prospect search (Serper) was switched off now that the feed brings in leads; you can turn it back on below.</p>}
+                {feed.error && <p className="text-critical-ink">{feed.error}</p>}
+                {feed.skipped.length > 0 && (
+                  <div><div className="font-medium text-ink-2">Not usable yet ({feed.skipped.length})</div><ul className="list-disc pl-4 text-ink-2">{feed.skipped.slice(0, 30).map((b) => <li key={`${b.sheetRow}-${b.company}`}>Row {b.sheetRow}, {b.company || 'no company'}: {b.reason}</li>)}</ul></div>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-muted">Not synced yet.</p>
+            )}
+            <details className="mt-4">
+              <summary className="cursor-pointer text-xs font-medium text-accent">Brief to give Instinct (once)</summary>
+              <p className="mt-2 text-xs text-muted">Built from the active ICPs, so it stays in step with Configuration. Columns it must write: {FEED_COLUMNS.join(', ')}.</p>
+              <textarea readOnly rows={14} defaultValue={brief} className="field mt-2 font-mono text-xs" aria-label="Brief for Instinct" />
+              <div className="mt-2"><CopyButton text={brief} label="Copy brief" /></div>
+            </details>
           </section>
           <section className="card p-5">
             <h2 className="text-sm font-semibold">Inbound demo sheet</h2>
