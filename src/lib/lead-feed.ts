@@ -28,8 +28,8 @@ export const FEED_COLUMNS = ['ICP', 'Company', 'Website', 'Location', 'Contact N
 const REPORT_KEY = 'leadFeedSync';
 const LOCK_KEY = 'leadFeedLock';
 const LOCK_MS = 90_000;
-/** Rows handled in one sync; a longer sheet is taken in over the following syncs. */
-export const FEED_BATCH = 300;
+/** Rows handled in one sync (a long weekend of Instinct runs, 100 a day, fits many times over); a longer sheet is taken in over the following syncs. */
+export const FEED_BATCH = 1000;
 
 export type FeedRow = { sheetRow: number; icp: string; company: string; website: string; city: string; name: string; title: string; linkedin: string; phones: string[]; emails: string[]; raw: Record<string, string> };
 
