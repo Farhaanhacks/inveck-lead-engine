@@ -79,14 +79,16 @@ export default async function SettingsPage() {
           <section className="card p-5">
             <h2 className="text-sm font-semibold">Instinct lead feed</h2>
             <p className="mb-3 text-xs text-muted">
-              New companies found by Instinct and enriched by Zintlr, read from a Google Sheet (tab <code>{feedTab()}</code>, shared with the service account as Viewer). Each company with a phone number AND an email, in an ICP the app draws, becomes a lead that is dealt out by the 8 am draw. A company that is already a lead, a client or on your own list is never added again. It reads the sheet before every morning draw; Sync now reads it at once.
+              New companies found by Instinct and enriched by Zintlr, read from a Google Sheet (tab <code>{feedTab()}</code>, shared with the service account as Viewer). The app also keeps a Known tab in the sheet (every company the CRM has) for Instinct to check before it spends credits, so the service account must be an Editor. Each company with a phone number AND an email, in an ICP the app draws, becomes a lead that is dealt out by the 8 am draw. A company that is already a lead, a client or on your own list is never added again. It reads the sheet before every morning draw; Sync now reads it at once.
             </p>
-            <p className="mb-2 text-xs text-ink-2">Share the sheet with this service account (Viewer): <code className="select-all break-all">{googleCredentials()?.client_email ?? 'not set: add GOOGLE_SERVICE_ACCOUNT_JSON'}</code></p>
+            <p className="mb-2 text-xs text-ink-2">Share the sheet with this service account (Editor): <code className="select-all break-all">{googleCredentials()?.client_email ?? 'not set: add GOOGLE_SERVICE_ACCOUNT_JSON'}</code></p>
             {!feedConfigured() && <p className="mb-2 text-xs text-warning-ink">Not set up: add <code>LEAD_FEED_SHEET_ID</code> in Vercel (and <code>LEAD_FEED_SHEET_TAB</code> if the tab isn&apos;t called Leads).</p>}
             <form action={syncLeadFeedAction}><button className="btn-secondary">Sync now</button></form>
             {feed ? (
               <div className="mt-3 space-y-2 text-xs">
                 <p className="text-muted">Last sync {formatDate(new Date(feed.at))}: {feed.read} rows read, {feed.imported} new leads, {feed.duplicates} already known.</p>
+                <p className="text-muted">Known tab (what Instinct checks before spending credits): {feed.knownError ? '' : `${feed.known} companies written.`}</p>
+                {feed.knownError && <p className="text-critical-ink">{feed.knownError}</p>}
                 {feed.searchSwitchedOff && <p className="text-ink-2">The morning prospect search (Serper) was switched off now that the feed brings in leads; you can turn it back on below.</p>}
                 {feed.error && <p className="text-critical-ink">{feed.error}</p>}
                 {feed.skipped.length > 0 && (

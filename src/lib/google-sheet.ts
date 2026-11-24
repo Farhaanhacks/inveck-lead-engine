@@ -12,6 +12,8 @@ import { readFileSync } from 'node:fs';
 export type GoogleCredentials = { client_email: string; private_key: string };
 
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+/** Only the one sheet that is written to (the lead feed's Known tab) asks for this; every other sheet is read with SCOPE. */
+const WRITE_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const TIMEOUT_MS = 30_000;
 
@@ -41,12 +43,13 @@ export function googleCredentials(env: NodeJS.ProcessEnv = process.env): GoogleC
 }
 
 const b64 = (x: unknown) => Buffer.from(typeof x === 'string' ? x : JSON.stringify(x)).toString('base64url');
-let cached: { token: string; until: number } | null = null;
+const cached = new Map<string, { token: string; until: number }>();
 
-async function accessToken(c: GoogleCredentials, fetchFn: typeof fetch): Promise<string> {
-  if (cached && cached.until > Date.now() + 60_000) return cached.token;
+async function accessToken(c: GoogleCredentials, fetchFn: typeof fetch, scope = SCOPE): Promise<string> {
+  const hit = cached.get(scope);
+  if (hit && hit.until > Date.now() + 60_000) return hit.token;
   const now = Math.floor(Date.now() / 1000);
-  const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: c.client_email, scope: SCOPE, aud: TOKEN_URL, iat: now, exp: now + 3600 })}`;
+  const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: c.client_email, scope, aud: TOKEN_URL, iat: now, exp: now + 3600 })}`;
   const signature = createSign('RSA-SHA256').update(unsigned).sign(c.private_key).toString('base64url');
   const res = await fetchFn(TOKEN_URL, {
     method: 'POST',
@@ -56,8 +59,8 @@ async function accessToken(c: GoogleCredentials, fetchFn: typeof fetch): Promise
   });
   const data = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
   if (!res.ok || !data.access_token) throw new Error(`Google sign-in failed: ${data.error_description || data.error || `HTTP ${res.status}`}`.slice(0, 200));
-  cached = { token: data.access_token, until: Date.now() + (data.expires_in ?? 3600) * 1000 };
-  return cached.token;
+  cached.set(scope, { token: data.access_token, until: Date.now() + (data.expires_in ?? 3600) * 1000 });
+  return data.access_token;
 }
 
 /** Every row of a tab as text (the first row is the headers). */
@@ -70,4 +73,26 @@ export async function readTab(spreadsheetId: string, tab: string, c: GoogleCrede
   const data = (await res.json().catch(() => ({}))) as { values?: unknown[][]; error?: { message?: string } };
   if (!res.ok) throw new Error(`Google Sheets: ${data.error?.message ?? `HTTP ${res.status}`}`.slice(0, 200));
   return (data.values ?? []).map((r) => r.map((cell) => String(cell ?? '').trim()));
+}
+
+/**
+ * Replaces everything in a tab with `rows` (the tab is made if it isn't there). Needs the service account to be an Editor of the sheet;
+ * a Viewer gets a plain "permission" error back. Used for one thing only: the lead feed's Known tab.
+ */
+export async function writeTab(spreadsheetId: string, tab: string, rows: string[][], c: GoogleCredentials, fetchFn: typeof fetch = fetch): Promise<void> {
+  const token = await accessToken(c, fetchFn, WRITE_SCOPE);
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
+  const call = async (url: string, init: RequestInit) => {
+    const res = await fetchFn(url, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const data = (await res.json().catch(() => ({}))) as { error?: { message?: string }; sheets?: { properties?: { title?: string } }[] };
+    if (!res.ok) throw new Error(`Google Sheets: ${data.error?.message ?? `HTTP ${res.status}`}`.slice(0, 200));
+    return data;
+  };
+  const meta = await call(`${base}?fields=sheets.properties.title`, { method: 'GET' });
+  if (!(meta.sheets ?? []).some((s) => s.properties?.title === tab)) {
+    await call(`${base}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab } } }] }) });
+  }
+  const range = encodeURIComponent(`'${tab.replace(/'/g, "''")}'`);
+  await call(`${base}/values/${range}:clear`, { method: 'POST', body: '{}' });
+  if (rows.length) await call(`${base}/values/${range}!A1?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: rows }) });
 }

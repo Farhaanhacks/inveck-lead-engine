@@ -187,6 +187,10 @@
     {
       "path": "/api/cron/blogs",
       "schedule": "45 16 * * *"
+    },
+    {
+      "path": "/api/cron/lead-feed",
+      "schedule": "30 23 * * *"
     }
   ]
 }

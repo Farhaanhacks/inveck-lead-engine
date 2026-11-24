@@ -4,7 +4,7 @@ import { clients, icps, leadFeedRows, leads, settings, type Icp } from './db/sch
 import { KnownBranches, companyKeys } from './branches';
 import { importContactSheet, type ContactRow } from './contact-import';
 import { cleanEmail } from './contact-edit';
-import { googleCredentials, readTab } from './google-sheet';
+import { googleCredentials, readTab, writeTab } from './google-sheet';
 import { resolveIcp } from './icp-match';
 import { listKnownCompanies } from './known-companies';
 import { defaultProduct, listIcps } from './config';
@@ -85,8 +85,8 @@ export function parseFeed(values: string[][]): { rows: FeedRow[]; error: string 
 export const feedKey = (company: string) => companyKeys(company)[0] ?? company.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export type FeedProblem = { company: string; sheetRow: number; reason: string };
-export type FeedReport = { at: string; read: number; imported: number; duplicates: number; skipped: FeedProblem[]; error: string; searchSwitchedOff: boolean };
-const emptyReport = (): FeedReport => ({ at: new Date().toISOString(), read: 0, imported: 0, duplicates: 0, skipped: [], error: '', searchSwitchedOff: false });
+export type FeedReport = { at: string; read: number; imported: number; duplicates: number; skipped: FeedProblem[]; error: string; searchSwitchedOff: boolean; /** Companies written to the Known tab, and why that failed if it did. */ known: number; knownError: string };
+const emptyReport = (): FeedReport => ({ at: new Date().toISOString(), read: 0, imported: 0, duplicates: 0, skipped: [], error: '', searchSwitchedOff: false, known: 0, knownError: '' });
 export const lastFeedReport = async (db: Db) => ((await db.select().from(settings).where(eq(settings.key, REPORT_KEY)))[0]?.value ?? null) as FeedReport | null;
 
 /** Why a row can't be a lead yet, or '' when it can (with the cleaned phone and email). */
@@ -116,7 +116,7 @@ async function feedIcps(db: Db): Promise<Icp[]> {
  * once (a lock): rows already imported or found to be duplicates are not touched again; rows that were not usable are looked at again.
  * `opts.source` replaces the sheet read (tests).
  */
-export async function syncLeadFeed(db: Db, opts: { source?: () => Promise<string[][]>; now?: Date } = {}): Promise<FeedReport> {
+export async function syncLeadFeed(db: Db, opts: { source?: () => Promise<string[][]>; writeKnown?: (rows: string[][]) => Promise<void>; now?: Date } = {}): Promise<FeedReport> {
   const now = opts.now ?? new Date();
   const report = emptyReport();
   report.at = now.toISOString();
@@ -213,11 +213,58 @@ export async function syncLeadFeed(db: Db, opts: { source?: () => Promise<string
         report.searchSwitchedOff = true;
       }
     }
+    // The Known tab, brought up to date with what was just added, for Instinct's next run (a failure here never undoes the import).
+    if (opts.writeKnown || !opts.source) {
+      try {
+        report.known = (await publishKnown(db, { write: opts.writeKnown })).count;
+      } catch (e) {
+        report.knownError = `The Known tab could not be updated: ${e instanceof Error ? e.message : String(e)}. Make the service account an Editor of the sheet.`.slice(0, 300);
+      }
+    }
     return report;
   } finally {
     await db.insert(settings).values({ key: REPORT_KEY, value: report }).onConflictDoUpdate({ target: settings.key, set: { value: report } });
     await db.delete(settings).where(eq(settings.key, LOCK_KEY));
   }
+}
+
+export const KNOWN_TAB_DEFAULT = 'Known';
+export const KNOWN_HEADER = ['Company', 'Domain', 'Match key', 'In the CRM as'];
+
+/**
+ * Every company the CRM already has, for Instinct to check BEFORE it spends Zintlr credits: every lead (whatever its stage, deleted and
+ * disqualified ones too), every client, the team's own list, and every company the feed has delivered before (even ones that were not
+ * usable). Once per company; the domain and the app's own cleaned-up name are included so the match is exact.
+ */
+export async function knownRows(db: Db): Promise<string[][]> {
+  const out = new Map<string, string[]>();
+  const add = (company: string, website: string, as: string) => {
+    const name = company.trim();
+    if (!name) return;
+    const domain = domainOf(website);
+    const key = feedKey(name);
+    const id = domain || key;
+    if (out.has(id) || (domain && out.has(key))) return;
+    out.set(id, [name, domain, key, as]);
+  };
+  for (const l of await db.select({ company: leads.company, website: leads.website }).from(leads)) add(l.company, l.website, 'CRM lead');
+  for (const c of await db.select({ company: clients.company, website: clients.website }).from(clients)) add(c.company, c.website, 'Client');
+  for (const k of await listKnownCompanies(db)) add(k.company, k.website, 'Own list');
+  for (const f of await db.select({ company: leadFeedRows.company }).from(leadFeedRows)) add(f.company, '', 'Instinct feed');
+  return [KNOWN_HEADER, ...[...out.values()].sort((a, b) => a[0].localeCompare(b[0]))];
+}
+
+/** Writes the Known tab of the feed sheet (replacing it). `opts.write` replaces the sheet write (tests). Returns how many companies. */
+export async function publishKnown(db: Db, opts: { write?: (rows: string[][]) => Promise<void> } = {}): Promise<{ count: number }> {
+  const rows = await knownRows(db);
+  if (opts.write) await opts.write(rows);
+  else {
+    const sheetId = process.env.LEAD_FEED_SHEET_ID?.trim() ?? '';
+    const creds = googleCredentials();
+    if (!sheetId || !creds) throw new Error('The lead sheet is not set (LEAD_FEED_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_JSON).');
+    await writeTab(sheetId, process.env.LEAD_FEED_KNOWN_TAB?.trim() || KNOWN_TAB_DEFAULT, rows, creds);
+  }
+  return { count: rows.length - 1 };
 }
 
 /**
@@ -234,9 +281,13 @@ export function instinctBrief(list: Pick<Icp, 'segment' | 'description' | 'indus
     '',
     icpText || '(no active ICP yet)',
     '',
+    'Order of work (this saves Zintlr credits: never reveal a phone or email before step 3):',
+    '1. Find a company and its best contact (P1 titles first, then P2, then P3) WITHOUT revealing contact details.',
+    `2. Check the company in the sheet tabs "${KNOWN_TAB_DEFAULT}" and "${FEED_TAB_DEFAULT}": match by Domain first, then by company name (ignore Pvt, Ltd, Limited, India, brackets and case). If it is listed in either tab, skip it and spend nothing on it. The "${KNOWN_TAB_DEFAULT}" tab lists every company the CRM already has and is refreshed every morning before you start; never edit it.`,
+    '3. Only then reveal the phone number and email, for that ONE contact. If either one cannot be found, stop and skip the company.',
+    '',
     'Rules:',
-    '- Only add a company when you have BOTH a phone number and an email for the contact. Skip the company otherwise.',
-    '- One row per company, one contact each. Never repeat a company that is already in the sheet.',
+    '- One row per company, one contact each: never a second person at the same company.',
     `- Write each company as a new row in the Google Sheet tab "${FEED_TAB_DEFAULT}" with exactly these columns: ${FEED_COLUMNS.join(' | ')}.`,
     `- The ICP column must be exactly one of: ${list.map((i) => i.segment).join(', ') || '(none)'}.`,
     '- Do not edit or delete earlier rows.',

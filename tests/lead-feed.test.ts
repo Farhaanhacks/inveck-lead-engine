@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb, resetDbForTests, type Db } from '@/lib/db';
 import { clients, icps, leadFeedRows, leads, people, settings } from '@/lib/db/schema';
-import { feedIcps, feedProblem, instinctBrief, lastFeedReport, parseFeed, syncLeadFeed, FEED_COLUMNS } from '@/lib/lead-feed';
+import { feedIcps, feedProblem, instinctBrief, knownRows, lastFeedReport, parseFeed, publishKnown, syncLeadFeed, FEED_COLUMNS, KNOWN_HEADER } from '@/lib/lead-feed';
+import { knownCompanies } from '@/lib/db/schema';
+import { writeTab } from '@/lib/google-sheet';
 import { drawPool, runDailyDraw } from '@/lib/draw';
 import { getSettings, saveSettings } from '@/lib/settings';
 
@@ -121,7 +123,11 @@ describe('after the sync, the normal draw takes over', () => {
     await sync(row('Manufacturing', 'Fresh Fed Works'));
     expect((await drawPool(db)).bySegment.Manufacturing).toBeGreaterThanOrEqual(1);
     // A working morning after the draw hour (a fresh database already holds today's draw record).
-    const rec = await runDailyDraw(db, { now: new Date('2026-11-24T04:30:00Z') });
+    const day = new Date();
+    do day.setUTCDate(day.getUTCDate() + 1);
+    while (day.getUTCDay() === 0 || day.getUTCDay() === 6 || day.getTime() - Date.now() < 2 * 86_400_000);
+    day.setUTCHours(4, 30, 0, 0);
+    const rec = await runDailyDraw(db, { now: day });
     expect(rec?.drawn).toBeGreaterThanOrEqual(1);
     const [l] = await db.select().from(leads).where(eq(leads.company, 'Fresh Fed Works'));
     expect(l.ownerId).not.toBeNull();
@@ -135,10 +141,67 @@ describe('the brief for Instinct', () => {
     expect(brief).toContain('ICP: Manufacturing');
     expect(brief).toContain('Priority 1 titles');
     expect(brief).toContain(FEED_COLUMNS.join(' | '));
-    expect(brief).toContain('BOTH a phone number and an email');
+    // Credits are only spent after the duplicate check, and only on one contact per company.
+    expect(brief).toContain('never reveal a phone or email before step 3');
+    expect(brief).toMatch(/Check the company in the sheet tabs "Known" and "Leads"/);
+    expect(brief).toContain('If either one cannot be found, stop and skip the company');
     expect(brief).not.toContain('ICP: CA Firms');
     const [m] = await db.select().from(icps).where(eq(icps.segment, 'Manufacturing'));
     expect(brief).toContain(m.targetTitles.split('\n')[0].trim().slice(0, 20));
     void settings;
+  });
+});
+
+describe('the Known tab: what Instinct checks before it spends credits', () => {
+  it('lists every company the CRM has, once: leads of any stage, clients, the own list and earlier feed rows, with domain and match key', async () => {
+    await db.insert(leads).values([
+      { company: 'Hosur Gears Pvt Ltd', website: 'hosurgears.in', segment: 'Manufacturing', status: 'Contacted' },
+      { company: 'Old Forge', website: '', segment: 'Manufacturing', status: 'Deleted' },
+      { company: 'Hosur Gears Private Limited', website: 'www.hosurgears.in', segment: 'Manufacturing', status: 'Approved' },
+    ]);
+    await db.insert(clients).values({ company: 'Swift Cargo', website: 'swiftcargo.in' });
+    await db.insert(knownCompanies).values({ company: 'Our Own List Co', website: 'ownlist.com', location: 'Pune' });
+    await sync(row('Manufacturing', 'Feed Delivered Co', { Email: '' }));
+    const rows = await knownRows(db);
+    expect(rows[0]).toEqual([...KNOWN_HEADER]);
+    const byName = Object.fromEntries(rows.slice(1).map((r) => [r[0], r]));
+    expect(Object.keys(byName).sort()).toEqual(['Feed Delivered Co', 'Hosur Gears Pvt Ltd', 'Old Forge', 'Our Own List Co', 'Swift Cargo']);
+    expect(byName['Hosur Gears Pvt Ltd']).toEqual(['Hosur Gears Pvt Ltd', 'hosurgears.in', 'hosurgear', 'CRM lead']);
+    expect(byName['Old Forge'][3]).toBe('CRM lead');
+    expect(byName['Swift Cargo'][3]).toBe('Client');
+    expect(byName['Our Own List Co'][3]).toBe('Own list');
+    expect(byName['Feed Delivered Co'][3]).toBe('Instinct feed');
+  });
+
+  it('is written after a sync, with its count in the report; a failed write is reported and never undoes the import', async () => {
+    let written: string[][] = [];
+    const ok = await syncLeadFeed(db, { source: async () => [HEAD, row('Manufacturing', 'Acme Works')], writeKnown: async (r) => { written = r; } });
+    expect(ok).toMatchObject({ imported: 1, known: 1, knownError: '' });
+    expect(written.map((r) => r[0])).toEqual(['Company', 'Acme Works']);
+    const bad = await syncLeadFeed(db, { source: async () => [HEAD, row('Manufacturing', 'Other Works')], writeKnown: async () => { throw new Error('Google Sheets: The caller does not have permission'); } });
+    expect(bad.imported).toBe(1);
+    expect(bad.knownError).toMatch(/Known tab could not be updated.*Editor/);
+    expect(await db.select().from(leads).where(eq(leads.company, 'Other Works'))).toHaveLength(1);
+    expect((await publishKnown(db, { write: async () => {} })).count).toBe(2);
+    await expect(publishKnown(db)).rejects.toThrow(/lead sheet is not set/);
+  });
+
+  it('the sheet writer makes the tab when it is missing, clears it, then writes the rows, with the read-write scope', async () => {
+    const calls: { url: string; method: string; body: string }[] = [];
+    const pem = (await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey;
+    const fake = (async (url: string, init: RequestInit = {}) => {
+      calls.push({ url, method: init.method ?? 'GET', body: typeof init.body === 'string' ? init.body : init.body instanceof URLSearchParams ? init.body.toString() : '' });
+      if (url.includes('oauth2')) return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { status: 200 });
+      if (url.includes('fields=sheets')) return new Response(JSON.stringify({ sheets: [{ properties: { title: 'Leads' } }] }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    await writeTab('SHEET1', 'Known', [['Company'], ['Acme']], { client_email: 'svc@x.iam.gserviceaccount.com', private_key: pem }, fake);
+    const steps = calls.filter((c) => !c.url.includes('oauth2')).map((c) => `${c.method} ${decodeURIComponent(c.url.split('/spreadsheets/')[1])}`);
+    expect(steps).toEqual(["GET SHEET1?fields=sheets.properties.title", 'POST SHEET1:batchUpdate', "POST SHEET1/values/'Known':clear", "PUT SHEET1/values/'Known'!A1?valueInputOption=RAW"]);
+    expect(calls.find((c) => c.method === 'POST' && c.url.includes('batchUpdate'))!.body).toContain('"title":"Known"');
+    expect(calls.at(-1)!.body).toContain('"Acme"');
+    // The sign-in asked for the read-write scope (the assertion is in the signed claim, which is base64url JSON).
+    const jwt = new URLSearchParams(calls[0].body).get('assertion')!.split('.')[1];
+    expect(JSON.parse(Buffer.from(jwt, 'base64url').toString()).scope).toBe('https://www.googleapis.com/auth/spreadsheets');
   });
 });
