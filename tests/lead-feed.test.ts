@@ -217,3 +217,17 @@ describe('the Known tab: what Instinct checks before it spends credits', () => {
     expect(JSON.parse(Buffer.from(jwt, 'base64url').toString()).scope).toBe('https://www.googleapis.com/auth/spreadsheets');
   });
 });
+
+describe('a sheet whose Leads tab is missing', () => {
+  it('says so in plain words and still writes the Known tab, so Instinct can start checking against it', async () => {
+    let written: string[][] = [];
+    const r = await syncLeadFeed(db, {
+      source: async () => { throw new Error('Google Sheets: Unable to parse range: Leads'); },
+      writeKnown: async (rows) => { written = rows; },
+    });
+    expect(r.error).toMatch(/no tab called "Leads".*Rename the tab to exactly Leads, or set LEAD_FEED_SHEET_TAB/);
+    expect(r.known).toBe(0);
+    expect(written[0]).toEqual([...KNOWN_HEADER]);
+    expect(await db.select().from(leads)).toHaveLength(0);
+  });
+});

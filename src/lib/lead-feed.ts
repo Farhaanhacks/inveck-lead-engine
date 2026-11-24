@@ -135,16 +135,31 @@ export async function syncLeadFeed(db: Db, opts: { source?: () => Promise<string
       report.error = 'The Google service account is not configured (GOOGLE_SERVICE_ACCOUNT_JSON).';
       return report;
     }
+    // The Known tab does not depend on the Leads tab: it is brought up to date even when Leads can't be read yet (so Instinct can already
+    // check against it), and a failure here never undoes an import.
+    const writeKnown = async () => {
+      if (!opts.writeKnown && opts.source) return;
+      try {
+        report.known = (await publishKnown(db, { write: opts.writeKnown })).count;
+      } catch (e) {
+        report.knownError = `The Known tab could not be updated: ${e instanceof Error ? e.message : String(e)}. Make the service account an Editor of the sheet.`.slice(0, 300);
+      }
+    };
     let values: string[][];
     try {
       values = await (opts.source ?? (() => readTab(sheetId, tab, creds!)))();
     } catch (e) {
-      report.error = `Could not read the sheet: ${e instanceof Error ? e.message : String(e)}. Share it with the service account's email (Viewer) and check the sheet ID and tab name.`.slice(0, 300);
+      const msg = e instanceof Error ? e.message : String(e);
+      report.error = (/unable to parse range/i.test(msg)
+        ? `The sheet has no tab called "${tab}" (Google says: ${msg}). Rename the tab to exactly ${tab}, or set LEAD_FEED_SHEET_TAB to its name.`
+        : `Could not read the sheet: ${msg}. Share it with the service account's email (Editor) and check the sheet ID and tab name.`).slice(0, 320);
+      await writeKnown();
       return report;
     }
     const parsed = parseFeed(values);
     if (parsed.error) {
       report.error = parsed.error;
+      await writeKnown();
       return report;
     }
     report.read = parsed.rows.length;
@@ -203,14 +218,8 @@ export async function syncLeadFeed(db: Db, opts: { source?: () => Promise<string
       }
     }
 
-    // The Known tab, brought up to date with what was just added, for Instinct's next run (a failure here never undoes the import).
-    if (opts.writeKnown || !opts.source) {
-      try {
-        report.known = (await publishKnown(db, { write: opts.writeKnown })).count;
-      } catch (e) {
-        report.knownError = `The Known tab could not be updated: ${e instanceof Error ? e.message : String(e)}. Make the service account an Editor of the sheet.`.slice(0, 300);
-      }
-    }
+    // The Known tab, brought up to date with what was just added, for Instinct's next run.
+    await writeKnown();
     return report;
   } finally {
     await db.insert(settings).values({ key: REPORT_KEY, value: report }).onConflictDoUpdate({ target: settings.key, set: { value: report } });
