@@ -1,6 +1,5 @@
 import Link from 'next/link';
-import { and, eq, ilike, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
-import { INBOUND_SOURCE } from '@/lib/inbound-source';
+import { and, eq, ilike, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import { after } from 'next/server';
 import { ensureResearch, liveServices, requestOrigin } from '@/lib/run-driver';
@@ -65,8 +64,8 @@ export default async function LeadsPage({ searchParams }: PageProps<'/leads'>) {
   const isAdmin = me?.role === 'admin';
   const ownerParam = !isAdmin ? 'me' : typeof sp.owner === 'string' ? sp.owner : 'all';
   const ownerId = ownerParam === 'me' ? me?.id : Number(ownerParam) || 0;
-  // Inbound demo requests have their own section (Inbound leads): never mixed in here.
-  const filters: SQL[] = [ne(leads.source, INBOUND_SOURCE)];
+  // Inbound demo requests are listed here too (tagged "Inbound"); they also have their own section.
+  const filters: SQL[] = [];
   if (ownerId) filters.push(eq(leads.ownerId, ownerId));
   if (segment) filters.push(eq(leads.segment, segment));
   if (q) filters.push(or(ilike(leads.company, `%${q}%`), ilike(leads.contactName, `%${q}%`), ilike(leads.city, `%${q}%`))!);

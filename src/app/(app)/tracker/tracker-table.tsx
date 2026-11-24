@@ -18,6 +18,7 @@ export type TrackerViewRow = {
   remark: string;
   linkedin: string;
   website: string;
+  inbound: boolean;
 };
 
 type Field = 'callFeedback' | 'callStatus' | 'contactChannel' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
@@ -193,6 +194,7 @@ export function TrackerTable({
               <td className={`${td} sticky left-0 z-[5] bg-surface font-medium`}>
                 <Link href={`/leads/${r.id}`} className="hover:underline">{r.cells.company}</Link>
                 {r.website && <div className="font-normal text-muted">{r.website}</div>}
+                {r.inbound && <div className="text-xs font-normal text-muted">Inbound</div>}
               </td>
               <td className={td}>{r.cells.location}</td>
               <td className={td}>

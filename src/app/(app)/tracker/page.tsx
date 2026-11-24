@@ -65,6 +65,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       remark: r.lead.remark,
       linkedin: r.lead.contactLinkedin,
       website: r.lead.website,
+      inbound: r.lead.inbound,
     };
   });
 

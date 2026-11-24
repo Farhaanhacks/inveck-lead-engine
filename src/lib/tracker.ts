@@ -1,5 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne, notInArray } from 'drizzle-orm';
-import { INBOUND_SOURCE } from './inbound-source';
+import { and, desc, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
 import type { Db } from './db';
 import { leads, tasks, users, type Lead } from './db/schema';
 import { isLinkedinResponse, linkedinOutcomeLabel, LI_NEGATIVE, LI_NEUTRAL, LI_NOT_ACTIVE, LI_POSITIVE, LI_REPLIED_LEGACY } from './linkedin-outcomes';
@@ -156,7 +155,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
     .select()
     .from(leads)
     // Not companies ruled out, or whose fit is still being reviewed (they aren't worked yet).
-    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), notInArray(leads.status, ['Disqualified', 'Deleted']), ne(leads.source, INBOUND_SOURCE)))
+    .where(and(ownerId === null ? undefined : eq(leads.ownerId, ownerId), notInArray(leads.status, ['Disqualified', 'Deleted'])))
     .orderBy(desc(leads.updatedAt))
     .limit(2000);
   if (!rows.length) return [];

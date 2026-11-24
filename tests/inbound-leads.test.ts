@@ -98,12 +98,12 @@ describe('the Inbound leads list and cards', () => {
 });
 
 describe('kept apart from prospecting leads', () => {
-  it('inbound leads never appear in the follow-up funnel or the tracker, and nothing existing is reclassified', async () => {
+  it('inbound leads stay out of the follow-up funnel but show in the tracker, and nothing existing is reclassified', async () => {
     const inbound = await make({}, '2026-10-05T04:00:00Z', { status: 'Contacted' });
     const cold = (await db.insert(leads).values({ company: 'Cold Co', segment: 'Manufacturing', status: 'Contacted', ownerId: owner, followUpStartedOn: istDay() }).returning())[0];
     for (const l of [inbound, cold]) await db.insert(tasks).values({ leadId: l.id, ownerId: owner, kind: 'call', step: 'Follow-up 1', title: 'f', followUpRound: 1, dueDate: istDay() });
     expect((await loadFunnel(db, owner)).map((c) => c.lead.company)).toEqual(['Cold Co']);
-    expect((await loadTracker(db, owner)).map((t) => t.lead.company)).toEqual(['Cold Co']);
+    expect((await loadTracker(db, owner)).map((t) => t.lead.company).sort()).toEqual(['Cold Co', inbound.company].sort());
     // The existing lead was not touched or made inbound.
     expect((await db.select().from(leads).where(eq(leads.id, cold.id)))[0]).toMatchObject({ inbound: false, source: '' });
     expect((await loadInbound(db)).map((r) => r.lead.company)).toEqual([inbound.company]);
