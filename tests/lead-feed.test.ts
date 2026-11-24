@@ -95,17 +95,29 @@ describe('the sync', () => {
     expect((await lastFeedReport(db))?.imported).toBe(1);
   });
 
-  it('turns the Serper morning search off once, when the feed first brings in leads; turning it back on is respected', async () => {
+  it('the scheduled Serper prospect search is switched off for good, once; turning it back on in Settings is respected', async () => {
+    const { switchOffSerperSearchOnce } = await import('@/lib/lead-feed');
+    const { searchesThisMorning } = await import('@/lib/sourcing/morning');
+    // Without a sheet for the feed nothing replaces the search: it stays on.
     await saveSettings(db, { ...(await getSettings(db)), morningSearch: true });
-    const none = await sync(row('Manufacturing', 'No Email Co', { Email: '' }));
-    expect(none.searchSwitchedOff).toBe(false);
+    await switchOffSerperSearchOnce(db);
     expect((await getSettings(db)).morningSearch).toBe(true);
-    const first = await sync(row('Manufacturing', 'First Co'));
-    expect(first.searchSwitchedOff).toBe(true);
+    // With the feed's sheet set (as in production) it goes off, once.
+    process.env.LEAD_FEED_SHEET_ID = 'sheet-id-for-the-test';
+    await switchOffSerperSearchOnce(db);
     expect((await getSettings(db)).morningSearch).toBe(false);
+    // A Tuesday morning, far enough ahead to be a working day: no search runs.
+    expect(await searchesThisMorning(db, await getSettings(db), new Date('2026-12-08T01:00:00Z'))).toBe(false);
+    // Turned back on by an administrator: it stays on (the step never runs twice).
     await saveSettings(db, { ...(await getSettings(db)), morningSearch: true });
-    const second = await sync(row('Manufacturing', 'Second Co'));
-    expect(second.searchSwitchedOff).toBe(false);
+    await switchOffSerperSearchOnce(db);
+    expect((await getSettings(db)).morningSearch).toBe(true);
+    delete process.env.LEAD_FEED_SHEET_ID;
+  });
+
+  it('bringing in leads no longer changes the search setting', async () => {
+    await saveSettings(db, { ...(await getSettings(db)), morningSearch: true });
+    await sync(row('Manufacturing', 'First Co'));
     expect((await getSettings(db)).morningSearch).toBe(true);
   });
 

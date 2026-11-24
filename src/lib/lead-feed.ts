@@ -85,8 +85,8 @@ export function parseFeed(values: string[][]): { rows: FeedRow[]; error: string 
 export const feedKey = (company: string) => companyKeys(company)[0] ?? company.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export type FeedProblem = { company: string; sheetRow: number; reason: string };
-export type FeedReport = { at: string; read: number; imported: number; duplicates: number; skipped: FeedProblem[]; error: string; searchSwitchedOff: boolean; /** Companies written to the Known tab, and why that failed if it did. */ known: number; knownError: string };
-const emptyReport = (): FeedReport => ({ at: new Date().toISOString(), read: 0, imported: 0, duplicates: 0, skipped: [], error: '', searchSwitchedOff: false, known: 0, knownError: '' });
+export type FeedReport = { at: string; read: number; imported: number; duplicates: number; skipped: FeedProblem[]; error: string; /** Companies written to the Known tab, and why that failed if it did. */ known: number; knownError: string };
+const emptyReport = (): FeedReport => ({ at: new Date().toISOString(), read: 0, imported: 0, duplicates: 0, skipped: [], error: '', known: 0, knownError: '' });
 export const lastFeedReport = async (db: Db) => ((await db.select().from(settings).where(eq(settings.key, REPORT_KEY)))[0]?.value ?? null) as FeedReport | null;
 
 /** Why a row can't be a lead yet, or '' when it can (with the cleaned phone and email). */
@@ -203,16 +203,6 @@ export async function syncLeadFeed(db: Db, opts: { source?: () => Promise<string
       }
     }
 
-    // The feed replaces the Serper prospect search: once it has brought in leads, the morning search is switched off, once (Settings can turn it back on).
-    if (report.imported > 0) {
-      const marker = 'leadFeedSearchOffV1';
-      if (!(await db.select().from(settings).where(eq(settings.key, marker))).length) {
-        const s = await getSettings(db);
-        if (s.morningSearch) await saveSettings(db, { ...s, morningSearch: false });
-        await db.insert(settings).values({ key: marker, value: { at: now.toISOString() } }).onConflictDoNothing();
-        report.searchSwitchedOff = true;
-      }
-    }
     // The Known tab, brought up to date with what was just added, for Instinct's next run (a failure here never undoes the import).
     if (opts.writeKnown || !opts.source) {
       try {
@@ -298,3 +288,18 @@ export function instinctBrief(list: Pick<Icp, 'segment' | 'description' | 'indus
 export const feedConfigured = () => !!process.env.LEAD_FEED_SHEET_ID?.trim() && !!googleCredentials();
 export const feedTab = () => process.env.LEAD_FEED_SHEET_TAB?.trim() || FEED_TAB_DEFAULT;
 export { feedIcps };
+
+/**
+ * Once: the scheduled Serper prospect search (the 6 am Morning Sample and the evening one) is switched off for good, because the feed
+ * now brings in the leads (it waits for LEAD_FEED_SHEET_ID: until the feed has a sheet, nothing replaces the search). It is the Settings checkbox "morningSearch" set to off, so an administrator can still turn it back on there;
+ * this only runs once and never switches it off again. Contact checks on leads already in the CRM are separate and keep running.
+ */
+export async function switchOffSerperSearchOnce(db: Db): Promise<void> {
+  // Only once the feed has a sheet: with nothing replacing it, switching the search off would leave the draw with no leads.
+  if (!process.env.LEAD_FEED_SHEET_ID?.trim()) return;
+  const key = 'serperSearchOffV1';
+  if ((await db.select().from(settings).where(eq(settings.key, key))).length) return;
+  const s = await getSettings(db);
+  if (s.morningSearch) await saveSettings(db, { ...s, morningSearch: false });
+  await db.insert(settings).values({ key, value: { at: new Date().toISOString(), was: s.morningSearch } }).onConflictDoNothing();
+}

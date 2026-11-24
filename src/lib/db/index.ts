@@ -5,6 +5,7 @@ import * as schema from './schema';
 import { SCHEMA_STATEMENTS } from './migrate';
 import { BLOG_SCHEMA_STATEMENTS } from '../blogs/db/ddl';
 import { ensureBlogProfile } from '../blogs/seed';
+import { switchOffSerperSearchOnce } from '../lead-feed';
 import { removeTopFromP1, upgradeLogisticsIcpV2, upgradeLogisticsIcpV3, seedIfEmpty, upgradeIcpsV2, upgradeManufacturingDealBreakersV5, upgradeManufacturingHeavyV4, upgradeManufacturingIndustriesV3 } from './seed';
 import { ensureBlogsUser, ensureMarketingUser, seedUsers } from '../passwords';
 import { reconcileFollowUpsOnce } from '../follow-up-reconcile';
@@ -73,6 +74,7 @@ async function connect(): Promise<Db> {
     await seedConfiguration(db);
     await migrateEmailTemplatesOnce(db);
     await ensureMarketingUser(db);
+    await switchOffSerperSearchOnce(db);
     await endWrongNumberSequencesOnce(db);
     await reconcileFollowUpsOnce(db);
     await retireWithoutContactOnce(db);

@@ -89,7 +89,6 @@ export default async function SettingsPage() {
                 <p className="text-muted">Last sync {formatDate(new Date(feed.at))}: {feed.read} rows read, {feed.imported} new leads, {feed.duplicates} already known.</p>
                 <p className="text-muted">Known tab (what Instinct checks before spending credits): {feed.knownError ? '' : `${feed.known} companies written.`}</p>
                 {feed.knownError && <p className="text-critical-ink">{feed.knownError}</p>}
-                {feed.searchSwitchedOff && <p className="text-ink-2">The morning prospect search (Serper) was switched off now that the feed brings in leads; you can turn it back on below.</p>}
                 {feed.error && <p className="text-critical-ink">{feed.error}</p>}
                 {feed.skipped.length > 0 && (
                   <div><div className="font-medium text-ink-2">Not usable yet ({feed.skipped.length})</div><ul className="list-disc pl-4 text-ink-2">{feed.skipped.slice(0, 30).map((b) => <li key={`${b.sheetRow}-${b.company}`}>Row {b.sheetRow}, {b.company || 'no company'}: {b.reason}</li>)}</ul></div>
