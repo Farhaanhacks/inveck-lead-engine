@@ -40,10 +40,11 @@ describe('reading the sheet', () => {
     expect(p(row('3PL & Logistics', 'Swift')).segment).toBe('3PL & Logistics');
     expect(p(row('Retail', 'Acme')).reason).toMatch(/ICP "Retail"/);
     expect(p(row('CA Firms', 'Acme')).reason).toMatch(/not one of the app's active ICPs/);
-    expect(p(row('Manufacturing', 'Acme', { Email: '' })).reason).toBe('no valid email');
-    expect(p(row('Manufacturing', 'Acme', { Email: 'not-an-email' })).reason).toBe('no valid email');
+    // An email is optional: a lead with a phone and no (or a bad) email is usable.
+    expect(p(row('Manufacturing', 'Acme', { Email: '' })).reason).toBe('');
+    expect(p(row('Manufacturing', 'Acme', { Email: 'not-an-email' })).emails).toEqual([]);
     expect(p(row('Manufacturing', 'Acme', { Phone: '' })).reason).toBe('no valid phone number');
-    expect(p(row('Manufacturing', 'Acme', { Phone: '123', Email: '' })).reason).toBe('no phone number and no email');
+    expect(p(row('Manufacturing', 'Acme', { Phone: '123', Email: '' })).reason).toBe('no valid phone number');
     expect(p(row('Manufacturing', 'Acme', { 'Contact Name': '' })).reason).toBe('no contact name');
   });
 });
@@ -82,14 +83,14 @@ describe('the sync', () => {
   });
 
   it('is safe to run again: imported companies are not touched, unusable rows are read again and imported once fixed', async () => {
-    const bad = row('Manufacturing', 'Needs Email', { Email: '' });
+    const bad = row('Manufacturing', 'Needs Phone', { Phone: '' });
     const first = await sync(row('Manufacturing', 'Good Co'), bad);
     expect(first).toMatchObject({ imported: 1 });
-    expect(first.skipped).toEqual([{ company: 'Needs Email', sheetRow: 3, reason: 'no valid email' }]);
+    expect(first.skipped).toEqual([{ company: 'Needs Phone', sheetRow: 3, reason: 'no valid phone number' }]);
     const again = await sync(row('Manufacturing', 'Good Co'), bad);
     expect(again).toMatchObject({ read: 2, imported: 0, duplicates: 0 });
     expect(again.skipped).toHaveLength(1);
-    const fixed = await sync(row('Manufacturing', 'Good Co'), row('Manufacturing', 'Needs Email', { Email: 'now@example.com' }));
+    const fixed = await sync(row('Manufacturing', 'Good Co'), row('Manufacturing', 'Needs Phone', { Phone: '+91 98765 43210' }));
     expect(fixed).toMatchObject({ imported: 1, skipped: [] });
     expect(await db.select().from(leads).where(eq(leads.source, ''))).toHaveLength(2);
     expect((await lastFeedReport(db))?.imported).toBe(1);
@@ -156,7 +157,7 @@ describe('the brief for Instinct', () => {
     // Credits are only spent after the duplicate check, and only on one contact per company.
     expect(brief).toContain('never reveal a phone or email before step 3');
     expect(brief).toMatch(/Check the company in the sheet tabs "Known" and "Leads"/);
-    expect(brief).toContain('If either one cannot be found, stop and skip the company');
+    expect(brief).toContain('The phone number is required: if it cannot be found, stop and skip the company');
     expect(brief).not.toContain('ICP: CA Firms');
     const [m] = await db.select().from(icps).where(eq(icps.segment, 'Manufacturing'));
     expect(brief).toContain(m.targetTitles.split('\n')[0].trim().slice(0, 20));
@@ -173,7 +174,7 @@ describe('the Known tab: what Instinct checks before it spends credits', () => {
     ]);
     await db.insert(clients).values({ company: 'Swift Cargo', website: 'swiftcargo.in' });
     await db.insert(knownCompanies).values({ company: 'Our Own List Co', website: 'ownlist.com', location: 'Pune' });
-    await sync(row('Manufacturing', 'Feed Delivered Co', { Email: '' }));
+    await sync(row('Manufacturing', 'Feed Delivered Co', { Phone: '' }));
     const rows = await knownRows(db);
     expect(rows[0]).toEqual([...KNOWN_HEADER]);
     const byName = Object.fromEntries(rows.slice(1).map((r) => [r[0], r]));

@@ -20,7 +20,7 @@ import { domainOf } from './pipeline/text';
  *
  * - one company is one lead: a company already a lead, a client or on the team's own list is never added again (the same company
  *   check as everywhere, by name and website), nor twice in the sheet;
- * - usable means an ICP the app has, a named contact, and BOTH a valid phone number and a valid email;
+ * - usable means an ICP the app has, a named contact, and BOTH a valid phone number (an email is optional);
  * - the lead shows no source, is not researched (Instinct already judged the fit) and its contact is taken as checked.
  */
 export const FEED_TAB_DEFAULT = 'Leads';
@@ -97,9 +97,8 @@ export function feedProblem(r: FeedRow, activeIcps: Icp[]): { reason: string; se
   if (!r.name) return { reason: 'no contact name' };
   const phones = r.phones.map((p) => cleanPhone(p)).filter((p): p is string => !!p);
   const emails = r.emails.map((e) => cleanEmail(e)).filter((e): e is string => !!e);
-  if (!phones.length && !emails.length) return { reason: 'no phone number and no email' };
+  // A phone number is needed; an email is welcome but optional (the lead is worked by call and WhatsApp without one).
   if (!phones.length) return { reason: 'no valid phone number' };
-  if (!emails.length) return { reason: 'no valid email' };
   return { reason: '', segment: match.icp.segment, phones: [...new Set(phones)], emails: [...new Set(emails)] };
 }
 
@@ -283,7 +282,7 @@ export function instinctBrief(list: Pick<Icp, 'segment' | 'description' | 'indus
     'Order of work (this saves Zintlr credits: never reveal a phone or email before step 3):',
     '1. Find a company and its best contact (P1 titles first, then P2, then P3) WITHOUT revealing contact details.',
     `2. Check the company in the sheet tabs "${KNOWN_TAB_DEFAULT}" and "${FEED_TAB_DEFAULT}": match by Domain first, then by company name (ignore Pvt, Ltd, Limited, India, brackets and case). If it is listed in either tab, skip it and spend nothing on it. The "${KNOWN_TAB_DEFAULT}" tab lists every company the CRM already has and is refreshed every morning before you start; never edit it.`,
-    '3. Only then reveal the phone number and email, for that ONE contact. If either one cannot be found, stop and skip the company.',
+    '3. Only then reveal the phone number and email, for that ONE contact. The phone number is required: if it cannot be found, stop and skip the company. If the email cannot be found, still write the company and leave the Email cell empty.',
     '',
     'Rules:',
     '- One row per company, one contact each: never a second person at the same company.',

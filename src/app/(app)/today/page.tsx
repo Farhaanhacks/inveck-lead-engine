@@ -128,7 +128,7 @@ function Counter({ label, done, goal, note }: { label: string; done: number; goa
 function Reach({ lead, emails = [] }: { lead: Lead; emails?: string[] }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-      {/* Only a number the team found and saved: phone numbers aren't collected automatically. */}
+      {/* The number saved on the lead (from the lead feed or found by the team); the call, WhatsApp and email steps work from it. */}
       <PhoneLinks value={lead.contactPhone} className="font-medium text-accent hover:underline" />
       {/* Every saved email, on every round (not only on a day with an email step). */}
       {emails.map((e) => (
