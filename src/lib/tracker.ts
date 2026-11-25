@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
 import type { Db } from './db';
-import { leads, tasks, users, type Lead } from './db/schema';
+import { leads, people, tasks, users, type Lead, type Person } from './db/schema';
 import { isLinkedinResponse, linkedinOutcomeLabel, LI_NEGATIVE, LI_NEUTRAL, LI_NOT_ACTIVE, LI_POSITIVE, LI_REPLIED_LEGACY } from './linkedin-outcomes';
 
 /** What a connected (or attempted) call came to: the "Call Outcome / Feedback" dropdown. */
@@ -48,6 +48,8 @@ export const TRACKER_FIELDS = {
   linkedinOutcome: LINKEDIN_OUTCOMES,
 } as const;
 export type TrackerField = keyof typeof TRACKER_FIELDS | 'remark' | 'callRemark';
+/** What the Tracker keeps for each extra contact: everything but the point-of-contact channel, which is the company's. */
+export const CONTACT_FIELDS: readonly TrackerField[] = ['callStatus', 'callFeedback', 'callRemark', 'mailOutcome', 'linkedinOutcome', 'remark'];
 
 /**
  * A contact number as typed on the tracker: spaces tidied; digits, spaces and + - ( ) / , . only, at
@@ -139,7 +141,12 @@ export type TrackerRow = {
   autoChannel: string;
   mailOutcome: string;
   linkedinOutcome: string;
+  /** The other people the team added at this company, each tracked on their own. */
+  contacts: Person[];
 };
+
+/** A person the team added beside the main contact (not a number or an address kept for the company). */
+const isExtraContact = (p: Person) => !p.isPrimary && !p.passedAt && p.source === 'Added by the team' && p.name !== 'Other number' && p.name !== 'Other email';
 
 /** Where the conversation happened, from what was logged: a connected call, an email or LinkedIn reply. */
 function channelFromLog(lead: Lead, calls: { outcome: string }[]): string {
@@ -160,7 +167,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
     .limit(2000);
   if (!rows.length) return [];
   const ids = rows.map((l) => l.id);
-  const [calls, sent, team] = await Promise.all([
+  const [calls, sent, team, others] = await Promise.all([
     db
       .select({ leadId: tasks.leadId, outcome: tasks.outcome, note: tasks.note, doneAt: tasks.doneAt })
       .from(tasks)
@@ -171,7 +178,9 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       .from(tasks)
       .where(and(inArray(tasks.leadId, ids), inArray(tasks.kind, ['email', 'linkedin']), inArray(tasks.outcome, ['sent', 'done']))),
     db.select({ id: users.id, name: users.name }).from(users),
+    db.select().from(people).where(and(inArray(people.leadId, ids), eq(people.isPrimary, false))).orderBy(people.id),
   ]);
+  const extra = others.filter(isExtraContact);
   const names = new Map(team.map((u) => [u.id, u.name]));
   const emailed = new Set(sent.filter((s) => s.kind === 'email').map((s) => s.leadId));
   const linked = new Set(sent.filter((s) => s.kind === 'linkedin').map((s) => s.leadId));
@@ -191,6 +200,7 @@ export async function loadTracker(db: Db, ownerId: number | null): Promise<Track
       autoChannel: channelFromLog(lead, mine),
       // Logged sends fill these in until someone picks an outcome by hand.
       mailOutcome: lead.mailOutcome || (emailed.has(lead.id) || lead.sentAt ? 'Sent' : ''),
+      contacts: extra.filter((p) => p.leadId === lead.id),
       linkedinOutcome: lead.linkedinOutcome || (linked.has(lead.id) ? 'Request sent' : lead.contactLinkedin ? 'Not sent' : LI_NOT_ACTIVE),
     };
   });

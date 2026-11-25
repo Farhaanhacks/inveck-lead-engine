@@ -848,4 +848,6 @@ export const SCHEMA_STATEMENTS = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Each extra contact at a company has its own call, mail and LinkedIn status and remarks in the Tracker.
+  ...['call_status', 'call_feedback', 'call_remark', 'mail_outcome', 'linkedin_outcome', 'remark'].map((c) => `ALTER TABLE people ADD COLUMN IF NOT EXISTS ${c} TEXT NOT NULL DEFAULT ''`),
 ];

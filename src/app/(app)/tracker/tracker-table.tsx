@@ -1,9 +1,26 @@
 'use client';
 import Link from 'next/link';
-import { useState, useTransition } from 'react';
-import { updateTrackerEmailAction, updateTrackerFieldAction, updateTrackerPhoneAction } from '../../team-actions';
+import { Fragment, useRef, useState, useTransition } from 'react';
+import { updateTrackerContactFieldAction, updateTrackerEmailAction, updateTrackerFieldAction, updateTrackerPhoneAction } from '../../team-actions';
+import { addPointOfContactAction } from '../../actions';
 import { AddLeadRow } from './add-lead';
 import { LI_REPLIED_LEGACY, linkedinOutcomeLabel } from '@/lib/linkedin-outcomes';
+
+/** Someone the team added at a company beside the main contact, with their own statuses. */
+export type ContactView = {
+  id: number;
+  name: string;
+  title: string;
+  phone: string;
+  email: string;
+  linkedin: string;
+  callStatus: string;
+  callFeedback: string;
+  callRemark: string;
+  mailOutcome: string;
+  linkedinOutcome: string;
+  remark: string;
+};
 
 export type TrackerViewRow = {
   id: number;
@@ -18,14 +35,18 @@ export type TrackerViewRow = {
   remark: string;
   linkedin: string;
   website: string;
-  inbound: boolean;
+  origin: string;
+  contacts: ContactView[];
 };
 
 type Field = 'callFeedback' | 'callStatus' | 'contactChannel' | 'mailOutcome' | 'linkedinOutcome' | 'remark' | 'callRemark';
 
 const CELL = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink hover:border-line focus:border-accent focus:outline-none';
 
-function Choice({ id, field, value, options, label, empty = '—', narrow = false, labels = {} }: { id: number; field: Field; value: string; options: readonly string[]; label: string; empty?: string; narrow?: boolean; labels?: Record<string, string> }) {
+/** A company's cell saves on the lead; an extra contact's (`contact`) on that person, so each is tracked on their own. */
+const saveField = (contact: boolean) => (contact ? updateTrackerContactFieldAction : updateTrackerFieldAction);
+
+function Choice({ id, field, value, options, label, empty = '—', narrow = false, labels = {}, contact = false }: { id: number; field: Field; value: string; options: readonly string[]; label: string; empty?: string; narrow?: boolean; labels?: Record<string, string>; contact?: boolean }) {
   const [v, setV] = useState(value);
   const [state, setState] = useState<'' | 'saving' | 'error'>('');
   const [, start] = useTransition();
@@ -38,7 +59,7 @@ function Choice({ id, field, value, options, label, empty = '—', narrow = fals
         setV(next);
         setState('saving');
         start(async () => {
-          const r = await updateTrackerFieldAction(id, field, next);
+          const r = await saveField(contact)(id, field, next);
           setState(r.ok ? '' : 'error');
           if (!r.ok) setV(value);
         });
@@ -51,7 +72,7 @@ function Choice({ id, field, value, options, label, empty = '—', narrow = fals
   );
 }
 
-function Remark({ id, value, label, field = 'remark', placeholder = 'Add a remark' }: { id: number; value: string; label: string; field?: 'remark' | 'callRemark'; placeholder?: string }) {
+function Remark({ id, value, label, field = 'remark', placeholder = 'Add a remark', contact = false }: { id: number; value: string; label: string; field?: 'remark' | 'callRemark'; placeholder?: string; contact?: boolean }) {
   const [saved, setSaved] = useState(value);
   const [error, setError] = useState(false);
   return (
@@ -62,7 +83,7 @@ function Remark({ id, value, label, field = 'remark', placeholder = 'Add a remar
       onBlur={async (e) => {
         const next = e.currentTarget.value.trim();
         if (next === saved) return;
-        const r = await updateTrackerFieldAction(id, field, next);
+        const r = await saveField(contact)(id, field, next);
         if (r.ok) {
           setSaved(next);
           setError(false);
@@ -148,6 +169,34 @@ function Email({ id, value, label }: { id: number; value: string; label: string 
   );
 }
 
+/** "+ Contact" under a company: another person at it, who is then tracked on their own row. */
+function AddContact({ id, company }: { id: number; company: string }) {
+  const box = useRef<HTMLDetailsElement>(null);
+  const [problem, setProblem] = useState(false);
+  return (
+    <details ref={box} className="mt-1 font-normal">
+      <summary className="cursor-pointer text-xs text-accent hover:underline">+ Contact</summary>
+      <form
+        className="mt-1 grid w-60 gap-1"
+        action={async (fd) => {
+          const before = fd.get('name');
+          await addPointOfContactAction(fd);
+          // Nothing is added from a form with nothing valid in it: it stays open to be corrected.
+          setProblem(!before && !fd.get('phone') && !fd.get('email') && !fd.get('linkedin'));
+          if (before || fd.get('phone') || fd.get('email') || fd.get('linkedin')) box.current?.removeAttribute('open');
+        }}
+      >
+        <input type="hidden" name="id" value={id} />
+        {([['name', 'Name'], ['title', 'Designation'], ['phone', 'Number'], ['email', 'Email'], ['linkedin', 'LinkedIn URL']] as const).map(([n, l]) => (
+          <input key={n} name={n} placeholder={l} aria-label={`${company}: new contact ${l.toLowerCase()}`} className={`${CELL} border-line bg-surface`} />
+        ))}
+        {problem && <span role="alert" className="text-critical-ink">Add at least a name, number, email or LinkedIn.</span>}
+        <button className="btn-secondary h-7 px-2 py-0 text-xs">Add contact</button>
+      </form>
+    </details>
+  );
+}
+
 export function TrackerTable({
   rows,
   options,
@@ -190,11 +239,13 @@ export function TrackerTable({
         <tbody>
           <AddLeadRow segments={segments} columns={showOwner ? 20 : 19} showOwner={showOwner} />
           {rows.map((r) => (
-            <tr key={r.id} className="hover:bg-surface-2/50">
+            <Fragment key={r.id}>
+            <tr className="hover:bg-surface-2/50">
               <td className={`${td} sticky left-0 z-[5] bg-surface font-medium`}>
                 <Link href={`/leads/${r.id}`} className="hover:underline">{r.cells.company}</Link>
                 {r.website && <div className="font-normal text-muted">{r.website}</div>}
-                {r.inbound && <div className="text-xs font-normal text-muted">Inbound</div>}
+                <div className="text-xs font-normal text-muted">{r.origin}</div>
+                <AddContact id={r.id} company={r.cells.company} />
               </td>
               <td className={td}>{r.cells.location}</td>
               <td className={td}>
@@ -232,6 +283,33 @@ export function TrackerTable({
               <td className={`${td} whitespace-nowrap`}>{r.cells.date}</td>
               {showOwner && <td className={td}>{r.cells.owner}</td>}
             </tr>
+            {r.contacts.map((c) => (
+              <tr key={`c${c.id}`} className="bg-surface-2/30 hover:bg-surface-2/50">
+                <td className={`${td} sticky left-0 z-[5] bg-surface pl-5 font-normal text-ink-2`}>↳ {r.cells.company}</td>
+                <td className={td} />
+                <td className={td}>
+                  {c.name}
+                  {c.linkedin && <div><a href={c.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn</a></div>}
+                </td>
+                <td className={`${td} max-w-[14rem]`}>{c.title}</td>
+                <td className={td} />
+                <td className={td}>{c.phone}</td>
+                <td className={td}>{c.email}</td>
+                <td className={`${td} p-1`}><Choice contact id={c.id} field="callStatus" value={c.callStatus} options={options.callStatus} label={`${c.name}: call status`} /></td>
+                <td className={`${td} p-1`}><Choice contact id={c.id} field="callFeedback" value={c.callFeedback} options={options.callFeedback} label={`${c.name}: call outcome`} /></td>
+                <td className={`${td} p-1`}><Remark contact id={c.id} field="callRemark" value={c.callRemark} placeholder="Add a call remark" label={`${c.name}: call remark`} /></td>
+                <td className={td} />
+                <td className={td} />
+                <td className={`${td} p-1`}><Choice contact id={c.id} field="mailOutcome" value={c.mailOutcome} options={options.mailOutcome} label={`${c.name}: mail outcome`} /></td>
+                <td className={`${td} p-1`}><Choice contact id={c.id} field="linkedinOutcome" value={c.linkedinOutcome} options={c.linkedinOutcome === LI_REPLIED_LEGACY ? [...options.linkedinOutcome, LI_REPLIED_LEGACY] : options.linkedinOutcome} labels={{ [LI_REPLIED_LEGACY]: linkedinOutcomeLabel(LI_REPLIED_LEGACY) }} label={`${c.name}: LinkedIn outcome`} /></td>
+                <td className={td} />
+                <td className={`${td} p-1`}><Remark contact id={c.id} value={c.remark} label={`${c.name}: remark`} /></td>
+                <td className={td} />
+                <td className={td} />
+                {showOwner && <td className={td} />}
+              </tr>
+            ))}
+            </Fragment>
           ))}
         </tbody>
       </table>

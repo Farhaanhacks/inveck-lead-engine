@@ -22,7 +22,7 @@ import { clockIn, clockOut } from '@/lib/attendance';
 import { canReassign } from '@/lib/assign';
 import { runDailyDraw, topUpDraw } from '@/lib/draw';
 import { runCaDraw } from '@/lib/ca-sheet';
-import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
+import { CALL_FEEDBACK, CLIENT_OUTCOMES, cleanPhone, CONTACT_FIELDS, NOT_INTERESTED, validTrackerValue, type TrackerField } from '@/lib/tracker';
 import { mayActOn } from '@/lib/access';
 import { addPhone, dropFirstPhone, putPhoneBack, waNumber } from '@/lib/phones';
 import { ON_A_CALL, recordConsent, undoCallConsent, WA_DETAILS_STEP } from '@/lib/whatsapp/contacts';
@@ -572,6 +572,26 @@ export async function updateTrackerFieldAction(id: number, field: TrackerField, 
   }
   revalidatePath('/tracker');
   revalidatePath(`/leads/${id}`);
+  return { ok: true };
+}
+
+/**
+ * A status or remark for one extra contact at a company (a person added beside the main contact). Each contact has their own,
+ * so changing one never touches the company's or another contact's. Only the company's owner (or an administrator) can.
+ */
+export async function updateTrackerContactFieldAction(personId: number, field: TrackerField, value: string): Promise<{ ok: boolean }> {
+  const clean = String(value ?? '').trim();
+  if (!CONTACT_FIELDS.includes(field) || !validTrackerValue(field, clean)) return { ok: false };
+  const db = await getDb();
+  const [person] = await db.select().from(people).where(and(eq(people.id, Number(personId)), eq(people.isPrimary, false)));
+  if (!person || !(await mayActOn(person.leadId))) return { ok: false };
+  await db.update(people).set({ [field]: clean }).where(eq(people.id, person.id));
+  if (field !== 'remark' && field !== 'callRemark' && clean) {
+    const label = field === 'callStatus' ? 'Call status' : field === 'callFeedback' ? 'Call outcome' : field === 'mailOutcome' ? 'Mail outcome' : 'LinkedIn outcome';
+    await logActivity(db, person.leadId, 'note', `${person.name}: ${label}: ${clean}`);
+  }
+  revalidatePath('/tracker');
+  revalidatePath(`/leads/${person.leadId}`);
   return { ok: true };
 }
 

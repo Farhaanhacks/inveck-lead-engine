@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/page-header';
 import { AutoFilterForm } from '@/components/auto-filter-form';
 import { TrackerTable, type TrackerViewRow } from './tracker-table';
 import { icps } from '@/lib/db/schema';
+import { cleanOrigin, ORIGINS, originOf } from '@/lib/lead-origin';
 
 export default async function TrackerPage({ searchParams }: PageProps<'/tracker'>) {
   const me = (await getCurrentUser())!;
@@ -23,14 +24,21 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   const outcome = cleanOutcome(medium, legacyCall ? sp.feedback : sp.outcome);
   // A date, or a range of dates (start and end), on the day the lead was added or last called.
   const dateBy = DATE_FILTERS.some((d) => d.value === sp.dateBy) ? (sp.dateBy as 'added' | 'call') : 'added';
+  // The company type (segment) and where the data came from: Manual research, System data or Inbound.
+  const segment = typeof sp.segment === 'string' ? sp.segment : '';
+  const origin = cleanOrigin(sp.origin);
   const from = cleanDay(sp.from);
   const to = cleanDay(sp.to);
   const backwards = !!from && !!to && from > to;
   const [all, segmentRows] = await Promise.all([loadTracker(db, ownerScope(me)), db.select({ segment: icps.segment, active: icps.active }).from(icps)]);
   const segments = segmentRows.filter((r) => r.active).map((r) => r.segment);
+  // Every company type in the list, even one whose ICP is switched off now.
+  const segmentOptions = [...new Set([...segmentRows.map((r) => r.segment), ...all.map((r) => r.lead.segment)].filter(Boolean))].sort();
   const rows = all.filter(
     (r) =>
       (!q || [r.lead.company, r.lead.contactName, r.lead.city].some((v) => v.toLowerCase().includes(q))) &&
+      (!segment || r.lead.segment === segment) &&
+      (!origin || originOf(r.lead) === origin) &&
       matchesOutcome(r, medium, outcome) &&
       (backwards || inDayRange(dateBy === 'call' ? r.lastCallAt : r.lead.createdAt, from, to)),
   );
@@ -65,7 +73,11 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       remark: r.lead.remark,
       linkedin: r.lead.contactLinkedin,
       website: r.lead.website,
-      inbound: r.lead.inbound,
+      origin: originOf(r.lead),
+      contacts: r.contacts.map((p) => ({
+        id: p.id, name: p.name, title: p.title, phone: p.phone, email: p.email, linkedin: p.linkedin,
+        callStatus: p.callStatus, callFeedback: p.callFeedback, callRemark: p.callRemark, mailOutcome: p.mailOutcome, linkedinOutcome: p.linkedinOutcome, remark: p.remark,
+      })),
     };
   });
 
@@ -76,6 +88,14 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       </PageHeader>
       <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-3 text-sm">
         <input type="search" name="q" defaultValue={q} aria-label="Search company, person or city" placeholder="Search company, person or city" className="field h-9 max-w-xs py-1.5" />
+        <select name="segment" defaultValue={segment} aria-label="Company type" className="field h-9 w-auto py-1.5">
+          <option value="">All company types</option>
+          {segmentOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select name="origin" defaultValue={origin} aria-label="Where the data came from" className="field h-9 w-auto py-1.5">
+          <option value="">All data</option>
+          {ORIGINS.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
         <OutcomeFilter medium={medium} outcome={outcome} />
         <fieldset className="flex flex-wrap items-center gap-2">
           <legend className="sr-only">Filter by date</legend>
@@ -91,7 +111,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
             <input type="date" name="to" defaultValue={to} min={from || undefined} aria-label="To date" className="field h-9 w-auto py-1.5" />
           </label>
           {(from || to) && (
-            <a href={`/tracker?${new URLSearchParams({ ...(q ? { q } : {}), ...(medium ? { medium } : {}), ...(outcome ? { outcome } : {}) })}`} className="text-xs font-medium text-accent hover:underline">Clear dates</a>
+            <a href={`/tracker?${new URLSearchParams({ ...(q ? { q } : {}), ...(segment ? { segment } : {}), ...(origin ? { origin } : {}), ...(medium ? { medium } : {}), ...(outcome ? { outcome } : {}) })}`} className="text-xs font-medium text-accent hover:underline">Clear dates</a>
           )}
         </fieldset>
         <span className="ml-auto text-xs text-muted tabular-nums">{rows.length} of {all.length} leads</span>

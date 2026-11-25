@@ -21,6 +21,7 @@ import { assignUnowned } from '@/lib/assign';
 import { recordPresence } from '@/lib/attendance';
 import { getCurrentUser, listBdas, requireUser, verifyLogin } from '@/lib/users';
 import { importContactSheet, parseContactSheet } from '@/lib/contact-import';
+import { ADDED_BY_HAND } from '@/lib/lead-origin';
 import { cleanPhone } from '@/lib/tracker';
 import { mayActOn, ownedIds, requireAdmin } from '@/lib/access';
 import { driveRun, liveServices } from '@/lib/run-driver';
@@ -191,7 +192,7 @@ export async function addLeadAction(_prev: { message: string; ok: boolean } | un
     website,
     city,
     segment: await matchSegment(str(form, 'segment')),
-    source: inbound ? 'Inbound lead' : 'Added by hand',
+    source: inbound ? 'Inbound lead' : ADDED_BY_HAND,
     contactName: str(form, 'contactName'),
     contactTitle: str(form, 'contactTitle'),
     contactPhone: str(form, 'contactPhone'),
@@ -237,7 +238,7 @@ export async function addLeadsBulkAction(_prev: { message: string; ok: boolean }
       continue;
     }
     known.add(company, domain, city);
-    toAdd.push({ company, website: domain, city, segment: await matchSegment(segment || fallbackSegment), source: inbound ? 'Inbound lead' : 'Added by hand', inbound, ownerId });
+    toAdd.push({ company, website: domain, city, segment: await matchSegment(segment || fallbackSegment), source: inbound ? 'Inbound lead' : ADDED_BY_HAND, inbound, ownerId });
   }
   const db = await getDb();
   const names = (await db.select({ segment: icps.segment, active: icps.active }).from(icps)).filter((i) => i.active).map((i) => normSegment(i.segment));
@@ -332,6 +333,7 @@ export async function addPointOfContactAction(form: FormData) {
   await logActivity(db, leadId, 'note', `Point of contact added by ${await actorName()}: ${[label, phone, email, linkedin].filter(Boolean).join(' · ')}`);
   refreshLeadPages(leadId);
   revalidatePath('/today');
+  revalidatePath('/tracker');
 }
 
 export async function updateLeadAction(form: FormData) {

@@ -382,6 +382,13 @@ export const people = pgTable('people', {
   emailVerification: text('email_verification').notNull().default(''),
   emailProviderStatus: text('email_provider_status').notNull().default(''),
   emailRetrievedAt: timestamp('email_retrieved_at', { withTimezone: true }),
+  /** The Tracker's own columns for a contact the team added beside the main one; the main contact's live on the lead. */
+  callStatus: text('call_status').notNull().default(''),
+  callFeedback: text('call_feedback').notNull().default(''),
+  callRemark: text('call_remark').notNull().default(''),
+  mailOutcome: text('mail_outcome').notNull().default(''),
+  linkedinOutcome: text('linkedin_outcome').notNull().default(''),
+  remark: text('remark').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type Person = typeof people.$inferSelect;

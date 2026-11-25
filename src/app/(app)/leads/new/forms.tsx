@@ -131,6 +131,7 @@ export function AddLeadForms({ segments, allSegments, team }: { segments: string
             (<code>Matched partner / proprietor</code> or Contact name, one per line), <code>Role</code>, <code>LinkedIn 1</code>, <code>LinkedIn 2</code>…; City and Website if you have them.
             The first person is the main contact; everyone else, and any extra numbers and emails, are kept as more points of contact. Research scores each company against the segment&apos;s ICP, with its evidence, and writes the email.
             Companies already a lead or a client are skipped. From Excel: File → Save As → CSV (UTF-8).
+            {' '}<a href="/inveck-lead-import-sample.csv" download className="font-medium text-accent hover:underline">Download a sample CSV</a> and paste your companies into it.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
