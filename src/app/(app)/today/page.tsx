@@ -568,8 +568,8 @@ function CompanyCard({
   );
 }
 
-/** In the "All" view the list shows its first companies, with a link to the full list. */
-const PREVIEW = 10;
+/** The list shows this many companies at a time (Previous / Next below it): a page that loads and redraws only these stays quick. */
+const PAGE_SIZE = 5;
 
 const TABS = [
   { key: 'all', label: 'To do' },
@@ -586,7 +586,7 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   // show what was just saved, so that redraw skips it (it runs on the next visit, as before).
   const fromAction = (await headers()).has('next-action');
   // Housekeeping before the list is drawn; none of it can stop the page from showing.
-  // Run every couple of minutes, not before every click: Show all, a filter or a logged step redraws
+  // Run every couple of minutes, not before every click: a filter or a logged step redraws
   // the page, and none of these need to run again for it.
   if (!fromAction) await atMostEvery('today:housekeeping', HOUSEKEEPING_EVERY, async () => {
     await bestEffort('assigning inbound leads', () => assignUnowned(db), 0);
@@ -741,7 +741,10 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
   };
   const showDone = tab === 'done';
   const shownGroups = groups.filter(inTab);
-  const visible = tab === 'all' && sp.all !== '1' ? shownGroups.slice(0, PREVIEW) : shownGroups;
+  const pages = Math.max(1, Math.ceil(shownGroups.length / PAGE_SIZE));
+  const page = Math.min(Math.max(1, Math.floor(Number(sp.page)) || 1), pages);
+  // The Done tab has its own list; the others show one page of companies, and only those are looked up below.
+  const visible = showDone ? [] : shownGroups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   // Other people found at these companies, to switch the point of contact to.
   const peopleRows = visible.length ? await db.select().from(people).where(inArray(people.leadId, visible.map((g) => g.lead.id))) : [];
   // Each contact's own LinkedIn status and remarks.
@@ -1103,10 +1106,12 @@ export default async function TodayPage({ searchParams }: PageProps<'/today'>) {
               <CompanyCard key={g.lead.id} group={g} linkedin={liFor(g.lead.id)} primaryId={primaryIdOf(g.lead.id)} bda={bda} readOnly={!own} others={othersOf(g.lead)} doneToday={doneOf(g.lead.id)} linkedinFull={linkedinFull} tier={(['P1', 'P2', 'P3'].includes(g.lead.contactTier) ? g.lead.contactTier : tierOf(g.lead.contactTitle, icpOf(g.lead))) as Tier} mail={mailFor(g.lead)} whatsapp={waFor(g.lead)} />
             ))}
           </ul>
-          {visible.length < shownGroups.length && (
-            <Link href={link({ all: '1' })} className="block rounded-b-lg border-t border-line px-5 py-3 text-sm font-medium text-accent hover:bg-surface-2">
-              Show all {shownGroups.length}
-            </Link>
+          {pages > 1 && (
+            <nav aria-label="Pages of companies" className="flex items-center justify-between rounded-b-lg border-t border-line px-5 py-3 text-sm">
+              {page > 1 ? <Link href={link({ page: String(page - 1) })} className="font-medium text-accent hover:underline">← Previous</Link> : <span />}
+              <span className="text-xs text-muted tabular-nums">Page {page} of {pages}</span>
+              {page < pages ? <Link href={link({ page: String(page + 1) })} className="font-medium text-accent hover:underline">Next →</Link> : <span />}
+            </nav>
           )}
         </section>
       )}

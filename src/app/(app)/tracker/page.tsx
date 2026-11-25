@@ -11,6 +11,8 @@ import { TrackerTable, type TrackerViewRow } from './tracker-table';
 import { icps } from '@/lib/db/schema';
 import { cleanOrigin, ORIGINS, originOf } from '@/lib/lead-origin';
 
+const PAGE_SIZE = 25;
+
 export default async function TrackerPage({ searchParams }: PageProps<'/tracker'>) {
   const me = (await getCurrentUser())!;
   const db = await getDb();
@@ -40,7 +42,10 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       matchesOutcome(r, medium, outcome) &&
       (backwards || inDayRange(dateBy === 'call' ? r.lastCallAt : r.lead.createdAt, from, to)),
   );
-  const view: TrackerViewRow[] = rows.map((r) => {
+  // One page of leads at a time: the table and every save redraw only these.
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const page = Math.min(Math.max(1, Math.floor(Number(sp.page)) || 1), pages);
+  const view: TrackerViewRow[] = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r) => {
     const c = trackerCells(r);
     return {
       id: r.lead.id,
@@ -78,6 +83,8 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       })),
     };
   });
+
+  const pageLink = (n: number) => `/tracker?${new URLSearchParams({ ...(q ? { q } : {}), ...(segment ? { segment } : {}), ...(origin ? { origin } : {}), ...(medium ? { medium } : {}), ...(outcome ? { outcome } : {}), ...(from || to ? { dateBy, ...(from ? { from } : {}), ...(to ? { to } : {}) } : {}), page: String(n) })}`;
 
   return (
     <>
@@ -120,6 +127,13 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
           {DATE_FILTERS.find((d) => d.value === dateBy)!.label}: {from && to ? (from === to ? from : `${from} to ${to}`) : from ? `from ${from}` : `up to ${to}`}.
           {dateBy === 'call' ? ' Leads not called yet are left out.' : ''}
         </p>
+      )}
+      {pages > 1 && (
+        <nav aria-label="Pages of leads" className="mb-3 flex items-center gap-4 text-sm">
+          {page > 1 ? <a href={pageLink(page - 1)} className="font-medium text-accent hover:underline">← Previous</a> : <span className="text-muted">← Previous</span>}
+          <span className="text-xs text-muted tabular-nums">Page {page} of {pages}</span>
+          {page < pages ? <a href={pageLink(page + 1)} className="font-medium text-accent hover:underline">Next →</a> : <span className="text-muted">Next →</span>}
+        </nav>
       )}
       <TrackerTable rows={view} options={{ contactChannel: CONTACT_CHANNELS, callStatus: CALL_STATUSES, callFeedback: CALL_FEEDBACK, mailOutcome: MAIL_OUTCOMES, linkedinOutcome: LINKEDIN_OUTCOMES }} showOwner={me.role === 'admin'} segments={segments} />
     </>

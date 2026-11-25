@@ -2,7 +2,7 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import { INBOUND_SOURCE } from './inbound-source';
 import { LI_NEGATIVE } from './linkedin-outcomes';
 import { isPositiveLead } from './follow-up-eligibility';
-import { isWrongNumberOut } from './follow-up-sequence';
+import { isWrongNumberOut, latestCallOutcomeIn } from './follow-up-sequence';
 import type { Db } from './db';
 import { leads, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
 import { CA_FALLBACK_STEP, CA_ROUNDS, caRoundsOf, CA_WAITING_STEP, FIND_NEXT_STEP, isCallAttempt, isCaSegment, istDay, notYet } from './tasks';
@@ -82,7 +82,7 @@ export async function loadFunnel(db: Db, ownerId: number | null, today = istDay(
     // A positive outcome (call, email or LinkedIn) takes a lead out of the follow-ups; one already talking to us stays under "In conversation".
     if (isPositiveLead(lead) && !TALKING.includes(lead.status)) continue;
     // A wrong number (the box in Follow-up Rules off, as it is by default) is not a follow-up: the lead stays a lead, off this list.
-    if (!TALKING.includes(lead.status) && (await isWrongNumberOut(db, lead))) continue;
+    if (!TALKING.includes(lead.status) && (await isWrongNumberOut(db, lead, latestCallOutcomeIn(list, lead)))) continue;
     const open = list.filter((t) => !t.doneAt).sort((a, b) => a.dueDate.localeCompare(b.dueDate) || Number(b.priority) - Number(a.priority));
     const waitingTask = open.find((t) => t.step === CA_WAITING_STEP) ?? null;
     const steps = open.filter((t) => t.step !== CA_WAITING_STEP);

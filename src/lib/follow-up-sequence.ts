@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, notInArray, or } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, ne, notInArray, or } from 'drizzle-orm';
 import type { Db } from './db';
 import { followupRules, leads, settings, tasks, type Lead, type LeadStatus, type Task } from './db/schema';
 import { logActivity } from './activity';
@@ -180,20 +180,24 @@ const CALL_ATTEMPTS = ['connected', 'no_answer', 'busy', 'wrong_number'];
 /** The outcome of the latest call to the lead's current contact (a call before they became the contact doesn't count), or null. */
 export async function latestCallOutcome(db: Db, lead: Pick<Lead, 'id' | 'contactSince'>): Promise<string | null> {
   const rows = await db
-    .select({ outcome: tasks.outcome, doneAt: tasks.doneAt })
+    .select({ kind: tasks.kind, outcome: tasks.outcome, doneAt: tasks.doneAt })
     .from(tasks)
-    .where(and(eq(tasks.leadId, lead.id), eq(tasks.kind, 'call'), isNotNull(tasks.doneAt), inArray(tasks.outcome, CALL_ATTEMPTS)))
-    .orderBy(desc(tasks.doneAt));
-  const mine = rows.find((r) => !lead.contactSince || (r.doneAt && r.doneAt > lead.contactSince));
-  return mine?.outcome ?? null;
+    .where(and(eq(tasks.leadId, lead.id), eq(tasks.kind, 'call'), isNotNull(tasks.doneAt), inArray(tasks.outcome, CALL_ATTEMPTS)));
+  return latestCallOutcomeIn(rows, lead);
+}
+
+/** The same from a lead's tasks already in hand (the follow-up list loads every lead's tasks once, instead of asking again for each lead). */
+export function latestCallOutcomeIn(list: { kind: string; outcome: string; doneAt: Date | null }[], lead: Pick<Lead, 'contactSince'>): string | null {
+  const calls = list.filter((t) => t.kind === 'call' && t.doneAt && CALL_ATTEMPTS.includes(t.outcome)).sort((a, b) => b.doneAt!.getTime() - a.doneAt!.getTime());
+  return calls.find((r) => !lead.contactSince || r.doneAt! > lead.contactSince)?.outcome ?? null;
 }
 
 /**
  * A lead whose latest call was a wrong number, with the wrong-number box off for its rule: it is not in the follow-ups (the list leaves
  * it out, whatever tasks it still has). With the box on, it is a normal follow-up lead.
  */
-export async function isWrongNumberOut(db: Db, lead: Pick<Lead, 'id' | 'contactSince' | 'productId' | 'icpId' | 'segment'>): Promise<boolean> {
-  if ((await latestCallOutcome(db, lead)) !== 'wrong_number') return false;
+export async function isWrongNumberOut(db: Db, lead: Pick<Lead, 'id' | 'contactSince' | 'productId' | 'icpId' | 'segment'>, latest?: string | null): Promise<boolean> {
+  if ((latest === undefined ? await latestCallOutcome(db, lead) : latest) !== 'wrong_number') return false;
   return !isQualifyingOutcome('wrong_number', (await ruleForLead(db, lead)).outcomes);
 }
 
