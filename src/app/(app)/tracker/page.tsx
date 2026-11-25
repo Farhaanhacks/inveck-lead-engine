@@ -24,7 +24,7 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   const outcome = cleanOutcome(medium, legacyCall ? sp.feedback : sp.outcome);
   // A date, or a range of dates (start and end), on the day the lead was added or last called.
   const dateBy = DATE_FILTERS.some((d) => d.value === sp.dateBy) ? (sp.dateBy as 'added' | 'call') : 'added';
-  // The company type (segment) and where the data came from: Manual research, System data or Inbound.
+  // The ICP (a lead's segment, as on Today) and where the data came from: Manual research, System data or Inbound.
   const segment = typeof sp.segment === 'string' ? sp.segment : '';
   const origin = cleanOrigin(sp.origin);
   const from = cleanDay(sp.from);
@@ -32,8 +32,6 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
   const backwards = !!from && !!to && from > to;
   const [all, segmentRows] = await Promise.all([loadTracker(db, ownerScope(me)), db.select({ segment: icps.segment, active: icps.active }).from(icps)]);
   const segments = segmentRows.filter((r) => r.active).map((r) => r.segment);
-  // Every company type in the list, even one whose ICP is switched off now.
-  const segmentOptions = [...new Set([...segmentRows.map((r) => r.segment), ...all.map((r) => r.lead.segment)].filter(Boolean))].sort();
   const rows = all.filter(
     (r) =>
       (!q || [r.lead.company, r.lead.contactName, r.lead.city].some((v) => v.toLowerCase().includes(q))) &&
@@ -88,9 +86,9 @@ export default async function TrackerPage({ searchParams }: PageProps<'/tracker'
       </PageHeader>
       <AutoFilterForm className="mb-4 flex flex-wrap items-center gap-3 text-sm">
         <input type="search" name="q" defaultValue={q} aria-label="Search company, person or city" placeholder="Search company, person or city" className="field h-9 max-w-xs py-1.5" />
-        <select name="segment" defaultValue={segment} aria-label="Company type" className="field h-9 w-auto py-1.5">
-          <option value="">All company types</option>
-          {segmentOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+        <select name="segment" defaultValue={segment} aria-label="ICP" className="field h-9 w-auto py-1.5">
+          <option value="">All ICPs</option>
+          {segments.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select name="origin" defaultValue={origin} aria-label="Where the data came from" className="field h-9 w-auto py-1.5">
           <option value="">All data</option>
